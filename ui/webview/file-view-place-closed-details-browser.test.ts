@@ -57,7 +57,7 @@
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, frames, PARA, REPORT } from "./real-viewer-leg";
+import { inBrowser, openViewer, frames, paintsReach, PARA, REPORT } from "./real-viewer-leg";
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
@@ -400,6 +400,107 @@ test("in a browser, the real module: from Raw, the closing row of a SHUT fold wi
         near(afterRow2.top, after.top, where + ": the block after the fold's row is where the block was in Rendered (the way back keeps its distance)");
         const sceneRow = (await box(page, "code.hljs .fv-cl", rowText === "" ? afterText : rowText))!;
         if (rowText !== "") near(sceneRow.top, -above - (afterRow.top - after.top), where + `: the scene row is above the edge by the Raw rows' excess over the summary's box, ${Math.round(afterRow.top - after.top)}px, and no more (round 2: ${width === 900 ? "427 to 463" : "787 to 823"}px)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+// ── round 4: an open fold's own rows uncapped; a reflow of the same Raw text keeps the top row ──────────────────
+/** Scroll so the Raw row `offset` rows after the first whose text includes `text` has its top at the edge; answers that row's index. */
+const rowIndexToEdge = (page: any, text: string, offset: number): Promise<number> => page.evaluate(([t, o]: [string, number]) => {
+  const body = document.querySelector(".fileview-body")!;
+  const rows = Array.from(body.querySelectorAll("code.hljs .fv-cl"));
+  const i = rows.findIndex((r) => (r.textContent || "").includes(t)) + o;
+  body.scrollTop += rows[i].getBoundingClientRect().top - body.getBoundingClientRect().top;
+  return i;
+}, [text, offset]);
+/** Raw row `i`: its text, its top from the body's top edge and its height. */
+const rowAt = (page: any, i: number) => page.evaluate((k: number) => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  const r = body.querySelectorAll("code.hljs .fv-cl")[k]; const rr = r.getBoundingClientRect();
+  return { text: (r.textContent || "").trim().slice(0, 48), top: Math.round((rr.top - br.top) * 10) / 10, height: Math.round(rr.height * 10) / 10 };
+}, i);
+/** One press of a text-size button, awaited through the seam's paint count (the reflow's own paint), never a timer. */
+const sizeStep = async (page: any, label: string) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
+
+test("in a browser, the real module: from Raw, an OPEN fold's own rows switched to Rendered keep the first nested block at its row's distance, the summary below the edge (the review's round 4; round 3 read the open fold's summary as a shut fold's and capped the block at the summary at the edge): the `<summary>` row at the edge round-trips exactly at 900 and 380px (round 3: 6px lost, the row above the edge), and the opener's row puts paragraph 11 where its row was, the summary 24px down (round 3: at the edge); Rendered to Raw to Rendered from the open fold's summary 2 and 5px below the edge is exact (round 3: the summary pulled to the edge); the shut fold's rows stand as the earlier tests pin them", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const OPEN = fold(true);
+    for (const width of [900, 380]) {
+      for (const [what, rowText] of [["the summary's row", "<summary>Closed one"], ["the opener's row", "<details open>"]] as const) {
+        const where = `pane ${width}, ${what}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: OPEN }, raw: true });
+        await rowToEdge(page, rowText, 0); await frames(page, 2);
+        const row = (await rowAtTop(page))!;
+        assert.ok(row.text.startsWith(rowText), where + `: the scene starts on the row (got ${JSON.stringify(row.text)})`);
+        const p11Row = (await box(page, "code.hljs .fv-cl", "Paragraph 11:"))!;
+        assert.ok(p11Row.top > 30, where + `: the fixture: paragraph 11's row is more than the summary's box below the edge (top ${p11Row.top}), so a cap would move it`);
+        await click(page, "Rendered");
+        const shape = await foldShape(page);
+        assert.ok(!shape.closed && shape.hidden.visible, where + `: the fixture: the fold is open in Rendered (got ${JSON.stringify(shape)})`);
+        const p11 = (await box(page, ".fileview-md details > p", "Paragraph 11:"))!;
+        const sum = (await box(page, ".fileview-md summary", "Closed one"))!;
+        near(p11.top, p11Row.top, where + `: paragraph 11 is where its row was (round 3: ${Math.round(p11.top - sum.top)}px down, the summary's box, the summary at the edge)`);
+        assert.ok(sum.top > 2, where + `: the summary is below the edge, not pulled to it (top ${sum.top}; round 3: 0.2)`);
+        if (what === "the summary's row") {
+          await click(page, "Raw");
+          const back = (await box(page, "code.hljs .fv-cl", rowText))!;
+          near(back.top, 0, where + ": the summary's row is back at the edge (round 3: 6px above it)");
+        }
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      for (const below of [2, 5]) {
+        const where = `pane ${width}, the open fold's summary ${below}px below the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: OPEN } });
+        await scrollInto(page, ".fileview-md summary", "Closed one", -below); await frames(page, 2);
+        const before = (await box(page, ".fileview-md summary", "Closed one"))!;
+        near(before.top, below, where + ": the scene starts with the summary below the edge", 1);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        assert.ok(row.text.startsWith("<summary>"), where + `: the summary's row is the top Raw row, partway above the edge (got ${JSON.stringify(row.text)} at ${row.top})`);
+        await click(page, "Rendered");
+        const after = (await box(page, ".fileview-md summary", "Closed one"))!;
+        near(after.top, before.top, where + `: the summary is where it was (round 3: pulled to the edge, ${below}px lost)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: a text-size step (A+, then A-) and a pane drag in Raw with a row that reads as the block after it at the top edge keep the row within a pixel, at 900 and 380px: a comment's row and the `</div>` inside a wrapper, the `</details>` of a shut and of an open fold, a shut fold's `<summary>`, the blank row before a shut fold's opener, a blank row between paragraphs (the review's round 4: the place carries the row at the edge, Place.row, and a seat in the same Raw text puts it back; round 3 kept the block after the row at its distance while the rows between grew 18 to 20.7px, so the row rose 5 to 6px per step, the blank before the opener 10 to 11, a blank between paragraphs 3, where before the slice a closer, a comment and an opener were their own blocks and held within half a pixel); a paragraph's own row holds as before", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const SCENES: Array<[string, string, string, number]> = [
+      ["a comment's row inside a wrapper", commented, "<!-- a note to self -->", 0],
+      ["the wrapper's `</div>`", commented, "</div>", 0],
+      ["the shut fold's `</details>`", DOC, "</details>", 0],
+      ["the shut fold's `<summary>`", DOC, "<summary>Closed one", 0],
+      ["the blank row before the shut fold's opener", DOC, "<details>", -1],
+      ["a blank row between paragraphs", DOC, "Paragraph 3:", 1],
+      ["the open fold's `</details>`", fold(true), "</details>", 0],
+      ["a paragraph's own row", DOC, "Paragraph 12:", 0],
+    ];
+    for (const width of [900, 380]) {
+      for (const [what, doc, text, offset] of SCENES) {
+        const where = `pane ${width}, ${what}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: doc }, raw: true });
+        const i = await rowIndexToEdge(page, text, offset); await frames(page, 2);
+        const r0 = await rowAt(page, i);
+        near(r0.top, 0, where + `: the scene starts with the row at the edge (${JSON.stringify(r0.text)})`, 1);
+        await sizeStep(page, "Larger text");
+        const r1 = await rowAt(page, i);
+        assert.ok(r1.height > r0.height, where + `: the fixture: the step grew the row (${r0.height} to ${r1.height})`);
+        near(r1.top, r0.top, where + `: after A+ the row is where it was (round 3: ${offset === -1 ? "10 to 11" : /^Paragraph/.test(text) ? (offset ? "3" : "0") : "5 to 6"}px above the edge)`, 1);
+        await sizeStep(page, "Smaller text");
+        const r2 = await rowAt(page, i);
+        near(r2.top, r0.top, where + ": after A- the row is where it was", 1);
+        const p: number = await page.evaluate(() => (window as any).__paints);
+        await page.setViewportSize({ width: width === 900 ? 600 : 700, height: 600 }); await paintsReach(page, p + 1); await frames(page, 3);
+        const r3 = await rowAt(page, i);
+        near(r3.top, r0.top, where + ": after the pane drag the row is where it was", 1);
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }

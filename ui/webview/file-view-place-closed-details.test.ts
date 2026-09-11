@@ -532,3 +532,98 @@ test("readPlace / seatPlace: a picture of a wrapper's block's own (a README's lo
     assert.equal(c4.body.scrollTop, 500 + (c4.h2.box!.top - EDGE) - qr.top, what + ": the heading at the row's distance (the rule below the picture's)");
   }
 });
+
+// ── round 4: an open fold's own rows uncapped, a picture below a row of the block's own, a reflow of the same Raw text ──
+/** The source span of line `k` of `src` (its line ending excluded). */
+const rowSpanOf = (src: string, k: number) => { const start = src.split("\n").slice(0, k).join("\n").length + (k > 0 ? 1 : 0); return { start, end: start + src.split("\n")[k].length }; };
+/** rawRow, the body scrolled off its very top (a body at its very top reads atTop, and its seat goes to the top). */
+const rawRowDown = (src: string, k: number, depth: number) => { const r = rawRow(src, k, depth); r.body.scrollTop = 400; return r; };
+
+test("round 4. seatPlace: the first block nested in an OPEN fold, read from the fold's own Raw rows (the blank before the opener, the opener, the summary), keeps its row's distance in Rendered, since the summary before it is an open fold's and no shut fold stands before the block (round 3 read that summary as a shut fold's and capped the block at the summary at the edge, so the `<summary>` row's round trip lost 6px where it had been exact); the shut fold's cap stands", () => {
+  // the open fold: paragraph 5, read from each of the fold's own rows 9px in, seats at the row's distance (the stand-in's summary is
+  // 40px tall and paragraph 5 starts 48 below its top, so the round-3 cap brought 71 and 51 to 48; the summary row's 31 was under it)
+  const docO = fold(true), spansO = sourceBlockSpans(docO);
+  const kDetO = lineOf(docO, "<details open>"), k5o = lineOf(docO, PARA(5));
+  for (const [what, k] of [["the blank row before the opener", kDetO - 1], ["the opener's row", kDetO], ["the summary's row", kDetO + 1]] as const) {
+    const q = readPlace(H(rawRowDown(docO, k, 9).body), docO)!;
+    const dist = -9 + (k5o - k) * 20;
+    assert.deepEqual([textOf(docO, q), q.top], [PARA(5), dist], what + ": paragraph 5 at its row's distance");
+    const o = scene(true, 0); o.body.scrollTop = 500;
+    assert.equal(o.hidden[0].box!.top - o.summary.box!.top, 48, "the fixture: paragraph 5 starts 48px below the summary's top");
+    assert.equal(seatPlace(H(o.body), docO, q), true, what + ": seated");
+    assert.equal(o.body.scrollTop, 500 + (o.hidden[0].box!.top - EDGE) - dist, what + `: paragraph 5's box ${dist}px below the edge, where its row was (round 3: ${Math.min(dist, 48)}px${dist > 48 ? ", the summary at the edge" : ""})`);
+  }
+  // the same rows of the SHUT fold seat the carried block, paragraph 7, no lower than the summary at the edge (the fourth test's cap)
+  const docS = fold(false);
+  const qS = readPlace(H(rawRowDown(docS, lineOf(docS, "<details>") - 1, 9).body), docS)!;
+  const s = scene(false, 0); s.body.scrollTop = 500;
+  assert.equal(seatPlace(H(s.body), docS, qS), true, "the shut fold: seated");
+  assert.equal(s.body.scrollTop, 500 + (s.p7.box!.top - EDGE) - 48, "the shut fold: paragraph 7 48px below the edge, the summary at it, as before");
+  assert.equal(spansO.length, sourceBlockSpans(docS).length, "the fixture: the two folds lex to the same blocks");
+});
+
+test("round 4. readPlace in Raw: a row of a wrapper's block BEFORE its picture's tag line (the opener, the blank row before it) carries the picture's line with the picture's OWN row, below the edge (Place.pic at a positive top), and the Rendered seat puts the picture at that distance, the nested heading after it (round 3 carried the tag row alone, so the heading seated at its row's distance put the picture above the edge, and the way back, seating the picture's row at that fraction, left the opener's row 32 to 109px above the edge); a row of the block's own AFTER the picture carries nothing, as before", () => {
+  // a wrapper's own picture from the rows before its tag line: the opener 5px in, the blank row before it 5px in
+  const doc = readmeDoc(IMG_LINE), spans = sourceBlockSpans(doc);
+  const kImg = lineOf(doc, IMG_LINE), kH2 = lineOf(doc, "## Centred title");
+  const picLine = rowSpanOf(doc, kImg);
+  assert.equal(doc.slice(picLine.start, picLine.end), IMG_LINE, "the fixture: the picture's tag line");
+  assert.ok(spans.some((sp) => doc.slice(sp.start, sp.end) === "<div align=\"center\">\n" + IMG_LINE), "the fixture: the opener and the tag line are one html block");
+  for (const [what, k] of [["the opener's row", kImg - 1], ["the blank row before the opener", kImg - 2]] as const) {
+    const qr = readPlace(H(rawRowDown(doc, k, 5).body), doc)!;
+    const picTop = -5 + (kImg - k) * 20, h2Top = -5 + (kH2 - k) * 20;
+    assert.deepEqual([textOf(doc, qr), qr.top, qr.line, qr.pic], ["## Centred title", h2Top, null, { ...picLine, top: picTop, height: 20 }], what + ": the heading at its row's distance, the picture's tag line carried with its own row's box, below the edge (round 3: nothing carried)");
+    const c = readmeScene(doc); c.body.scrollTop = 500;
+    assert.equal(seatPlace(H(c.body), doc, qr), true, what + ": seated in Rendered");
+    assert.equal(c.body.scrollTop, 500 + (c.img.box!.top - EDGE) - picTop, what + `: the picture ${picTop}px below the edge, where its row was (round 3: the heading at ${h2Top}, the picture ${IMG_H + GAP - h2Top}px above the edge)`);
+    assert.equal(c.h2.box!.top - c.img.box!.bottom, GAP, what + ": the fixture: the heading follows the picture");
+  }
+  // a row of the block's own after the picture (a `<p>` tagline under the logo) carries nothing: the heading at its row's distance, as before
+  const docT = readmeDoc(IMG_LINE + "\n<p>A tagline for the project</p>");
+  const kT = lineOf(docT, "<p>A tagline for the project</p>");
+  const qt = readPlace(H(rawRow(docT, kT, 5).body), docT)!;
+  assert.deepEqual([textOf(docT, qt), qt.top, qt.pic], ["## Centred title", -5 + (lineOf(docT, "## Centred title") - kT) * 20, undefined], "the tagline's row, after the picture: the heading at its distance, nothing carried");
+});
+
+test("round 4. readPlace in Rendered: a lead `<h1>` of the block's own at the edge with the picture below it carries the picture too (the first picture of the block's own rows from the level's first box on), so the Raw seat puts the tag's row where the picture was (round 3 carried only a picture the level's search landed on)", () => {
+  // Rendered: a lead <h1> of the block's own 10px into the edge, the picture below it (the block `<div align="center">\n<h1>..</h1>\n<img ..>`):
+  // the heading nested after them is the place, and the picture is carried with its box below the edge (round 3 carried only a
+  // picture the level's search landed on, so the Raw seat put the nested heading's row where the heading was, the picture's row and
+  // the <h1>'s above the edge)
+  const docH = readmeDoc("<h1>Project</h1>\n" + IMG_LINE), spansH = sourceBlockSpans(docH);
+  const bDivH = spansH.findIndex((sp) => docH.slice(sp.start, sp.end).startsWith("<div align")), kImgH = lineOf(docH, IMG_LINE);
+  const ch = readmeScene(docH);
+  const h1 = ch.div.elements().find((e) => e.tagName === "H1")!;
+  assert.ok(h1 && ch.div.elements().indexOf(h1) === 0 && ch.div.elements().indexOf(ch.img) === 1, "the fixture: the div holds the <h1> then the picture, then the nested blocks");
+  assert.equal(renderedBlockIndex(El(ch.md), docH, El(h1)), bDivH, "the fixture: the <h1> is a row of the div's block");
+  toEdge(ch.md, h1, 10); ch.body.scrollTop = 400;
+  const qh = readPlace(H(ch.body), docH)!;
+  const picLineH = rowSpanOf(docH, kImgH);
+  assert.deepEqual([textOf(docH, qh), qh.top, qh.pic], ["## Centred title", ch.h2.box!.top - EDGE, { ...picLineH, top: ch.img.box!.top - EDGE, height: IMG_H }], "the heading is the place, the picture below the <h1> carried with its box (round 3: nothing carried)");
+  assert.equal(qh.pic!.top, H_BLOCK - 10 + GAP, "the picture 38px below the edge: the <h1>'s remaining 30 and the gap");
+  const rh = raw(docH, 0); rh.body.scrollTop = 500;
+  assert.equal(seatPlace(H(rh.body), docH, qh), true, "seated in Raw");
+  assert.equal(rh.body.scrollTop, 500 + (rh.rows[kImgH].box!.top - EDGE) - qh.pic!.top, "the picture's tag row 38px below the edge, where the picture was, the <h1>'s row and the opener above it (round 3: the heading's row at the heading's distance, the tag row above the edge)");
+});
+
+test("round 4. readPlace / seatPlace: a Raw place whose block starts at or below the edge carries the top row (Place.row), which a seat in the same Raw text puts back where it was, whatever the rows between it and the block grew to (a text-size step, the pane dragged; round 3 kept the block after the row at its distance, so a comment's row and a closer's rose 5px per step, the blank before a fold's opener 11 and a blank between paragraphs 3); partway into a block the line is kept instead, and a seat into Rendered or over other text leaves the row unused", () => {
+  // a reflow of the same Raw text: the row at the edge is carried (Place.row) and a seat in Raw over the same text puts it back where it
+  // was; the rows 20px tall at the read and 24 at the seat (a text-size step), the body scrolled elsewhere between
+  const docM = "# Report\n\n" + paras(1, 2) + "\n\n<details>\n<summary>Folded</summary>\n\n" + PARA(3) + "\n\n</details>\n\n<!-- a note to self -->\n\n" + paras(4, 5) + "\n";
+  for (const [what, text, delta, afterText] of [["a comment's row", "<!-- a note to self -->", 0, PARA(4)], ["the closing row", "</details>", 0, PARA(4)], ["the blank row before the opener", "<details>", -1, PARA(3)], ["a blank row between paragraphs", PARA(1), 1, PARA(2)], ["the opener's row", "<details>", 0, PARA(3)]] as const) {
+    const k = lineOf(docM, text) + delta, kb = lineOf(docM, afterText);
+    const q = readPlace(H(rawRowDown(docM, k, 0).body), docM)!;
+    assert.deepEqual([textOf(docM, q), q.top, q.line, q.row], [afterText, (kb - k) * 20, null, { ...rowSpanOf(docM, k), top: 0 }], what + ": the block after the row at its distance, no line, the row at the edge carried");
+    const r1 = raw(docM, 0, 24); r1.body.scrollTop = 500;
+    assert.equal(seatPlace(H(r1.body), docM, q), true, what + ": seated in the reflowed Raw view");
+    assert.equal(r1.body.scrollTop, 500 + (r1.rows[k].box!.top - EDGE), what + `: the row back at the edge (round 3: the block after it at its old distance, ${(kb - k) * 20}px, the row ${(kb - k) * 4}px above the edge)`);
+  }
+  // partway into a block the line is kept and the row is not (the line branch seats it, as before); a place read in Raw and seated in
+  // Rendered, or over other text, leaves the row unused
+  const qp = readPlace(H(rawRow(docM, lineOf(docM, PARA(4)), 4).body), docM)!;
+  assert.deepEqual([!!qp.line, qp.row], [true, undefined], "a row inside a block: the line kept, no row");
+  const qc = readPlace(H(rawRowDown(docM, lineOf(docM, "<!-- a note to self -->"), 0).body), docM)!;
+  const r2 = raw(docM.replace(PARA(5), PARA(5) + " More words."), 0, 24); r2.body.scrollTop = 500;
+  assert.equal(seatPlace(H(r2.body), docM.replace(PARA(5), PARA(5) + " More words."), qc), true, "other text: seated");
+  assert.equal(r2.body.scrollTop, 500 + (r2.rows[lineOf(docM, PARA(4))].box!.top - EDGE) - qc.top, "other text: the block after the row at its distance, the row unused");
+});

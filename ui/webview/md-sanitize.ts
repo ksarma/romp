@@ -32,6 +32,13 @@
 //     left: colorOnlyStyle below is the whole grammar, applied by a DOMPurify uponSanitizeAttribute hook on
 //     every element, inline SVG included.
 //   • data-* never rides in (ALLOW_DATA_ATTR: false): both pages key their delegated actions off data-act.
+//   • an html comment is dropped, as GitHub drops it, and dropped BEFORE the element holding it is judged. DOMPurify
+//     removes every comment on its own (no profile lists `#comment`), but its walk judges a parent before it reaches
+//     the comment inside, and the parent's markup guard (SAFE_FOR_XML, its mXSS defence) reads the comment's `<!--`
+//     in the innerHTML: a `<p>` or `<td>` holding a comment and a literal `<word` (`&lt;x&gt;`, which reads `<x` in
+//     the textContent) matched the guard from two different children and vanished whole with its prose.
+//     dropCommentChildren below, on the uponSanitizeElement hook, empties an element of its comments first; every
+//     other output is unchanged, since no comment ever survived (Slice 5 review, round 4).
 //   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser
 //     fetch the URL the moment the note renders, a tracking pixel with no click and no gate; DOMPurify's html
 //     list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
@@ -144,14 +151,41 @@ export function styleAttributeHook(ev: Pick<UponSanitizeAttributeHookEvent, "att
   else ev.keepAttr = false;
 }
 
+/** The DOMPurify uponSanitizeElement hook body: an element's html comment children go before DOMPurify judges the
+ *  element. DOMPurify drops every comment itself (`#comment` is in no profile, so the walk removes one when it reaches
+ *  it), but the walk is in document order, so a parent is judged with its comments still inside it, and one of the
+ *  judgments reads them: the markup guard DOMPurify runs under SAFE_FOR_XML (its `_isUnsafeNode`, an mXSS defence)
+ *  force-removes an element that has child nodes but no element child when BOTH its textContent and its innerHTML
+ *  read as markup (`/<[/\w!]/`), the shape of a raw-text element whose text would re-parse as tags. A `<p>` or a
+ *  `<td>` holding a comment and a literal `<word` matched both probes from two different children (marked emits
+ *  `&lt;x&gt;` as the entity, so the textContent reads `<x`, and the comment verbatim, so the innerHTML reads `<!--`)
+ *  and vanished whole with its prose: the table cell `a <!-- c --> b &lt;x&gt;` rendered as a row with one cell, and
+ *  a comment on it painted nothing (the Slice 5 review, round 4, 2026-09-11; identical on main). With the comments
+ *  gone first the guard reads the innerHTML DOMPurify would have produced anyway, so the element stays; for every
+ *  other input the output is what it always was, since no comment ever survived the sanitize. The guard itself is
+ *  untouched: a raw-text element's text is one text node, with no comment in it to drop. Reads `childNodes` as a
+ *  snapshot and touches nothing but comments; DOMPurify removes a clobbered form before this hook runs for the names
+ *  it probes (removeChild and nodeType among them), and `childNodes`, which it does not probe, is stepped back from
+ *  here when a form's `<input name="childNodes">` has made it no list. */
+export function dropCommentChildren(node: Node): void {
+  if (node.nodeType !== 1 /* Node.ELEMENT_NODE */) return;
+  const children = node.childNodes;
+  if (!children || typeof children.length !== "number") return;
+  for (const child of Array.from(children)) {
+    if (child.nodeType === 8 /* Node.COMMENT_NODE */) node.removeChild(child);
+  }
+}
+
 let hooksInstalled = false;
-/** Install the style hook on the (module-global) DOMPurify instance, once. Idempotent: DOMPurify's hooks
- *  are a list, and a second registration would run the same rewrite twice per attribute. `purify` is a
- *  seam for the node tests, which have no window for the real instance to sanitize in. */
+/** Install the two hooks on the (module-global) DOMPurify instance, once: the style rewrite on every attribute
+ *  (styleAttributeHook) and the comment drop on every element (dropCommentChildren). Idempotent: DOMPurify's hooks
+ *  are a list, and a second registration would run the same rewrite twice per attribute. `purify` is a seam for
+ *  the node tests, which have no window for the real instance to sanitize in. */
 export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"> = DOMPurify): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   purify.addHook("uponSanitizeAttribute", (_node, ev) => { styleAttributeHook(ev); });
+  purify.addHook("uponSanitizeElement", (node) => { dropCommentChildren(node); });
 }
 
 /** marked's task checkbox is the one control a note keeps, inert: every other <input> goes, and a

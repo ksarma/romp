@@ -1213,7 +1213,10 @@ class Panel {
    *  poll, a filter or settings pick), and the browser fires selectionchange for the move; compared with the ends of the OFFER, that
    *  change read as the person's and re-offered a float a scroll had hidden, beside a passage nobody selected (the Slice 5 review,
    *  round 1). Read from the live selection after each paint, the record holds no node of a swapped-out render: it used to keep the
-   *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review). */
+   *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review).
+   *  Dropped when the listener hides the float for a selection that is no passage of the body's (onSelectionChange: collapsed, or
+   *  an end outside the body), since a record the float no longer answers to read the selection brought back to its ends as
+   *  already offered (the same review, round 4); the scroll's hide keeps it, so the re-seat of the same ends stays no offer. */
   offeredFor: SelectionEnds & { text: string } | null = null;
   /** A pointer is down (the document's capture mousedown, for the PRIMARY button, or touchstart; cleared at mouseup, touchend,
    *  touchcancel, the dragend of a press that became a drag of the selected text, which ends in no mouseup, a contextmenu, and the
@@ -1233,15 +1236,21 @@ class Panel {
    *  never offered Comment. Four guards, then the seam's own path (onSelection): nothing while a pointer is down (pointerHeld: the
    *  drag's offer comes at mouseup); a collapsed selection, or one with an end outside the body (Ctrl+A puts one at the page's
    *  start; a selection in the aside), hides a passage's float, since the passage it was offered for is no longer the selection
-   *  (a picture's float has no selection to answer to and stands); the selection the float is already offered beside changes
-   *  nothing (offeredFor: the seam's re-seat of the same ends after a paint fires this event too). A scroll fires no
-   *  selectionchange, so a float hidden by one stays hidden (hideFloatOnScroll); onRendered hides it on every paint and reflow.
+   *  (a picture's float has no selection to answer to and stands), and drops the record of the offer with it (offeredFor), so the
+   *  selection the keyboard brings back to the offered ends is a new selection and offers: with the record kept past the hide,
+   *  Shift+ArrowDown carrying the focus into the aside hid the float, and the Shift+ArrowUp after it, back at exactly the ends of
+   *  the last offer, read as the selection already answered, and a live keyboard selection in the body had no button (the Slice 5
+   *  review, round 4); the selection the float is already offered beside changes nothing (offeredFor: the seam's re-seat of the
+   *  same ends after a paint fires this event too). A scroll fires no selectionchange, so a float hidden by one stays hidden
+   *  (hideFloatOnScroll), its record kept, so the re-seat of the same ends after it is no second offer; onRendered hides it on
+   *  every paint and reflow.
    *  Nothing while the editor holds the body: its selections are edits (the seam gates its own path the same way). */
   onSelectionChange = (): void => {
     if (this.pointerHeld || this.ctx.editing()) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     if (!sel || this.passageGone(sel)) {
       if (this.floatAt && !this.floatAt.img) this.hideFloat();
+      this.offeredFor = null;   // the passage is gone, and the record of its offer with it: a selection brought back to those ends is a new one (the header)
       return;
     }
     // the selection the float answers to, as offered or as the panel's own paint left it (offeredFor): the ends first (atEnds), the

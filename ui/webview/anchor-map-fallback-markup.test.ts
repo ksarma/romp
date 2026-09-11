@@ -737,17 +737,33 @@ function checkCorpus(cells: string[], what: string): string[] {
   });
   return bad;
 }
+/** The failure message for `bad` from checkCorpus over `n` cells: every cell is checked twice (as a table cell and as a refused
+ *  paragraph), so the count is of checks against `2 * n`, then each half against `n`, then the cells failing either way (every line
+ *  of `bad` opens `${what} ${note} ${index}`). Before, both tests counted the checks against the cell count and read "488 of 300 cells". */
+function corpusVerdict(bad: string[], what: string, n: number, noun: string): string {
+  const half = (note: "cell" | "prose") => bad.filter((l) => l.startsWith(`${what} ${note} `)).length;
+  const failing = new Set(bad.map((l) => l.split(" ")[2])).size;
+  return `${bad.length} of ${n * 2} checks read or paint differently from the rendering (${half("cell")} of ${n} ${noun} as table cells, ` +
+    `${half("prose")} of ${n} as refused paragraphs; ${failing} of ${n} ${noun} fail either way)`;
+}
+
+test("the corpus verdict counts failing checks against twice the cell count, each half against the cell count, and the cells failing either way (before: the checks of both halves were counted against the cell count, and a run with only the paragraph half failing read \"300 of 300 cells\")", () => {
+  const bad = ['corpus prose 0 "a": needle "x", shown "y"', 'corpus cell 0 "a": not painted (shown "y")', 'corpus prose 2 "c": painted "p", shown "q"', 'corpus cell 1 "b": a mark outside the cell'];
+  assert.equal(corpusVerdict(bad, "corpus", 3, "cells"), "4 of 6 checks read or paint differently from the rendering (2 of 3 cells as table cells, 2 of 3 as refused paragraphs; 3 of 3 cells fail either way)");
+  assert.equal(corpusVerdict(bad.slice(0, 1), "corpus", 300, "cells"), "1 of 600 checks read or paint differently from the rendering (0 of 300 cells as table cells, 1 of 300 as refused paragraphs; 1 of 300 cells fail either way)");
+  assert.equal(corpusVerdict([], "hand", 110, "hand cases"), "0 of 220 checks read or paint differently from the rendering (0 of 110 hand cases as table cells, 0 of 110 as refused paragraphs; 0 of 110 hand cases fail either way)");
+});
 
 test("the corpus: 300 seeded cells over every inline construct, as table cells and as refused paragraphs, each read as the stand-in's rendering shows it (renderedQuote) and painted whole; the strip that served before read 40 of them differently from marked (the review's round 3 census: lone delimiters, intraword underscores, undefined references, literal angle brackets, URLs holding delimiters, dropped tags)", () => {
   const cells = corpusCells(20260911, 300);
   assert.equal(new Set(cells).size, 300, "every cell its own");
   const bad = checkCorpus(cells, "corpus");
-  assert.deepEqual(bad, [], bad.length + " of 300 cells read or paint differently from the rendering");
+  assert.deepEqual(bad, [], corpusVerdict(bad, "corpus", 300, "cells"));
 });
 
 test("the hand cases of rounds 1, 2 and 3 as cells and as refused paragraphs: every seeded strip regression (`_snake_case_`, `**5 * 3 = 15**`, `~~a ~ b~~`, `_a_b_`, `___a___`, `**a*b**`, the escapes of every ASCII punctuation, the entities, `Edit <path/to/file> first`, `Map<K, V>`, the undefined footnote and reference link, the reference images, the URLs holding delimiters, the autolinks of every scheme, the non-ASCII neighbours of an underscore, the tags the sanitizer drops with their text) reads as the rendering shows it and paints whole (before: nothing painted, or a partial mark, the card offering Reveal)", () => {
   const bad = checkCorpus(HAND_CELLS, "hand");
-  assert.deepEqual(bad, [], bad.length + " of " + HAND_CELLS.length + " hand cases read or paint differently from the rendering");
+  assert.deepEqual(bad, [], corpusVerdict(bad, "hand", HAND_CELLS.length, "hand cases"));
   // a few spelled out, as the cells show them
   const TABLE = tableNote(HAND_CELLS);
   for (const [cell, shown] of [["_snake_case_", "snake_case"], ["**5 * 3 = 15**", "5 * 3 = 15"], ["~~a ~ b~~", "a ~ b"], ["**a*b**", "a*b"], ["Edit <path/to/file> first", "Edit <path/to/file> first"], ["Map<K, V>", "Map<K, V>"],

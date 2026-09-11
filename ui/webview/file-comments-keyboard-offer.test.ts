@@ -6,7 +6,10 @@
 // the float is already offered beside does nothing (the seam's re-seat of the same ends after a paint fires the event too, and an
 // offer a scroll hid stays hidden); a collapsed selection hides the float; one arriving while a pointer is down does nothing (a
 // drag keeps its one offer at mouseup, and the float does not flicker mid-drag); one with an end outside the body hides a passage's
-// float and offers nothing; a DIFFERENT non-collapsed selection inside the body shows the float at the new rect; nothing while the
+// float and offers nothing, and with the collapsed hide drops the record of the offer, so the selection the keyboard brings back to
+// the offered ends is offered again (the Slice 5 review, round 4: Shift+ArrowDown into the aside hid the float, and the Shift+ArrowUp
+// after it, back at exactly the ends of the last offer, read as the selection already answered and offered nothing); a DIFFERENT
+// non-collapsed selection inside the body shows the float at the new rect; nothing while the
 // editor holds the body; and the listeners leave at dispose. The press flag takes pressHold's shape (the Slice 5 review, round 2):
 // a right or middle mousedown raises it not at all, since Chromium on Linux and macOS opens the native context menu on that
 // mousedown and the menu takes the release, so a flag raised by one stood until the next left click and every keyboard change in
@@ -431,6 +434,35 @@ test("a selection with an end outside the body (Ctrl+A puts one at the page's st
   assert.equal(float.hidden, true, "the passage is no longer the selection: the float goes, and no offer is made for the page");
   documentEvent("selectionchange");
   assert.equal(float.hidden, true, "and stays hidden");
+});
+
+test("the passage-gone hide drops the record of the offer: the selection Shift+ArrowDown carried into the aside hides the float, and the selection Shift+ArrowUp brings back to exactly the ends the float was offered at offers again (before: the record stood past the hide, the returned selection read as the one already answered, and a live keyboard selection in the body had no button); the collapsed face the same; the scroll's hide keeps its record", async (t) => {
+  const { w, float, sel } = await offered(t);
+  const words = textNodeWith(w.body, QUOTE).node;
+  // the aside the open panel mounted stands outside the body: Shift+ArrowDown past the body's last line lands the focus in it
+  const aside = w.main.querySelector(".fileview-aside")!;
+  const inAside = aside.querySelector("button")!;
+  assert.ok(inAside && !w.body.contains(inAside), "the aside's button stands outside the body");
+  selection = { rangeCount: 1, isCollapsed: false, anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: inAside, focusOffset: 0, toString: () => QUOTE + ".\n\nMore text here.\nComments", getRangeAt: () => ({ getBoundingClientRect: () => RECT_A }) };
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the focus in the aside: the passage is no longer the selection, and the float goes");
+  // Shift+ArrowUp: the selection back at the ends of the drag's offer, the same nodes and offsets and the same text, and a selectionchange for the move
+  selection = selectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  assert.deepEqual([selection.anchorNode, selection.anchorOffset, selection.focusNode, selection.focusOffset, selection.toString()], [sel.anchorNode, sel.anchorOffset, sel.focusNode, sel.focusOffset, sel.toString()], "the returned selection has exactly the offer's ends and text");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "back at the offered ends: a live selection in the body, offered again (before: hidden, read as the selection already answered)");
+  // the collapsed face: the keyboard collapses the selection (the float goes), and the selection back at the offered ends offers
+  selection = { rangeCount: 1, isCollapsed: true, anchorNode: words, anchorOffset: 3, focusNode: words, focusOffset: 3, toString: () => "", getRangeAt: () => ({ getBoundingClientRect: () => RECT_A }) };
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "collapsed: the float goes");
+  selection = selectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "back at the offered ends after the collapse: offered again");
+  // the scroll's hide keeps its record, as before: the same selection re-seated after it makes no second offer
+  selection.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by the scroll");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the same selection after the scroll's hide: no second offer (a scroll fires no selectionchange, and the re-seat of the same ends is none)");
 });
 
 test("while the editor holds the body its selections are edits: a selectionchange offers nothing", async (t) => {

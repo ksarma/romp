@@ -12,11 +12,15 @@
 // PRIMARY button alone and ends at a contextmenu too, since Chromium on Linux and macOS opens the native context menu on the right
 // mousedown and the menu takes the release, so the page sees no mouseup, and the flag stood until the next left click while every
 // keyboard change offered nothing; headless Chromium shows no menu, so the leg presses the right button and never releases it, the
-// shape the page is left in. Legs await the DOM's own states and frames, never a timer. Skips LOUDLY without a playwright browser
+// shape the page is left in. The third (the review's round 4): the hide for a selection with an end outside the body drops the record
+// of the offer, so Shift+ArrowDown carrying the selection from the last paragraph into the aside hides the float, and one Shift+ArrowUp,
+// which brings the selection back to exactly the ends the float was last offered at, offers again; before, the record stood past the
+// hide and the returned selection, a live keyboard selection in the body, read as the one already answered and had no button. Legs
+// await the DOM's own states and frames, never a timer. Skips LOUDLY without a playwright browser
 // (CI installs none). Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, PARA, REPORT } from "./real-viewer-leg";
 
 /** With the body at its top, drag across the first twelve characters of the paragraph starting with `text`, so the seam's mouseup
  *  offers the float (the float-scroll leg's gesture). */
@@ -177,6 +181,70 @@ test("in a browser, the real module and panel: a right-button press whose releas
     assert.equal(s.floatHidden, false, "offered after the contextmenu ended the press");
     assert.ok(!((await page.evaluate(() => (window as any).__ev)) as string[]).some((e) => e.startsWith("mouseup")), "and no mouseup reached the page meanwhile");
     await page.mouse.up();
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+/** Shift held, `k` pressed once; then the document's selectionchange for the move, and two frames for the panel's answer. */
+async function shiftKey(page: any, k: string): Promise<void> {
+  const n: number = await page.evaluate(() => (window as any).__selChanges);
+  await page.keyboard.down("Shift"); await page.keyboard.press(k); await page.keyboard.up("Shift");
+  await page.waitForFunction((m: number) => (window as any).__selChanges > m, n, { timeout: 5000 });
+  await frames(page, 2);
+}
+type Ends = { anchorInBody: boolean; focusInBody: boolean; collapsed: boolean; atOfferedEnds: boolean; text: string };
+/** The selection's ends against the body and against the ends kept at the last offer (keepEnds): node identity and offsets, the
+ *  panel's own compare (file-comments.ts atEnds). */
+const ends = (page: any): Promise<Ends> => page.evaluate(() => {
+  const s = getSelection()!; const body = document.querySelector(".fileview-body")!; const e = (window as any).__offeredEnds as [Node, number, Node, number] | undefined;
+  return { anchorInBody: !!s.anchorNode && body.contains(s.anchorNode), focusInBody: !!s.focusNode && body.contains(s.focusNode), collapsed: s.isCollapsed,
+    atOfferedEnds: !!e && s.anchorNode === e[0] && s.anchorOffset === e[1] && s.focusNode === e[2] && s.focusOffset === e[3], text: String(s).slice(0, 40) };
+});
+const keepEnds = (page: any): Promise<void> => page.evaluate(() => { const s = getSelection()!; (window as any).__offeredEnds = [s.anchorNode, s.anchorOffset, s.focusNode, s.focusOffset]; });
+
+test("in a browser, the real module and panel: Shift+ArrowDown carries the selection from the last paragraph into the aside and the float goes; one Shift+ArrowUp brings it back to exactly the ends the float was last offered at, and the float is offered again (before: the hide kept the record of the offer, and the returned selection, a live keyboard selection in the body, read as the one already answered and had no button)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const doc = "# Report\n\n" + Array.from({ length: 30 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+    const { page, errors } = await openViewer(browser, "pane", 800, 650, { docs: { [REPORT]: doc } });
+    await openPanel(page);
+    await page.evaluate(() => { const w = window as any; w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; }); });
+    // the body at its end, a drag over the last paragraph's first ten characters: offered
+    await page.evaluate(() => { getSelection()!.removeAllRanges(); const b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop = b.scrollHeight; });
+    await frames(page, 2);
+    const r = await page.evaluate(() => {
+      const ps = document.querySelectorAll(".fileview-md > p"); const p = ps[ps.length - 1] as HTMLElement;
+      const range = document.createRange(); range.setStart(p.firstChild!, 0); range.setEnd(p.firstChild!, 10);
+      const b = range.getBoundingClientRect(); return { x1: b.left + 1, x2: b.right - 1, y: b.top + b.height / 2 };
+    });
+    await page.mouse.move(r.x1, r.y); await page.mouse.down(); await page.mouse.move(r.x2, r.y, { steps: 4 }); await page.mouse.up();
+    await waitFor(page, () => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, "the drag's offer");
+    let s = await scene(page);
+    assert.equal(s.selected, "Paragraph ", "the drag selected the last paragraph's first ten characters");
+    near(s.left, s.expectedLeft, "beside the drag's selection");
+    await keepEnds(page);
+    // Shift+ArrowDown extends the selection down the paragraph, the float following, until the focus leaves the body for the aside
+    let downs = 0; let e: Ends;
+    for (;;) {
+      await shiftKey(page, "ArrowDown"); downs++;
+      e = await ends(page);
+      if (!e.focusInBody) break;
+      await offeredAtSelection(page, "Shift+ArrowDown " + downs + ": the float beside the extended selection");
+      await keepEnds(page);
+      assert.ok(downs < 12, "Shift+ArrowDown reaches the aside within twelve presses");
+    }
+    s = await scene(page);
+    assert.equal(e.anchorInBody, true, "the anchor stands in the body");
+    assert.equal(s.floatHidden, true, "the focus in the aside: the passage is no longer the selection, and the float goes (" + downs + " presses)");
+    // one Shift+ArrowUp: the selection back in the body, at exactly the ends of the last offer, and a selectionchange for the move
+    await shiftKey(page, "ArrowUp");
+    e = await ends(page);
+    assert.deepEqual([e.anchorInBody, e.focusInBody, e.collapsed], [true, true, false], "back in the body, non-collapsed: " + JSON.stringify(e));
+    assert.equal(e.atOfferedEnds, true, "at exactly the ends the float was last offered at (the scene the defect needs): " + JSON.stringify(e));
+    await offeredAtSelection(page, "the float beside the selection the keyboard brought back to the offered ends");
+    s = await scene(page);
+    assert.equal(s.floatHidden, false, "offered again (before: hidden, the selection read as the one already answered)");
+    near(s.left, s.expectedLeft, "beside the selection's end"); near(s.top, s.expectedTop, "on its line");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

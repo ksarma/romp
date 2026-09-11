@@ -582,3 +582,84 @@ test("in a browser, the real module: the edge inside a wrapper's own lead pictur
     }
   });
 });
+
+// ── round 4: the wrapper's picture from a row of the block's own before its tag row, in either view ─────────────
+/** the banner after an `<h1>` lead row, a `<p>` tagline after it: three rows of the wrapper's own, the picture the second */
+const H1_BANNER = readme(`<h1>Project</h1>\n<img src="${SVG}" alt="banner" width="900" height="600">\n<p>A tagline for the project</p>`);
+/** Scroll so the Raw row `offset` rows after the first whose text includes `text` has its top at the edge. */
+const rowNearToEdge = (page: any, text: string, offset: number) => page.evaluate(([t, o]: [string, number]) => {
+  const body = document.querySelector(".fileview-body")!;
+  const rows = Array.from(body.querySelectorAll("code.hljs .fv-cl"));
+  const row = rows[rows.findIndex((r) => (r.textContent || "").includes(t)) + o];
+  body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top;
+}, [text, offset]);
+/** The Raw row `offset` rows after the first whose text includes `text`: its text and its top from the body's top edge. */
+const rowNear = (page: any, text: string, offset: number) => page.evaluate(([t, o]: [string, number]) => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
+  const rows = Array.from(body.querySelectorAll("code.hljs .fv-cl")); const r = rows[rows.findIndex((x) => (x.textContent || "").includes(t)) + o]; const rr = r.getBoundingClientRect();
+  return { text: (r.textContent || "").trim().slice(0, 48), top: Math.round((rr.top - br.top) * 10) / 10 };
+}, [text, offset]);
+
+test("in a browser, the real module: from Raw, a row of the wrapper's block BEFORE its lead picture's tag row at the top edge (the `<div align=\"center\">` opener and the blank row before it, for the logo and the banner at 900 and 380px; the `<h1>` lead row and the opener of a README whose banner follows its `<h1>`) switched to Rendered puts the picture where its tag's row was, below the edge, the first nested block after the picture (the review's round 4; round 3 carried the tag row alone, so the nested block seated at its row's distance with the picture between them, 120 to 508px tall against one Raw row, put the logo's top 40px above the edge and the banner's 428); the way back returns the `<h1>` README's rows exactly and the logo's and banner's opener in view, at most the tail of the paragraph before the wrapper low (round 3: the picture's row seated at the picture's fraction left the opener 32 to 109px above the edge, off the pane; before the slice it came back 38 to 45px low); Rendered to Raw to Rendered with the picture's top 2px below the edge is exact for the three shapes (round 3: 59 to 447px lost at 900); and the `<h1>` 10px into the edge with the banner under it puts the tag's row in Raw where the picture was (round 3: the nested paragraph at its distance below the banner, the write clamped at the document's top)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const FROM_RAW: Array<[string, string, string, number, string, string]> = [
+      ["the logo, the opener's row", IMG_LEAD, "<div align", 0, ".fileview-md div > h2", "Centred title"],
+      ["the logo, the blank row before the opener", IMG_LEAD, "<div align", -1, ".fileview-md div > h2", "Centred title"],
+      ["the banner, the opener's row", BANNER_LEAD, "<div align", 0, ".fileview-md div > h2", "Centred title"],
+      ["the banner, the blank row before the opener", BANNER_LEAD, "<div align", -1, ".fileview-md div > h2", "Centred title"],
+      ["the banner after an <h1>, the <h1>'s row", H1_BANNER, "<h1>Project", 0, ".fileview-md div > p", "Paragraph 6:"],
+      ["the banner after an <h1>, the opener's row", H1_BANNER, "<div align", 0, ".fileview-md div > p", "Paragraph 6:"],
+    ];
+    for (const width of [900, 380]) {
+      for (const [what, doc, text, offset, nestedSel, nestedText] of FROM_RAW) {
+        const where = `pane ${width}, ${what}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: doc }, raw: true });
+        await rowNearToEdge(page, text, offset); await frames(page, 2);
+        const row0 = await rowNear(page, text, offset);
+        near(row0.top, 0, where + `: the scene starts with the row at the edge (${JSON.stringify(row0.text)})`, 1);
+        const imgRow0 = (await box(page, "code.hljs .fv-cl", "<img src="))!;
+        assert.ok(imgRow0.top > 0, where + `: the fixture: the picture's tag row is below the edge (top ${imgRow0.top})`);
+        await click(page, "Rendered"); await imagesDone(page);
+        const pic = await imgBox(page);
+        near(pic.top, imgRow0.top, where + `: the picture's top is where its tag's row was, below the edge (round 3: the nested block at its row's distance, the picture between the two above the edge, the logo's top at -40 and the banner's at -428 at 900)`);
+        const nested = (await box(page, nestedSel, nestedText))!;
+        assert.ok(nested.top > pic.bottom, where + `: the first nested block follows the picture (top ${nested.top}, the picture's bottom ${pic.bottom})`);
+        await click(page, "Raw");
+        const row1 = await rowNear(page, text, offset);
+        if (doc === H1_BANNER) near(row1.top, row0.top, where + ": the row is back at the edge (round 3: 65 to 109px above it, off the pane)");
+        else assert.ok(row1.top > -1 && row1.top <= 35, where + `: the row is back in view, at most the tail of the paragraph before the wrapper low (got ${row1.top}; round 3: 32 to 94px above the edge, off the pane; before the slice: 38 to 45px low)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      for (const [what, doc, lost] of [["the logo", IMG_LEAD, 59], ["the banner", BANNER_LEAD, 447], ["the banner after an <h1>", H1_BANNER, 444]] as const) {
+        const where = `pane ${width}, ${what}, the picture's top 2px below the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: doc } }); await imagesDone(page);
+        await page.evaluate(() => { const body = document.querySelector(".fileview-body")!; const i = document.querySelector(".fileview-md div > img")!; body.scrollTop += i.getBoundingClientRect().top - body.getBoundingClientRect().top - 2; }); await frames(page, 2);
+        const before = await imgBox(page);
+        near(before.top, 2, where + ": the scene starts with the picture's top 2px below the edge", 1);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        assert.ok(/^<div align|^<h1>/.test(row.text), where + `: the top Raw row is one of the wrapper's own before the tag row, the scene the way back reads from (got ${JSON.stringify(row.text)} at ${row.top})`);
+        await click(page, "Rendered"); await imagesDone(page);
+        const after = await imgBox(page);
+        near(after.top, before.top, where + `: back in Rendered the picture is where it was (round 3: ${lost}px lost at 900)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      {
+        const where = `pane ${width}, the <h1> 10px into the edge, the banner under it`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: H1_BANNER } }); await imagesDone(page);
+        await scrollInto(page, ".fileview-md div > h1", "Project", 10); await frames(page, 2);
+        const h1 = (await box(page, ".fileview-md div > h1", "Project"))!;
+        near(h1.top, -10, where + ": the scene starts with the <h1> 10px in", 1);
+        const pic = await imgBox(page);
+        assert.ok(pic.top > 20, where + `: the fixture: the banner starts below the <h1> (top ${pic.top})`);
+        await click(page, "Raw");
+        const imgRow = (await box(page, "code.hljs .fv-cl", "<img src="))!;
+        near(imgRow.top, pic.top, where + ": the picture's tag row is where the picture was, the <h1>'s row and the opener above it (round 3: the nested paragraph at its distance below the banner, the write clamped at the document's top)");
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});

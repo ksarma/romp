@@ -40,7 +40,14 @@
 // directions: the tag line of a picture of the block's own (a README's banner or logo in a centred div, a linked logo,
 // a badge row: Place.pic), which is seated as a top-level picture is, its depth kept as a fraction of its height from
 // the picture to the line's row and back (round 3: read as the first nested block below the picture, a banner 150px
-// into view came back 435px off, the paragraph before the wrapper on top of Raw and its fraction the way back). When the reader is
+// into view came back 435px off, the paragraph before the wrapper on top of Raw and its fraction the way back); and the
+// picture BELOW the edge with a row of the block's own at it (in Raw the `<div align="center">` opener, an `<h1>` lead row
+// or the blank before the opener, in Rendered a lead `<h1>` the edge is inside) is carried the same way and keeps its
+// distance below the edge, as any block that starts below the edge keeps its own, so the picture stands where its tag's
+// row was and the way back returns the row (round 4: read as the first nested block at its row's distance, with the
+// picture between the two, 120 to 508px tall in Rendered against one Raw row, the picture landed above the edge, the way
+// back seated its row at that fraction, and the opener's row came back 32 to 109px above the edge, off the pane, where
+// main had kept it in view 38 to 45px low). When the reader is
 // partway into a block that shows LINES (any block in Raw; in Rendered a markdown code block, fenced or indented, whose
 // code element shows the block's lines one for one), the line at the edge is kept too, as its own source span and its
 // top edge: the Raw row under the edge, or, in Rendered, the code's row under the edge (code-block.ts wraps every fence
@@ -86,6 +93,12 @@
 //     the edge though the reader never read into it).
 //   - a body at its very top stays at its very top: the views pad differently (14px rendered, 10px raw), so seating
 //     the first block at the other view's padding drifted a round trip from scrollTop 0 to 4.
+//   - a reflow of the same Raw text (a text-size step, the pane dragged, the aside opening or closing) keeps the top ROW:
+//     the row at the edge goes back where it was (Place.row), whatever the rows between it and the kept block grew or
+//     shrank to, since the rows are the view's own lines and the reader's eye is on the top one (the Slice 5 review,
+//     round 4: a comment's row, a closer's, a wrapper's opener or the blank before a fold's opener, read as the block
+//     after them, rose 5 to 11px per text-size step, 2.7px for each row between, where before the slice each was its own
+//     block and held within half a pixel; a plain blank row between paragraphs rose 3px the same way, there and here).
 // Across a reload the span is followed through the edit first (followPassage, the composer's own follow): a block
 // after the inserted paragraphs shifts by their length, one before them keeps its offset, and one the write rewrote is
 // placed by the block before it, followed the same way, so the reader lands on what replaced it; with that block
@@ -182,17 +195,25 @@ export type Place = {
   atTop: boolean;
   prev: SourceRange | null; next: SourceRange | null;
   line?: Line | null;
+  row?: Line | null;
   after?: Stand[];
   pic?: Pic | null;
 };
+/** Place.row: the Raw row at the body's top edge when the kept block starts at or below the edge (a blank row between
+ *  blocks, a row read as the block after it, the block's own first row at the edge), as its span and its top; a reflow of
+ *  the same Raw text (a text-size step, the pane dragged, the Comments aside opening or closing) puts that row back where
+ *  it was, whatever the rows between it and the kept block grew or shrank to (the header). Partway into the block the row
+ *  is Place.line, and this is unset. */
 /** A block after a `<details>` the kept block lies in, read in Raw (the header): its source span and its first row's top
  *  edge measured from the body's top. The seat stands on the first of these the Rendered view shows when the kept block
  *  is not shown (the fold shut), where the kept block itself has no box and the block after it is what the reader had,
  *  no lower than the fold's summary at the edge (seatPlaceOutcome). */
 export type Stand = SourceRange & { top: number };
-/** A picture of a wrapper's block's own with the reader's edge inside it (the header): the source span of the line its
- *  `<img` tag starts on, and the picture's box from the body's top edge, the `<img>` element's in Rendered and the line's
- *  row in Raw. The seat puts the picture, or its row, at the same fraction of its height, as it does a top-level picture. */
+/** A picture of a wrapper's block's own with the reader's edge inside it, or below the edge with a row of the block's own
+ *  at the edge above it (the header): the source span of the line its `<img` tag starts on, and the picture's box from the
+ *  body's top edge, the `<img>` element's in Rendered and the line's row in Raw. The seat puts the picture, or its row, at
+ *  the same fraction of its height when the edge is inside it, as it does a top-level picture, and at the same distance
+ *  below the edge otherwise, as any block that starts below the edge keeps its own. */
 export type Pic = SourceRange & { top: number; height: number };
 
 type Box = { top: number; bottom: number };
@@ -496,8 +517,6 @@ function imgIndexBefore(source: string, span: SourceRange, offset: number): numb
   while (IMG_TAG.exec(text)) n++;
   return n;
 }
-/** Whether an `<img` tag starts on the line. */
-const holdsImg = (source: string, line: SourceRange): boolean => { IMG_TAG.lastIndex = 0; return IMG_TAG.test(source.slice(line.start, line.end)); };
 /** The Rendered box of the picture whose tag starts on the line at `lineStart` of html block `b`, when the view shows it. */
 function picBox(md: Element, source: string, spans: SourceRange[], b: number, lineStart: number): Box | null {
   const img = picturesOf(md, source, b)[imgIndexBefore(source, spans[b], lineStart)];
@@ -521,7 +540,12 @@ function shownFoldOf(el: Element): Box | null {
  *  null. The element before `b`'s first shown element: its previous sibling with a box, or, for the first shown child of
  *  a wrapper, the element before the wrapper; read into the last shown child of every wrapper it is (a centred div whose
  *  last block is a fold), which is the summary when the fold is shut (its content has no box) and a nested block when it
- *  is open, in which case there is no shut fold before `b` and the answer is null. */
+ *  is open, in which case there is no shut fold before `b` and the answer is null. A summary met as the previous sibling
+ *  of `b`'s own element makes `b` the first block nested in that fold, which is shown, so the fold is OPEN and the answer
+ *  is null too (the Slice 5 review's round 4: read as a shut fold's, it capped the first nested block at the summary from the
+ *  fold's own Raw rows, so the `<summary>` row's round trip lost 6px where it had been exact, and the opener's put the
+ *  summary at the edge in place of the row's own distance); a stand-in reading rects alone, where a shut fold's content
+ *  keeps a box, reaches the same summary with the fold shut, and that is the shut fold's summary as ever. */
 function shutFoldBefore(md: Element, source: string, b: number): Box | null {
   let el: Element | null = renderedBlockElements(md, source, b).find((e) => !!boxOf(e)) || null;
   let prev: Element | null = null;
@@ -535,7 +559,10 @@ function shutFoldBefore(md: Element, source: string, b: number): Box | null {
   for (;;) {
     if (!prev) return null;
     const t = tagOf(prev);
-    if (t === "SUMMARY") return boxOf(prev);
+    if (t === "SUMMARY") {
+      const fold = prev.parentNode as Element | null;
+      return fold && tagOf(fold) === "DETAILS" && fold.getAttribute("open") === null ? boxOf(prev) : null;
+    }
     if (t === "DETAILS" && prev.getAttribute("open") === null) return boxOf(elementsOf(prev).find((k) => tagOf(k) === "SUMMARY") || prev);
     const pb = renderedBlockIndex(md, source, prev);
     if (pb < 0 || renderedBlockWrappers(md, source, pb).indexOf(prev) < 0) return null;
@@ -667,13 +694,24 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
     // the row is the block's own when the block starts above the edge: a blank row between blocks, or a closing tag's, reads
     // as the block after it, whose rows all start below the row and so below the edge
     const place = placeOf(source, "raw", spans, b, box, edge, atTop, box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
+    // the row at the edge when the block starts at or below it (a blank row, a row read as the block after it, the block's own
+    // first row): a reflow of the same Raw text puts the row back where it was (Place.row, the header); partway into the block
+    // the line above is that row
+    if (!place.line) place.row = { start: span.start, end: span.end, top: rowBox.top - edge };
     // a block inside a `<details>`: the Raw view shows its rows whether the Rendered view folds it shut or not, so the blocks
     // after the fold travel with the place for the seat to stand on when the block is not shown (the header)
     const after = foldStands(code, source, spans, b, edge);
     if (after) place.after = after;
-    // the tag line of a picture of the wrapper's block's own (a README's banner): the row travels with the place, and the seat
-    // puts the picture at the row's fraction of its height (Place.pic, the header)
-    if (held !== b && holdsImg(source, span) && opensWrapper(source, spans[held])) place.pic = { start: span.start, end: span.end, top: rowBox.top - edge, height: rowBox.bottom - rowBox.top };
+    // the tag line of a picture of the wrapper's block's own (a README's banner): the line the top row is on, or the first
+    // `<img` line of the block after the top row (the opener's row, an `<h1>` lead row, the blank before the opener), with that
+    // line's row travels with the place, and the seat puts the picture where the row was, at the row's fraction of its height
+    // when the row straddles the edge, at the row's distance below it otherwise (Place.pic, the header)
+    if (held !== b) {
+      const line = imgLine(source, spans[held], imgIndexBefore(source, spans[held], span.start));
+      const row = line && opensWrapper(source, spans[held]) ? rawRowForOffset(code, source, line.start) : null;
+      const pb = row ? boxOf(row) : null;
+      if (line && pb) place.pic = { start: line.start, end: line.end, top: pb.top - edge, height: pb.bottom - pb.top };
+    }
     return place;
   }
   return null;
@@ -687,9 +725,10 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
  *  child paired to a wrapper's block that is not itself one of the block's wrappers (a `<details>`' summary, a tag the
  *  block closed before opening the wrapper) is a row of the block's own and is passed over for the block after it, so
  *  the wrapper's box at the edge reads the first nested block (the header). The search runs per level, on that level's
- *  boxes alone (the header: the map's index is a whole-shape check per read). A passed-over row that is a picture of the
- *  block's own with the edge inside it (the level's first box ending below the edge, its `<img>` ending there too) is
- *  carried to the place as Place.pic (the header): the picture's tag line and its box. */
+ *  boxes alone (the header: the map's index is a whole-shape check per read). From the level's first box on, the first
+ *  passed-over row that is a picture of the block's own ending below the edge (the picture the edge is inside, or one below
+ *  the edge under a lead `<h1>` the edge is inside) is carried to the place as Place.pic (the header): the picture's tag
+ *  line and its box. */
 type Carry = { pic: Pic | null };
 function readRendered(md: Element, source: string, spans: SourceRange[], kids: Element[], edge: number, atTop: boolean, carry: Carry): Place | null | undefined {
   const first = topVisibleIndex(kids.length, (k) => bottomOrNaN(kids[k]), edge + 1);
@@ -699,10 +738,17 @@ function readRendered(md: Element, source: string, spans: SourceRange[], kids: E
     const wrappers = renderedBlockWrappers(md, source, b);
     if (wrappers.length) {
       if (wrappers.indexOf(kids[i]) < 0) {   // a row of the wrapper's block's own (its summary, a lead picture): the blocks nested after it are read
+        // the first picture of the block's own rows from the level's first box on (the picture the edge is inside, or one below the
+        // edge under a lead `<h1>` the edge is inside) is carried to the place (Place.pic, the header), the walk ending at the first
+        // element that is not a row of the block's own (a nested block, a wrapper of the block's)
         if (i === first && !carry.pic) {
-          const img = pictureOf(kids[i]), ib = img && boxOf(img);
-          const line = ib && ib.bottom > edge + 1 ? imgLine(source, spans[b], picturesOf(md, source, b).indexOf(img as Element)) : null;
-          if (line && ib) carry.pic = { start: line.start, end: line.end, top: ib.top - edge, height: ib.bottom - ib.top };
+          for (let j = i; j < kids.length && renderedBlockIndex(md, source, kids[j]) === b && wrappers.indexOf(kids[j]) < 0; j++) {
+            const img = pictureOf(kids[j]), ib = img && boxOf(img);
+            if (!img || !ib || !(ib.bottom > edge + 1)) continue;
+            const line = imgLine(source, spans[b], picturesOf(md, source, b).indexOf(img));
+            if (line) carry.pic = { start: line.start, end: line.end, top: ib.top - edge, height: ib.bottom - ib.top };
+            break;
+          }
         }
         continue;
       }
@@ -857,9 +903,24 @@ export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place
   if (place.atTop) { if (body.scrollTop !== 0) body.scrollTop = 0; return outcome(true); }
   const spans = sourceBlockSpans(source);
   const edge = body.getBoundingClientRect().top;
+  // a reflow of the same Raw text (a text-size step, the pane dragged, the Comments aside opening or closing): the row at the
+  // edge goes back where it was (Place.row, the header), whatever the rows between it and the kept block grew or shrank to; the
+  // rows are the Raw view's own lines, so this is exact where the kept block's distance is not (the Slice 5 review, round 4: a comment's
+  // row, a closer's, a wrapper's opener or the blank before a fold's opener, read as the block after them, rose 5 to 11px per
+  // text-size step, 2.7px for each row between, where the block was its own place before the slice and the row held)
+  if (code && place.row && place.view === "raw" && place.source === source) {
+    const row = rawRowForOffset(code, source, place.row.start);
+    const rb = row ? boxOf(row) : null;
+    if (rb) {
+      const delta = rb.top - (edge + place.row.top);
+      if (Math.abs(delta) >= 0.5) scrollBy(delta);
+      return outcome(true);
+    }
+  }
   // the reader's edge inside a picture of a wrapper's block's own (Place.pic, the header): the picture in Rendered, or its tag
-  // line's row in Raw, at the same fraction of its height, as a top-level picture is seated; a picture the view does not show
-  // (the sanitizer dropped it, a fold hides it) leaves the place to the rules below
+  // line's row in Raw, at the same fraction of its height, as a top-level picture is seated, or, the picture below the edge
+  // with a row of the block's own at it, at the same distance below the edge; a picture the view does not show (the sanitizer
+  // dropped it, a fold hides it) leaves the place to the rules below
   if (place.pic && place.source === source) {
     const pic = place.pic, pb = blockIndexAt(spans, pic.start);
     const box = pb < 0 ? null : md ? picBox(md, source, spans, pb, pic.start) : (() => { const row = rawRowForOffset(code as Element, source, pic.start); return row ? boxOf(row) : null; })();

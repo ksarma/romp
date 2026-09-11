@@ -2,7 +2,8 @@
 // the DOM post-passes are proven in headless Chromium: md-sanitize-browser.test.ts opens a note in the real file
 // viewer, md-sanitize-postpass-browser.test.ts runs the chat's pipeline, md-sanitize-chat-fragment-browser.test.ts
 // clicks a message's own `#` link over the real chat bundle. Here: the colour grammar an inline `style` is held to,
-// the profile's forbidden tags and attributes, the hook body, the hook's install guard, and the source pins that
+// the profile's forbidden tags and attributes, the two hook bodies (the style rewrite, the comment drop), the hooks'
+// install guard, and the source pins that
 // make md-sanitize.ts the ONE sanitizer the dashboard has (the chat's md() and userMd(), the viewer's mdBlock). The
 // design is plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does; the colour-only rule is its decision 6), and
 // the last test holds SECURITY.md's output-sanitization bullet to the math renderer's trust boundary and its bounds
@@ -12,7 +13,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, installMdSanitizeHooks } from "./md-sanitize";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, installMdSanitizeHooks } from "./md-sanitize";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -70,7 +71,47 @@ test("the style hook rewrites a style attribute to its colours, drops it when no
   assert.equal(upper.attrValue, "color: #fff");
 });
 
-test("installMdSanitizeHooks registers ONE uponSanitizeAttribute hook however often it is called, and that hook is the style rewrite", () => {
+// A stand-in node for the comment-drop hook, which reads nodeType and childNodes and calls removeChild: the DOM's
+// three names, nothing of the shim's (the hook runs inside DOMPurify's walk, over real nodes; here the body is proven
+// pure, as the style hook's is above). `removed` counts the calls, so a test can say the hook touched nothing.
+type FakeNode = { nodeType: number; childNodes: FakeNode[]; removed: number; removeChild(c: FakeNode): FakeNode };
+function fakeNode(nodeType: number, childNodes: FakeNode[] = []): FakeNode {
+  const n: FakeNode = {
+    nodeType, childNodes, removed: 0,
+    removeChild(c) { const i = n.childNodes.indexOf(c); if (i < 0) throw new Error("not a child"); n.childNodes.splice(i, 1); n.removed++; return c; },
+  };
+  return n;
+}
+const TEXT = 3, ELEMENT = 1, COMMENT = 8;
+
+test("dropCommentChildren: an element loses every comment child and nothing else, in one pass over a snapshot of its children", () => {
+  const nested = fakeNode(ELEMENT, [fakeNode(COMMENT)]);
+  const el = fakeNode(ELEMENT, [fakeNode(COMMENT), fakeNode(TEXT), fakeNode(COMMENT), fakeNode(COMMENT), nested, fakeNode(TEXT), fakeNode(COMMENT)]);
+  dropCommentChildren(el as unknown as Node);
+  assert.deepEqual(el.childNodes.map((c) => c.nodeType), [TEXT, ELEMENT, TEXT], "the comments are gone, the text and the element stay in order");
+  assert.equal(el.removed, 4, "adjacent comments are both removed: the walk is over a snapshot, not the live list a removal shifts");
+  assert.deepEqual(nested.childNodes.map((c) => c.nodeType), [COMMENT], "a comment inside a child element is that element's, dropped when DOMPurify's walk reaches it");
+  dropCommentChildren(el as unknown as Node);
+  assert.equal(el.removed, 4, "a second pass finds nothing to remove");
+});
+
+test("dropCommentChildren leaves a non-element alone and cannot throw on a clobbered childNodes", () => {
+  const text = fakeNode(TEXT, [fakeNode(COMMENT)]);   // a text node holds no children in the DOM; the hook must not act on the type
+  dropCommentChildren(text as unknown as Node);
+  assert.equal(text.removed, 0);
+  const comment = fakeNode(COMMENT, [fakeNode(COMMENT)]);
+  dropCommentChildren(comment as unknown as Node);
+  assert.equal(comment.removed, 0);
+  // a form whose <input name="childNodes"> shadows the list: DOMPurify removes a clobbered form for the names it
+  // probes, and childNodes is not one of them, so the hook reads what it is given and steps back
+  const clobbered = { nodeType: ELEMENT, childNodes: { nodeName: "INPUT" }, removeChild() { throw new Error("must not be called"); } };
+  assert.doesNotThrow(() => dropCommentChildren(clobbered as unknown as Node));
+  const empty = fakeNode(ELEMENT);
+  dropCommentChildren(empty as unknown as Node);
+  assert.equal(empty.removed, 0);
+});
+
+test("installMdSanitizeHooks registers its two hooks ONCE however often it is called: the style rewrite on uponSanitizeAttribute, the comment drop on uponSanitizeElement", () => {
   // The guard is module-global and never reset, so this test must be the module's FIRST installer: node runs a
   // file's tests in order, and nothing above calls installMdSanitizeHooks or sanitizeMd (which would need a window).
   const calls: { name: string; fn: Function }[] = [];
@@ -78,12 +119,17 @@ test("installMdSanitizeHooks registers ONE uponSanitizeAttribute hook however of
   installMdSanitizeHooks(fake);
   installMdSanitizeHooks(fake);
   installMdSanitizeHooks(fake);
-  assert.equal(calls.length, 1, "idempotent: a second registration would run the rewrite twice per attribute");
-  assert.equal(calls[0].name, "uponSanitizeAttribute");
+  assert.equal(calls.length, 2, "idempotent: a second registration would run the rewrite twice per attribute and the drop twice per element");
+  assert.deepEqual(calls.map((c) => c.name), ["uponSanitizeAttribute", "uponSanitizeElement"]);
   const ev = { attrName: "style", attrValue: "font-size: 80px; color: rgb(200, 0, 0)", keepAttr: true, allowedAttributes: {}, forceKeepAttr: undefined };
   calls[0].fn.call(fake, {} as Element, ev, {});
   assert.equal(ev.attrValue, "color: rgb(200, 0, 0)");
   assert.equal(ev.keepAttr, true);
+  // the element hook is the comment drop: DOMPurify calls it with the node, the tag data and the config, and only the
+  // node matters to it
+  const el = fakeNode(ELEMENT, [fakeNode(TEXT), fakeNode(COMMENT), fakeNode(ELEMENT)]);
+  calls[1].fn.call(fake, el as unknown as Node, { tagName: "p", allowedTags: {} }, {});
+  assert.deepEqual(el.childNodes.map((c) => c.nodeType), [TEXT, ELEMENT], "the comment child is gone before DOMPurify's markup guard reads the element's innerHTML");
 });
 
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
@@ -207,6 +253,7 @@ test("the guide says what a file's own HTML may do, in the terms the code enforc
   assert.match(para, /`color` and `background-color`/);
   assert.match(para, /`background=`/);
   assert.match(para, prose("cannot be ticked"));
+  assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
   assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 
