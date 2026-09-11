@@ -3,8 +3,8 @@
 //   * a comment whose position the refresh carried to the quote's own occurrence (a tracked edit inside the chosen
 //     copy's context) had the tie rules run over the OTHER whole copies, and with two copies under one heading the
 //     section rule confirmed the second, which the panel painted plainly as the copy chosen while the reply's own
-//     anchorAt named the first. A position the quote alone sits at names the passage now (locateStored's `position`,
-//     quoteSitsAt), the reply's placed map carries no entry for it, and the panel paints as before the tie-break. The
+//     anchorAt named the first. A position the quote sits at, one side of its context beside it (the fourth round's qualification),
+//     names the passage now (locateStored's `position`, quoteSitsAt), the reply's placed map carries no entry for it, and the panel paints as before the tie-break. The
 //     same state held from the tracked edit to the next host write, with the disk's position two characters stale
 //     and no quote at it: while every change is on record, a verdict the recorded changes carry elsewhere is not
 //     forwarded either (placedFor, carriedTo), and one they carry to the same copy is, so a tracked insertion above

@@ -296,3 +296,11 @@ test('the consolidation: the Tests section says the region module\'s coarse leg 
   assert.ok(region.includes('assert.deepEqual(notesOf(card), [UNSURE_REGION_TOUCH]'), 'its coarse leg wears the phone\'s words');
   assert.ok(!region.includes('assert.deepEqual(notesOf(card), [UNSURE_REGION]);'), 'the coarse leg no longer pins the pictured view\'s words, which named a Re-place the phone\'s card lacks');
 });
+
+test('the consolidation: the painting paragraph says what exactly two copies paint, as the host paragraph does, and the host\'s notes on the position rule ask for the one side the code asks for', () => {
+  assert.ok(ux.includes("with exactly two copies the one still whole is the engine's one best hit, not a tie, and is painted plainly, on the copy the person did not comment: the host paragraph and decision 51 say so and why"), 'the painting paragraph\'s inherited sentence is qualified for two copies, as the host paragraph is');
+  assert.ok(op.includes('or, with exactly two copies, the one still whole, plainly, as since the anchors follow-on'), 'the host paragraph states the same paint');
+  assert.ok(host.includes("return span(at, true, 'position');   // the quote with one side of its context beside it, the other side edited: the copies whole elsewhere are the other copies"), 'the note at the call says what quoteSitsAt asks');
+  assert.ok(!host.includes('the quote alone: its surroundings edited'), 'no note says the quote alone suffices');
+  assert.ok(!host.includes('or the quote alone there with'), 'placedFor\'s note names the one side too');
+});

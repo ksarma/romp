@@ -1940,7 +1940,7 @@ export function locateStored(text, c, markdown, budget) {
     const { first, last } = boundaryHits(text, anchor);
     return span(loc.from, !last || last.from === first.from, 'engine');
   }
-  if (at !== undefined && quoteSitsAt(text, anchor, at)) return span(at, true, 'position');   // the quote alone: its surroundings edited, and the copies whole elsewhere are the other copies
+  if (at !== undefined && quoteSitsAt(text, anchor, at)) return span(at, true, 'position');   // the quote with one side of its context beside it, the other side edited: the copies whole elsewhere are the other copies
   if (hits.length === 1 && !more) return span(hits[0], true, 'whole');
   if (!more) {
     const o = ordinalOf(c);
@@ -2013,8 +2013,8 @@ function copiesUnder(text, anchor, hits, markdown, section, budget) {
 // The reply's `placed`: for every passage comment whose whole anchor ties in the text and whose stored position names
 // none of the copies, where the tie-break put it (locateStored) as {at, confirmed, by}, keyed by comment id, so the
 // panel paints a confirmed copy plainly and a guessed one as a guess with its words (the tie-break, 2026-09-11). A
-// comment the position or the anchor alone places (the whole anchor at the position, or the quote alone there with
-// its surroundings edited: `position` both), one the engine's scoring places, one with no position on a tie
+// comment the position or the anchor alone places (the whole anchor at the position, or the quote there with one side
+// of its context whole beside it, the other side edited: `position` both), one the engine's scoring places, one with no position on a tie
 // the fields do not settle (refused, as a hintless tie always was) and one whose scan the budget refused have no
 // entry, and the panel places those itself as before. A read never rewrites the sidecar: the stored
 // position stands until the next host write. `at` is an offset into the text this script read (the reply's `bom`

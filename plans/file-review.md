@@ -915,7 +915,9 @@ position the recorded changes carried to no copy or to several, and every positi
 nobody recorded, and an edit inside the chosen copy's context leaves the other copies whole to
 outscore it, so the engine's nearest-wins pick from such a position, or its earliest tie with
 none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
-review, 2026-09-07; before it the guess was painted as located). Since the tie-break (2026-09-11,
+review, 2026-09-07; before it the guess was painted as located; with exactly two copies the one still whole is
+the engine's one best hit, not a tie, and is painted plainly, on the copy the person did not comment: the host
+paragraph and decision 51 say so and why). Since the tie-break (2026-09-11,
 decision 51) the status carries the host's verdict for every such comment (`placed`): a copy the host
 confirmed from the fields stored with the comment (the ordinal's copy while the count of copies is
 unchanged, unless the stored heading path names other copies and not that one; else, the count changed,
