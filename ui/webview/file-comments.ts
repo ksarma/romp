@@ -614,6 +614,15 @@ const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew thi
  *  taken the copy nearest the confirmed place, a different copy when the view's text had moved past the status (the
  *  review, 2026-09-11). */
 type PanelCard = Card & { confirmedAt?: number };
+/** What the render a card's words are for shows of it, stamped by renderCard on the card it hands copyUnsureWords
+ *  (WordedCard): whether the editor holds the body, and for a region whether this view shows its picture (regionImageFor).
+ *  The words for a guessed copy end with the recourse, and the recourse names controls (Reveal, Re-place, the composer's
+ *  save, a region drawn on the figure) that the editor and a view with no picture do not offer; handed the card alone,
+ *  the words need these two facts to name the way there instead (the review, round 3, 2026-09-11: with the editor up
+ *  the card said to Reveal and save while it offered Reply and Resolve, and in Raw a region's card said to draw on a
+ *  figure the view did not show). */
+type Shown = { editing: boolean; pictured: boolean };
+type WordedCard = PanelCard & { shown: Shown };
 /** What the save copyUnsureWords asks for does, for a passage comment: the host's comment verb mints a NEW comment on the
  *  copy the selection is made in, so the guessed card keeps its tag until it is resolved (docs/guide.md says the same).
  *  The guessed copy's Reveal carries it in its title after the line it names, and the open card says it in a line of its
@@ -623,8 +632,25 @@ type PanelCard = Card & { confirmedAt?: number };
 const SAVE_FROM_COPY = "a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
 const SAVE_FROM_COPY_NOTE = "A" + SAVE_FROM_COPY.slice(1) + ".";
 /** The ending of a REGION comment's words for a guessed copy (copyUnsureWords): the recourse a region has, and why the
- *  two controls its card offers are not it. */
+ *  two controls its card offers are not it. For the view that shows the region's picture. */
 const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. Drawing a region needs a mouse.";
+/** The same ending where the view shows no picture of the region's (Raw for a markdown embed, whose card highlights the
+ *  embed line instead; the editor, which shows text alone): the figure to draw on is in the view that shows the image,
+ *  so the words name that view, as regionRecourse does for a stale region there, and say what re-placing does from
+ *  there; Re-place itself is not on this card (replaceOffered needs the picture). With the editor up the way there
+ *  starts with leaving it (the Cancel button's own title is "Leave edit mode"). */
+const REGION_CONFIRM_TAIL = "; this comment keeps its tag until you resolve it. Re-placing it there redraws the rectangle on the figure it is on and does not move the comment to another figure. Drawing a region needs a mouse.";
+const REGION_CONFIRM_UNSEEN = "To confirm the copy, draw a new region on the figure you mean in the view that shows the image" + REGION_CONFIRM_TAIL;
+const REGION_CONFIRM_AFTER_EDIT = "To confirm the copy, leave edit mode, then draw a new region on the figure you mean in the view that shows the image" + REGION_CONFIRM_TAIL;
+/** A passage comment's ending with the editor up: the Reveal the read view's sentence names, and the save, are not on the
+ *  card until the edit ends (renderCard offers Reveal outside the editor alone, and the composer is the read view's), so
+ *  the words name the way there first, in the Cancel button's own words; what the save does stands under them as in the
+ *  read view (SAVE_FROM_COPY_NOTE), a line that names no control. */
+const PASSAGE_CONFIRM_AFTER_EDIT = "To confirm the copy, leave edit mode, then reveal it and save again from the right copy.";
+/** The state with the editor up, for either card kind: the editor paints no highlight of ours (it carries the changes
+ *  alone, Slice 5), so no copy is shown and there is no hint to name, and the words say only that the copy is a guess;
+ *  the read view's three states (copyUnsureWords) each name the place the painted copy is the nearest to. */
+const UNSURE_IN_EDITOR = "This passage occurs in the file more than once with the same surroundings, and as the file is now the copy this comment is on can only be guessed. ";
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
  *  open card, since a tag's title never reaches touch. Three states, by the hint the paint took (paintAll): the host's
  *  confirmed place, when the view's text has moved past it (`confirmedAt`: the poll's reload paints before the fresh
@@ -638,14 +664,21 @@ const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you
  *  doRetarget keeps the anchor, its position and its copy fields), so the one thing that places a comment on the figure
  *  meant is a NEW region drawn on it, with a mouse. Its words end with that (REGION_CONFIRM) and its card offers no
  *  Reveal (the review, round 2, 2026-09-11: a region card wore a Reveal titled for the Raw view that scrolled to the
- *  picture already framed, over words naming a save a region cannot make). */
-function copyUnsureWords(c: PanelCard): string {
+ *  picture already framed, over words naming a save a region cannot make). The recourse is worded for what THIS render
+ *  shows (`shown`, stamped by renderCard): with the editor up, no highlight of ours is painted and none of those controls
+ *  is on the card, so the words say the state without a paint and name the way there (UNSURE_IN_EDITOR, then
+ *  PASSAGE_CONFIRM_AFTER_EDIT or REGION_CONFIRM_AFTER_EDIT); a region whose picture this view does not show (Raw) is told
+ *  which view has it (REGION_CONFIRM_UNSEEN). Before it the card in the editor asked for a Reveal and a save it did not
+ *  offer, and the Raw card said to draw on a figure the view did not show (the review, round 3, 2026-09-11). */
+function copyUnsureWords(c: WordedCard): string {
+  if (c.shown.editing) return UNSURE_IN_EDITOR + (c.target ? REGION_CONFIRM_AFTER_EDIT : PASSAGE_CONFIRM_AFTER_EDIT);
   const state = "This passage occurs in the file more than once with the same surroundings, and "
     + (c.confirmedAt !== undefined
       ? "the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted"
       : c.anchorAt === null
       ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted");
+  if (c.target && !c.shown.pictured) return state + ", not a confirmed one. " + REGION_CONFIRM_UNSEEN;
   if (c.target) return state + ", not a confirmed one. " + REGION_CONFIRM;
   return state + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
@@ -5561,10 +5594,16 @@ class Panel {
     if (!picture) return this.ctx.media() === "pdf" ? "Resolve it; re-placing it needs its page drawn in the viewer." : "Resolve it, or re-place it from the view that shows the image.";
     return "Resolve it, or re-place it from a computer: drawing a region needs a mouse.";
   }
-  private renderCard(c: PanelCard): HTMLElement {
+  private renderCard(given: PanelCard): HTMLElement {
+    // the link and Reveal scroll the read view or switch it to Raw; while the editor holds the body there is neither
+    // (the viewer's setMode and scrollToOffset are no-ops then), so neither control is offered (Slice 5)
+    const editing = this.ctx.editing();
+    const picture = given.target ? this.regionImageFor(given) : null;   // the picture the region is on, in this view; null when it shows none
+    // the card as its words see it (WordedCard): what this render shows of it rides on the card, since the words for a
+    // guessed copy are handed the card alone (copyUnsureWords) and name the recourse by the controls this render offers
+    const c: WordedCard = { ...given, shown: { editing, pictured: !!picture } };
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
-    const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.id;
     card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
@@ -5592,9 +5631,6 @@ class Panel {
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
-    // the link and Reveal scroll the read view or switch it to Raw; while the editor holds the body there is neither
-    // (the viewer's setMode and scrollToOffset are no-ops then), so neither control is offered (Slice 5)
-    const editing = this.ctx.editing();
     // a PDF region whose page is mounted but did not render (pageUnrendered) has no rectangle to reach, so its reference
     // reaches the page instead, where the chunk's notice says why (reveal): the compact card must not dead-end
     const unrendered = this.pageUnrendered(c);
@@ -5699,9 +5735,11 @@ class Panel {
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
-    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
+    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch (worded for what this render offers: c.shown)
     // ...and for a passage comment what the save those words ask for does (SAVE_FROM_COPY_NOTE): the Reveal's title says it
-    // too, and a button's title never reaches touch either; a region's words end with its own recourse (REGION_CONFIRM)
+    // too, and a button's title never reaches touch either; a region's words end with its own recourse (REGION_CONFIRM).
+    // With the editor up the line stands too: the words above name the way to that save (PASSAGE_CONFIRM_AFTER_EDIT), and
+    // the line says what it does without naming a control
     if (this.unsureCopies.has(c.id) && !c.target) card.appendChild(el("div", "fc-note", SAVE_FROM_COPY_NOTE));
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));

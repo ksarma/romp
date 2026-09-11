@@ -119,7 +119,9 @@ test('the contract names the three fields beside anchorAt with their rule, and t
   assert.ok(fn(host, 'isMarkdownPath').includes("return ext === 'md' || ext === 'markdown';"));
   const heads = fn(host, 'headings');
   assert.ok(heads.includes('const fences = fencedRanges(text);') && heads.includes('!inFencedRange(fences, at)'), 'a fenced line is not a heading');
-  assert.ok(heads.includes("/^ {0,3}(#{1,6})(?:[ \\t]+(.*?))?[ \\t]*$/"), 'ATX headings');
+  assert.ok(heads.includes("/^ {0,3}(#{1,6})(?:[ \\t]+([\\s\\S]*))?$/"), 'ATX headings, the rest of the line taken whole');
+  assert.ok(!heads.includes('(.*?)') && !heads.includes('[ \\t]*$/.exec'), 'no lazy tail before an end anchor: the first cut\'s backtracked quadratically over a run of whitespace inside the line (the review\'s second round, 2026-09-11)');
+  assert.ok(heads.includes(".replace(/(^|[ \\t])#+[ \\t]*$/, '').trim().replace(/\\s+/g, ' ')"), 'closing hashes, trailing whitespace and inner runs dropped by the trim, so the words read as the first cut read them');
   assert.ok(fn(host, 'sectionAt').includes("if (!markdown || typeof text !== 'string' || typeof offset !== 'number') return '';"), 'empty for a non-markdown file');
 });
 

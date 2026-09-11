@@ -897,7 +897,12 @@ scrolls to the guessed copy, and its title says that a comment saved from the co
 and this one keeps its tag until you resolve it. A confirmed place the view's text has moved past (the poll's reload paints
 before the fresh status lands; a refused refresh keeps the old status) paints the copy nearest that place as a
 guess whose words name the confirmed place (`confirmedAt`), never plainly on a copy the host did not vouch for
-in the text shown. The stored position is an offset
+in the text shown.
+A region comment on an embed line that recurs is in the same state, its rectangle on the figure nearest
+the hint; its words end with the recourse a region has, a new region drawn on the figure meant, with a
+mouse (Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor and its
+fields), and its card offers no Reveal (the review's second round, 2026-09-11).
+The stored position is an offset
 into the text the host read, which keeps a leading UTF-8 BOM the fetch strips from the viewer's
 text, so the reply says whether it does (`bom`) and the panel maps the position into the view's
 coordinates by it (`viewAt`) before the engine takes it as the hint and before the copy is
@@ -1670,6 +1675,11 @@ refresh) and breaks the tie by them (`locateStored`, the one reader of a stored 
 copy while the count of copies is unchanged, else the one copy under the stored heading path,
 confirmed; else the nearest, a guess, whose words on the card end with "Reveal it and save again from
 the right copy to confirm." and whose card offers that Reveal (the review's first round, 2026-09-11).
+That is a passage comment's card: a region comment whose embed line ties is guessed by the same rules,
+and since Reveal for a region scrolls to its picture, never to Raw, and Re-place keeps the anchor, its
+position and its fields, its words end with the recourse a region has, a new region drawn on the figure
+meant, with a mouse, and its card offers no Reveal (the review's second round, 2026-09-11; decision 51
+says why).
 Tests: `tools/file-comments-host-tiebreak.test.mjs` (the section helper,
 creation, the refresh, the rules in order, a read that rewrites nothing, the decisions' carve-out),
 `ui/webview/file-comments-tiebreak.test.ts` (the confirmed and the guessed paint),
@@ -1679,7 +1689,9 @@ insertion above, the status refreshed, the highlight on the right copy with no t
 and the guide against the host, the panel and the model; and from the review's first round (2026-09-11)
 `tools/file-comments-host-tiebreak-review.test.mjs`, `ui/webview/file-comments-tiebreak-recourse.test.ts`,
 `tests/test_guide_files_comments_confirm.py` and `tools/file-review-plan-tiebreak-review.test.mjs`, and from
-its second `tools/file-review-plan-tiebreak-review-2.test.mjs` (the Tests section says what each drives).
+its second `tools/file-comments-host-tiebreak-review-2.test.mjs`, `ui/webview/file-comments-tiebreak-region.test.ts`,
+`tools/file-review-plan-tiebreak-review-2.test.mjs` and `tools/file-review-plan-tiebreak-review-3.test.mjs` (the Tests
+section says what each drives).
 
 The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
 user todo and its file be structured, not a path in the detail's free text, and that any Send on the
@@ -2440,7 +2452,26 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   holds the record's account of the first round to the code: the stamp's note (`noteUnstamped`), the tied
   CLI comment no host write stamps while its tie holds (`refreshAnchorAts`, on the real host), the heading
   cap and the file's kind from its name, the guessed card's Reveal and the confirmed place the view moved
-  past, the guide's sentences in the Docs section, and the first round's modules against the tree. `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
+  past, the guide's sentences in the Docs section, and the first round's modules against the tree.
+  From the same round, `tools/file-comments-host-tiebreak-review-2.test.mjs` drives the real host as a child
+  process, or its exported helpers, over the round's findings on the host: a scan the budget cut serves no
+  caller without a budget (`fullMatches`, so `passageFigure` and `doRetarget` read no null from
+  `locateStored`), the heading and front-matter regexes take a whitespace run without quadratic backtracking,
+  a whole-nowhere anchor under a budget is answered unplaced after the classification pass alone (`placedFor`
+  spends nothing on a verdict it drops), the refresh returns before judging a null store, `stampCopy` keeps
+  the fields of a comment carried to the quote's other occurrence, and `markdownOf` leaves an unjudged store's
+  heading path as it is, with its note once per process. `ui/webview/file-comments-tiebreak-region.test.ts`
+  drives both card kinds over the rendered stand-in and a Raw body: a region on the second of two embeds whose
+  title an unrecorded write edited has its rectangle on the guessed figure and the tag, its words end with the
+  region's recourse (a new region, with a mouse; what Re-place does instead), and its card offers Reply,
+  Resolve and Re-place on a pointer that draws, Reply and Resolve on a coarse one, and no Reveal in either
+  view; a passage comment on the same line, guessed, carries the words that ask for the save and a line under
+  them saying what the save does (the Reveal's title ends with the same words, and Reveal switches to Raw at
+  the guessed copy), and a passage whose position names its copy carries neither.
+  `tools/file-review-plan-tiebreak-review-3.test.mjs` holds the record's account of the second round (the
+  region card's words and its missing Reveal, the passage card's line, the round's modules) to the panel
+  (`copyUnsureWords`, `REGION_CONFIRM`, `renderCard`, `reveal`), the host (`doRetarget`) and the tree.
+  `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
   record: the ask as the user made it, with its hedges, and the layout as the build's reading of
   it, awaiting the user's word (a review of the follow-on found the note had folded the build's
   design into the ask, 2026-09-07); `ui/webview/styles-fc-margin-attribution.test.ts` holds each sheet's
@@ -3270,8 +3301,9 @@ document stands on its own, each with the reasoning it was given.
     run in order: the count of copies unchanged since the fields were written, the ordinal's copy, confirmed;
     else exactly one copy under the stored heading path, that copy, confirmed; else the copy nearest the
     position, a guess, as before. The panel paints a confirmed copy plainly (no dashed cue, no tag) and a
-    guessed one as before, with the card's words now ending "Reveal it and save again from the right copy to
-    confirm." A passage comment's guessed copy has its card offer the Reveal those words name (the review's
+    guessed one as before, for a passage comment with the card's words now ending "Reveal it and save again from
+    the right copy to confirm." and for a region comment with the card's words ending in the recourse a region
+    has, said below. A passage comment's guessed copy has its card offer the Reveal those words name (the review's
     first round: before it the card offered Reveal only for a passage it could not paint, so the words named a
     button the card did not have); it switches to Raw and scrolls to the guessed copy, and its title says that a
     comment saved from the copy you mean is placed on that copy and this one keeps its tag until you resolve it,
@@ -3279,7 +3311,27 @@ document stands on its own, each with the reasoning it was given.
     resolve it; `tests/test_guide_files_comments_confirm.py`). A confirmed place the view's text has moved past
     (the poll's reload paints before the fresh status lands; a refused refresh keeps the old status) paints the
     copy nearest that place as a guess whose words name the confirmed place (`confirmedAt`), never plainly on a
-    copy the host did not vouch for in the text shown. The contract named two fields; `copies` is the third,
+    copy the host did not vouch for in the text shown.
+    A region comment on an embed line that recurs is guessed by the same rules (the host stamps and places every
+    anchored comment, and the panel's `copyUnsure` asks the same of a rectangle, which `paintRegions` puts on the
+    figure nearest the hint by `regionImageFor`), but the passage's recourse is not open to it: Reveal for a
+    region scrolls to its picture and never switches to Raw, and Re-place sends the rectangle alone, so the host
+    keeps the anchor, its position and its copy fields (`doRetarget` writes `target` back and nothing else), and
+    the one thing that places a comment on the figure meant is a new region drawn on it, with a mouse. Its words
+    end with that in place of the Reveal sentence (`REGION_CONFIRM`: draw a new region on the figure you mean, and
+    this comment keeps its tag until you resolve it; Re-place redraws the rectangle on the figure shown and does
+    not move the comment to another figure; drawing a region needs a mouse), and its card offers no Reveal: Reply,
+    Resolve and Re-place on a pointer that draws, Reply and Resolve on a coarse one, where the words naming the
+    mouse keep the card from dead-ending (the review's second round, 2026-09-11: before it the region card wore a
+    Reveal titled for the Raw view that scrolled to the picture already framed, over words asking for a save a
+    region cannot make). The same round put what the passage's save does on the open card as a line of its own
+    under the words that ask for it (`SAVE_FROM_COPY_NOTE`, the sentence the Reveal's title carries), since a
+    button's title never reaches touch; a region's words carry their own.
+    `ui/webview/file-comments-tiebreak-region.test.ts` drives both card kinds over the rendered stand-in and a Raw
+    body, `tools/file-comments-host-tiebreak-review-2.test.mjs` the round's findings on the host, and
+    `tools/file-review-plan-tiebreak-review-3.test.mjs` holds this account of the round to the panel, the host and
+    the tree (the Tests section says what each drives).
+    The contract named two fields; `copies` is the third,
     since the first rule compares the count of
     copies with the count at the time the ordinal was written, and the ordinal alone does not carry it. Setext
     headings (a line underlined with `=` or `-`) are not read as headings, a tie with no position still refuses

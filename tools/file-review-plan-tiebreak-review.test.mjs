@@ -12,8 +12,10 @@
 // refreshAnchorAts and the note told after it, and locateStored on a tied text. The review's second round found this
 // module's first cut pinning the plan's word that the skip past the budget leaves no note, a sentence the first round's
 // fix had made false, with a source pin over the stamping loop alone, which ends before the note is told; the pin now
-// reads the note's source and the plan says what stderr says. Synthetic: the repo's own text and an invented report,
-// no session data.
+// reads the note's source and the plan says what stderr says. The third round found this module's decision-51 pin still
+// spelling the first cut's clause on the CLI comment (a stamp on the next host write), which the second round had
+// reworded in the plan and pinned in its own module; the pin here now holds the correction's own clauses around it and
+// that the old clause is gone. Synthetic: the repo's own text and an invented report, no session data.
 // Run: node --test tools/file-review-plan-tiebreak-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -139,7 +141,14 @@ test('the stamping pass of refreshAnchorAts scans every seated comment through t
 // ── a tie with no position ──────────────────────────────────────────
 
 test('decision 51 says a tie with no position refuses only when neither field tells, and names this module beside the tie-break\'s; the Tests section says what this module holds', () => {
-  assert.ok(decision51.includes('a tie with no position still refuses `anchor-ambiguous` when neither field tells (the fields settle it as for any other comment, so one whose position an editor dropped is confirmed from its ordinal or its heading path, and a comment the CLI made, which carries neither until the next host write stamps it, is refused as before), and the other editors write the object back whole, so the fields survive them (docs/adr/0002: six additive fields now).'));
+  // The first correction's own words: the refusal is scoped to a comment neither field tells, and the fields survive
+  // the other editors. The CLI clause between them is the second round's (tools/file-review-plan-tiebreak-review-2.test.mjs
+  // pins its wording); this module holds only that the clause still says such a comment carries neither and is refused,
+  // and not the first cut's promise of a stamp on the next host write, which the second round found the refresh never
+  // makes while the tie holds. The review's third round found this pin still spelling that promise, red on the branch.
+  assert.ok(decision51.includes('a tie with no position still refuses `anchor-ambiguous` when neither field tells (the fields settle it as for any other comment, so one whose position an editor dropped is confirmed from its ordinal or its heading path, and a comment the CLI made on a passage that recurs with the same 24 characters around it (the context the CLI stores) carries neither and is refused as before;'));
+  assert.ok(decision51.includes('), and the other editors write the object back whole, so the fields survive them (docs/adr/0002: six additive fields now).'));
+  assert.ok(!decision51.includes('which carries neither until the next host write stamps it'), 'the first cut\'s clause, which promised a stamp the tied comment never gets, is gone');
   assert.ok(!decision51.includes('still refuses, and'), 'the unconditional clause is gone');
   assert.ok(decision51.includes('`tools/file-review-plan-tiebreak-review.test.mjs` (the review\'s two corrections to this record: the stamp\'s pass on a passage still at its position, and the fields settling a tie with no position)'));
   assert.ok(tests.includes('`tools/file-review-plan-tiebreak-review.test.mjs` holds the tie-break review\'s two corrections to the record against the host: a passage still at its position costs its copy fields one classification pass per distinct anchor on every write, charged to the budget, and past it keeps the fields it has while stderr says how many, once per write (the stamping pass of `refreshAnchorAts`, `noteUnstamped`, `fullMatches`\'s memo), and a tie with no position is settled by the fields before it is refused (`locateStored`).'));
