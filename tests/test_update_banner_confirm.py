@@ -616,6 +616,33 @@ out({ armed1: armed1, retired: retired, rearmed: rearmed, after: state() });""")
                          "the old life's counts are gone at the instant of the arm")
         self.assertEqual(s["after"]["label"], "Restart 6 sessions now, interrupting 2", "the new life's counts, once read")
 
+    def test_the_boot_retire_clears_every_previous_life_message_not_only_a_shown_update(self):
+        # review round 8 (2026-09-10): the retire on a boot change ran only while Update was shown, so a failed
+        # ending with no offer standing (round 6 hides Update there: a refused pull) left the previous life's
+        # failure text on screen after the kernel restarted, until Not now; origin/main's failed branch kept Update
+        # shown, so its retire ran. Every message the box shows is retired now: the failed ending with and without
+        # an offer, the updated ending's on-disk text in the clicking window, the plain offer. A wait in progress
+        # still reloads, and a boot change over a hidden box changes nothing
+        click = "GO.onclick(); await tick(); await tick(); CF.onclick(); await tick(); await tick(); await tick();"
+        refused_pull = ("CHECK.tag = ''; CHECK.drift = ''; CHECK.driftSha = ''; "
+                        "CHECK.failed = 'the romp checkout has uncommitted work, so it was left alone. Commit or stash it; the next check offers the update again';")
+        boot = " var ended = state(); window.__rompUpdBoot('b2'); out({ ended: ended, after: state() });"
+        s = run_banner(refused_pull + click + boot, check={"tag": "", "drift": "pull", "driftSha": "abcdef01"})
+        self.assertEqual((s["ended"]["shown"], s["ended"]["goHidden"]), (True, True), "the failure text alone, no offer standing")
+        self.assertEqual((s["after"]["shown"], s["after"]["reloads"], s["after"]["dismissals"]), (False, 0, []),
+                         "the boot change retires it: no reload, nothing dismissed")
+        s = run_banner("CHECK.failed = 'romp is updated on disk but the restart request failed (HTTP 500)';" + click + boot)
+        self.assertEqual((s["ended"]["shown"], s["ended"]["goHidden"]), (True, False), "the failure text with Update re-shown")
+        self.assertEqual((s["after"]["shown"], s["after"]["armed"]), (False, False), "retired as before")
+        s = run_banner("CHECK.tag = ''; CHECK.updated = 'v0.2.0'; CHECK.why = 'no manager is running this kernel';" + click + boot)
+        self.assertTrue(s["ended"]["msg"].startswith("romp updated to v0.2.0 on disk"), s["ended"]["msg"])
+        self.assertEqual((s["after"]["shown"], s["after"]["reloads"]), (False, 0), "the updated ending's text in the clicking window is that life's too")
+        s = run_banner("GO.onclick(); await tick(); await tick(); CF.onclick();" + boot)
+        self.assertEqual((s["ended"]["msg"].startswith("Updating romp"), s["after"]["reloads"]), (True, 1), "a wait in progress reloads into the new life")
+        s = run_banner("DM.onclick();" + boot)
+        self.assertEqual((s["ended"]["shown"], s["after"]["shown"], s["after"]["dismissals"]), (False, False, [{"tag": "v0.2.0"}]),
+                         "a boot change over a hidden box changes nothing")
+
     def test_the_click_on_the_confirm_posts_once_with_the_confirmation(self):
         s = run_banner("""
 GO.onclick(); await tick(); await tick();

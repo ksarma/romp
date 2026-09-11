@@ -56505,10 +56505,14 @@ _UPD_JS = (
     # the kernel restarted under a SHOWING offer → the offer's evidence predates the new life: retire
     # it silently (the new kernel re-offers real drift within one check pass), and drop the held counts
     # with it (they were that life's; the next arm re-reads). Fed by #rstale's own 30s /version poll,
-    # an existing beat, not a new timer.
+    # an existing beat, not a new timer. Every message the box shows is retired, not only one with Update
+    # beside it (review round 8, 2026-09-10): the poll's failed ending with no offer standing (round 6 hides
+    # Update there) and the updated ending's on-disk text in the clicking window are that life's too, and
+    # keyed on Update alone the retire left a previous life's failure text on screen after the kernel
+    # restarted, until Not now. A wait in progress reloads instead, above: the new life is the update's
     "window.__rompUpdBoot=function(b){if(!b)return;if(!bootNow){bootNow=b;return;}"
     "if(b!==bootNow){bootNow=b;impact=null;if(waiting){location.reload();return;}"
-    "if(!go.hidden){disarm();box.classList.remove('show');curTag='';failedEnd=false;}}};"
+    "if(box.classList.contains('show')){disarm();box.classList.remove('show');curTag='';failedEnd=false;}}};"
     "function poll(){fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "if(!waiting)return;"
     "if(d.boot&&bootNow&&d.boot!==bootNow){location.reload();return;}"
@@ -56535,7 +56539,9 @@ _UPD_JS = (
     # is cleared only when no offer stands; while Update is re-shown the window keeps the identifier it
     # offers, so a retry from that Update whose wait ends updated has its Not now dismiss that identifier
     # durably, as the updated ending's rule above says (round 7 cleared curTag at every failed ending, and
-    # the retry's updated ending posted nothing). Round 6 had the failed ending's Not now post the tag the
+    # the retry's updated ending posted nothing). A boot change retires the text whether or not Update
+    # stands beside it (__rompUpdBoot above), so a previous life's failure does not outlive the kernel's
+    # restart. Round 6 had the failed ending's Not now post the tag the
     # clicking window had offered (the refused target) and an empty tag from a pushed window, which the
     # kernel ignores, so one message dismissed durably in one window and nothing in another
     "if(d.failed){waiting=false;var again=!!(d.tag||(d.drift&&d.driftSha));go.hidden=!again;go.disabled=false;dm.hidden=false;failedEnd=true;if(!again)curTag='';show('The update did not finish: '+d.failed);return;}"
