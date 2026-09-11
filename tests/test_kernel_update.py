@@ -1487,6 +1487,147 @@ class Routes(Fresh):
             km._MANAGER_READ_FAULT[0] = ""
             mgr.shutdown()
 
+    def _drift_click_whose_thread_fails_to_start(self, before_raise=None):
+        """The drift door clicked with a Thread whose start raises for the converge's target alone (the test
+        server's own request threads start), so the route's except runs its give-back. `before_raise` runs
+        inside that start, between the route's take of the flag and its except: the place a writer of the
+        outcome slot can land meanwhile (review round 8 of the confirm step, 2026-09-10). A context manager
+        that yields the running pushes; a fake manager on an ephemeral port behind _dials_only, as every
+        Routes probe of the door, though nothing dials it: no thread runs."""
+        import contextlib
+        import http.server
+        from http.server import ThreadingHTTPServer
+        pushed, dials = [], []
+        Real = threading.Thread
+
+        class FakeManager(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *a):
+                pass
+
+        class StartFails(Real):
+            def start(self):
+                if self._target is km._run_main_update:
+                    if before_raise:
+                        before_raise()
+                    raise RuntimeError("no thread")
+                return super().start()
+
+        @contextlib.contextmanager
+        def door():
+            mgr = ThreadingHTTPServer(("127.0.0.1", 0), FakeManager)
+            Real(target=mgr.serve_forever, daemon=True).start()
+            port = mgr.server_address[1]
+            saved_port, saved_tried = os.environ.get("ROMP_MANAGER_PORT"), km._INPLACE_TRIED[0]
+            try:
+                os.environ["ROMP_MANAGER_PORT"] = str(port)
+                km._INPLACE_TRIED[0] = ""
+                km._UPDATE_AVAIL[0] = ""
+                km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "", "abcdef01"
+                with mock.patch.object(km.http.client, "HTTPConnection", _dials_only(port, dials, allow={self.port})), \
+                     mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \
+                     mock.patch.object(km, "_checkout_sha", return_value="abcdef01"), \
+                     mock.patch.object(km, "_send_to_app", side_effect=lambda app, m: pushed.append(m)), \
+                     mock.patch.object(threading, "Thread", StartFails):
+                    yield pushed
+            finally:
+                km._INPLACE_TRIED[0] = saved_tried
+                if saved_port is None:
+                    os.environ.pop("ROMP_MANAGER_PORT", None)
+                else:
+                    os.environ["ROMP_MANAGER_PORT"] = saved_port
+                km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+                km._MANAGER_READ_FAULT[0] = ""
+                km._UPDATE_STATE[0] = ""
+                mgr.shutdown()
+        return door()
+
+    def test_the_give_back_restores_what_the_take_cleared_not_what_an_earlier_read_saw(self):
+        # review round 8 of the confirm step (2026-09-10): the round-7 give-back read the slot on the line BEFORE
+        # the take of the flag (_main_converge_begin) and restored that read when Thread.start raised. An auto
+        # converge ending between the read and the take (it is not gated on the flag) latched a newer outcome,
+        # which the take cleared and the except then overwrote with the older read: None (the newer outcome lost,
+        # every waiting window polling the wait's neither state for good) or a stale outcome served in its place.
+        # The take now hands back what it cleared, read under the same lock hold, and the except restores exactly
+        # that. Modelled with _main_converge_begin wrapped to run the auto converge's ending before the real take,
+        # with the slot None and with a stale outcome in it at the click; red at 27c1cf3d8 in both
+        real = km._main_converge_begin
+        new = {"failed": "an auto converge ended between the read and the take", "updated": "", "why": "", "hint": ""}
+        old = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+
+        def latch_then_take():
+            km._main_converge_outcome(failed=new["failed"])
+            km._main_converge_end()
+            return real()
+        for name, before in (("the slot None at the click", None), ("a stale outcome in the slot at the click", dict(old))):
+            with self.subTest(name):
+                km._MAIN_CONVERGE_OUTCOME[0] = before
+                with self._drift_click_whose_thread_fails_to_start() as pushed, \
+                     mock.patch.object(km, "_main_converge_begin", side_effect=latch_then_take):
+                    code, body = self._post("/update")
+                    self.assertEqual((code, body), (500, "romp could not start the converge: no thread"))
+                    self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the flag was given back")
+                    self.assertEqual(pushed, [], "no running push for a converge that never started")
+                    self.assertEqual(km._MAIN_CONVERGE_OUTCOME[0], new, "the outcome the take cleared is the one given back")
+                    _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+                    d = json.loads(body)
+                    self.assertEqual((d["state"], d["failed"], d["updated"]), ("", new["failed"], ""), "a waiting window's poll ends on it")
+
+    def test_the_give_back_yields_to_an_outcome_latched_between_the_take_and_the_failed_start(self):
+        # review round 8 (tests-1): the give-back restores the outcome the take cleared only while the slot is still
+        # None, the clause round 7 wrote and did not pin. An auto converge that starts after the take and ends
+        # before Thread.start raises has latched a newer outcome; an unconditional restore overwrote it with the
+        # older one. Red with the `is None` clause removed on a copy of 27c1cf3d8
+        old = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+        new = {"failed": "an auto converge ended between the take and the failed start", "updated": "", "why": "", "hint": ""}
+        km._MAIN_CONVERGE_OUTCOME[0] = dict(old)
+        with self._drift_click_whose_thread_fails_to_start(before_raise=lambda: km._main_converge_outcome(failed=new["failed"])) as pushed:
+            code, body = self._post("/update")
+            self.assertEqual((code, body), (500, "romp could not start the converge: no thread"))
+            self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the flag was given back")
+            self.assertEqual(pushed, [], "no running push")
+            self.assertEqual(km._MAIN_CONVERGE_OUTCOME[0], new, "the newer outcome stands; the older one is not reinstated over it")
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            d = json.loads(body)
+            self.assertEqual((d["state"], d["failed"], d["updated"]), ("", new["failed"], ""), "and is what every poll reads")
+
+    def test_the_give_back_yields_to_a_tag_door_start_between_the_take_and_the_failed_start(self):
+        # review round 8 (correctness-1): the tag door's start (_run_update, through the route's tag branch or the
+        # auto path) sets its running state and clears the slot for the child it launched. One landing between the
+        # drift door's take and its except left the slot None, so the round-7 give-back (gated on None alone)
+        # reinstated the outcome the take had cleared behind the running child, and once the child's report was
+        # consumed every poll read that stale ending. The except now restores nothing while _UPDATE_STATE is
+        # running, and the tag door's clear holds _MAIN_CONVERGE_LOCK, so the compare and the store cannot
+        # straddle it. Red at 27c1cf3d8: the slot held the stale outcome after the 500
+        old = {"failed": "a stale outcome", "updated": "", "why": "", "hint": ""}
+        km._MAIN_CONVERGE_OUTCOME[0] = dict(old)
+
+        def check():
+            _, body = _serve_get("/update-check", headers={"X-Romp-Token": km.TOKEN})
+            return json.loads(body)
+
+        def tag_door_starts():
+            with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: None):
+                if not km._run_update("v0.7.0"):
+                    raise AssertionError("the tag door did not start")
+        with self._drift_click_whose_thread_fails_to_start(before_raise=tag_door_starts) as pushed:
+            code, body = self._post("/update")
+            self.assertEqual((code, body), (500, "romp could not start the converge: no thread"))
+            self.assertFalse(km._MAIN_CONVERGE_INFLIGHT[0], "the drift door's flag was given back")
+            self.assertEqual(pushed, [], "no running push from the drift door")
+            self.assertEqual(km._UPDATE_STATE[0], "running", "the tag door's child is in flight")
+            self.assertIsNone(km._MAIN_CONVERGE_OUTCOME[0], "the tag door's clear stands: nothing is reinstated behind its child")
+            d = check()
+            self.assertEqual((d["state"], d["failed"], d["updated"]), ("running", "", ""), "the wait for the tag door's child")
+            km._UPDATE_STATE[0] = ""      # the child's report consumed
+            d = check()
+            self.assertEqual((d["state"], d["failed"], d["updated"]), ("", "", ""), "idle after it, with no stale ending served")
+
     def test_both_running_pushes_say_when_no_manager_started_the_kernel(self):
         # review round 6 of the confirm step (2026-09-10): the running push flips every window into the wait, and
         # the wait's words promised a restart and a reload on a kernel no manager started, where nothing restarts.

@@ -9253,7 +9253,11 @@ _MAIN_CONVERGE_OUTCOME = [None]     # how the last main converge ended when the 
 #                                        wait the slot never ends: review round 6): the running push flipped every
 #                                        window into the wait, so a slot consumed on first read would end one
 #                                        window's wait
-_MAIN_CONVERGE_LOCK = threading.Lock()   # the in-flight flag's compare-and-set (two clicks racing the drift door)
+_MAIN_CONVERGE_LOCK = threading.Lock()   # the in-flight flag's compare-and-set (two clicks racing the drift door) and
+#                                        every write of the outcome slot (review round 8, 2026-09-10): the take reads
+#                                        and clears the slot in one hold, the latch, the decorator's entry clear and
+#                                        _run_update's clear each hold it, and the drift door's give-back compares
+#                                        and stores under it; reads of the slot (the fold) take no lock
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
@@ -9621,8 +9625,13 @@ def _run_update(tag):
     # (review round 7): a spawn that raises gives the latch back above and leaves the slot as it found it, so a
     # window still waiting on that outcome reads it on its next poll instead of the wait's neither state for
     # good. Nothing is served early in between: /update-check folds the slot into its answer only while
-    # _UPDATE_STATE is not running, and the route's running push goes out only once this has returned True
-    _MAIN_CONVERGE_OUTCOME[0] = None
+    # _UPDATE_STATE is not running, and the route's running push goes out only once this has returned True.
+    # Under _MAIN_CONVERGE_LOCK (review round 8): the drift door's give-back restores the outcome its take
+    # cleared only while the slot is still None and no tag child is running, comparing and storing under that
+    # lock, so this clear orders wholly before it (the running set above then refuses the restore) or wholly
+    # after it (the clear wins), never between its compare and its store
+    with _MAIN_CONVERGE_LOCK:
+        _MAIN_CONVERGE_OUTCOME[0] = None
     return True
 
 
@@ -10427,17 +10436,23 @@ _PORT_FROM_ENV = object()
 
 def _main_converge_begin():
     """Take the converge's in-flight flag for a click (the /update drift branch, before its thread starts and
-    its running push goes out): True when this click starts the converge, False when one is already running
-    (another window's click, or the auto converge), so the route answers converging and starts no second
-    thread and writes no second audit row. Taking the flag also clears the last converge's latched outcome:
-    a new converge is in flight and its outcome is not known yet. Compare-and-set under _MAIN_CONVERGE_LOCK,
-    for two clicks racing the route."""
+    its running push goes out): (True, cleared) when this click starts the converge, (False, None) when one is
+    already running (another window's click, or the auto converge), so the route answers converging and starts
+    no second thread and writes no second audit row. Taking the flag also clears the last converge's latched
+    outcome: a new converge is in flight and its outcome is not known yet. `cleared` is that outcome (None when
+    there was none), read under the same lock hold as the take (review round 8 of the confirm step,
+    2026-09-10): the route's give-back for a Thread.start that raises restores exactly what the take cleared.
+    Round 7 read the slot on the line before the take, outside the lock, and an auto converge ending between
+    the two lines (it is not gated on the flag) latched an outcome the take then cleared and the give-back
+    overwrote with the older read. Compare-and-set under _MAIN_CONVERGE_LOCK, for two clicks racing the
+    route."""
     with _MAIN_CONVERGE_LOCK:
         if _MAIN_CONVERGE_INFLIGHT[0]:
-            return False
+            return False, None
         _MAIN_CONVERGE_INFLIGHT[0] = True
+        cleared = _MAIN_CONVERGE_OUTCOME[0]
         _MAIN_CONVERGE_OUTCOME[0] = None
-        return True
+        return True, cleared
 
 
 def _main_converge_end():
@@ -10446,8 +10461,12 @@ def _main_converge_end():
 
 def _main_converge_outcome(failed="", updated="", why="", hint=""):
     """Latch how the converge ended for the banner's poll (the slot's comment says which endings and why it
-    latches). Written BEFORE the in-flight flag clears, so no poll reads neither running nor an outcome."""
-    _MAIN_CONVERGE_OUTCOME[0] = {"failed": failed, "updated": updated, "why": why, "hint": hint}
+    latches). Written BEFORE the in-flight flag clears, so no poll reads neither running nor an outcome.
+    Under _MAIN_CONVERGE_LOCK, as every write of the slot is (review round 8 of the confirm step, 2026-09-10):
+    the drift door's give-back compares the slot and stores under that lock, so a latch orders wholly before
+    or wholly after it, never between its compare and its store."""
+    with _MAIN_CONVERGE_LOCK:
+        _MAIN_CONVERGE_OUTCOME[0] = {"failed": failed, "updated": updated, "why": why, "hint": hint}
 
 
 def _main_converge_guarded(fn):
@@ -10463,8 +10482,9 @@ def _main_converge_guarded(fn):
     it); a converge that starts while another runs is the pre-existing hazard, not widened here."""
     @functools.wraps(fn)
     def run(*a, **kw):
-        _MAIN_CONVERGE_INFLIGHT[0] = True
-        _MAIN_CONVERGE_OUTCOME[0] = None
+        with _MAIN_CONVERGE_LOCK:      # the slot's writers all hold it (review round 8; _main_converge_outcome says why)
+            _MAIN_CONVERGE_INFLIGHT[0] = True
+            _MAIN_CONVERGE_OUTCOME[0] = None
         try:
             return fn(*a, **kw)
         except Exception as e:
@@ -59292,10 +59312,12 @@ class Handler(BaseHTTPRequestHandler):
                     # no second thread and writes no second audit row. The thread clears the flag on every
                     # exit; a start that raises gives it back here, or every later poll would read running,
                     # and gives back the outcome the take cleared (review round 7, 2026-09-10), or a window
-                    # still waiting on that outcome would poll the wait's neither state for good; only while
-                    # nothing newer was latched meanwhile (an auto converge ending between the two lines)
-                    out0 = _MAIN_CONVERGE_OUTCOME[0]
-                    if not _main_converge_begin():
+                    # still waiting on that outcome would poll the wait's neither state for good. The take
+                    # itself hands back what it cleared, read under the one lock hold (review round 8): a
+                    # separate read before the take saw an older slot when an auto converge ended between the
+                    # two lines, and the give-back then lost the newer outcome or reinstated the older one
+                    taken, out0 = _main_converge_begin()
+                    if not taken:
                         return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                     _audit_restart_request("main-converge", tag=d0 or d1,
                                            addr=str(self.client_address[0]), via="update-confirmed")
@@ -59308,8 +59330,13 @@ class Handler(BaseHTTPRequestHandler):
                                          kwargs={"manager_port": mp, "target": d0 or d1},
                                          daemon=True).start()
                     except Exception as e:
+                        # the give-back, under the lock every writer of the slot holds: only while nothing
+                        # newer was latched between the take and here (an auto converge ending: the slot is
+                        # then not None) and no tag child is running (the tag door's start, _run_update,
+                        # cleared the slot for the child it launched; a restore behind that child would be
+                        # served as a stale ending once the child's report is consumed: review round 8)
                         with _MAIN_CONVERGE_LOCK:
-                            if _MAIN_CONVERGE_OUTCOME[0] is None:
+                            if _MAIN_CONVERGE_OUTCOME[0] is None and _UPDATE_STATE[0] != "running":
                                 _MAIN_CONVERGE_OUTCOME[0] = out0
                             _main_converge_end()
                         return self._send(500, "romp could not start the converge: %s" % e, "text/plain")
