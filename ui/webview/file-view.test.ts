@@ -384,7 +384,9 @@ test("composerWindow, executed: own composer → the same-origin shell's chat pa
 });
 
 // executed: the body's width observer (watchBodyWidth), lifted from the source with its type annotations stripped (the
-// composerWindow lift above; a hand copy would drift), run over a fake ResizeObserver and stand-in nodes. Both sheets'
+// composerWindow lift above; a hand copy would drift), run over a fake ResizeObserver and stand-in nodes whose edges hide
+// through the shared shim's hideEdges (the ratchet in ui/test-dom-shim.test.ts: a fake's enumerable children edge is the
+// shape a failing assertion's dump walks). Both sheets'
 // `.fileview-md > table` read --fv-body-w for a top-level table's cap and its shift into the gutters; what the function
 // promises them is run here: nothing before the first report, the body's content width on EACH TOP-LEVEL TABLE (never a
 // nested one, never the prose) after one, the same width on the fresh tables a paint brings (the returned stamp: mdBlock
@@ -407,7 +409,7 @@ test("watchBodyWidth, executed: --fv-body-w lands on each top-level table after 
     const n: Node = { tagName, className, children, clientWidth: 0, writes: 0,
       style: { setProperty: (k, v) => { props.set(k, v); n.writes++; }, getPropertyValue: (k) => props.get(k) ?? "" },
       querySelector: (sel) => { const walk = (m: Node): Node | null => { for (const c of m.children) { if (c.className === sel.slice(1)) return c; const d = walk(c); if (d) return d; } return null; }; return walk(n); } };
-    return n;
+    return hideEdges(n);   // the shared rule (ui/test-dom-shim.ts): children, style and querySelector hide, so a failing dump names the node's primitives alone
   };
   type Rec = { cb: (entries: Array<{ contentRect: { width: number } }>) => void; targets: unknown[]; live: boolean };
   const observers: Rec[] = [];
