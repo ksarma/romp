@@ -38,6 +38,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { FederationManager } from "./federation";
 import { paintHeld, paintReleased, publishPaneHidden, type PaneHiddenHost } from "./paint-gate";
 
@@ -65,6 +67,9 @@ function makeWindow(opts: { framed: boolean; innerWidth: number; innerHeight: nu
     __rompLocalSend: (m: any) => sent.push(m),
   };
   win.parent = opts.framed ? {} : win;
+  // the stand-in's parent, dispatchEvent, addEventListener and __rompLocalSend are non-enumerable (ui/test-dom-shim.ts
+  // hideEdges), so a failing assertion over the window dumps its primitives, never a cycle through parent
+  hideEdges(win);
   return { win, emitted, sent };
 }
 
@@ -420,4 +425,19 @@ test("the timeline pane publishes the word too, from its own hold's events, and 
     v._paneIntersecting = true; v._publishPaneHidden();
     assert.equal(win.__rompPaneHidden, false, "shown");
   });
+});
+
+// ── the window stand-in is a projection (ui/test-dom-shim.ts): a failing assertion over it dumps primitives, never a cycle through parent ──
+test("a window stand-in, framed or not, enumerates its primitives alone; parent is non-enumerable and still reachable; a dump of it names no edge", () => {
+  for (const framed of [true, false]) {
+    const { win, emitted, sent } = makeWindow({ framed, innerWidth: 1200, innerHeight: 800 });
+    assert.ok(Object.keys(win).every((k) => staysEnumerable(win[k])), "the stand-in keeps an enumerable edge: " + Object.keys(win).join(","));
+    assert.deepEqual(Object.keys(win).sort(), ["_nid", "innerHeight", "innerWidth"], "the primitives and the serial (framed: " + framed + ")");
+    assert.equal(Object.getOwnPropertyDescriptor(win, "parent")!.enumerable, false, "parent is an own, non-enumerable property");
+    assert.equal(win.parent !== win, framed, framed ? "framed: parent is another object" : "standalone: parent is the window itself");
+    win.dispatchEvent({ data: { type: "feed" } }); win.__rompLocalSend({ type: "needFullFeed" });
+    assert.ok(emitted.length === 1 && sent.length === 1 && typeof win.addEventListener === "function", "dispatchEvent, __rompLocalSend and addEventListener are still reachable");
+    const dump = inspect(win, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!/^\s*(parent|dispatchEvent|addEventListener|__rompLocalSend):/m.test(dump), "the window dumps an edge:\n" + dump);
+  }
 });

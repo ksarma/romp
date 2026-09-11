@@ -33,6 +33,8 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import type { PdfLib, PageInfo, PageError } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const UI = path.resolve(EXT, "..", "ui", "webview");
@@ -124,15 +126,20 @@ class El {
   textContent = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  childNodes: El[] = [];
-  parentNode: El | null = null;
+  childNodes!: El[];                        // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+  parentNode!: El | null;                   // a node inspects as its primitives, never as the tree it hangs in
   /** the width layout gives this box — set on the host; inherited by what is inside it */
   layoutWidth?: number;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | null { return this.childNodes[0] || null; }
   appendChild(c: El): El { c.remove(); c.parentNode = this; this.childNodes.push(c); return c; }
-  remove(): void { const p = this.parentNode; if (p) { p.childNodes.splice(p.childNodes.indexOf(this), 1); this.parentNode = null; } }
+  remove(): void { detach(this); }
   get clientWidth(): number { for (let n: El | null = this; n; n = n.parentNode) if (n.layoutWidth !== undefined) return n.layoutWidth; return 0; }
   *descendants(): Generator<El> { for (const c of this.childNodes) { yield c; yield* c.descendants(); } }
   querySelectorAll(sel: string): El[] {
@@ -148,6 +155,8 @@ class El {
   }
   querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] || null; }
 }
+/** Takes `n` out of its parent's childNodes, as remove() did in place; a helper so the class body assigns no edge of its own. */
+function detach(n: El): void { const p = n.parentNode; if (p) { p.childNodes.splice(p.childNodes.indexOf(n), 1); n.parentNode = null; } }
 function matches(el: El, compound: string): boolean {
   const m = /^([a-zA-Z]*)((?:\.[\w-]+)*)$/.exec(compound);
   if (!m) throw new Error("the DOM stand-in does not understand the selector " + JSON.stringify(compound) + " — extend it");
@@ -160,7 +169,7 @@ function matches(el: El, compound: string): boolean {
 class CanvasEl extends El {
   private napi: any;
   private w = 300; private h = 150;                       // the element default, as a browser's
-  constructor(create: (w: number, h: number) => any) { super("canvas"); this.napi = create(300, 150); }
+  constructor(create: (w: number, h: number) => any) { super("canvas"); this.napi = create(300, 150); hideEdges(this); }
   get width(): number { return this.w; }
   set width(v: number) { this.w = v; if (v > 0) this.napi.width = v; }
   get height(): number { return this.h; }
@@ -403,4 +412,14 @@ test("chromium: the built chunk and worker — the worker fetched at the chunk's
     assert.equal(await page.evaluate(() => { (window as any).__handle.dispose(); return document.getElementById("host")!.childNodes.length; }), 0);
     assert.deepEqual(errors, [], "no page error, no console error or warning");
   } finally { await browser.close(); }
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the DOM stand-in enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new El("div"); const kid = new El("span"); root.appendChild(kid); kid.appendChild(new El("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), n.tagName + " dumps an edge:\n" + dump);
+  }
 });

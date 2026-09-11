@@ -6,6 +6,8 @@
 // fakes are in place (its boot line installs on import). Synthetic URLs and ids only: host h, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const SID = "11111111-2222-3333-4444-555555555555";
 const g: any = globalThis;
@@ -25,6 +27,9 @@ win.PerformanceObserver = class {
   observe(opts: any): void { observed = opts; }
   disconnect(): void {}
 };
+// the stand-in's parent (itself), performance, navigator, location and observer class are non-enumerable (ui/test-dom-shim.ts
+// hideEdges): a failing assertion over the window dumps its primitives, never a cycle through parent
+hideEdges(win);
 // the socket script (kernel.py shellWS) runs AFTER the bundles: the send is read at call time, so it is set here
 // only once the module has booted (the first test), which is also the order on the page
 g.window = win;
@@ -133,4 +138,13 @@ test("shellPost: no send yet (the socket script has not run) holds too; past HEL
   send = (m) => { out.push(m); return true; };
   post({ i: "e" });
   assert.deepEqual(out.map((m) => m.i), ["a", "b", "c", "d", "e"], "the rest followed in order once the socket answered");
+});
+
+// ── the window stand-in is a projection (ui/test-dom-shim.ts): a failing assertion over it dumps primitives, never the self-referencing parent ──
+test("the window stand-in enumerates no edge of its own (the module's later writes aside), parent is non-enumerable and still the window, and a dump of it names no parent", () => {
+  for (const k of Object.keys(win)) assert.ok(staysEnumerable(win[k]) || k.startsWith("__romp"), "the stand-in keeps an enumerable edge: " + k);
+  assert.equal(Object.getOwnPropertyDescriptor(win, "parent")!.enumerable, false, "parent is an own, non-enumerable property");
+  assert.ok(win.parent === win && win.performance.now() === now && win.location.href.startsWith("http://h:1/"), "parent, performance and location are still reachable");
+  const dump = inspect(win, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+  assert.ok(!/^\s*(parent|location|navigator|PerformanceObserver):/m.test(dump), "the window dumps an edge:\n" + dump);
 });

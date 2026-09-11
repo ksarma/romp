@@ -18,6 +18,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const LINKS = fs.readFileSync(path.join(UI, "path-links.ts"), "utf8");
@@ -29,7 +31,7 @@ const SID = "11111111-2222-3333-4444-555555555555";
 type Handler = ((e: unknown) => void) | null;
 class TextNode {
   parentElement: Elm | null = null;
-  constructor(public data: string) {}
+  constructor(public data: string) { hideEdges(this); }
   replaceWith(frag: Frag): void {
     const p = this.parentElement!;
     const i = p.childNodes.indexOf(this);
@@ -38,16 +40,23 @@ class TextNode {
     p.childNodes.splice(i, 1, ...kids);
   }
 }
-class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
+class Frag {
+  childNodes!: (Elm | TextNode | string)[];
+  constructor() { Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); }
+}
 class Elm {
   className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
-  childNodes: (Elm | TextNode)[] = [];
+  childNodes!: (Elm | TextNode)[];
   attrs: Record<string, string> = {};
   role: string | null = null;
   onkeydown: Handler = null; onmousedown: Handler = null; onmouseup: Handler = null;
   onmouseleave: Handler = null; oncontextmenu: Handler = null; ondragstart: Handler = null; onfocus: Handler = null;
   clicks = 0;
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   // tabIndex reflects the attribute, as the IDL attribute does: absent → -1 (not focusable for a span)
   get tabIndex(): number { return "tabindex" in this.attrs ? Number(this.attrs.tabindex) : -1; }
   set tabIndex(v: number) { this.attrs.tabindex = String(v); }
@@ -205,4 +214,16 @@ test("source pins: the press drops the attribute (not tabIndex = -1, which a cli
   assert.match(LINKS, /a\.onmouseup = a\.onmouseleave = a\.oncontextmenu = a\.ondragstart = pathLinkRelease;/);
   assert.doesNotMatch(LINKS, /a\.onfocus = /, "not a blur on the focus event: in Chromium that clears the selection the press made");
   assert.match(LINKS, /function pathLinkRelease\(e: Event\): void \{\n\s*const a = e\.currentTarget as HTMLElement;\n\s*if \(!a\.hasAttribute\("tabindex"\)\) a\.tabIndex = 0;/);
+});
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode, parentElement nor childNodes", () => {
+  const root = new Elm("div"); const kid = new Elm("span"); root.appendChild(kid); kid.appendChild(new TextNode("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("parentElement") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

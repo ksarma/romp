@@ -23,6 +23,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -38,10 +40,16 @@ class Style {
   getPropertyValue(k: string): string { return this[k] ?? ""; }
 }
 type Kid = El | Txt;
+/** the DOM's detach: a node that left its parent's list forgets the parent. A helper, so no class assigns an edge of
+ *  its own (the ratchet in ui/test-dom-shim.test.ts reads a class's own null assignment to parentNode as an enumerable edge). */
+const detach = (n: Kid): void => { n.parentNode = null; };
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   set textContent(v: string) { this.data = v; }
   get parentElement(): El | null { return this.parentNode; }
@@ -57,7 +65,7 @@ class Txt {
     for (const n of nodes) { if (n instanceof El && n.tagName === "#FRAGMENT") kids.push(...n.childNodes.splice(0)); else kids.push(typeof n === "string" ? new Txt(n) : n); }
     for (const k of kids) { k.parentNode?.removeChild(k); k.parentNode = p; }
     p.childNodes.splice(i, 1, ...kids);
-    this.parentNode = null;
+    detach(this);
   }
   splitText(offset: number): Txt {
     const tail = new Txt(this.data.slice(offset)); this.data = this.data.slice(0, offset);
@@ -83,8 +91,8 @@ function parseCompound(s: string): Compound {
 type Ev = { type: string; target: El; currentTarget: El | Doc | null; key?: string; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 class El {
   nodeType = 1;
-  parentNode: El | null = null;
-  childNodes: Kid[] = [];
+  parentNode!: El | null;
+  childNodes!: Kid[];
   style = new Style();
   hidden = false; disabled = false; checked = false; value = ""; type = ""; placeholder = ""; rows = 0; role = "";
   offsetWidth = 0; offsetHeight = 0;
@@ -99,6 +107,8 @@ class El {
     contains: (c: string) => this.classes().has(c),
   };
   constructor(public tagName: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
     this.tagName = tagName.toUpperCase();
     this.dataset = new Proxy({} as Record<string, string | undefined>, {
       get: (_t, k) => (typeof k === "string" ? this.attrs.get("data-" + kebab(k)) : undefined),
@@ -108,6 +118,7 @@ class El {
       ownKeys: () => Array.from(this.attrs.keys()).filter((k) => k.startsWith("data-")).map((k) => camel(k.slice(5))),
       getOwnPropertyDescriptor: (_t, k) => (this.attrs.has("data-" + kebab(String(k))) ? { enumerable: true, configurable: true, value: this.attrs.get("data-" + kebab(String(k))) } : undefined),
     });
+    hideEdges(this);
   }
   private classes(): Set<string> { return new Set((this.attrs.get("class") || "").split(/\s+/).filter(Boolean)); }
   private setClasses(s: Set<string>): void { this.attrs.set("class", [...s].join(" ")); }
@@ -129,7 +140,7 @@ class El {
   get previousSibling(): Kid | null { return sib(this, -1); }
   get parentElement(): El | null { return this.parentNode; }
   get isConnected(): boolean { return this === body || body.contains(this); }
-  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; }
+  private detachAll(): void { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; }
   private adopt(c: Kid | string): Kid[] {
     if (c instanceof El && c.tagName === "#FRAGMENT") { const kids = c.childNodes.splice(0); for (const k of kids) k.parentNode = this; return kids; }
     const n = typeof c === "string" ? new Txt(c) : c; n.parentNode?.removeChild(n); n.parentNode = this; return [n];
@@ -218,6 +229,7 @@ class Doc {
   visibilityState = "visible";
   activeElement: El = this.body;
   listeners = new Map<string, Array<{ fn: (ev: Ev) => void; capture: boolean }>>();
+  constructor() { hideEdges(this); }
   createElement(tag: string): El { return new El(tag); }
   createTextNode(s: string): Txt { return new Txt(s); }
   createDocumentFragment(): El { return new El("#fragment"); }
@@ -521,3 +533,15 @@ for (const name of ["chromium", "firefox"]) {
     } finally { await browser.close(); }
   });
 }
+
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor childNodes", () => {
+  const root = new El("div"); const kid = root.appendChild(new El("span")); kid.appendChild(new Txt("x"));
+  const nodes = [root, kid, kid.childNodes[0]];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
+});

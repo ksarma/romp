@@ -8,10 +8,12 @@
 // units, and marks the view stale for a reply folded into a run. Synthetic events; epochs are seconds.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { workedFooterPlan } from "./worked-footer";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const requireCjs = createRequire(__filename);
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -158,8 +160,13 @@ test("a status-only tail (empty suffix) replaces the status and re-renders the a
 
 /** Enough of Element for the footer patch: children, a class list, data-unit, and the two selector shapes it uses. */
 class FakeEl {
-  children: FakeEl[] = []; parent: FakeEl | null = null; dataset: Record<string, string> = {}; textContent = ""; title = "";
-  constructor(public tag: string, public className = "") {}
+  children!: FakeEl[]; parent: FakeEl | null = null; dataset: Record<string, string> = {}; textContent = ""; title = "";
+  constructor(public tag: string, public className = "") {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   has(c: string): boolean { return this.className.split(/\s+/).includes(c); }
   appendChild(c: FakeEl): FakeEl { c.parent?.removeChild(c); c.parent = this; this.children.push(c); return c; }
   removeChild(c: FakeEl): void { this.children = this.children.filter((x) => x !== c); c.parent = null; }
@@ -261,4 +268,16 @@ test("compact mode: the window start is a unit and the plan wants an event index
   const w3 = footWorld(events, 4, 2); w3.v.winStart = 9;
   w3.patch(w3.v, w3.s, 4, true, items);
   assert.ok(w3.nodes.every((n) => !n.querySelector(":scope > .turn-elapsed")));
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names neither its children nor its parent", () => {
+  const root = new FakeEl("div"), turn = new FakeEl("div", "turn"); root.appendChild(turn); turn.dataset.unit = "3"; turn.textContent = "alpha";
+  for (const n of [root, turn]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parent"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(turn.parent === root && root.children[0] === turn, "the edges still hold the tree");
+  assert.ok(root.querySelector(':scope > [data-unit="3"]') === turn); turn.remove(); assert.equal(root.children.length, 0);
 });

@@ -15,6 +15,8 @@
 // own notice went while the live card's still stands.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in with a tree: parentNode, insertBefore, prepend, remove, and getElementById over it ──
 class El {
@@ -22,8 +24,8 @@ class El {
   href = ""; target = ""; rel = ""; spellcheck = true; value = "";
   style: Record<string, string> = {};
   dataset: Record<string, string> = {};
-  parentNode: El | null = null;
-  childNodes: Array<El | string> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | string>;
   private attrs = new Map<string, string>();
   private classes = new Set<string>();
   private listeners = new Map<string, Array<(ev: any) => void>>();
@@ -33,7 +35,13 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on ?? !this.classes.has(c)) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) {
+    // the tree's edges are non-enumerable, so a node inspects as its own projection and a failing assertion's dump
+    // stays small (ui/test-dom-shim.ts says why); assignments later keep them hidden
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -320,4 +328,20 @@ test("a replaced viewer's Escape handler leaves the live card's notice alone", a
   assert.ok(conflict.parentNode === null, "the old viewer's exitEdit removed its own notice, not the live card's");
   assert.equal(ta.value, TEXT + "b\n", "the kept edits are still in the buffer");
   assert.equal(b.edit.hidden, true); assert.equal(b.cancel.hidden, false, "still in edit mode");
+});
+
+// The stand-in's nodes inspect as their own projection, never as the tree: parentNode, childNodes, the attribute map,
+// the class set, the listener table, style, dataset and classList are non-enumerable, so a failing assertion's dump of
+// a node is a few lines, not the whole card (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
+test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
+  const root = new El("div");
+  const kid = root.appendChild(new El("span"));
+  kid.prepend("leaf"); kid.classList.add("row"); kid.setAttribute("data-id", "k1");
+  for (const n of [root, kid]) {
+    const o = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate: " + Object.keys(o).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.tagName);
+  }
+  assert.ok(kid.parentNode === root && root.children[0] === kid && kid.textContent === "leaf" && kid.className === "row", "the tree is reachable as before");
 });

@@ -10,6 +10,8 @@
 // cannot drift apart again without this failing. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { FIGURE_SEL } from "./figure-gate";
@@ -19,8 +21,12 @@ import { XLINK_NS } from "./md-links";
 class El {
   tagName: string;
   attrs = new Map<string, string>();
-  childNodes: El[] = [];
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  childNodes!: El[];
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   appendChild(c: El): El { this.childNodes.push(c); return c; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
@@ -256,4 +262,16 @@ test("the sanitizer drops a filter's <feImage> today (the svg profile without sv
   const addTags = MD_PURIFY.ADD_TAGS ?? [];
   assert.ok(Array.isArray(addTags), "ADD_TAGS as a predicate could admit feImage too: name tags, so this pin can read them");
   assert.ok(!addTags.map((t) => t.toLowerCase()).includes("feimage"), "ADD_TAGS is the other door to a live feImage: the same follow-through applies");
+});
+
+// ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
+test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows no childNodes", () => {
+  const root = new El("div");
+  const p = root.appendChild(new El("p")); p.appendChild(img("a.png"));
+  for (const n of [root, p]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
+  }
+  assert.ok(root.childNodes[0] === p && p.childNodes.length === 1, "the tree is reachable as before");
 });

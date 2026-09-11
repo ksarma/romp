@@ -16,6 +16,8 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { makeRender, scrollRootFor, type PdfLib, type PageInfo, type PageError } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a fake DOM: what the chunk touches of an element, and nothing else ──────────────────────────
 
@@ -24,14 +26,18 @@ class FakeEl {
   className = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  children: FakeEl[] = [];
+  children!: FakeEl[];                       // defined in the constructor, non-enumerable: an edge, not part of the node's projection
   parentElement: FakeEl | null = null;
   textContent = "";
   clientWidth = 0;
   width = 300; height = 150;                 // a canvas's element default, which the chunk must not leave in place
   ownerDocument: { body: FakeEl; documentElement: FakeEl } | undefined = undefined;
   private backing: unknown = null;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // parentElement, style, dataset and the other edges hide too: a node inspects as its primitives (ui/test-dom-shim.ts)
+  }
   appendChild(c: FakeEl): FakeEl { c.remove(); c.parentElement = this; this.children.push(c); return c; }
   remove(): void {
     const p = this.parentElement;
@@ -181,7 +187,7 @@ test("the observer's root is the viewer's scroller; a page draws when it interse
   assert.equal(io.opts.rootMargin, "100% 0px", "one scroller height of margin");
   const wraps = pagesOf(container);
   assert.equal(wraps.length, 6);
-  assert.deepEqual(io.targets, wraps, "every page's wrapper is watched");
+  sameNodes(io.targets, wraps, "every page's wrapper is watched, in page order");   // by identity (ui/test-dom-shim.ts sameNodes)
   // the first page is drawn before resolve; the rest are shells with NO bitmap (0×0, never the 300×150 element
   // default an overlay would read as the page's size) whose canvas box still has the page's aspect
   assert.deepEqual(drawn.map((p) => p.index), [1]);
@@ -354,4 +360,14 @@ test("pdf.js (legacy build) on a PDF whose page 2 is a bare integer: the documen
     assert.ok(canvasOf(pagesOf(container)[0])!.width > 0, "page 1 has its bitmap");
     h.dispose();
   } finally { console.warn = warn; }
+});
+
+// ── the fake DOM's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a fake element enumerates its primitives alone, and a dump of it names neither its children nor its parent", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.appendChild(new FakeEl("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children", "parentElement"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
+  }
 });

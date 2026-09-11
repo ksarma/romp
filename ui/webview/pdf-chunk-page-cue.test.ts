@@ -25,6 +25,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeRender, type PdfLib, type PageInfo, type PageError } from "./pdf-chunk";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const PKG = process.cwd();                                   // vscode-extension, where npm test runs
 const ROOT = path.resolve(PKG, "..");
@@ -41,7 +43,7 @@ class FakeEl {
   className = "";
   dataset: Record<string, string> = {};
   style: Record<string, string> = {};
-  children: FakeEl[] = [];
+  children!: FakeEl[];                       // defined in the constructor, non-enumerable: an edge, not part of the node's projection
   parentElement: FakeEl | null = null;
   textContent = "";
   src = ""; alt: string | undefined = undefined;   // an <img>'s, as the cue sets them
@@ -54,7 +56,11 @@ class FakeEl {
   getContext(kind: string): { canvas: FakeEl; drawImage(): void } | null {
     return kind === "2d" && this.tagName === "CANVAS" ? { canvas: this, drawImage: () => {} } : null;
   }
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // parentElement, style, dataset and the other edges hide too: a node inspects as its primitives (ui/test-dom-shim.ts)
+  }
   appendChild(c: FakeEl): FakeEl { c.remove(); c.parentElement = this; this.children.push(c); return c; }
   remove(): void {
     const p = this.parentElement;
@@ -622,5 +628,15 @@ test("in Chromium: a heavy page entering the margin carries the loader over its 
     assert.equal(await page.evaluate(() => document.getElementById("host")!.childNodes.length), 0);
   } finally {
     await browser.close();
+  }
+});
+
+// ── the fake DOM's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps an element's primitives, never the tree ──
+test("a fake element enumerates its primitives alone, and a dump of it names neither its children nor its parent", () => {
+  const root = new FakeEl("div"); const kid = new FakeEl("span"); root.appendChild(kid); kid.appendChild(new FakeEl("canvas"));
+  for (const n of [root, kid]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), n.tagName + " keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parentNode", "childNodes", "children", "parentElement"]) assert.ok(!dump.includes(edge), n.tagName + " dumps " + edge + ":\n" + dump);
   }
 });

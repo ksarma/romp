@@ -15,6 +15,8 @@
 // Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -24,8 +26,8 @@ class Doc {
   createElement(tag: string): E { return new E(this, tag.toUpperCase()); }
 }
 class E {
-  parentNode: E | null = null;
-  childNodes: E[] = [];
+  parentNode!: E | null;
+  childNodes!: E[];
   attrs = new Map<string, string>();
   listeners = new Map<string, Array<(ev: unknown) => void>>();
   title = ""; tabIndex = -1;
@@ -42,10 +44,13 @@ class E {
     contains: (c: string) => this.classes().includes(c),
   };
   constructor(public ownerDocument: Doc, public tagName: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
     this.dataset = new Proxy({} as Record<string, string | undefined>, {
       get: (_t, k) => (typeof k === "string" ? this.attrs.get("data-" + String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase())) : undefined),
       set: (_t, k, v) => { this.attrs.set("data-" + String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()), String(v)); return true; },
     });
+    hideEdges(this);
   }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
@@ -188,4 +193,16 @@ test("without a ResizeObserver the window's resize stands in, and dispose remove
   h.img.rect = rectOf(20, 68, 300, 150);
   win.dispatchEvent(new Event("resize"));
   assert.equal(h.style(), last, "a resize after dispose reaches nothing");
+});
+
+// ── the projection: a node's edges are own, non-enumerable properties (ui/test-dom-shim.ts), so a failing
+// assertion's dump of a node stops at the node instead of walking the tree ────────────────────────────
+test("a node of the stand-in enumerates its primitives alone, and its dump names neither its parent nor its children", () => {
+  const root = doc.createElement("div"), row = root.appendChild(doc.createElement("p")), leaf = row.appendChild(doc.createElement("span"));
+  leaf.setAttribute("data-id", "x");
+  for (const n of [root, row, leaf] as any[]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable(n[k])), "every enumerable own property is a primitive: " + Object.keys(n).join(", "));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump stops at the node");
+  }
 });

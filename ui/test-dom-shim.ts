@@ -1,25 +1,45 @@
-// The house fake DOM for the timeline tests: one node factory, shared by the fifteen ui/timeline-*.test.ts that build
-// the panel on a fake DOM and by ui/webview/tab-color-picker.test.ts (sixteen files at 2026-09-10; the other fourteen
-// ui/timeline-*.test.ts fake no DOM), in place of the sixteen near-copies those files carried (the fifteen siblings'
-// and the tags-scale test's own: nine textual variants of one shape, unified 2026-09-10). A node is a plain object the
-// real TimelinePanel drives: children, parentNode, attributes, classList, style, dataset, text, listeners, geometry,
-// focus and the caret. A test installs its own fake `document` and window on globalThis around it, as before.
+// The house fake DOM for the UI tests. One node factory, shared by the sixteen ui/timeline-*.test.ts that build the
+// panel on a fake DOM and by ui/webview/tab-color-picker.test.ts (seventeen files at 2026-09-10; the other fourteen
+// ui/timeline-*.test.ts fake no DOM), in place of the seventeen near-copies those files carried (the sixteen siblings'
+// and the tags-scale test's own: textual variants of one shape, unified 2026-09-10), and taken outright by
+// ui/webview/timeline-boot.test.ts. Every other file that fakes a DOM (the 163 ui/webview test files that call
+// hideEdges at 2026-09-10, every one in the ratchet's detector's view, which ui/test-dom-shim.test.ts pins) keeps its
+// own node classes, window stand-ins or node literals and reaches this module through hideEdges and staysEnumerable,
+// so one rule covers them all, through assertHiddenEvent for the pin on its event class where it has one, and through
+// sameNodes for its assertions over node lists; this module's own test pins the rule on factory nodes and scratch
+// objects, and the two files the ratchet's NON_DOM_EDGES lists reach it through nothing. A factory node is a plain
+// object the real TimelinePanel drives:
+// children, parentNode, attributes, classList, style, dataset, text, listeners, geometry, focus and the caret. A test
+// installs its own fake `document` and window on globalThis around it, as before.
 //
 // A NODE INSPECTS AS ITS OWN PROJECTION, never as the tree. At creation, hideEdges makes every own property that holds
 // an object (children, parentNode, the listener tables, classList, the attribute, style and dataset records, every
 // method) and every accessor (firstChild, textContent, scrollTop) non-enumerable, so a fresh node enumerates as its
-// primitives alone: the tag, its text, value, caret and scroll offsets. The rule is STRUCTURAL, not a key list: an
-// edge the shim grows later (upstream's copy of the tags-scale test gives every node an enumerable _ownerDoc and an
-// ownerDocument accessor) is hidden by the same rule, where a key list missed it. null counts as an object here,
-// because parentNode starts null and holds a node later, and an assignment to an existing property keeps its
-// enumerability. The rule runs once, at creation, so a property hung on a node AFTERWARDS enumerates, whatever its
-// type: the shim's own later write (_sel, from select and setSelectionRange) is defined non-enumerable, but product
+// primitives alone: the tag, its text, value, caret and scroll offsets, and the serial below. The rule is STRUCTURAL,
+// not a key list: an edge the shim grows later (upstream's copy of the tags-scale test gives every node an enumerable
+// _ownerDoc and an ownerDocument accessor) is hidden by the same rule, where a key list missed it. null counts as an
+// object here, because parentNode starts null and holds a node later, and an assignment to an existing property keeps
+// its enumerability. The price is that a failing assertion's dump of a node no longer shows its attributes, style or
+// classes; the message the assertion carries is where those belong.
+//
+// THE SERIAL. hideEdges stamps every node it hides with _nid, an enumerable per-process serial, once: a second call on
+// the same node keeps the first. Two projections therefore agree only for the same node, so a deepEqual meant as
+// identity FAILS for the wrong node instead of passing on a look-alike (until 2026-09-10 two fresh nodes of one tag were
+// deepEqual, and nine assertions across seven webview tests had stopped telling WHICH node came back); a deepEqual of a
+// node with itself still passes, and a failing dump grows by one short line. Assert a node list with sameNodes(actual,
+// expected, message): the same length and the same node at every index, or one line naming the index and both tags.
+//
+// WHAT THE RULE DOES NOT REACH. It runs once, at creation, so a property hung on a node AFTERWARDS enumerates, whatever
+// its type: the shim's own later write (_sel, from select and setSelectionRange) is defined non-enumerable, but product
 // code's are not, and the timeline hangs strings (_key, _tname, _sid), a function (a menu's _build), records (a menu's
 // _session, a popover's _anchorAt) and a node (the meta menu's _sub) on nodes it builds. A function inspects as one
-// line and a record carries no DOM edge, but a node-valued property re-opens a path for a failing dump to walk; the
-// projection pins (ui/test-dom-shim.test.ts, and ui/timeline-tags-scale.test.ts over a live dialog) and the runner's
-// cgroup cap are the backstop for that, not this rule. The price is that a failing assertion's dump of a node no
-// longer shows its attributes, style or classes; the message the assertion carries is where those belong.
+// line and a record carries no DOM edge. A node the product decorated dumps its own primitives plus the product's
+// references, each of which is itself a node whose edges are hidden, so the dump is bounded by the count of hung
+// references (and of theirs, in turn), never by the tree: feed.ts hangs some fifty node references on each card it
+// renders (its title, rows, bell and the rest), so a rendered card dumps in about 1.3k lines where a bare node dumps
+// in about 25, and the five feed tests pin that bound over a rendered card (under 3,000 lines, no parentNode or
+// childNodes key). The projection pins (ui/test-dom-shim.test.ts, and ui/timeline-tags-scale.test.ts over a live
+// dialog) and the runner's cgroup cap are the backstop for anything past that, not this rule.
 //
 // Why: on 2026-09-09 the review's mutation runs of ui/timeline-tags-scale.test.ts grew to 100 GB five times
 // before earlyoom killed them. assert/strict's equal and deepEqual build a diff on failure even when given a
@@ -29,9 +49,13 @@
 // of 2(N+M)+1 entries per edit-distance level: a 71k-line dump against `null` costs 8N^2 bytes, some 40 GB,
 // allocated outside the V8 heap where --max-old-space-size cannot see it. With the projection the same failing
 // assertion returns at once with a message of a few lines. ui/timeline-tags-scale.test.ts pins the projection
-// over a live dialog at scale; ui/test-dom-shim.test.ts pins the rule itself and keeps a ratchet over the other
-// test files' node factories. Compare node IDENTITY with `a === b` behind a message (the tests' `same()`
-// helper), never assert.equal: a deepEqual of two nodes compares projections now, not trees.
+// over a live dialog at scale; ui/test-dom-shim.test.ts pins the rule, the serial and sameNodes, and keeps a ratchet
+// over the other test files' node factories. Compare one node's identity with `a === b` behind a message (the tests'
+// `same()` helper) and a node list with sameNodes, never assert.equal or deepEqual: a deepEqual of two nodes compares
+// projections, which the serial makes unequal for distinct nodes, but its failure is a diff of two projections;
+// sameNodes names the index and both tags and serials instead.
+import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 
 export type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 
@@ -44,14 +68,63 @@ const g: any = globalThis;
  *  undefined are placeholders for objects (parentNode starts null), so they hide with the objects. */
 export const staysEnumerable = (v: unknown): boolean => v != null && typeof v !== "object" && typeof v !== "function";
 
+let serial = 0;
+
 /** Every own enumerable property of `n` that holds an object, an array, a function, null or undefined, and
- *  every accessor, becomes non-enumerable; primitives stay. Idempotent. Returns `n`. */
+ *  every accessor, becomes non-enumerable; primitives stay. First, `n` gets `_nid`, the serial, if it has none:
+ *  an enumerable number that tells its projection from every other node's. Idempotent (a second call hides
+ *  nothing new and keeps the serial). Returns `n`. */
 export function hideEdges<T extends object>(n: T): T {
+  if (!Object.prototype.hasOwnProperty.call(n, "_nid")) (n as any)._nid = ++serial;
   for (const k of Object.keys(n)) {
     const d = Object.getOwnPropertyDescriptor(n, k)!;
     if (!("value" in d) || !staysEnumerable(d.value)) Object.defineProperty(n, k, { enumerable: false });
   }
   return n;
+}
+
+/** A node's tag and serial for a message: `DIV#12` (tagName, tag or nodeName, else the class name), or the value
+ *  itself when it is not an object. */
+export function describeNode(n: unknown): string {
+  if (n === null || typeof n !== "object") return String(n);
+  const o = n as any;
+  const tag = o.tagName ?? o.tag ?? o.nodeName ?? (o.constructor && o.constructor.name) ?? "object";
+  return typeof o._nid === "number" ? String(tag) + "#" + o._nid : String(tag);
+}
+
+/** Asserts that `actual` holds the same nodes as `expected`, by identity and in order: the same length, and `===`
+ *  at every index. On failure the AssertionError carries `message` and one line naming the index and both sides'
+ *  tags and serials, never a dump of either list. This is the assertion for a node list where a deepEqual once
+ *  stood: two distinct nodes are not deepEqual either (the serial), but that failure is a diff of two projections
+ *  where this one says which node came back and where. */
+export function sameNodes(actual: ArrayLike<unknown> | null | undefined, expected: ArrayLike<unknown>, message: string): void {
+  if (!actual) assert.fail(message + ": no node list, got " + String(actual) + " where " + expected.length + " nodes were expected");
+  if (actual.length !== expected.length) assert.fail(message + ": " + actual.length + " nodes where " + expected.length + " were expected");
+  for (let i = 0; i < expected.length; i++) {
+    if (actual[i] !== expected[i]) assert.fail(message + ": index " + i + " is another node: got " + describeNode(actual[i]) + ", expected " + describeNode(expected[i]));
+  }
+}
+
+// node's assert inspects the two sides of a failed strict assertion with these options (lib/internal/assert/
+// assertion_error.js, inspectValue) before it diffs them line by line; assertHiddenEvent dumps with the same ones
+const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+
+/** Asserts that an event-shaped object hides its `target` and `currentTarget` the way a node hides its edges: assigns
+ *  `target` and `currentTarget` (two nodes from the calling test's own tree), then requires each to be an own
+ *  NON-ENUMERABLE property and the event's assert-style dump to name neither key. This is the executed check on an Ev
+ *  class whose constructor ends in hideEdges(this): with the call removed, the two null-initialised fields enumerate,
+ *  dispatch's later writes fill them with nodes, and a failing assertion over the event dumps the tree through them.
+ *  Every assertion here carries a primitive-valued message, so the pin itself never dumps a node. */
+export function assertHiddenEvent(ev: object, target: unknown, currentTarget: unknown): void {
+  const e = ev as any;
+  e.target = target; e.currentTarget = currentTarget;
+  for (const k of ["target", "currentTarget"]) {
+    const d = Object.getOwnPropertyDescriptor(e, k);
+    assert.ok(d !== undefined && d.enumerable === false, k + " is an own, non-enumerable property of the event (hideEdges(this) at the end of the Ev constructor); enumerable: " + String(d ? d.enumerable : "no own property"));
+  }
+  const dump = inspect(e, ASSERT_INSPECT);
+  assert.ok(!dump.includes("target"), "the event's dump names no target or currentTarget: " + dump.split("\n").length + " lines");
+  assert.ok(e.target === target && e.currentTarget === currentTarget, "the two nodes are still reachable through the hidden properties");
 }
 
 /** Defines `k` on `n` as a non-enumerable own property, writable and configurable (so a later write or define still

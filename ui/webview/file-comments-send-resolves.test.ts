@@ -9,8 +9,10 @@
 // Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, StoreComment, Hunk } from "./file-comments-model";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in: ancestry, attributes, events with capture and bubbling, a small selector engine ──
 class Ev {
@@ -20,7 +22,7 @@ class Ev {
   stopped = false;
   key: string;
   ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -29,8 +31,11 @@ type Reg = { type: string; cb: Listener; capture: boolean };
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 class Txt {
   nodeType = 3;
-  parentNode: El | null = null;
-  constructor(public data: string) {}
+  parentNode!: El | null;
+  constructor(public data: string) {
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.data; }
   get length(): number { return this.data.length; }
   get parentElement(): El | null { return this.parentNode; }
@@ -56,15 +61,20 @@ function parseSel(sel: string): Compound[][] {
 class El {
   nodeType = 1;
   tagName: string;
-  parentNode: El | null = null;
-  childNodes: Array<El | Txt> = [];
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
   hidden = false; disabled = false; readOnly = false; title = ""; type = ""; value = ""; checked = false; placeholder = "";
   innerHTML = "";
   style: Record<string, string> = {};
   rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get ownerDocument(): typeof doc { return doc; }
   get parentElement(): El | null { return this.parentNode; }
   get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
@@ -86,7 +96,7 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
@@ -96,7 +106,7 @@ class El {
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
   removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes = []; for (const x of c) this.appendChild(x); }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
   remove(): void { this.detach(this); }
   normalize(): void {
     const out: Array<El | Txt> = [];
@@ -449,4 +459,19 @@ test("a send with no bound comment: the same words, the same plain acknowledgmen
   sent(w); await flush(); answer(w, status({ storeMtimeNs: "1757145600000000005", hunks: [], unsent: NO_UNSENT })); await flush();
   assert.equal(foldOf(aside), null, "no resolved comment, no fold");
   assert.match(aside.querySelector(".fc-sent")!.textContent, /^Sent to api at [^·]+$/, "the plain acknowledgment");
+});
+
+test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {
+  const root = doc.createElement("div");
+  const kid = doc.createElement("span");
+  root.appendChild(kid);
+  kid.appendChild(doc.createTextNode("leaf"));
+  root.setAttribute("data-x", "1"); root.classList.add("c");
+  for (const n of [root, kid, kid.firstChild as Txt]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as unknown as Record<string, unknown>)[k])), "only primitives stay enumerable on " + n.constructor.name);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump: " + dump);
+  }
+  // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
+  assertHiddenEvent(new Ev("click"), root, kid);
 });

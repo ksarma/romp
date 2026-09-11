@@ -17,6 +17,8 @@
 // placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
@@ -48,9 +50,15 @@ class Doc {
 }
 class N {
   nodeType = 0;
-  parentNode: N | null = null;
-  childNodes: N[] = [];
-  constructor(public ownerDocument: Doc) {}
+  parentNode!: N | null;
+  childNodes!: N[];
+  constructor(public ownerDocument: Doc) {
+    // the tree's edges are non-enumerable, so a node inspects as its own projection and a failing assertion's dump
+    // stays small (ui/test-dom-shim.ts says why); assignments later keep them hidden
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get parentElement(): E | null { return this.parentNode instanceof E ? this.parentNode : null; }
   get firstChild(): N | null { return this.childNodes[0] || null; }
   get textContent(): string { return this.nodeType === 3 ? (this as unknown as T).data : this.childNodes.map((c) => c.textContent).join(""); }
@@ -64,7 +72,7 @@ class N {
 }
 class T extends N {
   nodeType = 3;
-  constructor(doc: Doc, public data: string) { super(doc); }
+  constructor(doc: Doc, public data: string) { super(doc); hideEdges(this); }
   get length(): number { return this.data.length; }
   splitText(offset: number): T {
     const tail = new T(this.ownerDocument, this.data.slice(offset));
@@ -118,6 +126,7 @@ class E extends N {
       deleteProperty: (_t, k) => { this.attrs.delete("data-" + kebab(k)); return true; },
       has: (_t, k) => this.attrs.has("data-" + kebab(k)),
     });
+    hideEdges(this);
   }
   /** As the browser has it: a tabindex attribute, else 0 for a button, an input or a textarea, else -1. */
   get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
@@ -687,3 +696,20 @@ for (const name of ["chromium", "firefox"] as const) {
     });
   });
 }
+
+// The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the
+// attribute map, the listener table, style, dataset, classList) is non-enumerable, so a failing assertion's dump of a
+// node is a few lines, not the whole document (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
+test("stand-in: a node enumerates its primitives alone and inspects without its edges", () => {
+  const root = doc.createElement("div");
+  const kid = root.appendChild(doc.createElement("span"));
+  kid.appendChild(doc.createTextNode("leaf"));
+  kid.setAttribute("data-id", "k1");
+  for (const n of [root, kid, kid.firstChild!]) {
+    const o = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate on " + n.constructor.name + ": " + Object.keys(o).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "no edge in the dump of " + n.constructor.name);
+  }
+  assert.equal(kid.parentNode, root); assert.equal(root.childNodes.length, 1); assert.equal(kid.textContent, "leaf");
+});

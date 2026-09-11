@@ -10,7 +10,9 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { inspect } from "node:util";
 import type { EditorView } from "@codemirror/view";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { changeHandlers, releaseHover, CLS, type TrackHost } from "./track-decorations";
 
 const DECO = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "track-decorations.ts"), "utf8");
@@ -32,10 +34,15 @@ function matches(el: El, sel: string): boolean {
 }
 class El {
   classes = new Set<string>();
-  parent: El | null = null;
-  ownerDocument: Doc | null = null;
+  parent!: El | null;                 // both edges are defined in the constructor, non-enumerable (ui/test-dom-shim.ts hideEdges):
+  ownerDocument!: Doc | null;         // a node inspects as its primitives, never as the tree or the document it hangs in
   readonly classList = { add: (c: string) => { this.classes.add(c); }, remove: (c: string) => { this.classes.delete(c); } };
-  constructor(readonly attrs: Record<string, string> = {}, cls: string[] = []) { cls.forEach((c) => this.classes.add(c)); }
+  constructor(readonly attrs: Record<string, string> = {}, cls: string[] = []) {
+    cls.forEach((c) => this.classes.add(c));
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "ownerDocument", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);   // classes, classList and attrs hide too
+  }
   getAttribute(n: string): string | null { return n in this.attrs ? this.attrs[n] : null; }
   closest(sel: string): El | null { for (let e: El | null = this; e; e = e.parent) if (matches(e, sel)) return e; return null; }
   contains(other: unknown): boolean { for (let e = other as El | null; e; e = e.parent) if (e === this) return true; return false; }
@@ -132,4 +139,15 @@ test("track-decorations.ts names departure 9 and short-circuits on the key alone
   assert.match(DECO, /^\/\/\s*9\. FIX: the hover cache short-circuits a crossing over plain text while nothing is cued/m);
   assert.match(DECO, /if \(key === lastHoverKey && \(key == null \|\| scope === lastHoverRoot\)\) return;/);
   assert.match(DECO, /track-decorations-hover-cost\.test\.ts/, "the source points at this module");
+});
+
+// ── the stand-in's nodes are projections (ui/test-dom-shim.ts): a failing assertion dumps a node's primitives, never the tree ──
+test("a node of the document stand-in enumerates its primitives alone, and a dump of it names neither parent nor ownerDocument", () => {
+  const doc = new Doc(); const v = view(doc); const a = pair(v);
+  for (const n of [v.dom, a.ins, a.text]) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "an El keeps an enumerable edge: " + Object.keys(n).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    for (const edge of ["parent", "ownerDocument", "attrs", "classes", "els"]) assert.ok(!dump.includes(edge), "an El dumps " + edge + ":\n" + dump);
+  }
+  assert.ok(a.ins.parent === v.dom && a.ins.ownerDocument === doc && a.ins.closest(".cm-editor") === v.dom && v.dom.contains(a.ins), "the edges are still reachable");
 });

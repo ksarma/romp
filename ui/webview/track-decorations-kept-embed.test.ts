@@ -13,12 +13,14 @@
 // really reads un-struck) is the sheets' to pin, with their rules.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EditorState } from "@codemirror/state";
 import { EditorView, type DecorationSet, type WidgetType } from "@codemirror/view";
 import { makeSuggestionField, setSuggestions } from "../../vendor/track-changents/obsidian/src/track-cm.js";
 import { trackDecorations, displayItems, CLS, type TrackHost, type TrackRecord } from "./track-decorations";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 
 const DECO = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "track-decorations.ts"), "utf8");
 const codeOnly = (src: string) => src.split("\n").map((l) => l.replace(/\s\/\/.*$/, "")).filter((l) => { const t = l.trim(); return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*"); }).join("\n");
@@ -34,12 +36,17 @@ class Node {
   attrs: Record<string, string> = {};
   vars: Record<string, string> = {};
   readonly style = { setProperty: (k: string, v: string) => { this.vars[k] = v; } };
-  children: Node[] = [];
+  children!: Node[];
   listeners: string[] = [];
   private text = "";
-  constructor(readonly tag: string) {}
+  constructor(readonly tag: string) {
+    // the edges are non-enumerable, and so is every other object the node holds (hideEdges, ui/test-dom-shim.ts): a
+    // failing assertion's dump of a node is its own primitives, never the tree it hangs in
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   get textContent(): string { return this.children.length ? this.children.map((c) => c.textContent).join("") : this.text; }
-  set textContent(v: string) { this.text = v; this.children = []; }
+  set textContent(v: string) { this.text = v; this.children.length = 0; }
   appendChild(c: Node): Node { this.children.push(c); return c; }
   setAttribute(k: string, v: string): void { this.attrs[k] = v; }
   addEventListener(type: string): void { this.listeners.push(type); }
@@ -134,4 +141,16 @@ test("the two names are set in one place, and departure 4 names them for the she
   assert.match(DECO, /^\/\/\s*4\. Class names are romp's:[\s\S]*?tc-diff-del-seg over each removed run and tc-diff-del-kept-embed over the kept token/m);
   assert.match(DECO, /must also stop the propagation/, "the wrapper's line-through paints through an inline descendant");
   assert.match(DECO, /track-decorations-kept-embed\.test\.ts pins the names/, "the source points at this pin");
+});
+
+// ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────
+test("a stand-in node enumerates its primitives alone, and a dump of one names no children", () => {
+  const root = new Node("div"), row = new Node("span"); root.appendChild(row); row.textContent = "alpha"; row.className = SEG;
+  for (const n of [root, row]) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("children") && !dump.includes("parentNode") && !dump.includes("childNodes"), "a dump stays on the node: " + dump);
+  }
+  assert.ok(root.children[0] === row, "the edge still holds the tree"); assert.equal(root.textContent, "alpha");
+  root.textContent = "gone"; assert.equal(root.children.length, 0, "the DOM's setter drops the children"); assert.equal(root.textContent, "gone");
 });

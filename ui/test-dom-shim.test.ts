@@ -1,28 +1,34 @@
 // The shared fake-DOM shim's PROJECTION RULE, pinned on its own (ui/test-dom-shim.ts; ui/timeline-tags-scale.test.ts
-// pins it over a live dialog at scale), and a RATCHET over the other UI test files, one rule for every file under
-// ui/: a test file whose CODE initialises an edge-named property (parentNode, parentElement, parent, childNodes,
-// children, firstChild, lastChild, nextSibling, previousSibling, ownerDocument or host) as a plain enumerable own
-// property, in any shape the detector below reads (comments and the contents of string, template and regex literals
-// are blanked first, so a source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from
-// the shared shim (a named or a namespace import, either quote style on the specifier, with or without .js; an import
-// without a call in code is not switched) or is named on the allowlist below, the files that predate the rule, whose
-// length ALLOWLIST_MAX pins exactly: a renamed file replaces its entry, a file that comes off lowers the constant in
-// the same commit, a new file may not join. There is no vocabulary gate: a window stand-in's parent, a goal
-// fixture's children and a class's parentNode are the same kind of property, a failing dump walks each, and the
-// cure for a fake is the same one-line call. The rule hides the edges at CREATION: a property product code hangs on a node
-// later enumerates, whatever its type, and a node-valued one re-opens a path for a failing dump to walk; the
-// projection pins here and in the tags-scale test, plus the runner's cgroup cap, are the backstop for that. Source
-// pins over ui/**/*.test.ts, the repo convention. Why both: on 2026-09-09 a failing strict assertion with a fake
-// node on one side allocated tens of GB (node's assert dumps both sides at depth 1000 with getters on, then diffs
-// the dumps with a Myers trace that costs 8N^2 bytes outside the V8 heap); the projection is what stops it, and the
-// class-based shims still can do it (a feed card in ui/webview/feed-keynav-covered.test.ts dumps as 318,835 lines).
+// pins it over a live dialog at scale) with the SERIAL that tells two projections apart and sameNodes, the assertion
+// over a node list, and a RATCHET over the other UI test files, one rule for every file under ui/: a test file whose
+// CODE initialises an edge-named property (parentNode, parentElement, parent, childNodes, children, firstChild,
+// lastChild, nextSibling, previousSibling, ownerDocument or host) as a plain enumerable own property, in any shape
+// the detector below reads (comments and the contents of string, template and regex literals are blanked first, so a
+// source pin or a comment is not code), either CALLS hideEdges( or nodeFactory( imported from the shared shim (a named
+// or a namespace import, either quote style on the specifier, with or without .js; an import without a call in code
+// is not switched), or is named on one of the two lists below, each pinned to its exact length by a constant:
+// ALLOWLIST, the unmigrated fakes, empty since 2026-09-10 and never to grow (a file that comes off lowers the constant
+// in the same commit, a new file may not join), and NON_DOM_EDGES, the files whose edge-named key is a documented
+// non-DOM use (a data fixture, a list model), each with its reason and the count of edge-initialising lines the
+// detector reads in it, pinned so a fake that grows in a listed file trips. There is no
+// vocabulary gate: a window stand-in's parent, a goal fixture's children and a class's parentNode are the same kind
+// of property to a regex, a failing dump walks each, and the cure for a fake is the same one-line call. The rule hides
+// the edges at CREATION: a property product code hangs on a node later enumerates, whatever its type, and a
+// node-valued one re-opens a path for a failing dump to walk; the projection pins here and in the tags-scale test,
+// plus the runner's cgroup cap, are the backstop for that. Source pins over ui/**/*.test.ts, the repo convention. Why
+// both: on 2026-09-09 a failing strict assertion with a fake node on one side allocated tens of GB (node's assert
+// dumps both sides at depth 1000 with getters on, then diffs the dumps with a Myers trace that costs 8N^2 bytes
+// outside the V8 heap); the projection is what stops it, and until 2026-09-10 every other enumerable-edge fake in the
+// tree could still do it (a feed card in ui/webview/feed-keynav-covered.test.ts dumped as 318,835 lines; at this head
+// it dumps in about 1,300, bounded by feed.ts's hung references, and the five feed tests pin the bound under 3,000).
+// The paragraph above ALLOWLIST is the one account of the migration.
 // Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { inspect } from "node:util";
-import { nodeFactory, hideEdges, staysEnumerable, FLAT_RECT } from "./test-dom-shim";
+import { nodeFactory, hideEdges, staysEnumerable, sameNodes, describeNode, FLAT_RECT } from "./test-dom-shim";
 
 // node's assert inspects the two sides of a failed strict assertion with these options
 // (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
@@ -36,7 +42,7 @@ const lines = (s: string) => s.split("\n").length;
 test("a fresh node enumerates its primitives alone; the edges, records, methods and accessors are non-enumerable and still reachable", () => {
   const n = makeNode("div");
   for (const k of Object.keys(n)) assert.ok(staysEnumerable(n[k]), k + " is enumerable and holds a " + typeof n[k]);
-  assert.deepEqual(Object.keys(n).sort(), ["_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], "the projection");
+  assert.deepEqual(Object.keys(n).sort(), ["_nid", "_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], "the projection");
   for (const k of ["children", "parentNode", "_attrs", "style", "dataset", "classList", "_listeners", "_stacks", "appendChild", "getBoundingClientRect", "firstChild", "textContent", "scrollTop"]) {
     const d = Object.getOwnPropertyDescriptor(n, k);
     assert.ok(d && d.enumerable === false, k + " is an own, non-enumerable property");
@@ -54,12 +60,27 @@ test("a fresh node enumerates its primitives alone; the edges, records, methods 
 test("the rule on a bare object: objects, arrays, functions, null, undefined and accessors hide; strings, numbers, booleans stay; twice is the same", () => {
   const o: any = { s: "x", i: 1, b: true, z: null, u: undefined, r: {}, l: [], f() { return 1; }, get acc() { return 2; } };
   hideEdges(o);
-  assert.deepEqual(Object.keys(o).sort(), ["b", "i", "s"]);
+  assert.deepEqual(Object.keys(o).sort(), ["_nid", "b", "i", "s"], "the primitives, and the serial the call stamped");
+  const nid = o._nid;
   hideEdges(o);
-  assert.deepEqual(Object.keys(o).sort(), ["b", "i", "s"], "idempotent");
+  assert.deepEqual(Object.keys(o).sort(), ["_nid", "b", "i", "s"], "idempotent");
+  assert.equal(o._nid, nid, "the second call keeps the serial");
   assert.equal(o.f(), 1); assert.equal(o.acc, 2); assert.deepEqual(o.l, []); assert.equal(o.z, null);
   assert.deepEqual([staysEnumerable("a"), staysEnumerable(0), staysEnumerable(false), staysEnumerable(10n), staysEnumerable(Symbol("s"))], [true, true, true, true, true]);
   assert.deepEqual([staysEnumerable(null), staysEnumerable(undefined), staysEnumerable({}), staysEnumerable([]), staysEnumerable(() => 0)], [false, false, false, false, false]);
+});
+
+test("an event-shaped object: hideEdges hides target and currentTarget (null at construction, nodes after dispatch), the primitives stay, and a dump of the event names no node", () => {
+  // the shape the webview tests' Ev classes take: target and currentTarget start null, and dispatch assigns nodes later
+  class Ev { target: any = null; currentTarget: any = null; defaultPrevented = false; key: string; constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; hideEdges(this); } }
+  const ev = new Ev("keydown", { key: "Enter" });
+  assert.deepEqual(Object.keys(ev).sort(), ["_nid", "defaultPrevented", "key", "type"], "the primitives and the serial");
+  const root = makeNode("div"), n = root.createDiv({ text: "x" });
+  ev.target = n; ev.currentTarget = root;   // dispatch's later writes to existing properties keep them non-enumerable
+  for (const k of ["target", "currentTarget"]) assert.equal(Object.getOwnPropertyDescriptor(ev, k)!.enumerable, false, k + " is an own, non-enumerable property");
+  same(ev.target, n); same(ev.currentTarget, root);
+  const dump = inspect(ev, ASSERT_INSPECT);
+  assert.ok(!dump.includes("target") && !dump.includes("tag:") && lines(dump) <= 12, "the event dumps its own primitives alone, got:\n" + dump);
 });
 
 test("after construction: a property product code hangs on a node enumerates whatever its type, and stays bounded on its own; the shim's own later write (_sel) does not", () => {
@@ -76,11 +97,11 @@ test("after construction: a property product code hangs on a node enumerates wha
     for (const step of order) step === "select" ? m.select() : m.setSelectionRange(1, 2);
     const d = Object.getOwnPropertyDescriptor(m, "_sel")!;
     assert.ok(d && d.enumerable === false && d.writable && d.configurable, order.join(" then ") + ": _sel is an own, non-enumerable, writable property");
-    assert.deepEqual(Object.keys(m).sort(), ["_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], order.join(" then ") + ": the projection is unchanged");
+    assert.deepEqual(Object.keys(m).sort(), ["_nid", "_scrollTop", "_text", "selectionEnd", "selectionStart", "tag", "value"], order.join(" then ") + ": the projection is unchanged");
   }
 });
 
-test("a failing assertion on a node in a deep chain-first tree returns a short message; a deepEqual of two nodes compares projections", () => {
+test("a failing assertion on a node in a deep chain-first tree returns a short message; a deepEqual of two nodes compares projections, which the serial tells apart", () => {
   // depth 24 along first children with five siblings at every level: the shape whose dump passed util.inspect's
   // 2^27-character budget at depth 17 before the rule (the first-child getter re-expanded children[0] per level)
   const root = makeNode("div"); let cur = root;
@@ -93,9 +114,48 @@ test("a failing assertion on a node in a deep chain-first tree returns a short m
     let msg = ""; try { assert.equal(n, null, "a node against null"); } catch (e: any) { msg = String(e.message); }
     assert.ok(msg && lines(msg) <= 40, what + " against null: a short message, got " + lines(msg) + " lines");
   }
-  // two fresh nodes are deepEqual, their projections agree: node identity is compared with ===, behind a message
-  assert.deepEqual(makeNode("div"), makeNode("div"));
-  assert.ok(makeNode("div") !== makeNode("div"));
+  // two fresh nodes are NOT deepEqual: their projections differ in the serial (until 2026-09-10 they agreed, and a
+  // deepEqual meant as identity passed for any node of the tag). A node is deepEqual to itself; identity is still ===
+  const a = makeNode("div"), b = makeNode("div");
+  assert.notDeepEqual(a, b, "two fresh nodes of one tag project differently");
+  assert.deepEqual(a, a);
+  assert.ok(a !== b);
+  let msg = ""; try { assert.deepEqual(a, b); } catch (e: any) { msg = String(e.message); }
+  assert.ok(msg.includes("_nid") && lines(msg) <= 40, "the failing deepEqual names the serial in a short diff, got " + lines(msg) + " lines");
+});
+
+test("the serial: every node hideEdges touches carries an enumerable, distinct, increasing _nid, stamped once; sameNodes asserts a node list by identity with a one-line message", () => {
+  const nodes = [makeNode("div"), makeNode("span"), makeNode("div")];
+  for (const n of nodes) assert.ok(typeof n._nid === "number" && Object.getOwnPropertyDescriptor(n, "_nid")!.enumerable, "an enumerable number");
+  assert.ok(nodes[0]._nid < nodes[1]._nid && nodes[1]._nid < nodes[2]._nid, "increasing in creation order");
+  assert.equal(new Set(nodes.map((n) => n._nid)).size, 3, "distinct");
+  const kid = nodes[0].createDiv({}); assert.ok(kid._nid > nodes[2]._nid, "a child made later has a later serial");
+  // the class idiom the webview tests use: a constructor that defines its edges non-enumerable and ends in hideEdges(this),
+  // and a subclass constructor that calls it again; the node gets one serial, from the first call. The edges here are
+  // named up and kids, not by their DOM names, so this file does not trip its own ratchet (the scratch sources use EDGE)
+  class El { up!: El | null; kids: El[]; tagName: string; constructor(tag: string) { this.tagName = tag; this.kids = []; Object.defineProperty(this, "up", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); } }
+  class Txt extends El { data: string; constructor(d: string) { super("#text"); this.data = d; hideEdges(this); } }
+  const t = new Txt("x"), e = new El("div");
+  assert.deepEqual(Object.keys(t).sort(), ["_nid", "data", "tagName"], "the subclass's own field stays, its edges hide, one serial");
+  assert.ok((t as any)._nid !== undefined && (t as any)._nid < (e as any)._nid, "stamped in the base constructor's call, kept by the subclass's");
+  assert.notDeepEqual(new El("div"), new El("div"), "two class nodes of one tag are not deepEqual either");
+  // describeNode: tag and serial, for messages
+  assert.equal(describeNode(e), "div#" + (e as any)._nid); assert.equal(describeNode(nodes[1]), "span#" + nodes[1]._nid);
+  assert.equal(describeNode(null), "null"); assert.equal(describeNode(undefined), "undefined"); assert.equal(describeNode(3), "3");
+  assert.equal(describeNode({}), "Object", "a plain object with no tag: its class name");
+  // sameNodes: the same nodes in the same order pass; a wrong node, a wrong order, a missing node, a foreign node and no
+  // list fail with `message` and one line naming the index and both tags, never a dump
+  const [d1, s1, d2] = nodes;
+  sameNodes([d1, s1, d2], [d1, s1, d2], "the same list"); sameNodes([], [], "two empty lists");
+  const fails = (actual: any, expected: any[]) => { try { sameNodes(actual, expected, "the rows"); } catch (e: any) { return String(e.message); } return ""; };
+  let m = fails([d1, s1, d2], [d1, s1, makeNode("div")]);
+  assert.ok(m.startsWith("the rows: index 2 is another node: got div#" + d2._nid + ", expected div#"), "a different node of the same tag, by index and serial: " + m);
+  m = fails([d1, s1, d2], [d1, d2, s1]); assert.ok(m.startsWith("the rows: index 1 is another node: got span#" + s1._nid + ", expected div#" + d2._nid), "a reorder: " + m);
+  m = fails([d1, s1], [d1, s1, d2]); assert.equal(m, "the rows: 2 nodes where 3 were expected", "a missing node");
+  m = fails([d1, s1, d2, kid], [d1, s1, d2]); assert.equal(m, "the rows: 4 nodes where 3 were expected", "an extra node");
+  m = fails(null, [d1]); assert.equal(m, "the rows: no node list, got null where 1 nodes were expected", "no list at all");
+  m = fails([null], [d1]); assert.ok(m.startsWith("the rows: index 0 is another node: got null, expected div#"), "a null in the list: " + m);
+  for (const bad of [fails([d1, s1, d2], [d1, s1, makeNode("div")]), fails([d1, s1], [d1, s1, d2])]) assert.ok(lines(bad) === 1, "one line, got " + lines(bad));
 });
 
 test("the factory: the rect (the node's own, then the module hook, then the factory's), the scroll clamp, focus, the caret, the listener stack, the DOM's move and replace semantics", () => {
@@ -175,18 +235,30 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  - a constructor parameter property (`constructor(public EDGE: N[] = [])`, with or without a default);
  *  - an assignment through any name (`this.EDGE = null`, `n.EDGE = []`, `c.EDGE = p`, `c.EDGE = this.host`).
  *  Out of scope, by design: an edge under another name (a `kids` list), a shorthand key (`{ EDGE }`, or `EDGE,` alone
- *  on a line), a spread of a base built elsewhere (`{ tag, ...base }`), a value that is a member expression, a call
- *  or a `new` not rooted at this (`up.EDGE = g.document`, `EDGE = new Doc()`), a logical value (`n.EDGE = p || null`),
- *  an object literal or a non-empty array literal as the value (`win.EDGE = {}`, `EDGE: [kidA, kidB]`, `n.EDGE = [a,
- *  b]`), an Object.defineProperty of an edge whatever its enumerable flag (a descriptor holding a getter defeats a
- *  regex), a declared field whose type carries a comma (`EDGE: Record<string, N>;`), and a class field right after a
- *  `}` on the same line (a one-line method's body, a `{}` constructor, a static block: `constructor(public t: string)
- *  {} EDGE: N | null = null;`). A value is read by its first operand, a bare name whatever follows it other than a
- *  type continuation, a member or a call (`framed ? win : {}` is read through `framed`), or, for a conditional, by its
- *  final operand after the last colon (`win.EDGE = opts.framed ? {} : win`), the head and the middle operand free of
- *  parentheses; a conditional with a member-expression head whose final operand is an object literal, a member or a
- *  call (`win.EDGE = opts.framed ? win : {}`) is not read. A regex reads shape, not meaning, and some code that
- *  initialises no edge reads as a shape:
+ *  on a line), a computed key (`{ ["EDGE"]: null }`: the lexer blanks the string; `{ [k]: null }`: the identifier
+ *  carries no edge name), a spread of an object built elsewhere (`{ tag, ...base }`, `{ ...edges }` with edges from
+ *  Object.fromEntries, a helper or an import: the name is in another expression or file; a spread of a same-file
+ *  literal is read through that literal's own key), a bracket-notation write (`c["EDGE"] = this`: the lexer blanks the
+ *  key, and the assignment shape needs a dot), a compound assignment (`c.EDGE ??= this`, `c.EDGE ||= []`: the
+ *  assignment shape matches a bare equals sign), a class field whose type starts on the line after the colon (`EDGE:`
+ *  ending a line, `N | null = null;` or `N | null;` on the next: the field shape's type runs to the end of its own
+ *  line), a value that is a member expression, a call or a `new` not rooted at this (`up.EDGE = g.document`, `EDGE =
+ *  new Doc()`), a logical value (`n.EDGE = p || null`), an object literal or a non-empty array literal as the value
+ *  (`win.EDGE = {}`, `EDGE: [kidA, kidB]`, `n.EDGE = [a, b]`), an Object.defineProperty of an edge whatever its
+ *  enumerable flag (a descriptor holding a getter defeats a regex), a declared field whose type carries a comma
+ *  (`EDGE: Record<string, N>;`), and a class field right after a `}` on the same line (a one-line method's body, a
+ *  `{}` constructor, a static block: `constructor(public t: string) {} EDGE: N | null = null;`). A value is read by
+ *  its first operand, a bare name whatever follows it other than a type continuation, a member or a call (`framed ?
+ *  win : {}` is read through `framed`), or, for a conditional, by its final operand after the last colon (`win.EDGE =
+ *  opts.framed ? {} : win`), the head and the middle operand free of parentheses; a conditional with a
+ *  member-expression head whose final operand is an object literal, a member or a call (`win.EDGE = opts.framed ? win
+ *  : {}`) is not read. Checked in the tree at this head (2026-09-10; a TypeScript-AST walk over the 786 test
+ *  files under ui/ and ui/webview/ and a grep agree): no computed key, bracket write or wrapped field names an
+ *  edge; no object literal that spreads is a node (none carries tagName, nodeType, nodeName, tag or appendChild); and
+ *  the one compound write, ui/webview/timeline-boot.test.ts's `this.children ??= []` on a helper prototype whose
+ *  children are nodeFactory nodes, is in a file that calls nodeFactory. So no fake reaches the ratchet through these
+ *  shapes today; a new one in any of them is the reviewer's to catch, with the callers pin below for the files that
+ *  call hideEdges. A regex reads shape, not meaning, and some code that initialises no edge reads as a shape:
  *  a destructuring default at line start (`function mk({\n  EDGE = [],\n})`) reads as a class field, where the
  *  one-line forms do not (a brace after `(`, `=`, `,`, let, const or var opens no class body, and a `;` inside such a
  *  one-line brace group separates type members, not class members, so `type N = { tag: string; EDGE: N | null }` is
@@ -202,7 +274,7 @@ const src = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
  *  identifier on the right) reads as a class field, since a class body and a function body are the same brace to a
  *  regex, so the remedy is to rename the local; a class whose first member is an edge getter reads as an
  *  object-literal accessor. INDISTINGUISHABLE below pins each; a file that carries one renames the local or the
- *  parameter, or is carried on the documented non-DOM list (the newcomer paths in the ratchet's first message). */
+ *  parameter, or is carried on NON_DOM_EDGES with its reason (the newcomer paths in the ratchet's first message). */
 const KEY = "(parentNode|parentElement|parent|childNodes|children|firstChild|lastChild|nextSibling|previousSibling|ownerDocument|host)";
 const KEY_NOT_HOST = KEY.replace("|host", "");
 const MODS = "(?:(?:public|private|protected|readonly|declare|override)\\s+)";
@@ -323,6 +395,19 @@ function blank(s: string, literals: boolean): string {
 /** The names of the shapes the code of `s` initialises an edge in; empty when none. */
 const edgeShapes = (s: string): string[] => { const c = blank(s, true); return Object.keys(EDGE_INIT).filter((k) => EDGE_INIT[k].test(c)); };
 const initsEdge = (s: string) => edgeShapes(s).length > 0;
+/** The lines (1-based) on which the code of `s` initialises an edge: for every shape's every match over the blanked
+ *  code, the line of the first edge name inside the match. NON_DOM_EDGES pins each listed file's count, so a fake that
+ *  grows in a listed file, in any shape, on any new line, changes the number the ratchet checks. */
+const edgeLines = (s: string): number[] => {
+  const code = blank(s, true), edge = new RegExp("\\b" + KEY + "\\b"), out = new Set<number>();
+  for (const k of Object.keys(EDGE_INIT)) {
+    for (const m of code.matchAll(new RegExp(EDGE_INIT[k].source, EDGE_INIT[k].flags + "g"))) {
+      const at = m[0].search(edge);
+      out.add(code.slice(0, m.index! + (at < 0 ? 0 : at)).split("\n").length);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+};
 /** The credential: an import of hideEdges or nodeFactory from the shared module AND a call of one of them, in code.
  *  The import is a statement in code at line start (its text up to the specifier reads the same once every literal
  *  is blanked: an import line quoted inside a template or a backslash-continued string is not one), either quote
@@ -358,227 +443,121 @@ const switched = (s: string): boolean => {
 /** True when `s` must be on the allowlist: it initialises an edge and is not switched. */
 const needsListing = (s: string) => initsEdge(s) && !switched(s);
 
-// The test files whose code initialised an edge on 2026-09-10 without calling the shared module, each named: the
-// files that predate the rule, for the stacked migration PR to switch. ALLOWLIST_MAX is the list's exact length: a
-// file that switches (a hideEdges call on its object, at the end of each constructor for a class, or nodeFactory for
-// its nodes, plus a projection test) comes off and the constant comes down in the same commit; a renamed file
-// replaces its entry; a new file may not join. Most are class-based webview shims (El and Txt, FakeNode, E, FakeEl,
-// Elm) with a prototype firstChild, so no 2^depth term, but the whole-tree walk through parentNode or parentElement
-// (parent in several, an ownerDocument beside it in the two track-decorations files) remains, and feed.ts hangs node
-// references on cards. Others hold a window stand-in (a parent that is the stand-in itself, or a record) or a goal
-// fixture with a children list: dumps of a few lines today, listed because the rule is uniform and the cure is the
-// same call on the object.
-const ALLOWLIST = [
-  "timeline-tag-chips.test.ts",   // an object-literal fake the upstream fold added after this branch's base, listed at the final rebase
-  "webview/actions.test.ts",
-  "webview/anchor-map-block-edges.test.ts",
-  "webview/anchor-map-boundary-points.test.ts",
-  "webview/anchor-map-change-marks.test.ts",
-  "webview/anchor-map-fallback-markup.test.ts",
-  "webview/anchor-map-rendered-points.test.ts",
-  "webview/anchor-map-wrapped-code.test.ts",
-  "webview/anchor-map.test.ts",
-  "webview/card-subgoals.test.ts",
-  "webview/chat-exact-tail-exec.test.ts",
-  "webview/codex-meta-choices.test.ts",
-  "webview/federation-hidden-hold.test.ts",   // a conditional-valued window parent, read since the sixth review round
-  "webview/feed-keynav-click-focus.test.ts",
-  "webview/feed-keynav-covered.test.ts",
-  "webview/feed-keynav-tabscope-covered.test.ts",
-  "webview/feed-keynav-typing.test.ts",
-  "webview/feed-render-incremental.test.ts",
-  "webview/file-comments-about-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-about-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-anchors-unsure-rendered.test.ts",
-  "webview/file-comments-anchors-unsure.test.ts",
-  "webview/file-comments-anchors.test.ts",
-  "webview/file-comments-arrivals-about.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-arrivals-fixes.test.ts",
-  "webview/file-comments-arrivals-review2.test.ts",
-  "webview/file-comments-arrivals.test.ts",
-  "webview/file-comments-behavior.test.ts",
-  "webview/file-comments-changes-review.test.ts",
-  "webview/file-comments-changes-review2.test.ts",
-  "webview/file-comments-changes-review3.test.ts",
-  "webview/file-comments-changes.test.ts",
-  "webview/file-comments-composer-chat-nav-chord.test.ts",
-  "webview/file-comments-composer-fixes.test.ts",
-  "webview/file-comments-composer-review.test.ts",
-  "webview/file-comments-composer-shell-chord.test.ts",
-  "webview/file-comments-composer.test.ts",
-  "webview/file-comments-crop-keep.test.ts",
-  "webview/file-comments-crop-wait.test.ts",
-  "webview/file-comments-editing-cards.test.ts",
-  "webview/file-comments-editing-landed.test.ts",
-  "webview/file-comments-editing-moved-latch.test.ts",
-  "webview/file-comments-editing-races.test.ts",
-  "webview/file-comments-editing-round3.test.ts",
-  "webview/file-comments-figure-page.test.ts",
-  "webview/file-comments-filter-fixes.test.ts",
-  "webview/file-comments-filter-review.test.ts",
-  "webview/file-comments-filter-saved-line.test.ts",
-  "webview/file-comments-filter.test.ts",
-  "webview/file-comments-focus-audit.test.ts",
-  "webview/file-comments-focus-review.test.ts",
-  "webview/file-comments-focus-verify-2.test.ts",
-  "webview/file-comments-focus-verify.test.ts",
-  "webview/file-comments-focus.test.ts",
-  "webview/file-comments-follow.test.ts",
-  "webview/file-comments-inline-review.test.ts",
-  "webview/file-comments-inline-toggle.test.ts",
-  "webview/file-comments-margin-fixes.test.ts",
-  "webview/file-comments-margin-image-pad.test.ts",
-  "webview/file-comments-margin-review.test.ts",
-  "webview/file-comments-margin.test.ts",
-  "webview/file-comments-markclick-controls.test.ts",
-  "webview/file-comments-markclick.test.ts",
-  "webview/file-comments-page-states.test.ts",
-  "webview/file-comments-pages.test.ts",
-  "webview/file-comments-panel.test.ts",
-  "webview/file-comments-pdf-pictures.test.ts",
-  "webview/file-comments-region-tied.test.ts",
-  "webview/file-comments-regions-click.test.ts",
-  "webview/file-comments-regions-guards.test.ts",
-  "webview/file-comments-regions-press-scroll.test.ts",
-  "webview/file-comments-regions-press.test.ts",
-  "webview/file-comments-regions-repaint.test.ts",
-  "webview/file-comments-regions-review-2.test.ts",
-  "webview/file-comments-regions-review-3.test.ts",
-  "webview/file-comments-regions-review-4.test.ts",
-  "webview/file-comments-regions-review.test.ts",
-  "webview/file-comments-regions-sizer.test.ts",
-  "webview/file-comments-regions-stacking.test.ts",
-  "webview/file-comments-regions.test.ts",
-  "webview/file-comments-reply-keep.test.ts",
-  "webview/file-comments-reply-move.test.ts",
-  "webview/file-comments-reply-place.test.ts",
-  "webview/file-comments-reply-review2.test.ts",
-  "webview/file-comments-resolve-answered-fixes.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-resolve-answered-review2.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-resolve-answered.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/file-comments-reveal-arms-focus.test.ts",
-  "webview/file-comments-reveal-landing.test.ts",
-  "webview/file-comments-reveal-one-pass.test.ts",
-  "webview/file-comments-reveal-title.test.ts",
-  "webview/file-comments-review-fixes-3.test.ts",
-  "webview/file-comments-review-fixes.test.ts",
-  "webview/file-comments-seen-fixes.test.ts",
-  "webview/file-comments-seen-review2.test.ts",
-  "webview/file-comments-seen-review3.test.ts",
-  "webview/file-comments-send-note.test.ts",
-  "webview/file-comments-send-resolves.test.ts",
-  "webview/file-comments-send-seen.test.ts",
-  "webview/file-comments-todo-choices-review.test.ts",
-  "webview/file-comments-todo-choices.test.ts",
-  "webview/file-comments-todopick-focus.test.ts",
-  "webview/file-comments.test.ts",
-  "webview/file-view-edit-events.test.ts",
-  "webview/file-view-edit-races.test.ts",
-  "webview/file-view-figures-absolute.test.ts",
-  "webview/file-view-links.test.ts",
-  "webview/file-view-notice.test.ts",
-  "webview/file-view-pdf-backstop.test.ts",
-  "webview/file-view-pdf-chunk-latch.test.ts",
-  "webview/file-view-pdf-frame.test.ts",
-  "webview/file-view-pdf-lifecycle.test.ts",
-  "webview/file-view-pdf-page-error.test.ts",
-  "webview/file-view-pdf.test.ts",
-  "webview/file-view-place-blocks.test.ts",
-  "webview/file-view-place-comment-blocks.test.ts",
-  "webview/file-view-place-source-cache.test.ts",
-  "webview/file-view-place.test.ts",
-  "webview/file-view-reload.test.ts",
-  "webview/file-view-seam.test.ts",
-  "webview/file-view-text-size.test.ts",
-  "webview/file-view-tracked-edit.test.ts",
-  "webview/file-view-undo-landed-ack.test.ts",
-  "webview/file-view-undo-landed.test.ts",
-  "webview/file-view.test.ts",
-  "webview/fileview-chip.test.ts",
-  "webview/fleet-live-clock.test.ts",
-  "webview/github-link.test.ts",
-  "webview/path-links-pointer-focus.test.ts",
-  "webview/path-links.test.ts",
-  "webview/pdf-chunk-abort.test.ts",
-  "webview/pdf-chunk-dropped-images.test.ts",
-  "webview/pdf-chunk-evict-inflight.test.ts",
-  "webview/pdf-chunk-page-cap.test.ts",
-  "webview/pdf-chunk-page-cue.test.ts",
-  "webview/pdf-chunk-refused-open.test.ts",
-  "webview/pdf-chunk-resize.test.ts",
-  "webview/pdf-chunk-staged-draw.test.ts",
-  "webview/pdf-chunk.test.ts",
-  "webview/pdf-lazy-render.test.ts",
-  "webview/pdf-new-tab.test.ts",
-  "webview/perf-telemetry.test.ts",
-  "webview/pinned-notes.test.ts",
-  "webview/pr-links.test.ts",
-  "webview/preview-retry-pace.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/render-todo-file-chip.test.ts",
-  "webview/setting-stale-fold.test.ts",
-  "webview/shell-perf.test.ts",
-  "webview/strip.test.ts",
-  "webview/tab-hide.test.ts",   // a class fake main added after this branch's base, listed at the final rebase
-  "webview/tab-row-keep.test.ts",
-  "webview/tab-snapshot-view.test.ts",
-  "webview/tab-strip-skip-exec.test.ts",
-  "webview/thread-selection-scope.test.ts",
-  "webview/timeline-boot.test.ts",
-  "webview/timeline-rehover.test.ts",
-  "webview/track-decorations-guards.test.ts",
-  "webview/track-decorations-hover-cost.test.ts",
-  "webview/track-decorations-kept-embed.test.ts",
-  "webview/track-decorations.test.ts",
-  "webview/url-links.test.ts",
-  "webview/user-todo-links.test.ts",
-  "webview/user-todo-title-links.test.ts",
-  "webview/waiting-detail-link.test.ts",
-  "webview/waiting-file-chip-unframed.test.ts",
-  "webview/waiting-file-chip.test.ts",
+// ALLOWLIST: the test files whose code initialises an edge-named property without calling the shared module and are
+// not a documented non-DOM use below, each named, so a newcomer has a rule to read and a place it may not go.
+// ALLOWLIST_MAX is the list's exact length: a file that switches (a hideEdges call on its object, at the end of each
+// constructor for a class, or nodeFactory for its nodes, plus a projection test) comes off and the constant comes down
+// in the same commit; a renamed file replaces its entry; a new file may not join. On 2026-09-10 the list held 150
+// ui/webview test files: from the detector's first two rounds, 135 class-based fake DOMs (El and Txt, FakeNode, E,
+// FakeEl, Elm, with a prototype firstChild, so no 2^depth term, but the whole-tree walk through parentNode, parent or
+// ownerDocument remained, and feed.ts hangs node references on cards), four literal node factories
+// (anchor-map-wrapped-code, pdf-chunk-refused-open, setting-stale-fold, timeline-boot; the last now takes nodeFactory
+// outright) and two window stand-ins whose parent is another stand-in (file-view, pdf-new-tab); from its third, once
+// the vocabulary gate came off, nine more: two window stand-ins whose parent is the stand-in itself (perf-telemetry,
+// shell-perf), element and node literals (thread-selection-scope, timeline-rehover), one more class
+// (track-decorations-hover-cost), the two non-DOM uses listed below and two source pins (feed-absorb, setting-stale)
+// whose quoted product text the fourth round's lexer blanks, so they read as nothing now. The same day every fake hid
+// its edges (a non-enumerable define of the edge fields in the constructors, hideEdges from the shared module at the
+// end of each or on the literal, plus a projection test; the file-comments Ev classes end in hideEdges too, so an
+// event's target and currentTarget hide with the nodes). The eight class fakes main added between this branch's base
+// and its landing (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes,
+// -seen-review2, -seen-review3, file-comments-send-seen, file-view-notice) were migrated the same way, and so were the
+// eleven PR 523 listed at its final rebase onto main: the seven file-comments-about and file-comments-resolve-answered
+// class fakes (six of them already defined parentNode and childNodes non-enumerable through a local helper; the shared
+// module's call replaces it and their Ev classes end in it too), the tab-hide and preview-retry-pace class fakes,
+// federation-hidden-hold's window stand-in (hideEdges on the literal after its conditional-valued parent) and the
+// fold's timeline-tag-chips node literal, which takes nodeFactory outright and joins SWITCHED. The list is empty.
+const ALLOWLIST: string[] = [];
+// The list's exact length: 0 since 2026-09-10, when the last of the 167 came off or moved to NON_DOM_EDGES. The ratchet
+// pins it by equality, so neither the list nor this number goes up.
+const ALLOWLIST_MAX = 0;
+// NON_DOM_EDGES: the test files whose edge-named key the detector reads but which fake no DOM, each with its reason
+// and the count of lines on which the detector reads an edge init in it. An entry documents the use AS IT READS TODAY:
+// the detector reads shape, not meaning, and a goal fixture's children or a list model's children initialise no edge
+// a failing dump could walk (a dump of each is the fixture's own few lines). The count is what the pin enforces: a
+// fake DOM that later grows in a listed file, in any shape, adds a line the detector reads and the count changes,
+// where the list alone would have stayed green (a rewrite of the documented line itself, one for one, is the move the
+// count cannot see; the reason is the reviewer's check on that). A listed file has no projection test, so the runner's
+// cgroup cap is its backstop. NON_DOM_EDGES_MAX is this list's exact length too: a file that joins raises it in the
+// same commit, with its reason and count; one that stops reading as a shape, calls the module or is gone comes off and
+// lowers it.
+const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edge-named key is no DOM edge, edge-initialising lines the detector reads]
+  ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM", 1],
+  ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows", 1],
 ];
-// The list's exact length on 2026-09-10, after the detector's fourth round: the 148 files whose code initialised an
-// edge when the rule was written, plus the eight class fakes main added between this branch's base and its landing
-// (actions, file-comments-markclick, file-comments-markclick-controls, file-comments-seen-fixes, -seen-review2,
-// -seen-review3, file-comments-send-seen, file-view-notice), listed at the final rebase because they predate the rule,
-// plus federation-hidden-hold, whose conditional-valued window parent the sixth review round's detector reads, plus the
-// seven file-comments-about and file-comments-resolve-answered class fakes main added before the sixth round's rebase,
-// plus the three main added before the seventh round's rebase: the tab-hide and preview-retry-pace class fakes, and
-// the fold's timeline-tag-chips object-literal fake, the shape the shared module replaced in the other timeline tests.
-// The ratchet pins it by equality, so a file that comes off lowers this in the same commit, a renamed file leaves it
-// alone, and a new file may not join: neither the list nor this number goes up. A same-commit swap (one off, one on)
-// is the one move no count pin sees; the first assertion's allowlist-versus-detected diff is what names the newcomer.
-const ALLOWLIST_MAX = 167;
-// the sixteen files on the shared module (2026-09-10): the fifteen whose near-copies of the shim it replaced, and the
-// tags-scale test whose shim it grew from
+const NON_DOM_EDGES_MAX = 2;
+const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
+// SWITCHED: the seventeen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the sixteen
+// near-copies (fifteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and
+// ui/webview/tab-color-picker.test.ts) and the tags-scale test the shim grew from. They keep no makeNode of their own. The other ui/webview test files that fake a DOM are not listed
+// here: each keeps its own node classes, window stand-ins or literals and hides their edges through hideEdges
+// (ui/webview/timeline-boot.test.ts takes nodeFactory outright); the call is the credential the ratchet reads, and each
+// file's projection test is the executed check on its edges.
 const SWITCHED = [
   "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts", "timeline-live-tick.test.ts",
   "timeline-nan-window.test.ts", "timeline-open-interval.test.ts", "timeline-pending-hosts.test.ts", "timeline-render.test.ts",
-  "timeline-tagbtn-click.test.ts", "timeline-tagorder-drag.test.ts", "timeline-tags-scale.test.ts", "timeline-theme-light.test.ts",
+  "timeline-tag-chips.test.ts", "timeline-tagbtn-click.test.ts", "timeline-tagorder-drag.test.ts", "timeline-tags-scale.test.ts", "timeline-theme-light.test.ts",
   "timeline-transform-tick.test.ts", "timeline-views-ack.test.ts", "timeline-zoom-anchor.test.ts", "webview/tab-color-picker.test.ts",
 ];
 
-test("ratchet: every UI test file that initialises an edge calls the shared module or is on the allowlist, every allowlisted file still needs it, and the list's length is its pinned count", () => {
+test("ratchet: every UI test file that initialises an edge calls the shared module, is on the allowlist or is a documented non-DOM use; every listed file still reads as one; each list's length is its pinned count, and each non-DOM entry's edge-line count holds", () => {
   const files = testFiles();
   assert.ok(files.includes("test-dom-shim.test.ts") && files.includes("webview/tab-color-picker.test.ts"), "the sweep covers ui/ and ui/webview/");
   const matching = files.filter((f) => needsListing(src(f)));
-  assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f)), [],
+  assert.deepEqual(matching.filter((f) => !ALLOWLIST.includes(f) && !NON_DOM.includes(f)), [],
     "a UI test file's code initialises an edge-named property (parentNode, parentElement, parent, children, childNodes, a child or sibling pointer, " +
-    "ownerDocument or host) without calling the shared module; a failing assertion on such an object can allocate tens of GB. Three paths, one import and " +
-    "one line each: (1) a fake DOM: build its nodes with nodeFactory(, or call hideEdges(this) at the end of the class's constructor (hideEdges(obj) on an " +
-    "object literal), imported from ui/test-dom-shim.ts as a named import or a namespace import (shim.hideEdges(); a .js suffix on the specifier is read " +
-    "too). The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what counts. (2) A non-DOM use of an " +
-    "edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's field): rename it, or carry the file " +
-    "on the documented non-DOM list with its reason (that list lands with the stacked migration PR; until then ask the reviewer). (3) The allowlist below is " +
-    "closed: it names the files that predate the rule, a renamed listed file replaces its entry, and neither the list nor ALLOWLIST_MAX goes up");
+    "ownerDocument or host) without calling the shared module; a failing assertion on such an object can allocate tens of GB. Three paths: (1) a fake DOM: " +
+    "build its nodes with nodeFactory(, or call hideEdges(this) at the end of the class's constructor (hideEdges(obj) on an object literal), imported from " +
+    "ui/test-dom-shim.ts as a named import or a namespace import (shim.hideEdges(); a .js suffix on the specifier is read too), and add a projection test: " +
+    "one import and one line. The import alone is not enough, and a call token in a comment or a string is not a call: the call in code is what counts. " +
+    "(2) A non-DOM use of an edge name (a local reassigned at line start, a typed parameter after a comma, a type literal's member, a fixture's field): " +
+    "rename it, or add the file to NON_DOM_EDGES with its reason and its count of edge-initialising lines and raise NON_DOM_EDGES_MAX in the same commit. " +
+    "(3) Neither fits: ask the reviewer. ALLOWLIST, the unmigrated fakes, is empty since 2026-09-10 and closed: no file joins it and ALLOWLIST_MAX stays 0");
   assert.deepEqual(ALLOWLIST.filter((f) => !matching.includes(f)), [],
-    "an allowlisted file no longer initialises an edge in code, calls the shared module now, is gone, or was renamed (its new name replaces this entry and " +
-    "ALLOWLIST_MAX stands); otherwise take it off the list and set ALLOWLIST_MAX to the list's new length in the same commit");
+    "an allowlisted file no longer initialises an edge in code, calls the shared module now, or is gone: take it off the list and set ALLOWLIST_MAX to the " +
+    "list's new length in the same commit");
+  assert.deepEqual(NON_DOM.filter((f) => !matching.includes(f)), [],
+    "a file listed in NON_DOM_EDGES no longer initialises an edge-named key in code, calls the shared module now, or is gone: take it off and lower NON_DOM_EDGES_MAX to the new length in the same commit");
   assert.equal(ALLOWLIST.length, ALLOWLIST_MAX,
     "the allowlist holds " + ALLOWLIST.length + " files, not its pinned count of " + ALLOWLIST_MAX + ". ALLOWLIST_MAX is the list's exact length: a renamed file " +
     "replaces its entry and the count stands; a file that comes off lowers the constant in the same commit; a new file may not join, so neither the list nor the constant goes up");
+  assert.equal(NON_DOM_EDGES.length, NON_DOM_EDGES_MAX,
+    "NON_DOM_EDGES holds " + NON_DOM_EDGES.length + " files, not its pinned count of " + NON_DOM_EDGES_MAX + ": a file that joins or leaves moves the constant in the same commit");
+  for (const [f, why, n] of NON_DOM_EDGES) {
+    assert.ok(why.trim().length >= 40, f + " carries a one-line reason its edge-named key is no DOM edge");
+    const found = edgeLines(src(f));
+    assert.equal(found.length, n, f + " initialises an edge-named key on " + found.length + " line(s) (" + found.join(", ") + "), not the " + n + " its NON_DOM_EDGES entry " +
+      "pins: the file changed under its documented non-DOM use, so re-examine it. A fake DOM that grew there migrates onto the shim (hideEdges at the end of each constructor " +
+      "or on the literal, plus a projection test) and the file comes off this list; a non-DOM use that grew or shrank is re-documented, reason and count, in the same commit");
+  }
   assert.deepEqual(ALLOWLIST, ALLOWLIST.slice().sort(), "the allowlist is sorted, so a change to it reads as one line");
-  assert.equal(new Set(ALLOWLIST).size, ALLOWLIST.length, "no name twice");
+  assert.deepEqual(NON_DOM, NON_DOM.slice().sort(), "NON_DOM_EDGES is sorted by file, so a change to it reads as one line");
+  assert.equal(new Set([...ALLOWLIST, ...NON_DOM]).size, ALLOWLIST.length + NON_DOM.length, "no name twice, within or across the two lists");
+});
+
+test("the NON_DOM_EDGES count pin: a listed file's copy with one more edge-initialising line, in either shape, counts one more, so the pin goes red on growth; edgeLines counts lines, not matches", () => {
+  for (const [f, , n] of NON_DOM_EDGES) {
+    const s = src(f);
+    assert.equal(edgeLines(s).length, n, f + " counts its pinned lines");
+    assert.equal(edgeLines(s + "\n" + scratch("const extra = { tagName: 'DIV', EDGE: null, appendChild() {} };\n", "parentNode")).length, n + 1, f + ": an appended node literal adds one line");
+    assert.equal(edgeLines(s + "\n" + scratch("class Extra {\n  EDGE: Extra | null = null;\n  appendChild(c: Extra) { c.EDGE = this; }\n}\n", "parentNode")).length, n + 2, f + ": an appended class fake adds its field line and its assignment line");
+  }
+  assert.deepEqual(edgeLines(scratch("const n = { EDGE: null, x: 1 };\nclass N { EDGE = []; }\nn.EDGE = kid;\n", "children")), [1, 2, 3], "one entry per line, across shapes");
+  assert.deepEqual(edgeLines(scratch("const n = { EDGE: null, kids: [] }; n.EDGE = other;\n", "parentNode")), [1], "two inits on one line count once");
+  assert.deepEqual(edgeLines(scratch("// EDGE: null\nconst s = 'EDGE: []'; /* n.EDGE = kid */\n", "parentNode")), [], "comments and strings count for nothing");
+});
+
+test("every ui/webview test file whose code calls hideEdges( initialises an edge the detector reads: a caller the detector cannot see is a shape drift, the credential read but the rule not", () => {
+  // ui/test-dom-shim.test.ts (its text uses EDGE) and ui/timeline-tags-scale.test.ts (nodeFactory nodes, hideEdges on a variant-shape
+  // node it builds) are the two callers outside ui/webview/ that the detector does not read, by design; the webview files are the rule's
+  // scope, so every hideEdges( caller there must initialise an edge the detector reads
+  const callers = testFiles().filter((f) => f.startsWith("webview/") && /\bhideEdges\(/.test(blank(src(f), true)));
+  assert.ok(callers.length >= 100, "the sweep found " + callers.length + " webview callers");
+  assert.deepEqual(callers.filter((f) => !initsEdge(src(f))), [],
+    "a ui/webview test file calls hideEdges( on an object whose edge the detector does not read (the docstring's out-of-scope list: a shorthand key, a " +
+    "computed key, a spread of an object built elsewhere, a bracket-notation write, a compound assignment, a class field whose type starts on the line after " +
+    "the colon; the docstring records the tree check that found no fake in any of them on 2026-09-10), so the ratchet would stay green if the call came off. " +
+    "Write the edge in a shape it reads (a declared field, `EDGE: [] as any[]` on a literal), or add the shape to the detector with a POSITIVE case");
 });
 
 test("the files that carried the shim's copies import nodeFactory or hideEdges, call it, and keep no node factory of their own; this file's own code initialises no edge", () => {
@@ -727,6 +706,14 @@ const NEGATIVE: Array<[string, string, string]> = [   // [what it is, scratch so
   ["a conditional carrying a call (out of scope)", "n.EDGE = mk(x ? y : kid);", "firstChild"],
   ["a comparison inside a conditional, not an assignment", "const same = n.EDGE === x ? a : kid;", "parentNode"],
   ["a logical value (out of scope)", "n.EDGE = p || null; m.EDGE = p && q;", "parentNode"],
+  // the shapes the docstring names out of scope by design, one case each, so a detector that starts reading one of
+  // them moves its case to POSITIVE and the docstring's account (and the callers-pin message) with it
+  ["a shorthand key, inline or alone on a line (out of scope)", "const n = { tag: 'div', EDGE, appendChild() {} };\nconst m = {\n  tag: 'span',\n  EDGE,\n};", "children"],
+  ["a computed key, a string or an identifier (out of scope)", "const n = { ['EDGE']: null, tag: 'div' }; const m = { [k]: null, tag: 'span' };", "parentNode"],
+  ["a spread of an object built elsewhere (out of scope)", "const edges = Object.fromEntries([['EDGE', null]]);\nconst n = { tag: 'div', ...edges, appendChild() {} };", "parentNode"],
+  ["a bracket-notation write (out of scope)", "c['EDGE'] = this; c.appendChild(x);", "parentNode"],
+  ["a compound assignment (out of scope)", "c.EDGE ??= this; d.EDGE ||= this; c.appendChild(x);", "parentNode"],
+  ["a class field whose type starts on the line after the colon, with an initializer or declared only (out of scope)", "class N {\n  tag = 'x';\n  EDGE:\n    N | null = null;\n  appendChild() {}\n}\nclass M {\n  tag = 'y';\n  EDGE:\n    M | null;\n}", "parentNode"],
 ];
 const INDISTINGUISHABLE: Array<[string, string, string, string]> = [   // [what it is, the shape it reads as, scratch source, edge name]
   // the forms a line start reaches: a destructuring default or a type literal's member on its own line

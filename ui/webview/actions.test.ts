@@ -8,12 +8,14 @@
 // 300 ms waits are for flash's own 280 ms timer, the one time-based thing in the helper.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";
 import { delegate } from "./actions";
 
 type FakeEvent = { type: string; target: Elm; defaultPrevented: boolean; preventDefault(): void };
 type Listener = (ev: FakeEvent) => void;
 class Elm {
-  parent: Elm | null = null;
+  parent!: Elm | null;
   classes = new Set<string>();
   dataset: Record<string, string | undefined> = {};
   listeners: Listener[] = [];
@@ -23,6 +25,12 @@ class Elm {
     remove: (c: string): void => { this.classes.delete(c); },
     contains: (c: string): boolean => this.classes.has(c),
   };
+  constructor() {
+    // the up edge is non-enumerable, so an element inspects as its own projection and a failing assertion's dump stays
+    // small (ui/test-dom-shim.ts says why); append's later write keeps it hidden
+    Object.defineProperty(this, "parent", { value: null, writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
   append(k: Elm): Elm { k.parent = this; return k; }
   contains(n: Elm | null): boolean { for (let p = n; p; p = p.parent) if (p === this) return true; return false; }
   closest(sel: string): Elm | null {
@@ -91,4 +99,19 @@ test("a click on nothing the map names pulses nothing: the pulse is the matched 
   other.click();
   assert.equal(acted, 0);
   assert.ok(!other.classList.contains("romp-acted"), "an act without a handler is not an activation: no pulse");
+});
+
+// The stand-in's elements inspect as their own projection, never as the tree: parent, the class set, dataset, the
+// listener list and classList are non-enumerable, so a failing assertion's dump of an element is a few lines, not the
+// root and everything under it (ui/test-dom-shim.ts says why; ui/test-dom-shim.test.ts keeps the ratchet).
+test("stand-in: an element enumerates its primitives alone and inspects without its edges", () => {
+  const { root, btn } = control();
+  btn.classList.add("romp-acted");
+  for (const n of [root, btn]) {
+    const o = n as unknown as Record<string, unknown>;
+    assert.ok(Object.keys(o).every((k) => staysEnumerable(o[k])), "only primitives enumerate: " + Object.keys(o).join(","));
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parent") && !dump.includes("listeners"), "no edge in the dump");
+  }
+  assert.ok(btn.parent === root && root.contains(btn) && btn.closest("[data-act]") === btn, "the tree is reachable as before");
 });

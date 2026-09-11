@@ -12,6 +12,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { installDomHelpers, dispatchFrame, openExternalMessage, bridgeFunctions } from "./timeline-boot";
+import { inspect } from "node:util";
+import { nodeFactory, staysEnumerable } from "../test-dom-shim";
 
 const ROOT = path.resolve(process.cwd(), "..");
 const KERNEL = fs.readFileSync(path.join(ROOT, "bin", "romp-kernel"), "utf8");
@@ -126,12 +128,9 @@ test("a lane drag posts NOTHING to a kernel — it arranges this browser's own v
 });
 
 test("installDomHelpers supplies the 3 Obsidian helpers", () => {
-  (globalThis as any).document = {
-    createElement: (tag: string) => ({
-      tag, className: "", textContent: "", children: [] as any[],
-      appendChild(c: any) { this.children.push(c); return c; },
-    }),
-  };
+  // the shared fake DOM (ui/test-dom-shim.ts) stands in for the page: a node carries tag, textContent and children, and
+  // className lands on it as a plain property, the way installDomHelpers writes it
+  (globalThis as any).document = { createElement: nodeFactory() };
   try {
     const proto: any = {
       appendChild(c: any) { (this.children ??= []).push(c); return c; },
@@ -223,3 +222,14 @@ test("dispatchFrame routes tagEditFailed to the panel — the LOUD half of remot
   assert.match(BOOT, /__rompTimelineEditTag: \(edit: unknown\) => post\(\{ type: "editTag", edit \}\),/);
 });
 
+// The projection rule (ui/test-dom-shim.ts, hideEdges): a stand-in node enumerates its primitives alone, so a failing
+// assertion's dump of one stops at the node instead of walking the whole tree through its edges.
+test("a stand-in node enumerates its primitives alone, and a dump of it names neither parentNode nor children", () => {
+  const make = nodeFactory(); const root = make("div"); const kid = root.appendChild(make("span")); kid.appendChild(make("i"));
+  const nodes = [root, kid];
+  for (const n of nodes) {
+    assert.ok(Object.keys(n).every((k) => staysEnumerable((n as any)[k])), "every enumerable own key holds a primitive");
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes") && !dump.includes("children"), "the dump stops at the node");
+  }
+});
