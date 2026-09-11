@@ -472,7 +472,13 @@ test("the width watch is wired: each viewer opens one on the body it builds, eac
     "openFileView watches its body where the reflow's per-frame fold lives, the fold on the watch's onWidth (the seam re-places the comments panel's cards once per animation frame)");
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
     "openFileView: every paint stamps its fresh tables after the folds' restore (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
-  assert.match(VIEW, /landFragment\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);/, "openUrlView: the same, after the fragment lands");
+  // openUrlView stamps between the folds' restore and the seat, the local viewer's order: the seat and the fragment landing
+  // measure the fresh root, and a stamp after them would change the layout they had measured (review round 1 of the 4d-3
+  // fold, correctness-1). A source pin, not an executed case: the stand-ins have no layout, so neither the seat nor the
+  // landing reads a width there; the URL viewer's place keeping runs in file-view-url-place-bottom-browser.test.ts.
+  assert.match(VIEW, /folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/,
+    "openUrlView: the stamp after the folds' restore and before the seat and the fragment landing, as the local viewer orders it (a Raw paint has no tables to stamp)");
+  assert.doesNotMatch(VIEW, /landFragment\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);/, "and never after the landing");
   const closeAt = VIEW.indexOf("export function closeFileView(): void {");
   const close = VIEW.slice(closeAt, VIEW.indexOf("\n}\n", closeAt));
   assert.match(close, /\n\s*dropWidthWatch\(\);/, "closeFileView drops the watch with the viewer");

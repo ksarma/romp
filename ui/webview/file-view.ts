@@ -2445,10 +2445,10 @@ export function openUrlView(href: string): void {
       ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
       : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
+    if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
     seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
     landFragment();                                    // after the paint, and only a rendered one lands
-    if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported
   };
   renderBody();
 
