@@ -21,7 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, loadStore, saveStore, reviveThreadInto,
-  isNonTextPath,
+  isNonTextPath, withStoreLock, StoreLockError,
 } from '../store-io.mjs';
 import { parseArgs } from './cli-args.mjs';
 
@@ -63,9 +63,11 @@ function sessionLabel() {
   return process.env.TRACKCHANGES_SESSION || process.env.ROMP_SESSION_NAME || 'unknown';
 }
 
+// A failure is thrown, not exited on the spot, so a lock held at that moment is released on the
+// way out (process.exit skips every finally); the entry point prints it and exits 1.
+class CliFailure extends Error {}
 function fail(msg) {
-  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
-  process.exit(1);
+  throw new CliFailure(msg);
 }
 
 function run(argv) {
@@ -82,6 +84,22 @@ function run(argv) {
       + `rewrites a file from its UTF-8 text, which would destroy this one. Nothing was written. `
       + `Regenerate the file with a normal write instead.`);
   }
+  const storePath = storePathFor(vaultRoot, abs);
+  // One writer per sidecar (store-io's withStoreLock): the file read, the record, the file write
+  // and the thread turn run under the sidecar's lock, so a host or another CLI writing the same
+  // sidecar cannot land between this load and this rename and have its write erased by it, and
+  // a host's file write cannot land over this one. A lock still held after the wait fails with
+  // one line and nothing written.
+  try {
+    withStoreLock(storePath, () => editUnderLock(args, abs, vaultRoot, storePath));
+  } catch (e) {
+    if (e instanceof StoreLockError) fail(e.message);
+    throw e;
+  }
+  process.stdout.write('Tracked edit applied.\n');
+}
+
+function editUnderLock(args, abs, vaultRoot, storePath) {
   let text;
   let res;
   if (!fs.existsSync(abs)) {
@@ -130,7 +148,6 @@ function run(argv) {
   // Snapshot the sidecar so the note write below can be rolled back. Recording
   // happens first (see above), so a failed note write would otherwise leave an op
   // describing text that is not in the file.
-  const storePath = storePathFor(vaultRoot, abs);
   let priorStore = null;
   try { priorStore = fs.readFileSync(storePath, 'utf8'); } catch { priorStore = null; }
 
@@ -175,7 +192,6 @@ function run(argv) {
       }
     } catch (e) { /* best effort */ }
   }
-  process.stdout.write('Tracked edit applied.\n');
 }
 
 const invokedDirectly = (() => {
@@ -184,4 +200,12 @@ const invokedDirectly = (() => {
   } catch { return false; }
 })();
 
-if (invokedDirectly) run(process.argv.slice(2));
+if (invokedDirectly) {
+  try {
+    run(process.argv.slice(2));
+  } catch (e) {
+    if (!(e instanceof CliFailure)) throw e;
+    process.stderr.write(e.message.endsWith('\n') ? e.message : e.message + '\n');
+    process.exit(1);
+  }
+}

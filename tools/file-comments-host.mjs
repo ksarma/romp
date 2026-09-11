@@ -165,7 +165,18 @@
 //     would record itself), the kernel's _under_trackchanges rule for saveFile; and `save` logs an
 //     edit only for a file that already has a sidecar, a comments log, or a tracked flag, the rule
 //     log-edit follows (a save that created the log would make every later plain save of a file
-//     nobody tracked logged too).
+//     nobody tracked logged too);
+//   * one writer per sidecar at a time (decision 49): every writing verb holds store-io's lock on the
+//     file it writes (`<sidecar>.lock`, or `config.json.lock` for set-tracked), the lock the vendored
+//     CLIs hold around their own load-to-rename, from its fence stat through its last rename or
+//     prune (underStoreLock), so no CLI write lands between a verb's load and its rename to be erased
+//     by it, and no track-edit lands its file under a reject's or a save's. A lock still held after
+//     the wait refuses `busy` with nothing changed. The mtime fences stay: they catch the panel's
+//     stale copy, the lock the concurrent writer;
+//   * the clocks a reply carries (`storeMtimeNs`, `configMtimeNs`) are taken BEFORE the bytes they
+//     describe are read (decision 50: loadOrRefuse, loadFile, configStatus; clockOf), never stat'ed at
+//     reply time, so the panel's poll baseline is never newer than the store it holds, and a write in
+//     the gap makes the next poll refresh or the next write refuse.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -203,6 +214,7 @@ import engine from '../vendor/track-changents/engine.js';
 import {
   findVaultRoot, storePathFor, relPathFor, configPathFor, trackedPaths, untrackedPaths,
   trackedClosure, isTrackedFile, loadStoreStatus, saveStore, pruneIfClean, STORE_VERSION, fingerprintOf,
+  withStoreLock, StoreLockError,
 } from '../vendor/track-changents/store-io.mjs';
 import { addReply } from '../vendor/track-changents/cli/track-reply.mjs';
 import { decodeTextOrNull } from '../vendor/track-changents/cli/track-edit.mjs';
@@ -710,7 +722,8 @@ function vetoEntryFor(root, rel) {
 //   unsupported  a `v` above CONFIG_VERSION
 //   unreadable   an I/O error other than ENOENT
 //   ok           readable; a missing `tracked` list means nothing tracked, as store-io reads it
-function configStatus(paths) {
+function configStatus(ctx, paths) {
+  ctx.configClock = statNs(paths.configPath);   // the clock BEFORE the read (decision 50; clockOf says why)
   let raw;
   try {
     raw = fs.readFileSync(paths.configPath, 'utf8');
@@ -741,7 +754,7 @@ function refuseConfig(ctx, paths, status) {
       throw new Refusal('unreadable', `cannot read the tracking list for ${ctx.shown} (${cp})`);
   }
 }
-function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(paths)); }
+function checkConfig(ctx, paths) { refuseConfig(ctx, paths, configStatus(ctx, paths)); }
 
 // ── the file ────────────────────────────────────────────────────────
 
@@ -1422,8 +1435,19 @@ function prepareFileWrite(absPath, text) {
   return { tmp, real };
 }
 function commitFileWrite(prepared) {
+  pauseForTest();
   fs.renameSync(prepared.tmp, prepared.real);
   return statNs(prepared.real);
+}
+// A test-only pause between the file's stage and the rename that lands it, the seam the race test
+// (file-comments-host-race.test.mjs) widens to run a track-edit inside a reject's write: inert unless
+// FILE_COMMENTS_TEST_PAUSE_MS is set to a positive number of milliseconds, which the kernel never does.
+function pauseForTest() {
+  const v = process.env.FILE_COMMENTS_TEST_PAUSE_MS;
+  if (v == null || v === '') return;
+  const ms = Number(v);
+  if (!Number.isFinite(ms) || ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function discardFileWrite(prepared) {
   try { fs.unlinkSync(prepared.tmp); } catch { /* ignore */ }
@@ -1445,9 +1469,40 @@ function whyOf(e) {
 
 // ── the sidecar ─────────────────────────────────────────────────────
 
+// One writer per sidecar at a time (plans/file-review.md, decision 49). Every verb that writes takes
+// store-io's lock on the path it writes, the lock the vendored CLIs take around their own
+// load-to-rename (patch 0008): the sidecar's for comment, reply, resolve, retarget, accept, reject
+// and save; config.json's for set-tracked. The lock is held from the fence stat through the last
+// rename or prune, so every writer loads after the previous writer's rename and the mtime fence
+// catches every stale copy; before it, a CLI's write landing between a verb's load and its rename
+// was erased by the rename (one write in five at a 4 to 20 ms stagger, measured 2026-09-09), and a
+// track-edit's file write under a reject's was erased by the reject's. The mtime fences stay: the
+// lock serializes the writers, the fences catch the panel's stale copy. The lock is taken only once
+// the names under .trackchanges/ are checked (checkTrackDir), since it creates a file there; a
+// loose file takes it after its landmark (nothing else can write a sidecar that has no root yet),
+// and re-checks its "" fence under it. Everything that reads the disk for the reply (the log, the
+// tracking verdict, the figures' hashes) runs after the release; the store the reply carries was
+// read back under the lock. A lock still held after store-io's wait
+// refuses `busy`, nothing changed; the panel re-reads and retries once, as for a moved fence. The
+// refusal names what the held lock guards: the file, for the sidecar's; for config.json's, the
+// tracking list of the root, which every file under it shares, so the writer holding it may be a
+// toggle on a sibling file, and "writing <this file>" would be false (the review, 2026-09-11).
+function underStoreLock(ctx, lockedPath, fn) {
+  try {
+    return withStoreLock(lockedPath, fn);
+  } catch (e) {
+    if (!(e instanceof StoreLockError)) throw e;
+    const root = path.dirname(path.dirname(lockedPath));   // <root>/.trackchanges/<name>
+    if (e.held && lockedPath === configPathFor(root)) throw new Refusal('busy', `another editor is changing which files under ${tilde(root)} are tracked; retry`);
+    if (e.held) throw new Refusal('busy', `another editor is writing ${ctx.shown}; retry`);
+    throw new Refusal('unreadable', `cannot lock ${ctx.shown} for writing: ${errText(e)}; nothing was changed`);
+  }
+}
+
 // Load through loadStoreStatus, the only loader that says WHY there is no store. Returns the
 // normalized store (rebased against the current text), or null when absent; refuses the rest.
 function loadOrRefuse(ctx, paths, text) {
+  ctx.storeClock = statNs(paths.storePath);   // the clock BEFORE the read (decision 50; clockOf says why)
   const { store, status } = loadStoreStatus(paths.storePath, text);
   const sp = tilde(paths.storePath);
   switch (status) {
@@ -1470,7 +1525,8 @@ function loadOrRefuse(ctx, paths, text) {
 // exists to rebase against (or the caller asked for the baseline, which is the text itself when
 // there is none); otherwise the file is stat'ed. `store` is null when there is no sidecar.
 function loadFile(ctx, paths) {
-  const read = ctx.args.baseline === true || (paths != null && exists(paths.storePath));
+  if (paths) ctx.storeClock = statNs(paths.storePath);   // the clock BEFORE the read, and the reply's when there is nothing to read (decision 50)
+  const read = ctx.args.baseline === true || (paths != null && ctx.storeClock != null);
   const file = read ? readFile(ctx) : statFile(ctx);
   const store = read && paths ? loadOrRefuse(ctx, paths, file.text) : null;
   return { ...file, store };
@@ -1494,11 +1550,16 @@ function seedStore(rel) {
 function createLandmark(ctx) {
   const dir = path.dirname(ctx.abs);
   const mark = path.join(dir, '.trackchanges');
-  // findVaultRoot saw no directory here, so anything AT the name is a link to nowhere or a
-  // non-directory: never followed, never removed, and never built over (mkdir would fail or land
-  // the folder wherever a dangling link is later pointed).
+  // findVaultRoot saw no directory here. A directory AT the name now is another first write's
+  // landmark, made since that look (two first comments on one loose file, or a comment and a
+  // tracking toggle, from two clients at once): mkdir is a no-op over it, and the caller's lock and
+  // its "" fence re-check under the lock meet the other writer (store-moved or config-moved, which
+  // the panel re-reads and retries). Refusing it named a folder that by then held the other
+  // writer's comment and told the person to remove it (the review, 2026-09-11). Anything else AT
+  // the name is a link to nowhere or a non-directory: never followed, never removed, and never
+  // built over (mkdir would fail or land the folder wherever a dangling link is later pointed).
   const st = lstatOrNull(mark);
-  if (st) {
+  if (st && !st.isDirectory()) {
     throw new Refusal('unreadable', `the comments folder for ${ctx.shown} cannot be created: ${tilde(mark)} already exists as ${whatIs(st)}${st.isSymbolicLink() ? ' to nothing' : ''}, not a directory — remove it, or replace it with a directory; nothing was changed`);
   }
   fs.mkdirSync(mark, { recursive: true });
@@ -2148,8 +2209,8 @@ function reply(ctx, state, extra, opts) {
     // The panel has no other authoritative source for it, since the viewer never sees the byte (the review,
     // 2026-09-08). A media file (no text) carries false.
     bom: typeof text === 'string' && text.charCodeAt(0) === 0xFEFF,
-    storeMtimeNs: paths ? statNs(paths.storePath) : null,
-    configMtimeNs: paths ? statNs(paths.configPath) : null,
+    storeMtimeNs: paths ? clockOf(ctx, 'storeClock', paths.storePath) : null,
+    configMtimeNs: paths ? clockOf(ctx, 'configClock', paths.configPath) : null,
     store,
     hunks: store ? engine.toHunks(store.suggestions) : [],
     unsent: deriveUnsent(store, entries),
@@ -2186,6 +2247,20 @@ function reply(ctx, state, extra, opts) {
   Object.assign(out, extra || {});
   if (o.landed && o.landed.problems.length) out.logWarning = `${o.landed.did}, but ${o.landed.problems.join('; and ')}`;
   return out;
+}
+
+// The clock a reply carries for the sidecar or config.json (decision 50): the mtime taken BEFORE the
+// bytes it describes were read, by the one reader of each (loadOrRefuse and loadFile for the sidecar,
+// configStatus for the config; the prune sets the sidecar's to null, set-tracked's write sets the
+// config's to its own), never a stat at reply time. Read first and stat'ed after, a write landing
+// between the two gave the reply the writer's clock over the earlier bytes, so the panel baselined
+// its poll on a write it had not seen and never refreshed for it (the blind poll, 11 misses in 147
+// rounds of the probe, 2026-09-09). Taken first, the clock is never newer than the bytes: a write in
+// the gap makes the next poll refresh once, or the next write refuse `store-moved`. A verb that
+// reaches the reply without a clock is a program error, not a case for a stat now.
+function clockOf(ctx, key, p) {
+  if (!(key in ctx)) throw new Error(`${ctx.verb}: no ${key} was taken before the read of ${tilde(p)}`);
+  return ctx[key];
 }
 
 // Re-read what was just written so the reply carries the sidecar as every later load sees it.
@@ -2287,33 +2362,47 @@ function doStatus(ctx) {
 // gives the seed its relative path. `root` is null in `plan` for the same loose file; a check that
 // needs the root then uses the one the landmark is about to make, the file's own directory.
 function withSidecar(ctx, create, plan) {
-  const file = readFile(ctx);
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
   if (paths) checkTrackDir(ctx, paths);
-  requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
-    `the comments for ${ctx.shown}`);
-  if (paths) checkConfig(ctx, paths);
-  let store = null;
-  if (root) store = loadOrRefuse(ctx, paths, file.text);
-  if (!store && !create) {
-    throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
-  }
-  const apply = plan(store, file.text, root);
-  // The root the write will have: for a loose file, the landmark's — its own directory, created
-  // below, after the last check that can refuse (the reply's size).
-  const rootToBe = root || path.dirname(ctx.abs);
-  const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
-  if (!store) store = seedStore(pathsToBe.rel);
-  apply(store);
-  checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
-  if (!root) {
+  // From the file's read to the sidecar's read-back, under the sidecar's lock when the file has a
+  // root (underStoreLock says why the file's read is inside too: a track-edit writes the sidecar
+  // and then the file, and a read under the lock sees the pair as one writer left it).
+  const write = () => {
+    const file = readFile(ctx);
+    requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
+      `the comments for ${ctx.shown}`);
+    if (paths) checkConfig(ctx, paths); else ctx.configClock = null;   // no root: no config, no sidecar (decision 50)
+    let store = null;
+    if (root) store = loadOrRefuse(ctx, paths, file.text); else ctx.storeClock = null;
+    if (!store && !create) {
+      throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
+    }
+    const apply = plan(store, file.text, root);
+    // The root the write will have: for a loose file, the landmark's — its own directory, created
+    // below, after the last check that can refuse (the reply's size).
+    const rootToBe = root || path.dirname(ctx.abs);
+    const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
+    if (!store) store = seedStore(pathsToBe.rel);
+    apply(store);
+    checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
+    const land = () => {
+      landSidecar(root, paths.storePath, store, file.text);
+      return { root, paths, store: reloadSaved(ctx, paths, file.text), ...file };
+    };
+    if (root) return land();
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
     checkTrackDir(ctx, paths);
-  }
-  landSidecar(root, paths.storePath, store, file.text);
-  return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
+    // The landmark is new, so the lock is taken now, and the "" fence is checked again under it: a
+    // second first-comment that made the same landmark a moment earlier has landed its sidecar, or
+    // holds the lock while it does.
+    return underStoreLock(ctx, paths.storePath, () => {
+      requireFence(ctx, 'storeMtimeNs', statNs(paths.storePath), 'store-moved', `the comments for ${ctx.shown}`);
+      return land();
+    });
+  };
+  return reply(ctx, paths ? underStoreLock(ctx, paths.storePath, write) : write());
 }
 
 function noChange(ctx, ids) {
@@ -2458,19 +2547,30 @@ function requireIds(ctx) {
 // is false for the sidecar-only verbs and the verb's clause ("cannot write", "cannot save") for
 // the ones that write the file: those fence on the file too, and their read refuses `too-large`
 // on the stat, before the bytes (readFile).
-function loadForDecision(ctx, writesFile) {
-  for (const k of writesFile ? ['storeMtimeNs', 'fileMtimeNs'] : ['storeMtimeNs']) {
-    if (typeof ctx.fence[k] !== 'string') throw new BadRequest(`fence.${k} is required for ${ctx.verb}`);
-  }
+function loadForDecision(ctx, writesFile, root, paths) {
   const file = readFile(ctx, writesFile);
-  const root = findVaultRoot(ctx.abs);
-  const paths = root ? pathsFor(root, ctx.abs) : null;
-  if (paths) checkTrackDir(ctx, paths);
   requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved', `the comments for ${ctx.shown}`);
   if (writesFile) requireFence(ctx, 'fileMtimeNs', file.fileMtimeNs, 'file-moved', `the file ${ctx.shown}`);
   if (paths) checkConfig(ctx, paths);
   const store = root ? loadOrRefuse(ctx, paths, file.text) : null;
   return { file, root, paths, store };
+}
+
+// A decision (accept, reject, save) from its load to its last rename or prune, under the sidecar's
+// lock (underStoreLock): the request's shape and the names under .trackchanges/ are checked first,
+// since the lock is a file among them; `decide(loaded)` runs under the lock with loadForDecision's
+// result and returns `[state, extra, opts]` for reply, which is built after the release. A file
+// with no root has no sidecar to lock (a save of a plain file writes the file alone).
+function decideUnderLock(ctx, writesFile, decide) {
+  for (const k of writesFile ? ['storeMtimeNs', 'fileMtimeNs'] : ['storeMtimeNs']) {
+    if (typeof ctx.fence[k] !== 'string') throw new BadRequest(`fence.${k} is required for ${ctx.verb}`);
+  }
+  const root = findVaultRoot(ctx.abs);
+  const paths = root ? pathsFor(root, ctx.abs) : null;
+  if (paths) checkTrackDir(ctx, paths);
+  const run = () => decide(loadForDecision(ctx, writesFile, root, paths));
+  const [state, extra, opts] = paths ? underStoreLock(ctx, paths.storePath, run) : run();
+  return reply(ctx, state, extra, opts);
 }
 
 // The pending changes a verb decides, as toHunks rows in document order: every one for the -all
@@ -2503,7 +2603,10 @@ function changesOf(hunks) {
 // deleted, so the file returns to the absent state and the client renders it as such; a comment,
 // resolved or not, keeps the sidecar, as does a detached op the person has not dealt with.
 function afterDecision(ctx, paths, store, text) {
-  if (pruneIfClean(paths.storePath, store)) return null;
+  if (pruneIfClean(paths.storePath, store)) {
+    ctx.storeClock = null;   // absent, as of the prune: the store the reply carries is null, and so is its clock (decision 50)
+    return null;
+  }
   return reloadSaved(ctx, paths, text);
 }
 
@@ -2602,37 +2705,38 @@ export function requireCommentsUntouched(ctx, store, loadedComments, verb) {
 // reply says `logged: true` too, as save's, set-tracked's, log-edit's and log-send's do: the entry landed
 // before the rename did.
 function doAccept(ctx, all) {
-  const { file, root, paths, store } = loadForDecision(ctx, false);
-  const decided = decidedChanges(ctx, store, all);
-  const ids = decided.map((h) => h.id);
-  const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: decidedChanges read the records alone
-  store.suggestions = (all ? engine.acceptAll(store.suggestions) : engine.acceptSuggestions(store.suggestions, ids)).suggestions;
-  store[WRITE_SHIFTS] = { settled: decided };   // the accepted insertions stand in the text; the refresh reads their shift before the records go
-  let staged;
-  try {
-    staged = stageSidecar(root, paths.storePath, store, file.text);
-  } catch (e) {
-    throw cannotWriteSidecar(ctx, paths, e);
-  }
-  try {
-    requireCommentsUntouched(ctx, store, loadedComments, all ? 'accept-all' : 'accept');
-  } catch (e) {
-    discardSidecar(staged);
-    throw e;
-  }
-  try {
-    appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
-  } catch (e) {
-    discardSidecar(staged);
-    throw cannotRecord(ctx, paths, e, 'nothing was changed');
-  }
-  try {
-    commitSidecar(staged, paths.storePath);
-  } catch (e) {
-    discardSidecar(staged);
-    throw new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; the decision was recorded in the comments log but did not land — reload and retry`, { logged: true });
-  }
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids, logged: true });
+  return decideUnderLock(ctx, false, ({ file, root, paths, store }) => {
+    const decided = decidedChanges(ctx, store, all);
+    const ids = decided.map((h) => h.id);
+    const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: decidedChanges read the records alone
+    store.suggestions = (all ? engine.acceptAll(store.suggestions) : engine.acceptSuggestions(store.suggestions, ids)).suggestions;
+    store[WRITE_SHIFTS] = { settled: decided };   // the accepted insertions stand in the text; the refresh reads their shift before the records go
+    let staged;
+    try {
+      staged = stageSidecar(root, paths.storePath, store, file.text);
+    } catch (e) {
+      throw cannotWriteSidecar(ctx, paths, e);
+    }
+    try {
+      requireCommentsUntouched(ctx, store, loadedComments, all ? 'accept-all' : 'accept');
+    } catch (e) {
+      discardSidecar(staged);
+      throw e;
+    }
+    try {
+      appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+    } catch (e) {
+      discardSidecar(staged);
+      throw cannotRecord(ctx, paths, e, 'nothing was changed');
+    }
+    try {
+      commitSidecar(staged, paths.storePath);
+    } catch (e) {
+      discardSidecar(staged);
+      throw new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; the decision was recorded in the comments log but did not land — reload and retry`, { logged: true });
+    }
+    return [{ root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids, logged: true }];
+  });
 }
 
 // Put the sidecar back as it was before a reject that landed it and then could not finish: the
@@ -2684,68 +2788,69 @@ function putBack(storePath, prior, then) {
 // text. The survivors come back from the engine remapped into post-reject coordinates; reloading
 // the saved sidecar against the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
-  const { file, root, paths, store } = loadForDecision(ctx, 'cannot write');
-  const decided = decidedChanges(ctx, store, all);
-  const ids = decided.map((h) => h.id);
-  checkDiskSize(ctx, file, 'cannot write');
-  checkIsText(ctx.shown, file);
-  for (const h of decided) {
-    // The load-time rebase placed every kept op where its text is; a row that disagrees with the
-    // file is an invariant broken upstream, and a reject written from it would eat other text.
-    if (file.text.slice(h.curFrom, h.curTo) !== h.newText) {
-      throw new Error(`change ${h.id} does not match ${ctx.shown} at ${h.curFrom}..${h.curTo} after the rebase; nothing was changed`);
+  return decideUnderLock(ctx, 'cannot write', ({ file, root, paths, store }) => {
+    const decided = decidedChanges(ctx, store, all);
+    const ids = decided.map((h) => h.id);
+    checkDiskSize(ctx, file, 'cannot write');
+    checkIsText(ctx.shown, file);
+    for (const h of decided) {
+      // The load-time rebase placed every kept op where its text is; a row that disagrees with the
+      // file is an invariant broken upstream, and a reject written from it would eat other text.
+      if (file.text.slice(h.curFrom, h.curTo) !== h.newText) {
+        throw new Error(`change ${h.id} does not match ${ctx.shown} at ${h.curFrom}..${h.curTo} after the rebase; nothing was changed`);
+      }
     }
-  }
-  const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: the checks above read the records and the text alone
-  const res = all ? engine.rejectAll(store.suggestions) : engine.rejectSuggestions(store.suggestions, ids);
-  const newText = applyEdits(file.text, res.edits);
-  checkTooLarge(ctx.shown, newText);
-  let prior = null;
-  try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
-  let prepared;
-  try {
-    prepared = prepareFileWrite(ctx.abs, newText);
-  } catch (e) {
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
-  }
-  store.suggestions = res.suggestions;
-  store[WRITE_SHIFTS] = { applied: appliedShifts(res.edits) };   // the reversals moved what follows them; the refresh follows a tied passage through them
-  let staged;
-  try {
-    staged = stageSidecar(root, paths.storePath, store, newText);
-  } catch (e) {
-    discardFileWrite(prepared);
-    throw cannotWriteSidecar(ctx, paths, e);
-  }
-  try {
-    requireCommentsUntouched(ctx, store, loadedComments, all ? 'reject-all' : 'reject');
-  } catch (e) {
-    discardSidecar(staged);
-    discardFileWrite(prepared);
-    throw e;
-  }
-  try {
-    commitSidecar(staged, paths.storePath);
-  } catch (e) {
-    discardSidecar(staged);
-    discardFileWrite(prepared);
-    throw cannotWriteSidecar(ctx, paths, e);
-  }
-  try {
-    appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
-  } catch (e) {
-    discardFileWrite(prepared);
-    throw cannotRecord(ctx, paths, e, putBack(paths.storePath, prior));
-  }
-  let fileMtimeNs;
-  try {
-    fileMtimeNs = commitFileWrite(prepared);
-  } catch (e) {
-    discardFileWrite(prepared);
-    const back = putBack(paths.storePath, prior, 'but the decision had already been recorded in the comments log — reload and retry');
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, { logged: true });
-  }
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids, logged: true });
+    const loadedComments = commentsApartFromAnchorAt(store.comments);   // as loaded: the checks above read the records and the text alone
+    const res = all ? engine.rejectAll(store.suggestions) : engine.rejectSuggestions(store.suggestions, ids);
+    const newText = applyEdits(file.text, res.edits);
+    checkTooLarge(ctx.shown, newText);
+    let prior = null;
+    try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    let prepared;
+    try {
+      prepared = prepareFileWrite(ctx.abs, newText);
+    } catch (e) {
+      throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
+    }
+    store.suggestions = res.suggestions;
+    store[WRITE_SHIFTS] = { applied: appliedShifts(res.edits) };   // the reversals moved what follows them; the refresh follows a tied passage through them
+    let staged;
+    try {
+      staged = stageSidecar(root, paths.storePath, store, newText);
+    } catch (e) {
+      discardFileWrite(prepared);
+      throw cannotWriteSidecar(ctx, paths, e);
+    }
+    try {
+      requireCommentsUntouched(ctx, store, loadedComments, all ? 'reject-all' : 'reject');
+    } catch (e) {
+      discardSidecar(staged);
+      discardFileWrite(prepared);
+      throw e;
+    }
+    try {
+      commitSidecar(staged, paths.storePath);
+    } catch (e) {
+      discardSidecar(staged);
+      discardFileWrite(prepared);
+      throw cannotWriteSidecar(ctx, paths, e);
+    }
+    try {
+      appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
+    } catch (e) {
+      discardFileWrite(prepared);
+      throw cannotRecord(ctx, paths, e, putBack(paths.storePath, prior));
+    }
+    let fileMtimeNs;
+    try {
+      fileMtimeNs = commitFileWrite(prepared);
+    } catch (e) {
+      discardFileWrite(prepared);
+      const back = putBack(paths.storePath, prior, 'but the decision had already been recorded in the comments log — reload and retry');
+      throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, { logged: true });
+    }
+    return [{ root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids, logged: true }];
+  });
 }
 
 // ── save (Slice 5) ──────────────────────────────────────────────────
@@ -3057,168 +3162,169 @@ function doSave(ctx) {
   // logged, and reads the disk as it is at the save, so a config that moved since Edit changes
   // nothing written on a client's word; set-tracked, which writes it, is the verb that fences on
   // it (plans/file-review.md, the wire section). A `configMtimeNs` a client sends is not read.
-  const { file, root, paths, store } = loadForDecision(ctx, 'cannot save');
-  if (!store && a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
-  // The ids this save may name, read once for the decisions and the records alike (decisionRoots
-  // reads the log; unreadable refuses before any write).
-  let roots = null;
-  if (taken.size) {
-    // Every decided id must name a change that WAS pending: one the sidecar holds, one the comments
-    // log already records as decided (an editor kept alive past a landed save re-decides an id that
-    // save carried — undo, then the other gesture — and the log then reads accept, reject: what
-    // happened), or a fragment of either (`<id>~n`, the engine's split scheme: the person typed inside
-    // the change and decided one half). Anything else is a decision nobody took: logged, it would
-    // stand in the append-only log as fact and be counted to the session (the kernel tells it how many
-    // changes the save rejected, from these decisions), so it refuses `no-change` by id, as accept and
-    // reject do (decidedChanges), and nothing is written.
-    roots = decisionRoots(ctx, store, paths);
-    if (!store && !roots.size) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
-    const ghosts = [...taken].filter((id) => !rootedIn(roots, id));
-    if (ghosts.length) throw noChange(ctx, ghosts);
-  }
-  checkDiskSize(ctx, file, 'cannot save');
-  checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
-  checkContentText(ctx.shown, a.content);
-  checkTooLarge(ctx.shown, a.content);
-  const fit = fitRecords(a.content, a.suggestions);
-  if (fit.misfit) {
-    throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
-  }
-  if (fit.records.length) {
-    // Every record must be rooted the way a decision must: the sidecar holds it, the log remembers it
-    // decided (undo of a landed accept puts its record back in the field, and this save carries it as
-    // pending again), or it is a fragment of either. fitRecords checked each against `content` only,
-    // and rebuilds the record from the id, author, authorId, ts and oldText the client sent: a record
-    // rooted nowhere would be written into the sidecar as a change by the session it names, with an
-    // old text the session never replaced — the state the decisions check above refuses to LOG, reached
-    // through the sidecar instead, since the next save or the panel's Reject would find it pending.
-    // After fitRecords, so a malformed record is still the caller bug it crashes as and a misfit is
-    // still named first; before the reply is measured and anything written. The sidecar's own ids
-    // root the records of every ordinary save (the seeded records and the engine's splits of them),
-    // so the log is read only for an id the sidecar does not root — the undo of a landed accept, or a
-    // stranger — and a save that names none reads the log exactly as it did (the estimate, then the
-    // reply). Named in the caller's order, as noChange names ghosts.
-    let strangers = [...submitted].filter((id) => !rootedIn(sidecarRoots(store), id));
-    if (strangers.length) {
-      if (!roots) roots = decisionRoots(ctx, store, paths);
-      strangers = strangers.filter((id) => !rootedIn(roots, id));
-      if (strangers.length) throw recordsNeverPending(ctx, strangers);
+  return decideUnderLock(ctx, 'cannot save', ({ file, root, paths, store }) => {
+    if (!store && a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
+    // The ids this save may name, read once for the decisions and the records alike (decisionRoots
+    // reads the log; unreadable refuses before any write).
+    let roots = null;
+    if (taken.size) {
+      // Every decided id must name a change that WAS pending: one the sidecar holds, one the comments
+      // log already records as decided (an editor kept alive past a landed save re-decides an id that
+      // save carried — undo, then the other gesture — and the log then reads accept, reject: what
+      // happened), or a fragment of either (`<id>~n`, the engine's split scheme: the person typed inside
+      // the change and decided one half). Anything else is a decision nobody took: logged, it would
+      // stand in the append-only log as fact and be counted to the session (the kernel tells it how many
+      // changes the save rejected, from these decisions), so it refuses `no-change` by id, as accept and
+      // reject do (decidedChanges), and nothing is written.
+      roots = decisionRoots(ctx, store, paths);
+      if (!store && !roots.size) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
+      const ghosts = [...taken].filter((id) => !rootedIn(roots, id));
+      if (ghosts.length) throw noChange(ctx, ghosts);
     }
-    // Every record the sidecar roots must name its root's author and session id: the editor's remap
-    // copies both onto each fragment it splits off (mapOpsThroughChange's `...s`) and keeps the earlier
-    // record's on a merge (coalesceOps), so the pair holds for every record a real editor derives from
-    // the seeded ones, and a record that differs is not the editor's — written, it would put the
-    // session's change under another author or session id in the sidecar, which the panel's change
-    // cards then show and every later verb reads as who changed what (the review, 2026-09-06).
-    // Compared against the loaded store, the one the editor was seeded from (fenced on storeMtimeNs
-    // and fileMtimeNs, so the load-time rebase produced the same records). A record the log alone
-    // roots has no author on record to compare, and the texts and ts are the client's (the header's
-    // rule on records). Named in the caller's order.
-    const misnamed = [];
-    for (const s of a.suggestions) {
-      const rootRec = sidecarRootOf(store, String(s.id));
-      if (!rootRec) continue;
-      const got = authorOf(s);
-      const want = authorOf(rootRec);
-      if (got.author !== want.author || got.authorId !== want.authorId) misnamed.push(String(s.id));
+    checkDiskSize(ctx, file, 'cannot save');
+    checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
+    checkContentText(ctx.shown, a.content);
+    checkTooLarge(ctx.shown, a.content);
+    const fit = fitRecords(a.content, a.suggestions);
+    if (fit.misfit) {
+      throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
     }
-    if (misnamed.length) throw recordsMisattributed(ctx, misnamed);
-  }
-  // Whether the log has business with this file, decided before the writes from the disk as it is:
-  // a sidecar, a log, or the tracked flag (read from a config checkConfig passed in loadForDecision),
-  // and never a path inside .trackchanges/. The entries are built here too (editDiff is pure), so
-  // nothing after the writes has anything left to compute but the append itself.
-  const logs = !!paths && !underTrackchanges(ctx.abs)
-    && (!!store || exists(paths.logPath) || isTrackedFile(root, ctx.abs));
-  const entries = [];
-  if (logs) {
-    const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
-    entries.push(logEntry('edit', {
-      mtimeBeforeNs: file.fileMtimeNs,
-      mtimeAfterNs: file.fileMtimeNs, // a stand-in of the same width; the write's own mtime replaces it below
-      bytesBefore: file.bytes,
-      bytesAfter: Buffer.byteLength(a.content, 'utf8'),
-      diff,
-      truncated,
-    }));
-    if (accepted.length) entries.push(logEntry('accept', { changes: accepted }));
-    if (rejected.length) entries.push(logEntry('reject', { changes: rejected }));
-  }
-  let prior = null;
-  let loadedComments = null;
-  if (store) {
-    try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
-    const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
-    loadedComments = commentsApartFromAnchorAt(store.comments);   // the comments as loaded: the staged sidecar is held to them below (requireCommentsUntouched)
-    store.suggestions = fit.records;
-    // the person's edit moved what follows it, and the changes the editor accepted stand in the text
-    // while their records leave the sidecar in this write: the refresh follows a tied passage through
-    // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
-    const applied = editShift(file.text, a.content);
-    store[WRITE_SHIFTS] = { settled: settledBySave(loaded, accepted, applied), applied };
-  }
-  checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
-    'the change records and the decisions taken in the editor');
-  // The writes, in reject's order (doReject): the file's new bytes staged beside it, the sidecar
-  // staged against the new text, checked (requireCommentsUntouched: the decisions this save carries
-  // touch no comment, decision 42) and landed, the log's entries, then the rename that lands the
-  // file. A failure before the append refuses with nothing changed (the staged file discarded, the
-  // prior sidecar put back); the rename is the one step after the append, and its failure says the
-  // log already holds the entries (`logged: true`). The edit entry's mtimeAfterNs is the staged
-  // file's own: a rename keeps the inode's mtime, so the value is the one the landed file shows.
-  let prepared;
-  try {
-    prepared = prepareFileWrite(ctx.abs, a.content);
-  } catch (e) {
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
-  }
-  if (store) {
-    let staged;
+    if (fit.records.length) {
+      // Every record must be rooted the way a decision must: the sidecar holds it, the log remembers it
+      // decided (undo of a landed accept puts its record back in the field, and this save carries it as
+      // pending again), or it is a fragment of either. fitRecords checked each against `content` only,
+      // and rebuilds the record from the id, author, authorId, ts and oldText the client sent: a record
+      // rooted nowhere would be written into the sidecar as a change by the session it names, with an
+      // old text the session never replaced — the state the decisions check above refuses to LOG, reached
+      // through the sidecar instead, since the next save or the panel's Reject would find it pending.
+      // After fitRecords, so a malformed record is still the caller bug it crashes as and a misfit is
+      // still named first; before the reply is measured and anything written. The sidecar's own ids
+      // root the records of every ordinary save (the seeded records and the engine's splits of them),
+      // so the log is read only for an id the sidecar does not root — the undo of a landed accept, or a
+      // stranger — and a save that names none reads the log exactly as it did (the estimate, then the
+      // reply). Named in the caller's order, as noChange names ghosts.
+      let strangers = [...submitted].filter((id) => !rootedIn(sidecarRoots(store), id));
+      if (strangers.length) {
+        if (!roots) roots = decisionRoots(ctx, store, paths);
+        strangers = strangers.filter((id) => !rootedIn(roots, id));
+        if (strangers.length) throw recordsNeverPending(ctx, strangers);
+      }
+      // Every record the sidecar roots must name its root's author and session id: the editor's remap
+      // copies both onto each fragment it splits off (mapOpsThroughChange's `...s`) and keeps the earlier
+      // record's on a merge (coalesceOps), so the pair holds for every record a real editor derives from
+      // the seeded ones, and a record that differs is not the editor's — written, it would put the
+      // session's change under another author or session id in the sidecar, which the panel's change
+      // cards then show and every later verb reads as who changed what (the review, 2026-09-06).
+      // Compared against the loaded store, the one the editor was seeded from (fenced on storeMtimeNs
+      // and fileMtimeNs, so the load-time rebase produced the same records). A record the log alone
+      // roots has no author on record to compare, and the texts and ts are the client's (the header's
+      // rule on records). Named in the caller's order.
+      const misnamed = [];
+      for (const s of a.suggestions) {
+        const rootRec = sidecarRootOf(store, String(s.id));
+        if (!rootRec) continue;
+        const got = authorOf(s);
+        const want = authorOf(rootRec);
+        if (got.author !== want.author || got.authorId !== want.authorId) misnamed.push(String(s.id));
+      }
+      if (misnamed.length) throw recordsMisattributed(ctx, misnamed);
+    }
+    // Whether the log has business with this file, decided before the writes from the disk as it is:
+    // a sidecar, a log, or the tracked flag (read from a config checkConfig passed in loadForDecision),
+    // and never a path inside .trackchanges/. The entries are built here too (editDiff is pure), so
+    // nothing after the writes has anything left to compute but the append itself.
+    const logs = !!paths && !underTrackchanges(ctx.abs)
+      && (!!store || exists(paths.logPath) || isTrackedFile(root, ctx.abs));
+    const entries = [];
+    if (logs) {
+      const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
+      entries.push(logEntry('edit', {
+        mtimeBeforeNs: file.fileMtimeNs,
+        mtimeAfterNs: file.fileMtimeNs, // a stand-in of the same width; the write's own mtime replaces it below
+        bytesBefore: file.bytes,
+        bytesAfter: Buffer.byteLength(a.content, 'utf8'),
+        diff,
+        truncated,
+      }));
+      if (accepted.length) entries.push(logEntry('accept', { changes: accepted }));
+      if (rejected.length) entries.push(logEntry('reject', { changes: rejected }));
+    }
+    let prior = null;
+    let loadedComments = null;
+    if (store) {
+      try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+      const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
+      loadedComments = commentsApartFromAnchorAt(store.comments);   // the comments as loaded: the staged sidecar is held to them below (requireCommentsUntouched)
+      store.suggestions = fit.records;
+      // the person's edit moved what follows it, and the changes the editor accepted stand in the text
+      // while their records leave the sidecar in this write: the refresh follows a tied passage through
+      // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
+      const applied = editShift(file.text, a.content);
+      store[WRITE_SHIFTS] = { settled: settledBySave(loaded, accepted, applied), applied };
+    }
+    checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
+      'the change records and the decisions taken in the editor');
+    // The writes, in reject's order (doReject): the file's new bytes staged beside it, the sidecar
+    // staged against the new text, checked (requireCommentsUntouched: the decisions this save carries
+    // touch no comment, decision 42) and landed, the log's entries, then the rename that lands the
+    // file. A failure before the append refuses with nothing changed (the staged file discarded, the
+    // prior sidecar put back); the rename is the one step after the append, and its failure says the
+    // log already holds the entries (`logged: true`). The edit entry's mtimeAfterNs is the staged
+    // file's own: a rename keeps the inode's mtime, so the value is the one the landed file shows.
+    let prepared;
     try {
-      staged = stageSidecar(root, paths.storePath, store, a.content);
+      prepared = prepareFileWrite(ctx.abs, a.content);
+    } catch (e) {
+      throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
+    }
+    if (store) {
+      let staged;
+      try {
+        staged = stageSidecar(root, paths.storePath, store, a.content);
+      } catch (e) {
+        discardFileWrite(prepared);
+        throw cannotWriteSidecar(ctx, paths, e);
+      }
+      try {
+        requireCommentsUntouched(ctx, store, loadedComments, 'save');   // the decisions this save carries touch no comment (decision 42)
+      } catch (e) {
+        discardSidecar(staged);
+        discardFileWrite(prepared);
+        throw e;
+      }
+      try {
+        commitSidecar(staged, paths.storePath);
+      } catch (e) {
+        discardSidecar(staged);
+        discardFileWrite(prepared);
+        throw cannotWriteSidecar(ctx, paths, e);
+      }
+    }
+    if (logs) {
+      entries[0].mtimeAfterNs = statNs(prepared.tmp);
+      let n = 0;
+      try {
+        for (const e of entries) { appendLog(paths.logPath, e); n++; }
+      } catch (e) {
+        discardFileWrite(prepared);
+        const back = store ? putBack(paths.storePath, prior) : 'nothing was changed';
+        const partial = n ? `; the comments log already holds the ${entries.slice(0, n).map((x) => x.kind).join(' and ')} ${n > 1 ? 'entries' : 'entry'} for this save` : '';
+        throw cannotRecord(ctx, paths, e, back + partial, 'the edit');
+      }
+    }
+    let fileMtimeNs;
+    try {
+      fileMtimeNs = commitFileWrite(prepared);
     } catch (e) {
       discardFileWrite(prepared);
-      throw cannotWriteSidecar(ctx, paths, e);
+      const then = logs ? 'but the edit had already been recorded in the comments log — reload and retry' : '';
+      const back = store ? putBack(paths.storePath, prior, then) : `nothing was changed${then ? `, ${then}` : ''}`;
+      throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, logs ? { logged: true } : null);
     }
-    try {
-      requireCommentsUntouched(ctx, store, loadedComments, 'save');   // the decisions this save carries touch no comment (decision 42)
-    } catch (e) {
-      discardSidecar(staged);
-      discardFileWrite(prepared);
-      throw e;
-    }
-    try {
-      commitSidecar(staged, paths.storePath);
-    } catch (e) {
-      discardSidecar(staged);
-      discardFileWrite(prepared);
-      throw cannotWriteSidecar(ctx, paths, e);
-    }
-  }
-  if (logs) {
-    entries[0].mtimeAfterNs = statNs(prepared.tmp);
-    let n = 0;
-    try {
-      for (const e of entries) { appendLog(paths.logPath, e); n++; }
-    } catch (e) {
-      discardFileWrite(prepared);
-      const back = store ? putBack(paths.storePath, prior) : 'nothing was changed';
-      const partial = n ? `; the comments log already holds the ${entries.slice(0, n).map((x) => x.kind).join(' and ')} ${n > 1 ? 'entries' : 'entry'} for this save` : '';
-      throw cannotRecord(ctx, paths, e, back + partial, 'the edit');
-    }
-  }
-  let fileMtimeNs;
-  try {
-    fileMtimeNs = commitFileWrite(prepared);
-  } catch (e) {
-    discardFileWrite(prepared);
-    const then = logs ? 'but the edit had already been recorded in the comments log — reload and retry' : '';
-    const back = store ? putBack(paths.storePath, prior, then) : `nothing was changed${then ? `, ${then}` : ''}`;
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, logs ? { logged: true } : null);
-  }
-  const landed = landedState('saved');
-  const after = store ? settleLanded(ctx, paths, store, a.content, landed) : null;
-  return reply(ctx, { root, paths, store: after, text: a.content, fileMtimeNs }, { logged: logs }, { landed });
+    const landed = landedState('saved');
+    const after = store ? settleLanded(ctx, paths, store, a.content, landed) : null;
+    return [{ root, paths, store: after, text: a.content, fileMtimeNs }, { logged: logs }, { landed }];
+  });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
@@ -3278,46 +3384,68 @@ function doSetTracked(ctx) {
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
   if (paths) checkTrackDir(ctx, paths);
-  requireFence(ctx, 'configMtimeNs', paths ? statNs(paths.configPath) : null, 'config-moved',
-    `the tracking setting for ${ctx.shown}`);
-  if (paths) checkConfig(ctx, paths);
-  const file = loadFile(ctx, paths);
-  if (!root && !on) return reply(ctx, { root: null, paths: null, ...file });
-  // With no landmark, the root the toggle would create is the file's own directory (decision
-  // 37). Every check below runs against that root first — the veto (none, with no config), the
-  // folder entry (always the root for a loose file) — and the landmark is created only once none
-  // refused, so a refused toggle leaves the disk as it found it: no `.trackchanges/` created beside
-  // the file by a click that answered folder-is-root.
-  const loose = !root;
-  const newRoot = root || path.dirname(ctx.abs);
-  if (!paths) paths = pathsFor(newRoot, ctx.abs);
-  let entry;
-  let kind;
-  if (on) {
-    // The `untracked` veto wins over the list and over inheritance, for the guard and the CLIs as
-    // for trackedByFor; an entry written under it would change nothing but the config, so refuse
-    // and name the entry to remove (the config is the vault owner's, edited by hand).
-    const veto = vetoEntryFor(newRoot, paths.rel);
-    if (veto != null) {
-      throw new Refusal('tracked-vetoed', `${ctx.shown} cannot be tracked while the untracked entry "${veto}" in ${tilde(paths.configPath)} vetoes it — remove that entry there first`);
+  // From the config fence to the log append, under config.json's lock (underStoreLock): the file
+  // this verb writes is the root's tracking list, shared by every file under the root, so the
+  // lock is the config's, not the sidecar's.
+  const toggle = () => {
+    requireFence(ctx, 'configMtimeNs', paths ? statNs(paths.configPath) : null, 'config-moved',
+      `the tracking setting for ${ctx.shown}`);
+    if (paths) checkConfig(ctx, paths);
+    const file = loadFile(ctx, paths);
+    if (!root && !on) return [{ root: null, paths: null, ...file }];
+    // With no landmark, the root the toggle would create is the file's own directory (decision
+    // 37). Every check below runs against that root first — the veto (none, with no config), the
+    // folder entry (always the root for a loose file) — and the landmark is created only once none
+    // refused, so a refused toggle leaves the disk as it found it: no `.trackchanges/` created beside
+    // the file by a click that answered folder-is-root.
+    const loose = !root;
+    const newRoot = root || path.dirname(ctx.abs);
+    if (!paths) {
+      paths = pathsFor(newRoot, ctx.abs);
+      ctx.storeClock = null;    // no landmark yet: no sidecar and no config exist to clock (decision 50); the
+      ctx.configClock = null;   // write below stamps the config's own once it lands
     }
-    kind = scope;
-    entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel, loose);
-  } else {
-    const before = trackedByFor(root, ctx.abs);
-    if (!before) return reply(ctx, { root, paths, ...file });
-    if (before.kind === 'inherited') {
-      const parent = before.entry ? tilde(path.join(root, before.entry)) : 'a tracked note';
-      throw new Refusal('tracked-inherited', `${ctx.shown} is tracked because ${parent} links to it — turn tracking off there instead`);
+    let entry;
+    let kind;
+    if (on) {
+      // The `untracked` veto wins over the list and over inheritance, for the guard and the CLIs as
+      // for trackedByFor; an entry written under it would change nothing but the config, so refuse
+      // and name the entry to remove (the config is the vault owner's, edited by hand).
+      const veto = vetoEntryFor(newRoot, paths.rel);
+      if (veto != null) {
+        throw new Refusal('tracked-vetoed', `${ctx.shown} cannot be tracked while the untracked entry "${veto}" in ${tilde(paths.configPath)} vetoes it — remove that entry there first`);
+      }
+      kind = scope;
+      entry = scope === 'file' ? paths.rel : folderEntryFor(ctx, paths.rel, loose);
+    } else {
+      const before = trackedByFor(root, ctx.abs);
+      if (!before) return [{ root, paths, ...file }];
+      if (before.kind === 'inherited') {
+        const parent = before.entry ? tilde(path.join(root, before.entry)) : 'a tracked note';
+        throw new Refusal('tracked-inherited', `${ctx.shown} is tracked because ${parent} links to it — turn tracking off there instead`);
+      }
+      kind = before.kind;
+      entry = before.entry;
     }
-    kind = before.kind;
-    entry = before.entry;
-  }
-  if (loose) root = createLandmark(ctx); // asserts the root it finds is newRoot, the file's directory
-  writeConfigAtomic(root, entry, on);
-  const landed = landedState('the tracking setting was written');
-  const logged = appendLanded(ctx, paths, [logEntry('set-tracked', { on, scope: kind, entry })], landed);
-  return reply(ctx, { root, paths, ...file }, { logged }, { landed });
+    const write = () => {
+      writeConfigAtomic(root, entry, on);
+      ctx.configClock = statNs(paths.configPath);   // the write's own clock, under the lock: the reply's tracking verdict reads these bytes or later ones (decision 50)
+      const landed = landedState('the tracking setting was written');
+      const logged = appendLanded(ctx, paths, [logEntry('set-tracked', { on, scope: kind, entry })], landed);
+      return [{ root, paths, ...file }, { logged }, { landed }];
+    };
+    if (!loose) return write();
+    root = createLandmark(ctx); // asserts the root it finds is newRoot, the file's directory
+    // The landmark is new, so the lock is taken now, and the "" fence is checked again under it: a
+    // second toggle that made the same landmark a moment earlier has written the config, or holds
+    // the lock while it does.
+    return underStoreLock(ctx, paths.configPath, () => {
+      requireFence(ctx, 'configMtimeNs', statNs(paths.configPath), 'config-moved', `the tracking setting for ${ctx.shown}`);
+      return write();
+    });
+  };
+  const [state, extra, opts] = paths ? underStoreLock(ctx, paths.configPath, toggle) : toggle();
+  return reply(ctx, state, extra, opts);
 }
 
 const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'bytesAfter', 'diff', 'truncated'];
@@ -3338,7 +3466,7 @@ function doLogEdit(ctx) {
   try {
     if (paths) {
       checkTrackDir(ctx, paths);
-      const cfg = configStatus(paths);
+      const cfg = configStatus(ctx, paths);
       const own = !underTrackchanges(ctx.abs);
       if (own && (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs)))) {
         const fields = {};

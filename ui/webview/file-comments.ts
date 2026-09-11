@@ -100,7 +100,15 @@ import { regionDesc, isRegion, type Region } from "./region-geometry";
 import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
 
 const POLL_MS = 2500;
-const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+// The refusals a fresh status and one retry answer: a moved fence (the panel's copy is stale), and `busy` (another
+// writer held the host's lock past its wait, decision 49). The retry after `busy` is the moved-fence path reused, not a
+// wait for the holder: `busy` comes back while the lock is STILL held (the holder releases after its last rename, and
+// `status` takes no lock), so the re-read shows the holder's write only when it landed in the gap before the re-read,
+// and only then does the retry carry a fence that lands. A holder that finishes during the retry's own wait moves the
+// fence under it (the retry refuses `store-moved`); one still writing refuses `busy` again; either is the second
+// refusal, shown verbatim with Reload (file-comments-busy-retry-fence.test.ts). Nothing is decided over unseen text
+// either way: the fence catches every stale copy, and the lock only serializes the writers.
+const MOVED = new Set(["store-moved", "file-moved", "config-moved", "busy"]);
 /** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
 const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
 /** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
@@ -2202,14 +2210,21 @@ class Panel {
   }
   /** The editor's Save through the host: `save` with the text, the records as the editor holds them and its decisions,
    *  fenced on the sidecar the records came from (editSeed; the latest status when none rode in), the config, and the
-   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved
-   *  but the records the editor carries are still the sidecar's own — a reply a session wrote mid-edit, a toggle from
-   *  another browser; never for a moved file (the editor's text is from the old bytes) or a sidecar whose records
-   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read — and it re-seeds the
-   *  fence, since the editor may stay up past a landed save (the viewer keeps it over keystrokes typed during the round trip,
-   *  or a decision clicked then) and its next Save must meet the sidecar THIS save wrote, not the poll's latest: a decision
-   *  landed elsewhere between two saves would pass that fence and be written back as pending. The host's `logWarning`
-   *  (the comments log did not take the edit) rides the resolved value for the viewer's note bar and is said in the head. */
+   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved,
+   *  or the host's lock on the sidecar was still held past its wait (`busy`, decision 49: the same re-read and retry, which
+   *  land only when the holder released before the re-read, since `busy` arrives while it is still writing; a holder that
+   *  finishes under the retry moves the fence, and that `store-moved` reaches the viewer as the second refusal; see MOVED
+   *  and file-comments-busy-retry-fence.test.ts), but the records the editor carries are still the sidecar's own — a reply
+   *  a session wrote mid-edit, a toggle from another browser; never for a moved file (the editor's
+   *  text is from the old bytes) or a sidecar whose records changed (file-comments-save-busy.test.ts drives the `busy`
+   *  leg; file-comments-panel.test.ts the moved fences). A `busy` whose re-read shows the records changed hands the viewer
+   *  the head's row in place of the host's words, which ask for a retry that can only refuse (underEditRefusal); a moved
+   *  fence's words stand. The reply is applied as the status (it is one), so onSaved has
+   *  nothing left to re-read — and it re-seeds the fence, since the editor may stay up past a landed save (the viewer
+   *  keeps it over keystrokes typed during the round trip, or a decision clicked then) and its next Save must meet the
+   *  sidecar THIS save wrote, not the poll's latest: a decision landed elsewhere between two saves would pass that fence
+   *  and be written back as pending. The host's `logWarning` (the comments log did not take the edit) rides the resolved
+   *  value for the viewer's note bar and is said in the head. */
   async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean; logWarning?: string }> {
     const seed = this.editSeed;
     const gen = this.editGen;                          // the editor this save came from (begin() counts them): see `mine` below
@@ -2265,7 +2280,7 @@ class Panel {
         return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true, ...(logWarning ? { logWarning } : {}) };
       } catch (err) {
         const e = err as { code: string; error: string };
-        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
+        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved" || e.code === "busy")) {
           await this.refresh();
           this.noteMovedUnderEdit();                   // the re-read can show the file moved too: the head says so, as the poll's would
           const s = this.status;
@@ -2274,10 +2289,30 @@ class Panel {
             if (seed && gen === this.editGen) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };   // the saving editor's seed follows; a later editor's is its own
             continue;
           }
+          // The records changed under the editor and the refusal was `busy`: the host's words ask for a retry that can
+          // only refuse (underEditRefusal), so the viewer gets the head's row instead, under the same code. A moved
+          // fence's words stand: they say reload, as the row does.
+          if (s && e.code === "busy") throw { code: e.code, error: this.underEditRefusal(seed, s) };
         }
         throw e;
       }
     }
+  }
+  /** The words a Save refused `busy` hands the viewer when its re-read shows the sidecar's pending changes are no longer
+   *  the ones the editor carries (saveThroughComments): the row that same re-read raised in the head, so the viewer's bar
+   *  and the head say one thing. The host's words ("another editor is writing <path>; retry") were true when the lock was
+   *  held and are stale once the re-read has shown other records: a Save now can only refuse `store-moved`, since its
+   *  fence is the sidecar the records came from and re-fencing it would pass the editor's stale list over what the other
+   *  writer decided (the review's stale-bar finding, 2026-09-11; file-comments-save-busy.test.ts). The code stays `busy`,
+   *  so the viewer's Reload offer keys on it as before: a reload shows the file as it stands once the other writer
+   *  releases. The
+   *  conditions are the rows' own (noteMovedUnderEdit, noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the file
+   *  moved too (a reject's or a track-edit's write), the file's row; records rode in and changed, the moved-records row;
+   *  none rode in and the re-read shows changes, the unread row. Not a moved fence's words: `store-moved` and
+   *  `config-moved` already say reload and retry, which agrees with the row. */
+  private underEditRefusal(seed: EditSeed | null, s: Status): string {
+    if (laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return MOVED_UNDER_EDIT;
+    return seed ? CHANGES_MOVED_UNDER_EDIT : CHANGES_UNREAD_UNDER_EDIT;
   }
   /** The file's bytes moved under an edit (the poll saw it; a verb's reply read a later file): the viewer's reload() stands
    *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   findVaultRoot, storePathFor, loadStore, saveStore, reviveThreadFromSuperseded, reviveThreadInto,
+  withStoreLock, StoreLockError,
 } from '../store-io.mjs';
 import { parseArgs } from './cli-args.mjs';
 
@@ -39,9 +40,11 @@ function sessionLabel() {
   return process.env.TRACKCHANGES_SESSION || process.env.ROMP_SESSION_NAME || 'unknown';
 }
 
+// A failure is thrown, not exited on the spot, so a lock held at that moment is released on the
+// way out (process.exit skips every finally); the entry point prints it and exits 1.
+class CliFailure extends Error {}
 function fail(msg) {
-  process.stderr.write(msg.endsWith('\n') ? msg : msg + '\n');
-  process.exit(1);
+  throw new CliFailure(msg);
 }
 
 function run(argv) {
@@ -51,9 +54,23 @@ function run(argv) {
   const abs = path.resolve(args.file);
   const vaultRoot = process.env.TRACKCHANGES_ROOT || findVaultRoot(abs);
   if (!vaultRoot) fail(`Not inside an Obsidian vault: ${abs}`);
+  const storePath = storePathFor(vaultRoot, abs);
+  // One writer per sidecar (store-io's withStoreLock): the note read, the load, the reply and
+  // the save run under the sidecar's lock, so a host or another CLI writing the same sidecar
+  // cannot land between this load and this rename and have its write erased by it. A lock still
+  // held after the wait fails with one line and nothing written.
+  try {
+    withStoreLock(storePath, () => replyUnderLock(args, abs, vaultRoot, storePath));
+  } catch (e) {
+    if (e instanceof StoreLockError) fail(e.message);
+    throw e;
+  }
+  process.stdout.write('Reply posted to thread.\n');
+}
+
+function replyUnderLock(args, abs, vaultRoot, storePath) {
   let text = null;
   try { text = fs.readFileSync(abs, 'utf8'); } catch { /* store still loadable without it */ }
-  const storePath = storePathFor(vaultRoot, abs);
   let store = loadStore(storePath, text);
   if (!store) {
     // The review may have just CLOSED (last change accepted → store
@@ -74,7 +91,6 @@ function run(argv) {
   }
   if (res.error) fail(res.error);
   try { saveStore(vaultRoot, storePath, store, text); } catch { fail(`Could not write the store for ${abs}`); }
-  process.stdout.write('Reply posted to thread.\n');
 }
 
 const invokedDirectly = (() => {
@@ -83,4 +99,12 @@ const invokedDirectly = (() => {
   } catch { return false; }
 })();
 
-if (invokedDirectly) run(process.argv.slice(2));
+if (invokedDirectly) {
+  try {
+    run(process.argv.slice(2));
+  } catch (e) {
+    if (!(e instanceof CliFailure)) throw e;
+    process.stderr.write(e.message.endsWith('\n') ? e.message : e.message + '\n');
+    process.exit(1);
+  }
+}

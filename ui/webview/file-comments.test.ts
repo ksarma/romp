@@ -781,7 +781,15 @@ test("every mutating verb: consent first, a fence from the current status, one r
     "a moved fence: fresh status (whose file mtime re-fetches the bytes when they moved — applyStatus), then one retry");
   assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \|\| e\.code === FIGURE_CHANGED \}\);/, "a second refusal shows verbatim; moved fences offer Reload, and so does a figure whose bytes changed (Slice 3: never retried)");
   assert.match(once, /const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\n\s*if \(fh\) fence\.figureHash = fh;/, "a write about a figure also fences on its bytes, when the status holds a hash for it (Slice 3)");
-  assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
+  // `busy` joined the three moved fences with the sidecar lock (decision 49, 2026-09-11): another writer held the host's
+  // lock past its wait, so the panel takes it as it takes a moved fence: a fresh status, one retry on the fence it shows
+  // (which lands only when the holder released before the re-read: file-comments-busy-retry-fence.test.ts), and a second
+  // refusal shows verbatim with Reload. tools/file-review-plan-sidecar.test.mjs pins the
+  // same literal against the plan's words; the save path's own retry (attempt === 0) names the code too.
+  assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved", "busy"\]\);/,
+    "the codes a fresh status and one retry answer: the three moved fences and busy (the host's lock, decision 49)");
+  assert.match(SRC, /if \(attempt === 0 && \(e\.code === "store-moved" \|\| e\.code === "config-moved" \|\| e\.code === "busy"\)\) \{\n\s*await this\.refresh\(\);/,
+    "the save through the panel retries once on busy as on a moved sidecar or config, from a fresh status");
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',
     '"set-tracked", { on: false, scope: "file" }', '"reply", { commentId: c.commentId, note }', '"comment", args', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {
     assert.ok(SRC.includes("this.mutate(" + verb), verb + " goes through mutate()");

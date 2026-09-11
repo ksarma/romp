@@ -275,7 +275,7 @@ test('after the file lands, a sidecar or a log that cannot be read back is repor
   assert.deepEqual(again.log.map((e) => e.kind), ['set-tracked', 'edit']);
 });
 
-test('save: a tracked file with no log yet in a .trackchanges/ that cannot be written to (a folder entry covers it) refuses unreadable naming the log it could not create, and nothing is written', skipAsRoot, () => {
+test('save: a tracked file with no log yet in a .trackchanges/ that cannot be written to (a folder entry covers it) refuses unreadable naming what it could not create, and nothing is written', skipAsRoot, () => {
   const w = world();
   writeTrackedPaths(w.root, ['docs/']);
   const other = path.join(w.root, 'docs', 'other.md');
@@ -293,9 +293,12 @@ test('save: a tracked file with no log yet in a .trackchanges/ that cannot be wr
   } finally {
     fs.chmodSync(tc, 0o755);
   }
-  // The file is the log's business (the folder entry), so the edit entry must land before the file
-  // does; a log that cannot be created refuses with nothing changed — no sidecar to put back here.
-  assert.match(r.error, /^cannot record the edit in the comments log for ~\/notes-api\/docs\/other\.md \(~\/notes-api\/\.trackchanges\/docs%2Fother\.md\.comments-log\.jsonl\): .*(EACCES|EPERM).*; nothing was changed$/);
+  // The first thing a save creates under .trackchanges/ is the sidecar's lock (decision 49), taken
+  // before the load, so a folder that cannot be written to refuses on that, with nothing changed:
+  // before the lock the refusal came later, from the log entry (the file is the log's business, by
+  // the folder entry, so the edit entry had to land before the file did). Either way the message
+  // says which file could not be created and ends the same.
+  assert.match(r.error, /^cannot lock ~\/notes-api\/docs\/other\.md for writing: cannot create ~\/notes-api\/\.trackchanges\/docs%2Fother\.md\.json\.lock: .*(EACCES|EPERM).*; nothing was changed$/);
   assert.equal('logged' in r, false);
   untouched(w, other, before);
   assert.equal(fs.existsSync(lp), false);
