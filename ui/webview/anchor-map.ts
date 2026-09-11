@@ -157,6 +157,14 @@ const CONTROL_CLASSES = [
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
+/** The span the regions layer wraps a picture in while the Comments panel is open (file-comments-regions.ts: the <img> and its
+ *  drawing overlay inside it). Where a tag test reads a node's element, this span stands for its IMG: an html block whose
+ *  top-level tag is <img> renders that span with the panel open and the bare <img> without it, and the pairing must find the
+ *  block's element either way (the Slice 5 review, round 2: the span hid the IMG from every tag test, so a wrapper before such a
+ *  block could not confirm its run and the passages nested in it were refused, and their comments unpainted, with the panel open). */
+const IMG_WRAP_CLASS = "fc-imgwrap";
+/** The tag a node answers a tag test with: its own element's, or IMG for the regions layer's span around a picture. */
+const tagNameOf = (n: DElement): string => hasClass(n, IMG_WRAP_CLASS) ? "IMG" : n.tagName.toUpperCase();
 
 // ── code lines under a wrap ────────────────────────────────────────────────────────────────────────
 //
@@ -1129,10 +1137,20 @@ type Block = {
   tag: string | null;   // the element the token renders to, for resyncing past an html block
   /** an html block's top-level tags as the tag scan reads its raw (topTags), in order; null for every other block */
   tags: TopTag[] | null;
-  /** a paragraph's stray end tags (inlineEnds): the elements its inline html closes without opening them, upper case, in
-   *  order; empty for every other block. The parser closes such an element when it is open around the paragraph (a wrapper),
-   *  the paragraph's `<p>` with it, and mints an empty `<p>` for the paragraph's own `</p>`, which the pairing steps over. */
-  ends: string[];
+  /** the block's stray end tags (blockEnds): the elements its inline html closes without opening them, upper case, in order,
+   *  each with whether it stands inside a `<p>` the renderer emits (a paragraph's, a quoted paragraph's, a loose list item's;
+   *  not a heading's or a tight item's); empty for an html block. The parser closes such an element when it is open around the
+   *  block (a wrapper), the `<p>` with it, and, for a closer inside a `<p>`, mints an empty `<p>` for that `</p>` (minted). */
+  ends: EndTag[];
+  /** whether the parser minted an empty `<p></p>` right after this block's node: one of its `ends` inside a `<p>` closed a
+   *  wrapper the source had open around the block (the walk over the wrapper chain in walkedBlocks, which reads the html blocks'
+   *  open tags and stray end tags and the blocks' own closers in order), so the paragraph's own `</p>` found no `<p>` open and
+   *  the parser opened one. A node no block renders as, which the pairing steps over (analyzeRendered, pastMinted: the one
+   *  model the run check and the pairing share). A closer naming no open wrapper mints nothing, whatever the DOM holds. */
+  minted: boolean;
+  /** an html block's text outside its tags and comments (htmlText), whitespace stripped: what the sanitizer's unwrap of a
+   *  form-associated element leaves as a bare text node where the element stood; "" for every other block */
+  htext: string;
   /** the elements of this block whose children the pairing took into the table: a tag the raw leaves open (`<div
    *  align="center">`, `<details><summary>x</summary>`), which the browser nests the markdown after the block inside,
    *  so the blocks after it pair against that element's children (Slice 5's flattened walk); renderedBlockWrappers */
@@ -1146,7 +1164,7 @@ type Block = {
  *  in anything else (a tag, words, an unterminated comment) and doubled its time per comment (91 ms at 22, 144 s at
  *  30, on every Rendered paint), and it let a comment at each end of the line vouch for the words between them, which
  *  do render (the Slice 2 review, round 2: the next paragraph took their node and every block after paired one early). */
-function commentsOnly(raw: string): boolean {
+export function commentsOnly(raw: string): boolean {
   let i = 0;
   for (;;) {
     while (i < raw.length && isWs(raw[i])) i++;
@@ -1166,8 +1184,10 @@ function commentsOnly(raw: string): boolean {
  *  element, a `<p>` whose end tag is missing: see topTags). `depth` is 0 for a top-level tag; an element left open INSIDE
  *  the open one before it (`<div><div>`, the second the last element child of the first) is listed after it at depth 1, 2,
  *  and so on, since the markdown after the block nests in the innermost. `empty` marks the `<p></p>` the parser mints for a
- *  stray `</p>`: an element with no text. */
-type TopTag = { tag: string; open: boolean; depth: number; empty?: boolean };
+ *  stray `</p>`: an element with no text. `stray` marks any other end tag with no element of its name open in the raw
+ *  (`</details>` alone, the `</div>` before an `<img>` in one block): it closes an element an earlier block left open, or
+ *  nothing, and takes no node of its own; the wrapper chain in walkedBlocks reads it. */
+type TopTag = { tag: string; open: boolean; depth: number; empty?: boolean; stray?: boolean };
 const VOID_TAGS = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
 /** The elements whose start tag closes an open `<p>` (the HTML parser's rule for a `p` in button scope, "in body"). */
 const CLOSES_P = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DETAILS", "DIALOG", "DIV", "DL", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM",
@@ -1184,8 +1204,9 @@ const isTagNameChar = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A
  *  start tag (CLOSES_P) follows it, and a top-level `<p>` the raw leaves open is CLOSED, since every block marked renders
  *  after it opens with a tag that closes a `p` (the paragraph's own `<p>`, a heading, a list, a `<pre>`, a table), so no
  *  markdown nests in it, where it nests in an open `<div>` or `<details>`; and a stray `</p>` at depth 0 is an empty `<p>`
- *  the parser mints, one node. An end tag with no open element of its name is dropped, as the parser drops it: a block that is
- *  `</div>` alone opens nothing. Where this reading and the DOM disagree (the sanitizer dropped a `<style>` with its text or
+ *  the parser mints, one node. Any other end tag with no open element of its name at depth 0 is listed as `stray`: it opens
+ *  nothing and takes no node (a block that is `</div>` alone), and closes the element an earlier block left open, if one is
+ *  (the chain walkedBlocks keeps). Where this reading and the DOM disagree (the sanitizer dropped a `<style>` with its text or
  *  unwrapped a `<form>`, the parser split a `<p>` around a `<div>`), the pairing's resync from the following blocks stands. */
 function topTags(raw: string): TopTag[] {
   const out: TopTag[] = [];
@@ -1229,7 +1250,7 @@ function topTags(raw: string): TopTag[] {
       let at = stack.length - 1;
       while (at >= 0 && stack[at] !== name) at--;
       if (at >= 0) closeTo(at);
-      else if (name === "P" && stack.length === 0) out.push({ tag: "P", open: false, depth: 0, empty: true });   // the parser's empty `<p></p>`
+      else if (stack.length === 0) out.push(name === "P" ? { tag: "P", open: false, depth: 0, empty: true } : { tag: name, open: false, depth: 0, stray: true });   // the parser's empty `<p></p>`; else an earlier block's element closed, or nothing
       continue;
     }
     if (CLOSES_P.has(name) && stack.length && stack[stack.length - 1] === "P") closeTo(stack.length - 1);
@@ -1249,30 +1270,89 @@ function topTags(raw: string): TopTag[] {
   for (let d = 1; d < stack.length; d++) out.push({ tag: stack[d], open: true, depth: d });
   return out;
 }
-/** The end tags a paragraph's inline html carries with no start tag of theirs before them in the paragraph (`**Bold**
- *  </div>`, `Last line.</details>`: an author closing a wrapper on the paragraph's own line), upper case, in order. marked
- *  wraps the paragraph in `<p>...</p>` and the parser, meeting the end tag with its element open above the `<p>`, closes the
- *  `<p>` and the element, then mints an empty `<p></p>` for the paragraph's own `</p>`, a node right after the wrapper's
- *  children that no block renders as; the pairing steps over it (analyzeRendered). An end tag of an element not open is
- *  dropped by the parser and mints nothing, so the pairing checks the element is an ancestor before it steps. Inline tokens
- *  are read recursively (the tag may stand inside emphasis or a link's label); an inline html token is one tag. */
-function inlineEnds(tokens: Token[] | undefined, open: string[] = [], out: string[] = []): string[] {
-  if (!tokens) return out;
-  for (const t of tokens) {
-    if (t.type === "html") {
-      const raw = t.raw;
-      const end = raw[1] === "/";
-      let j = end ? 2 : 1, k = j;
-      while (k < raw.length && isTagNameChar(raw[k])) k++;
-      const name = raw.slice(j, k).toUpperCase();
-      if (!name) continue;
-      if (end) { const at = open.lastIndexOf(name); if (at >= 0) open.length = at; else out.push(name); }
-      else if (!VOID_TAGS.has(name) && !/\/\s*>$/.test(raw)) open.push(name);
+/** The common entities decoded, for a text the parser shows (`&amp;` is `&` in the DOM); an entity this does not know stays. */
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+function decodeBasicEntities(s: string): string {
+  return s.replace(/&(#[xX][0-9a-fA-F]{1,6}|#\d{1,7}|[a-zA-Z]+);/g, (m, e: string) => {
+    if (e[0] !== "#") return e in NAMED_ENTITIES ? NAMED_ENTITIES[e] : m;
+    const code = parseInt(e[1] === "x" || e[1] === "X" ? e.slice(2) : e.slice(1), e[1] === "x" || e[1] === "X" ? 16 : 10);
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+  });
+}
+/** The text an html token's raw shows outside its tags and comments, whitespace stripped and the common entities decoded: what
+ *  the sanitizer's unwrap of a form-associated element (md-sanitize.ts, `<option>Opt.</option>`) leaves as a bare text node
+ *  where the element stood, which the pairing's run check reads past with the block (analyzeRendered). The content of an
+ *  element the sanitizer drops with its text (RAW_TEXT but a textarea, whose content it keeps) is not shown. Empty for a block
+ *  of tags alone (`</details>`, `<img src="a.png">`), which then renders nothing of its own when it opens no element (blank). */
+function htmlText(raw: string): string {
+  let out = "";
+  const n = raw.length;
+  let i = 0;
+  while (i < n) {
+    const lt = raw.indexOf("<", i);
+    if (lt < 0) { out += raw.slice(i); break; }
+    out += raw.slice(i, lt);
+    i = lt + 1;
+    const c = raw[i];
+    if (c === "!" || c === "?") {
+      if (raw.startsWith("!--", i)) {
+        i += 3;
+        if (raw[i] === ">") i++;
+        else if (raw.startsWith("->", i)) i += 2;
+        else { const close = raw.indexOf("-->", i); i = close < 0 ? n : close + 3; }
+      } else { const gt = raw.indexOf(">", i); i = gt < 0 ? n : gt + 1; }
       continue;
     }
-    inlineEnds((t as { tokens?: Token[] }).tokens, open, out);
+    const j = c === "/" ? i + 1 : i;
+    if (j >= n || !((raw[j] >= "a" && raw[j] <= "z") || (raw[j] >= "A" && raw[j] <= "Z"))) { out += "<"; continue; }   // a bare `<`: text
+    let k = j;
+    while (k < n && isTagNameChar(raw[k])) k++;
+    const name = raw.slice(j, k).toUpperCase();
+    for (i = k; i < n; i++) {
+      const ch = raw[i];
+      if (ch === '"' || ch === "'") { const q = raw.indexOf(ch, i + 1); if (q < 0) { i = n; break; } i = q; continue; }
+      if (ch === ">") { i++; break; }
+    }
+    if (c !== "/" && RAW_TEXT.has(name) && name !== "TEXTAREA") {
+      const close = raw.toLowerCase().indexOf("</" + name.toLowerCase(), i);
+      i = close < 0 ? n : close;
+    }
   }
-  return out;
+  return stripWs(decodeBasicEntities(out));
+}
+/** A stray end tag of a block's inline html (blockEnds): the element it closes, upper case, and whether the tag stands inside a
+ *  `<p>` the renderer emits, where the parser then mints an empty `<p></p>` for that paragraph's own `</p>`. */
+type EndTag = { tag: string; p: boolean };
+/** A tag in an html token's raw: its `<` or `</`, its name, its attributes (a `>` inside a quoted value passes), a `/>`. */
+const TAG_RE = /<(\/?)([a-zA-Z][a-zA-Z0-9:_-]*)(?:[^>"']|"[^"]*"|'[^']*')*?(\/?)>/g;
+/** The end tags a block's inline html carries with no start tag of theirs before them in the block (`**Bold** </div>`,
+ *  `Last line.</details>`, `> quoted </div>`, a loose item's `- Item </div>`: an author closing a wrapper on the block's own
+ *  line), in order, each with whether it stands inside a `<p>` the renderer emits. marked wraps a paragraph in `<p>...</p>` (a
+ *  quoted paragraph's and a loose list item's the same) and the parser, meeting the end tag with its element open above the
+ *  `<p>`, closes the `<p>` and the element, then mints an empty `<p></p>` for the paragraph's own `</p>`, a node right after
+ *  the wrapper's children that no block renders as; a heading's or a tight item's closer closes the element and mints nothing,
+ *  since no `</p>` follows. An end tag of an element not open is dropped by the parser and mints nothing, so the wrapper chain
+ *  in walkedBlocks decides which of these closed one (Block.minted). Tokens are read recursively (the tag may stand inside
+ *  emphasis, a link's label, a quote's paragraph or a list item); a table's cells are a scope of their own, where the parser
+ *  ignores such a tag, and code holds no tag. */
+function blockEnds(tokens: Token[] | undefined, p: boolean, open: string[], out: EndTag[]): void {
+  if (!tokens) return;
+  for (const t of tokens) {
+    switch (t.type) {
+      case "html":
+        for (const m of t.raw.matchAll(TAG_RE)) {
+          const name = m[2].toUpperCase();
+          if (m[1]) { const at = open.lastIndexOf(name); if (at >= 0) open.length = at; else out.push({ tag: name, p }); }
+          else if (!VOID_TAGS.has(name) && !m[3]) open.push(name);
+        }
+        continue;
+      case "code": case "codespan": case "table": case "escape": continue;
+      case "list": { const l = t as Tokens.List; for (const it of l.items) blockEnds(it.tokens, !!l.loose, open, out); continue; }
+      case "paragraph": blockEnds((t as Tokens.Paragraph).tokens, true, open, out); continue;
+      case "heading": case "blockquote": blockEnds((t as { tokens?: Token[] }).tokens, false, open, out); continue;
+      default: blockEnds((t as { tokens?: Token[] }).tokens, p, open, out);
+    }
+  }
 }
 type RenderedIndex = {
   source: string; shape: Shape; N: string; nStart: Int32Array | null;
@@ -1380,8 +1460,33 @@ function walkedBlocks(table: SourceTable): Walked[] {
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
     const isHtml = t.type === "html";
-    const ends = t.type === "paragraph" || t.type === "text" ? inlineEnds((t as Tokens.Paragraph).tokens) : [];
-    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t), tags: isHtml ? topTags(t.raw) : null, ends });
+    const ends: EndTag[] = [];
+    if (!isHtml) blockEnds([t], t.type === "text", [], ends);   // a top-level `text` token renders as a paragraph (tagOf)
+    const tags = isHtml ? topTags(t.raw) : null;
+    const htext = isHtml ? htmlText(t.raw) : "";
+    // an html block that renders no node of its own: comments alone, or tags that open nothing (a closing tag alone, `</details>`,
+    // `</div>`) with no text outside them; the pairing gives it no node and reads past it (before this only a comment block was
+    // read past, and a closing tag's block ran the resync, which, before a paragraph carrying an inline closer, confirmed at no
+    // end and took every node to the document's end: the Slice 5 review, round 2)
+    const blank = isHtml && (commentsOnly(t.raw) || (!(tags as TopTag[]).some((tt) => !tt.stray) && htext === ""));
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank, tag: tagOf(t), tags, ends, minted: false, htext });
+  }
+  // the wrapper chain: the elements the source leaves open before each block, outermost first, read across the blocks in
+  // order as the parser keeps them: an html block's open tags push (the innermost last), its stray end tags pop the chain to
+  // the element they name (the parser closes down to it, and ignores an end tag naming no open element), and a block's own
+  // inline closers pop the same way; a closer inside a `<p>` that pops the chain mints the empty `<p>` (Block.minted). The
+  // source is the model, not the DOM's ancestry: the sanitizer unwraps a `<form>` after the parser minted the `<p>`, so the
+  // paragraph's element has no such ancestor left while the node stands (the Slice 5 review, round 2).
+  const chain: string[] = [];
+  for (const w of out) {
+    if (w.isHtml) {
+      for (const tt of w.tags || []) {
+        if (tt.stray) { const at = chain.lastIndexOf(tt.tag); if (at >= 0) chain.length = at; }
+        else if (tt.open) chain.push(tt.tag);
+      }
+    } else {
+      for (const e of w.ends) { const at = chain.lastIndexOf(e.tag); if (at >= 0) { chain.length = at; if (e.p) w.minted = true; } }
+    }
   }
   if (table.lexError !== null) out.length = 0;
   table.walked = out;
@@ -1412,7 +1517,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   for (const n of content) nodeText.set(n, textKey(n));
   if (lexError !== null) {
     blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
-                  dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, ends: [], wrap: [] });
+                  dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, ends: [], minted: false, htext: "", wrap: [] });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
   //    pairing is 1:1 except across an html block, whose node count is unknown (zero for a comment, several
@@ -1432,7 +1537,17 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   //    unwrapped element, a hoisted text) the resync decides as it always did.
   const nodeBlock = new Map<DNode, number>();
   const wrappers: DNode[] = [];
-  const tagIs = (node: DNode, tag: string): boolean => isElement(node) && node.tagName.toUpperCase() === tag;
+  const tagIs = (node: DNode, tag: string): boolean => isElement(node) && tagNameOf(node) === tag;   // the regions layer's span is its IMG
+  const hasElementChild = (n: DNode): boolean => { for (let i = 0; i < n.childNodes.length; i++) if (isElement(n.childNodes[i])) return true; return false; };
+  /** the parser's minted `<p></p>` as a node: an element P with no text and no child element (an image paragraph's <p> holds one) */
+  const emptyP = (n: DNode): boolean => tagIs(n, "P") && nodeText.get(n) === "" && !hasElementChild(n);
+  /** the index past the empty `<p>` the parser minted after block b's node when b closed a wrapper inline (Block.minted, the
+   *  source's own reading), k itself when no such node stands at k: the ONE model of the minted `<p>` the run check (runFits)
+   *  and the pairing loop share (the Slice 5 review, round 2: the loop stepped over it and the run check did not, so a wrapper
+   *  with a leftover closed inline on its only paragraph confirmed its run at no end and the closer was swallowed by the html
+   *  block after it) */
+  const pastMinted = (b: number, k: number): number => blocks[b].minted && k < content.length && emptyP(content[k]) ? k + 1 : k;
+  const firstTag = (blk: Block): TopTag | undefined => blk.tags ? blk.tags.find((tt) => tt.depth === 0 && !tt.stray) : undefined;
   const fits = (blk: Block, node: DNode): boolean => {
     if (blk.refused !== null) return blk.tag === null || tagIs(node, blk.tag);
     if (nodeText.get(node) !== blk.chars) return false;
@@ -1442,25 +1557,29 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   };
   const runFits = (b: number, k: number): boolean => {
     let confirmed = 0;
-    for (; b < blocks.length; b++, k++) {
+    for (; b < blocks.length; b++) {
       const blk = blocks[b];
       if (blk.isHtml) {
-        // an html block with no element of its own (a comment, a closing tag alone) has no node and is read past; the next
-        // html block with a tag resyncs on its own, and the run ends here when that tag's element is the node at k: a node
+        // an html block with no element of its own (a comment, a closing tag alone: blank) has no node and is read past; the
+        // next html block with a tag resyncs on its own, and the run ends here when that tag's element is the node at k: a node
         // the wrapper before it left over (its summary, its lead text) is not that element, so the run reaches past it to
         // the element, the wrapper keeps the leftover and the next block's scan finds its own (before this the run ended at
         // any html block, the summary stayed in `content`, the next wrapper's scan took nothing and it fell to every node to
-        // the end of the document). An element nowhere in the content (the sanitizer dropped or unwrapped it) is no node of
-        // the block's, which is read past like a comment's.
-        const first = blk.tags ? blk.tags.find((tt) => tt.depth === 0) : undefined;
-        if (blk.blank || !first) { k--; continue; }
+        // the end of the document). An element nowhere in the content is no node of the block's: the sanitizer dropped it,
+        // and the block is read past like a comment's, or unwrapped it and left its text as a bare node at k, which the block
+        // reads past with it (an `<option>Opt.</option>` after a wrapper; before this the text stood where the next
+        // paragraph's element was expected and the wrapper's run confirmed at no end: the Slice 5 review, round 2).
+        const first = firstTag(blk);
+        if (blk.blank || !first) continue;
         const isFirst = (x: number): boolean => tagIs(content[x], first.tag) && (!first.empty || nodeText.get(content[x]) === "");
         if (k < content.length && isFirst(k)) return true;
         for (let x = k + 1; x < content.length; x++) if (isFirst(x)) return false;
-        k--; continue;
+        if (k < content.length && isText(content[k]) && blk.htext !== "" && nodeText.get(content[k]) === blk.htext) k++;
+        continue;
       }
       if (k >= content.length) return confirmed > 0 || (blk.refused !== null && blk.chars.length === 0);
       if (!fits(blk, content[k])) return false;
+      k = pastMinted(b, k + 1);   // the empty `<p>` the parser minted after a block closing a wrapper inline is no block's node
       if (blk.refused === null && blk.chars.length > 0 && ++confirmed === 2) return true;   // two mapped blocks with text confirm the run
     }
     return true;
@@ -1486,6 +1605,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         let k = j;
         let holder: DNode | null = null;   // the open element the next deeper open tag's element is the last element child of
         for (const tt of blk.tags || []) {
+          if (tt.stray) continue;   // an end tag for an earlier block's element: it opens nothing and takes no node
           if (tt.depth > 0) {
             let inner: DNode | null = null;
             const kids: ArrayLike<DNode> = holder ? holder.childNodes : [];
@@ -1519,15 +1639,13 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       blk.refused = "a block whose rendered text does not match the file";
       if (j < content.length) blk.dom = [content[j++]];
     }
-    // a paragraph whose inline html closes a wrapper open around it (`**Bold** </div>`, inlineEnds): the parser closed the
-    // paragraph's `<p>` with the wrapper and minted an empty `<p></p>` right after the wrapper's children for the paragraph's
-    // own stray `</p>`, a node no block renders as; the pairing steps over it (before this the next paragraph took the empty
-    // `<p>` as a mismatch and every block after paired one node early, a repeated paragraph mapping to the wrong copy)
-    if (blk.ends.length && blk.dom.length === 1 && j < content.length && tagIs(content[j], "P") && nodeText.get(content[j]) === "") {
-      let closed = false;
-      for (let anc = blk.dom[0].parentNode; anc && anc !== root && !closed; anc = anc.parentNode) closed = isElement(anc) && blk.ends.indexOf(anc.tagName.toUpperCase()) >= 0;
-      if (closed) j++;
-    }
+    // a block whose inline html closes a wrapper open around it (`**Bold** </div>`, `Last line.</details>`, a quoted `> line
+    // </div>`, a loose item's; Block.minted, from the wrapper chain the source describes): the parser closed the block's `<p>`
+    // with the wrapper and minted an empty `<p></p>` right after the wrapper's children for the paragraph's own stray `</p>`,
+    // a node no block renders as; the pairing steps over it, through the model runFits reads too (before this the next
+    // paragraph took the empty `<p>` as a mismatch and every block after paired one node early, a repeated paragraph mapping
+    // to the wrong copy). A closer naming no open wrapper mints nothing and nothing is skipped.
+    if (blk.dom.length) j = pastMinted(b, j);
     for (const n of blk.dom) nodeBlock.set(n, b);
   }
   return { source, shape: shapeOf(root, source, wrappers), N, nStart, blocks, topNodes, topStart, total, nodeBlock, wrappers };
@@ -1638,6 +1756,30 @@ function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
  *  refusal makes, the selected text's occurrence (rawExtra), is the answer only where the hole is not found: the block's
  *  own start when the count disagrees (a placeholder an author typed by hand renders a formula the walk never saw), or a
  *  formula under no block. The same fields blockExtra gives a hole touched through its characters. */
+/** The block a formula ELEMENT belongs to and the hole it stands for: the block that renders the nearest node above the formula
+ *  that a block renders as (a top-level node, or a paragraph the browser nested inside an html wrapper, whose block is then the
+ *  paragraph's and not the wrapper's), and the k-th formula hole of the block for the k-th formula element under the node (the
+ *  walk pushes holes in source order and the renderer emits elements in the same order); `hole` null when the count disagrees
+ *  (a placeholder an author typed by hand renders a formula the walk never saw), the whole answer null for a formula under no
+ *  block. */
+function formulaHole(idx: RenderedIndex, root: DNode, control: DNode): { blk: Block; hole: Hole | null } | null {
+  let top: DNode = control;
+  while (top !== root && idx.nodeBlock.get(top) === undefined && top.parentNode) top = top.parentNode;
+  const b = top === root ? undefined : idx.nodeBlock.get(top);
+  if (b === undefined) return null;
+  const blk = idx.blocks[b];
+  const k = formulaElements(top).indexOf(control);
+  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
+  return { blk, hole: k >= 0 && k < holes.length ? holes[k] : null };
+}
+/** A formula hole's span as the Raw view preselects it: the formula with its delimiters, less the line feeds a display block's
+ *  raw carries after it and any indent before it (source offsets). */
+function formulaSpan(idx: RenderedIndex, hole: Hole): SourceRange {
+  let s = hole.startN, e = hole.endN;
+  while (s < e && isWs(idx.N[s])) s++;
+  while (e > s && isWs(idx.N[e - 1])) e--;
+  return { start: nOf(idx, s), end: nOf(idx, e) };
+}
 function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
   const selectedRaw = (): Partial<MapRefusal> => {
     let selected = "";
@@ -1645,23 +1787,46 @@ function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: numbe
     const rawRange = srcRangeOf(idx, selected.slice(gs, ge).trim());
     return rawRange ? { rawHasQuote: true, rawRange } : { rawHasQuote: false };
   };
-  let top: DNode = control;
-  while (top !== root && idx.nodeBlock.get(top) === undefined && top.parentNode) top = top.parentNode;
-  const b = top === root ? undefined : idx.nodeBlock.get(top);
-  if (b === undefined) return selectedRaw();
-  const blk = idx.blocks[b];
-  const k = formulaElements(top).indexOf(control);
-  const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
-  const hole = k >= 0 && k < holes.length ? holes[k] : null;
+  const fh = formulaHole(idx, root, control);
+  if (!fh) return selectedRaw();
+  const { blk, hole } = fh;
   const off = nOf(idx, hole ? hole.startN : blk.startN);
-  let raw: Partial<MapRefusal>;
-  if (hole) {
-    let s = hole.startN, e = hole.endN;
-    while (s < e && isWs(idx.N[s])) s++;
-    while (e > s && isWs(idx.N[e - 1])) e--;
-    raw = { rawHasQuote: true, rawRange: { start: nOf(idx, s), end: nOf(idx, e) } };
-  } else raw = selectedRaw();
+  const raw: Partial<MapRefusal> = hole ? { rawHasQuote: true, rawRange: formulaSpan(idx, hole) } : selectedRaw();
   return { blockStartLine: rawOffsetToLine(idx.source, off), blockStartOffset: off, ...raw };
+}
+
+/** The node before `n` in document order that is not an ancestor of it, below `root`: its previous sibling, or the previous
+ *  sibling of the nearest ancestor below `root` that has one; null at the root's start (nextAfter's mirror). */
+function prevBefore(root: DNode, n: DNode): DNode | null {
+  for (let c: DNode | null = n; c && c !== root; c = c.parentNode) { const s = sibling(c, -1); if (s) return s; }
+  return null;
+}
+/** The formula a selection boundary (node, offset) that is inside no control stands beside on the selection's side: the first
+ *  thing after it (isStart) or before it in document order that is not white space, elements descended into, when that thing
+ *  is a formula (isFormula); null when it is text, another control, an element with no children or the root's end. A
+ *  triple-click on a paragraph that opens with a formula anchors on the paragraph before its first child, and one on a
+ *  paragraph ending in a formula puts its focus at the next block's start, the line feed between the blocks in between: both
+ *  cover the formula whole. */
+function formulaBeside(root: DNode, node: DNode, offset: number, isStart: boolean): DNode | null {
+  let n: DNode | null;
+  if (isText(node)) {
+    if (stripWs(isStart ? node.data.slice(offset) : node.data.slice(0, offset)) !== "") return null;   // text on the selection's side
+    n = isStart ? nextAfter(root, node) : prevBefore(root, node);
+  } else {
+    const kid = isStart ? node.childNodes[offset] : offset > 0 ? node.childNodes[offset - 1] : undefined;
+    n = kid || (isStart ? nextAfter(root, node) : prevBefore(root, node));
+  }
+  while (n) {
+    if (isText(n)) {
+      if (stripWs(n.data) !== "") return null;
+      n = isStart ? nextAfter(root, n) : prevBefore(root, n);
+      continue;
+    }
+    if (isFormula(n)) return n;
+    if (isControl(n) || !n.childNodes.length) return null;
+    n = isStart ? n.childNodes[0] : n.childNodes[n.childNodes.length - 1];
+  }
+  return null;
 }
 
 export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source: string): MapResult {
@@ -1674,10 +1839,21 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   // A boundary inside a control stands at the control's place: the control's text is the viewer's (a back link's number, a
   // fold label, a gated figure's label), so a selection that begins or ends on it begins or ends beside it, and a
   // triple-click on a footnote definition maps the definition's words. A FORMULA is the note's, though not text the mapping
-  // places (its token is a zero-text hole): a boundary inside one means the person selected the formula, or part of it, and
-  // the answer is the hole's, "touches a formula", with the Raw view offered at the formula. The one exception is the edge
+  // places (its token is a zero-text hole): a boundary strictly inside one means the person selected part of the formula, and
+  // the answer is the hole's, "touches a formula", with the Raw view offered at the formula. Two edges are not that. The edge
   // that selects none of it: a selection ending at a formula's first character (a triple-click on the paragraph before a
   // display formula puts its focus there) or starting past its last, which stands at the formula's place like any control.
+  // And the edge that covers it WHOLE: a selection starting at the formula's first character, or ending at its last, with
+  // its other end outside the formula, selected the formula and the prose beside it, which is prose holding a formula, and
+  // maps as a drag from the prose before a formula into the prose after it does, the formula's source inside the quote
+  // (the owner's ruling, the Slice 5 review's round 2; before this a triple-click on a paragraph opening with a formula was
+  // refused as the formula, and the Raw view preselected the formula alone). The same when the boundary stands beside the
+  // formula from OUTSIDE it, with only white space between (a triple-click on a paragraph that opens with a formula anchors
+  // on the paragraph before its first child in Chromium, and one on a paragraph ending in a formula puts its focus at the next
+  // block's start; a drag released right after a formula's last glyph ends in the text node after it): the formula that is
+  // the first thing on the selection's side of the boundary is covered (formulaBeside). A formula covered whole with no text
+  // beside it in the selection (a triple-click on a display formula, or on a paragraph that is a formula alone) is the
+  // formula's still.
   const sa = boundaryAt(a, idx.total), sf = boundaryAt(f, idx.total);
   const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
   const FORMULA_TOUCHED = "This selection touches a formula; comment on it from the Raw view.";
@@ -1685,12 +1861,22 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   // below), so a drag from a table cell into a formula's glyphs names the table, the obstacle the person's eye meets first;
   // one at the START is the first obstacle and is named at once
   let formulaEnd: Partial<MapRefusal> | null = null;
-  for (const [x, sx, other] of [[a, sa, sf], [f, sf, sa]] as const) {
+  const covered: DNode[] = [];   // the formulas the selection covers whole, at its start or its end
+  for (const [x, sx, other, o] of [[a, sa, sf, f], [f, sf, sa, a]] as const) {
     if (!inControl(x) || !isFormula(x.control)) continue;
-    const clear = sx < other ? x.inner >= x.len : sx > other ? x.inner <= 0 : false;   // the start past its end, or the end at its start
-    if (clear) continue;
+    const isStart = sx < other, isEnd = sx > other;
+    if (isStart ? x.inner >= x.len : isEnd ? x.inner <= 0 : false) continue;   // the start past its end, or the end at its start: none of it
+    const whole = !(inControl(o) && o.control === x.control) && (isStart ? x.inner <= 0 : isEnd ? x.inner >= x.len : false);
+    if (whole) { covered.push(x.control); continue; }
     if (sx <= other) return refuse(FORMULA_TOUCHED, formulaExtra(idx, root, x.control, gs, ge));
     formulaEnd = formulaExtra(idx, root, x.control, gs, ge);
+  }
+  if (sa !== sf) {
+    for (const [x, node, offset, isStart] of [[a, sel.anchorNode, sel.anchorOffset, sa < sf], [f, sel.focusNode, sel.focusOffset, sf < sa]] as const) {
+      if (typeof x !== "number") continue;   // inside a control (above), or outside the root (the edge snaps)
+      const F = formulaBeside(root, node as unknown as DNode, offset, isStart);
+      if (F && covered.indexOf(F) < 0) covered.push(F);
+    }
   }
   if (gs >= ge || !idx.topNodes.length) return refuse("Select some text to comment on.");
   // the selected rendered text, for the Raw offer (computed only when a refusal needs it)
@@ -1782,8 +1968,10 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     }
     return descend(node, c, isStart);
   };
-  // a selection the text cannot place, or of whitespace alone, that ends inside a formula still touched the formula
-  const orFormula = (r: MapResult): MapResult => formulaEnd ? refuse(FORMULA_TOUCHED, formulaEnd) : r;
+  // a selection the text cannot place, or of whitespace alone, that ends inside a formula still touched the formula; one that
+  // covered a formula whole and holds no text beside it selected the formula
+  const orFormula = (r: MapResult): MapResult => formulaEnd ? refuse(FORMULA_TOUCHED, formulaEnd)
+    : covered.length ? refuse(FORMULA_TOUCHED, formulaExtra(idx, root, covered[0], gs, ge)) : r;
   const S = locate(gs, true), E = locate(ge, false);
   if (!S || !E) return orFormula(refuse("The selection could not be matched to the file text.", rawExtra()));
   let { b: bs, k: ks } = S;
@@ -1816,9 +2004,18 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     }
   }
   if (formulaEnd) return refuse(FORMULA_TOUCHED, formulaEnd);
-  if (bs > be || (bs === be && ks >= ke)) return refuse("The selection is only whitespace.", rawExtra());
-  const start = nOf(idx, idx.blocks[bs].pos[ks]);
-  const end = nOf(idx, idx.blocks[be].pos[ke - 1]) + 1;
+  if (bs > be || (bs === be && ks >= ke)) return orFormula(refuse("The selection is only whitespace.", rawExtra()));
+  let start = nOf(idx, idx.blocks[bs].pos[ks]);
+  let end = nOf(idx, idx.blocks[be].pos[ke - 1]) + 1;
+  // a formula covered whole at an end of the selection travels inside the quote, with its delimiters, as one between two
+  // selected words does; where its hole is not found (the count disagrees) the prose alone is the quote
+  for (const c of covered) {
+    const fh = formulaHole(idx, root, c);
+    if (!fh || !fh.hole) continue;
+    const span = formulaSpan(idx, fh.hole);
+    if (span.start < start) start = span.start;
+    if (span.end > end) end = span.end;
+  }
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 
@@ -2141,25 +2338,71 @@ const MARKUP_LEAD: MarkupRule[] = [
 ];
 /** A fence line renders nothing of its own. */
 const MARKUP_FENCE = /^\s*(`{3,}|~{3,})/;
-/** Inline constructs: images (dropped whole), link labels, autolinks, emphasis pairs, code backticks,
- *  escapes, and a hard break's trailing blanks or backslash. An emphasis pair's opener is followed by a non-blank and its
- *  closer preceded by one (CommonMark's flanking rule, the part of it that decides the shapes a note holds): `x * y * z`
- *  and `a * b` are the text they show, not emphasis over ` y ` or ` b ` (before this the rule read them so and a comment
- *  on such a cell matched nothing). A code span's content is masked while these run (inlineStripped). */
-const MARKUP_INLINE: MarkupRule[] = [
-  { re: /!\[[^\]]*\]\([^)]*\)/g },
-  { re: /\[([^\]]*)\]\([^)]*\)/g, keep: 1 },
-  { re: /\[([^\]]*)\]\[[^\]]*\]/g, keep: 1 },
-  { re: /<(https?:\/\/[^>]+)>/g, keep: 1 },
-  { re: /\*\*(?=\S)(.+?)(?<=\S)\*\*/g, keep: 2 },
-  { re: /(?<!\w)__(?=\S)(.+?)(?<=\S)__(?!\w)/g, keep: 2 },
-  { re: /\*(?=\S)(.+?)(?<=\S)\*/g, keep: 1 },
-  { re: /(?<!\w)_(?=\S)(.+?)(?<=\S)_(?!\w)/g, keep: 1 },
-  { re: /~~(?=\S)(.+?)(?<=\S)~~/g, keep: 2 },
-  { re: /`+/g },
-  { re: /\\([\\`*_{}[\]()#+\-.!>~|\uE000])/g, keep: 1 },   // \uE000: an escaped backtick under its mask (maskCodeSpans)
-  { re: /(\s{2,}|\\)$/g },
+/** The emphasis pairs, and the strikethrough's: run first over a line, innermost pair first (emphasisPass), each over the
+ *  masked text (a code span's content and an escape under their masks, so `__init__` in a span and `\*escaped\*` pair
+ *  nothing). An opener is followed by a non-blank and a closer preceded by one (CommonMark's flanking rule, the part of it
+ *  that decides the shapes a note holds: `x * y * z` and `a * b` are the text they show, not emphasis over ` y ` or ` b `);
+ *  a pair holds no delimiter of its own kind, so the innermost pair of a nest is taken first and the pass repeats for the
+ *  outer (`*a *b* c*` is `a b c`, as marked renders it; a single pass with any text between the delimiters paired the first
+ *  `*` with the closer after `b` and left `a *b c*`); `_` and `__` open and close at a word's edge only (`snake_case` is a
+ *  word). The rule of 3 and punctuation flanking are not modelled: a delimiter soup (`*a**b* c*`) may read differently. */
+const EMPHASIS_RULES: MarkupRule[] = [
+  { re: /\*\*(?=\S)([^*]+?)(?<=\S)\*\*/g, keep: 2 },
+  { re: /(?<!\w)__(?=\S)([^_]+?)(?<=\S)__(?!\w)/g, keep: 2 },
+  { re: /\*(?=\S)([^*]+?)(?<=\S)\*/g, keep: 1 },
+  { re: /(?<!\w)_(?=\S)([^_]+?)(?<=\S)_(?!\w)/g, keep: 1 },
+  { re: /~~(?=\S)([^~]+?)(?<=\S)~~/g, keep: 2 },
 ];
+/** The character a delimiter the emphasis pass took stands as until the pass is done: in no alphabet a rule reads and not a
+ *  blank, so the flanking checks of a later rule see no character where a delimiter stood and not the neighbour the shorter
+ *  text would put there (`**a**_b_`: the `_` after the strong opens, as marked reads it, where a rule run over `a_b_` saw a
+ *  word before it and refused). The pass keeps the text's length, so the map needs no bookkeeping until the survivors are read. */
+const GONE = "\uE003";
+/** The most levels of nesting the emphasis pass unwinds (one pass per level of a same-delimiter nest). */
+const EMPHASIS_PASSES = 8;
+/** `text` with every emphasis pair's delimiters replaced by GONE (EMPHASIS_RULES), innermost first: each rule runs over the
+ *  text as it stands, its group's characters kept and its delimiters GONE, and the pass repeats while a rule matched, at
+ *  most EMPHASIS_PASSES times. Same length as `text`. */
+function emphasisPass(text: string): string {
+  for (let pass = 0; pass < EMPHASIS_PASSES; pass++) {
+    let changed = false;
+    for (const rule of EMPHASIS_RULES) {
+      text = text.replace(rule.re, (m: string, g: string) => {
+        const keep = rule.keep as number;
+        if (m.slice(keep, keep + g.length) !== g) throw new Error("anchor-map: an emphasis rule's group is not at its delimiter's length");
+        changed = true;
+        return GONE.repeat(keep) + g + GONE.repeat(m.length - keep - g.length);
+      });
+    }
+    if (!changed) break;
+  }
+  return text;
+}
+/** The other inline constructs, run after the emphasis pass over the masked text (inlineStripped): images and image embeds
+ *  (dropped whole), link labels, autolinks (a URL's, keeping the URL; an email's or a mailto's, keeping the address), html
+ *  comments and tags (the sanitizer keeps or unwraps the element, its text stays), a highlight's `==` (md-config.ts's mark,
+ *  with its opener's and closer's neighbours), a wikilink's brackets (`[[Note]]` shows `Note` in a file document, the surface
+ *  comments are made on; the chat's unresolved span shows the source as written; an alias or a heading is not read), a footnote reference's brackets and caret (the number shown is the footnote's ordinal, which matches only a label
+ *  that is that number), code backticks, and escapes by their masks (maskEscapes: the backslash goes and the character it
+ *  escaped stays, read back from the line). The hard break is HARD_BREAK, applied by scopeMapped to a line that runs to its
+ *  line end. */
+const MARKUP_INLINE: MarkupRule[] = [
+  { re: /!\[\[[^\]]*\]\]/g },
+  { re: /!\[[^\]]*\]\((?:[^()]|\([^()]*\))*\)/g },
+  { re: /\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)/g, keep: 1 },
+  { re: /\[([^\]]*)\]\[[^\]]*\]/g, keep: 1 },
+  { re: /<(https?:\/\/[^>\s]+)>/g, keep: 1 },
+  { re: /<((?:mailto:)?[^\s<>@]+@[^\s<>]+)>/g, keep: 1 },
+  { re: /<!--[\s\S]*?-->/g },
+  { re: /<\/?[a-zA-Z][a-zA-Z0-9:_-]*(?:[^>"']|"[^"]*"|'[^']*')*?\/?>/g },
+  { re: /(?<![A-Za-z0-9_=)\]'"])==(?=[^\s=])((?:(?!==)[\s\S])*?(?<=[^\s=\\]))==(?![A-Za-z0-9_=])/g, keep: 2 },
+  { re: /\[\[([^\]|#\n]+)\]\]/g, keep: 2 },
+  { re: /\[\^([^\]\s]+)\]/g, keep: 2 },
+  { re: /`+/g },
+  { re: /\uE001(\uE002)/g, keep: 1 },   // an escape under its mask (maskEscapes): the backslash goes, the character stays
+];
+/** A hard break's trailing blanks or backslash, which render nothing at a line's end. */
+const HARD_BREAK: MarkupRule = { re: /(\s{2,}|\\)$/g };
 /** `m` with one rule applied, its map carried through: what String.replace does, keeping every surviving
  *  character's origin. */
 function applyMarkupRule(m: Mapped, rule: MarkupRule): Mapped {
@@ -2226,8 +2469,27 @@ function holeSpans(idx: RenderedIndex, blocks: Block[], source: string): HoleSpa
 }
 /** A blockquote's markers at a line's start, under any indentation: what a quoted hole's lines carry before their text. */
 const QUOTE_MARKERS: MarkupRule = { re: /^\s*(?:>\s?)+/g };
-/** A table row's cell delimiter: an unescaped `|` (`\|` is a literal pipe in the cell, the escape rule's business). */
-const UNESCAPED_PIPE = /(?<!\\)\|/g;
+/** A table cell's escaped pipe, `\|`, which marked's splitCells turns into `|` in every cell before the cell's inline markup is
+ *  read, so `\|` is the pipe it shows inside a code span as well as outside one. */
+const PIPE_ESCAPE: MarkupRule = { re: /\\(\|)/g, keep: 1 };
+/** A table row's cells as marked's splitCells cuts them: at each `|` an even count of backslashes precedes (an odd count is the
+ *  escape `\|`, the cell's own pipe: `\\|` is an escaped backslash and then a delimiter), each cell a Mapped over the row's
+ *  own characters, with the origin of the delimiter before it (-1 for the first). The row's leading and trailing delimiters
+ *  give an empty first and last cell. */
+function splitCellsMapped(m: Mapped): { cell: Mapped; delim: number }[] {
+  const out: { cell: Mapped; delim: number }[] = [];
+  let from = 0, delim = -1;
+  for (let i = 0; i < m.text.length; i++) {
+    if (m.text[i] !== "|") continue;
+    let slashes = 0;
+    for (let b = i - 1; b >= 0 && m.text[b] === "\\"; b--) slashes++;
+    if (slashes % 2) continue;
+    out.push({ cell: { text: m.text.slice(from, i), map: m.map.slice(from, i) }, delim });
+    delim = m.map[i]; from = i + 1;
+  }
+  out.push({ cell: { text: m.text.slice(from), map: m.map.slice(from) }, delim });
+  return out;
+}
 /** The character a code span's content wears while the inline rules run: in no alphabet a rule reads (`\w`, a delimiter),
  *  so no rule matches inside a span or pairs a delimiter across one. */
 const CODE_MASK = "";
@@ -2263,15 +2525,43 @@ function maskCodeSpans(text: string): string {
   }
   return out;
 }
-/** `m` with the inline rules (MARKUP_INLINE) applied outside its code spans: the spans' content is masked while the rules run
- *  (maskCodeSpans), so the emphasis rules do not read `__init__`, `_private_` or `f(*args, **kwargs)` inside a span as markup
- *  and no pair closes across a span, and the surviving characters are read back from `line` through the map (`origin` is the
- *  map's value for line[0]; a rule's output is always characters of its input, so the map is the whole record). Before this
- *  the rules ran over a span's content as over prose: a comment on `` `__init__` `` in a table cell painted `init` alone, one
- *  on `` `f(*args, **kwargs)` `` nothing (the Slice 5 review). The span's delimiters go to the backtick rule as before. */
+/** The masks an escape's backslash and its character wear while the rules run (maskEscapes): ESC_MASK for the backslash and
+ *  ESC_CHAR for the character, so no emphasis rule pairs an escaped `*` or `_` (before this `\*escaped\*` and `\*\*kwargs`
+ *  in a cell read as emphasis, the needle lost the asterisks the cell shows and the comment painted nothing: the Slice 5
+ *  review, round 2) and the escape rule takes the backslash by its mask, the character read back from the line. */
+const ESC_MASK = "\uE001", ESC_CHAR = "\uE002";
+/** What a backslash escapes: any ASCII punctuation character (CommonMark 2.4, so `\$`, `\<`, `\&` and the rest are the
+ *  character they show; the rule before this knew half the set), or a backtick under its mask (maskCodeSpans). */
+const ESCAPABLE = /[!-\/:-@\[-`{-~\uE000]/;
+/** `text` (its code spans masked already) with every backslash escape masked, ESC_MASK then ESC_CHAR in the two characters'
+ *  places; a `\` before anything else, a letter or a line's end, is a character of its own. Same length as `text`. */
+function maskEscapes(text: string): string {
+  if (text.indexOf("\\") < 0) return text;
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && i + 1 < text.length && ESCAPABLE.test(text[i + 1])) { out += ESC_MASK + ESC_CHAR; i++; }
+    else out += text[i];
+  }
+  return out;
+}
+/** `m` with the inline rules applied outside its code spans and its escapes: the spans' content and the escapes are masked
+ *  first (maskCodeSpans, maskEscapes), so the emphasis rules do not read `__init__`, `_private_` or `f(*args, **kwargs)`
+ *  inside a span, or `\*escaped\*`, as markup and no pair closes across a span; then the emphasis pass (emphasisPass, over
+ *  the text at its full length), then the other rules (MARKUP_INLINE) over the survivors; and the surviving characters are
+ *  read back from `line` through the map (`origin` is the map's value for line[0]; a rule's output is always characters of
+ *  its input, so the map is the whole record). Before this the rules ran over a span's content as over prose: a comment on
+ *  `` `__init__` `` in a table cell painted `init` alone, one on `` `f(*args, **kwargs)` `` nothing (the Slice 5 review). */
 function inlineStripped(m: Mapped, line: string, origin: number): Mapped {
-  const masked = maskCodeSpans(m.text);
-  let r: Mapped = masked === m.text ? m : { text: masked, map: m.map };
+  const masked = maskEscapes(maskCodeSpans(m.text));
+  const emph = emphasisPass(masked);
+  let r: Mapped;
+  if (emph === m.text) r = m;
+  else {
+    let text = "";
+    const map: number[] = [];
+    for (let i = 0; i < emph.length; i++) if (emph[i] !== GONE) { text += emph[i]; map.push(m.map[i]); }
+    r = { text, map };
+  }
   for (const rule of MARKUP_INLINE) r = applyMarkupRule(r, rule);
   if (masked === m.text) return r;
   let text = "";
@@ -2287,18 +2577,26 @@ function inlineStripped(m: Mapped, line: string, origin: number): Mapped {
  * 5 of plans/markdown-viewer.md, item 2); the fence lines are dropped, since they render nothing, so a quote over the whole
  * block, fences included, still paints, and so does one begun inside the opening line's info string (the lines are known by
  * their offsets, HoleSpan.openEnd and closeStart, not by their text: a quote's first line sliced to `python` is the fence
- * line still, and a code line that opens with three backticks inside a longer fence is code). A line of a table hole reads
- * each unescaped `|` as a blank, so a quote across two cells, `cell one | cell two`, matches the cells' text with the hay's
- * blank between them (hayRuns), and keeps the inline strip for the cells' own markup (a code span, a bold word); the lead
- * rules are skipped there, since a cell beginning `- ` or `# ` shows those characters. The delimiter row keeps its dashes,
+ * line still, and a code line that opens with three backticks inside a longer fence is code). A line of a table hole is read
+ * as marked's splitCells reads a row: cut into cells at its delimiters first (a `|` an even count of backslashes precedes;
+ * splitCellsMapped), each delimiter a blank, so a quote across two cells, `cell one | cell two`, matches the cells' text with
+ * the hay's blank between them (hayRuns); each cell's `\|` its pipe (PIPE_ESCAPE, inside a code span as well: `` `a \| b` ``
+ * shows the code `a | b`; before this the span's mask hid the escape and the needle kept the backslash); and the inline strip
+ * over one cell at a time, for the cell's own markup (a code span, a bold word), so an asterisk or a backtick pairs within a
+ * cell and never across the delimiter (before this the row's inline rules ran over the whole row); the lead rules are skipped
+ * there, since a cell beginning `- ` or `# ` shows those characters, and so is the hard break, since a cell's trailing
+ * backslash is the character it shows. The delimiter row keeps its dashes,
  * which no rendered text holds, so a quote spanning it paints nothing and the card keeps Reveal (item 8). On a hole's first
  * line the container's prefix before the hole (a list's bullet and indent, a quote's marker) is dropped, and on the
  * following lines of a quoted hole the quote's markers come off (QUOTE_MARKERS), as the walk's suffix view reads them; a
  * list's indentation is white space the match ignores. The inline strip leaves a code span's content as the rendering shows
- * it (inlineStripped: the emphasis rules ran over `__init__` inside backticks before). Needle and scope source are read the
- * same way, so the count guard stays exact on both sides.
+ * it (inlineStripped: the emphasis rules ran over `__init__` inside backticks before). The hard break (a line's trailing
+ * blanks or backslash) comes off a prose line that runs to its line end: every line but the last, and the last when `full`,
+ * which the quote's caller denies when the range ends mid-line (a quote ending in a backslash, `C:\Users\`, is the text it
+ * shows, where the rule read the slice's end as a line's end and the mark stopped one character short). Needle and scope
+ * source are read the same way, so the count guard stays exact on both sides.
  */
-function scopeMapped(s: string, base: number, holes: HoleSpan[]): Mapped {
+function scopeMapped(s: string, base: number, holes: HoleSpan[], full = true): Mapped {
   let text = "";
   const map: number[] = [];
   const lines = s.split("\n");
@@ -2316,7 +2614,10 @@ function scopeMapped(s: string, base: number, holes: HoleSpan[]): Mapped {
     if (!hole) {
       for (const r of MARKUP_LEAD) m = applyMarkupRule(m, r);
       if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] };
-      else m = inlineStripped(m, line, origin);
+      else {
+        m = inlineStripped(m, line, origin);
+        if (full || i < lines.length - 1) m = applyMarkupRule(m, HARD_BREAK);
+      }
     } else {
       if (hole.quoted && from === 0) m = applyMarkupRule(m, QUOTE_MARKERS);
       if (hole.kind === "code") {
@@ -2324,8 +2625,17 @@ function scopeMapped(s: string, base: number, holes: HoleSpan[]): Mapped {
         // line begun inside its info string) and a line starting at the closing fence's
         if ((hole.openEnd >= 0 && le <= hole.openEnd) || (hole.closeStart >= 0 && ls >= hole.closeStart)) m = { text: "", map: [] };
       } else {
-        line = line.replace(UNESCAPED_PIPE, " ");
-        m = inlineStripped({ text: m.text.replace(UNESCAPED_PIPE, " "), map: m.map }, line, origin);
+        // a table row, cell by cell as marked reads it (the docstring above): a blank for each delimiter, at the delimiter's origin
+        const cells = splitCellsMapped(m);
+        let text = "";
+        const map: number[] = [];
+        for (const c of cells) {
+          if (c.delim >= 0) { text += " "; map.push(c.delim); }
+          const r = inlineStripped(applyMarkupRule(c.cell, PIPE_ESCAPE), line, origin);
+          text += r.text;
+          for (const x of r.map) map.push(x);
+        }
+        m = { text, map };
       }
     }
     text += m.text;
@@ -2589,7 +2899,8 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   }
   // ── the fallback: a whitespace-tolerant match of the quote read as the rendering shows it (scopeMapped: stripped of its
   //    markup in prose, raw in a code block, its cell delimiters blanks in a table), inside the blocks the range overlaps
-  //    (a refused block or a hole, typically), else anywhere in the rendered text
+  //    (a refused block or a hole, typically), else, or when that scope's text holds no occurrence of the quote, anywhere in
+  //    the rendered text
   let scope: DNode[] = [];
   let scopeBlocks: Block[] = [];
   let scopeStart = source.length, scopeEnd = 0;   // the source span the scope's blocks cover
@@ -2600,39 +2911,52 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       scopeStart = Math.min(scopeStart, bs); scopeEnd = Math.max(scopeEnd, be);
     }
   }
-  if (!scope.length) { scope = idx.topNodes.slice(); scopeBlocks = idx.blocks; scopeStart = 0; scopeEnd = source.length; }
-  const spans = holeSpans(idx, scopeBlocks, source);
+  const whole = (): void => { scope = idx.topNodes.slice(); scopeBlocks = idx.blocks; scopeStart = 0; scopeEnd = source.length; };
+  if (!scope.length) whole();
   const raw = source.slice(range.start, range.end);
-  const quote = scopeMapped(raw, range.start, spans).text;
-  if (stripWs(quote) === "") return null;
-  // the hay is the scope's text with the newline between a wrapped code block's rows put back and a blank between two
-  // adjacent table parts (hayRuns, above): a quote across two code lines holds a newline, one across two cells a blank
-  // for its pipe, and the text nodes alone hold neither
-  const nodes: DText[] = [];
-  const gaps: number[] = [];   // where in the hay the put-back blanks sit; they are no text node's characters
-  let hay = "";
-  for (const n of scope) for (const r of hayRuns(n)) { if (r.node) { nodes.push(r.node); hay += r.text; } else { gaps.push(hay.length); hay += r.text; } }
-  const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
-  const hits = occurrences(hay, quote);
-  if (!hits.length) return null;
-  // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's
-  // source stripped the same way (stripMarkupMapped). A change's text is short (a word, a number), and a
-  // table or a code block repeats such tokens; the first occurrence would mark an unchanged cell and report
-  // it painted, the wrong passage under "Scroll to the change". The count is taken over the STRIPPED source,
-  // not the raw slice: a comment's quote may carry markup of its own (`` `GET /notes` `` in a table cell,
-  // `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the rendering
-  // shows its text twice. The ordinal is exact when the rendering shows the text as many times as the
-  // stripped source holds it, so the counts must agree, else nothing is painted and the comment or change
-  // keeps its card (and Reveal). The range's own occurrence is the one whose characters map back inside it.
-  // The scope's source is read as the quote was (scopeMapped): a code hole's lines raw, a table hole's pipes
-  // as blanks, so a code line holding `*` or a cell's text counts the same on both sides.
-  const scopeSrc = scopeMapped(source.slice(scopeStart, scopeEnd), scopeStart, spans);
-  const srcHits = occurrences(scopeSrc.text, quote);
-  if (srcHits.length !== hits.length) return null;
-  const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
-  if (k < 0) return null;
-  const hit = hits[k];
-  return done(wrapSlices(nodes, inNodes(hit.start), inNodes(hit.end), className, data, (t) => skipBlockWs(t, root)));
+  // whether the quote's last line runs to its line end: a slice cut mid-line ends at no hard break (scopeMapped)
+  const full = range.end >= source.length || source[range.end] === "\n" || source[range.end] === "\r";
+  for (;;) {
+    const spans = holeSpans(idx, scopeBlocks, source);
+    const quote = scopeMapped(raw, range.start, spans, full).text;
+    if (stripWs(quote) === "") return null;
+    // the hay is the scope's text with the newline between a wrapped code block's rows put back and a blank between two
+    // adjacent table parts (hayRuns, above): a quote across two code lines holds a newline, one across two cells a blank
+    // for its pipe, and the text nodes alone hold neither
+    const nodes: DText[] = [];
+    const gaps: number[] = [];   // where in the hay the put-back blanks sit; they are no text node's characters
+    let hay = "";
+    for (const n of scope) for (const r of hayRuns(n)) { if (r.node) { nodes.push(r.node); hay += r.text; } else { gaps.push(hay.length); hay += r.text; } }
+    const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
+    const hits = occurrences(hay, quote);
+    if (!hits.length) {
+      // the scope's text holds no occurrence: its blocks' nodes are not where the quote renders (a block a pairing cascade paired to
+      // a wrong node, the wrapper's leftover text, the parser's minted `<p>` or the previous paragraph, and marked a mismatch), so
+      // the whole text is searched, as when the scope is empty (the Slice 5 review, round 2: before this every residual pairing
+      // error also unpainted a comment the whole-text search had painted, the card offering Reveal and no Scroll)
+      if (scopeBlocks === idx.blocks) return null;
+      whole();
+      continue;
+    }
+    // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's
+    // source stripped the same way (stripMarkupMapped). A change's text is short (a word, a number), and a
+    // table or a code block repeats such tokens; the first occurrence would mark an unchanged cell and report
+    // it painted, the wrong passage under "Scroll to the change". The count is taken over the STRIPPED source,
+    // not the raw slice: a comment's quote may carry markup of its own (`` `GET /notes` `` in a table cell,
+    // `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the rendering
+    // shows its text twice. The ordinal is exact when the rendering shows the text as many times as the
+    // stripped source holds it, so the counts must agree, else nothing is painted and the comment or change
+    // keeps its card (and Reveal). The range's own occurrence is the one whose characters map back inside it.
+    // The scope's source is read as the quote was (scopeMapped): a code hole's lines raw, a table hole's pipes
+    // as blanks, so a code line holding `*` or a cell's text counts the same on both sides.
+    const scopeSrc = scopeMapped(source.slice(scopeStart, scopeEnd), scopeStart, spans);
+    const srcHits = occurrences(scopeSrc.text, quote);
+    if (srcHits.length !== hits.length) return null;
+    const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
+    if (k < 0) return null;
+    const hit = hits[k];
+    return done(wrapSlices(nodes, inNodes(hit.start), inNodes(hit.end), className, data, (t) => skipBlockWs(t, root)));
+  }
 }
 
 /** `s` with every whitespace run collapsed to one space and its edges trimmed, and `map[i]` the index in `s`

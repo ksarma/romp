@@ -185,6 +185,52 @@ test("in a browser, the real viewer and panel on the Files pane: a comment saved
   });
 });
 
+// ── the Slice 5 review, round 2: the strip's cell cases over the real viewer and panel ──
+const CELLS_NOTE = "# Cells\n\n| Cell | Note |\n|------|------|\n| *a *b* c* | nested |\n| **a **b** c** | strong |\n| `a \\| b` | span |\n| `string \\| number` | union |\n| \\*\\*kwargs | py |\n| \\*required\\* | req |\n| costs \\$5 | price |\n| **Note:**_draft_ | adj |\n| Ctrl<kbd>C</kbd> | kbd |\n| C:\\Users\\ | path |\n| x * y * z | stars |\n\nLast paragraph here.\n";
+/** The round 2 cells: the quote a Raw comment stores (the exact source slice) and the cell's text the marks must read. */
+const ROUND2_CELLS: Array<[string, string]> = [
+  ["*a *b* c*", "a b c"], ["**a **b** c**", "a b c"], ["`a \\| b`", "a | b"], ["`string \\| number`", "string | number"],
+  ["\\*\\*kwargs", "**kwargs"], ["\\*required\\*", "*required*"], ["costs \\$5", "costs $5"], ["**Note:**_draft_", "Note:draft"],
+  ["Ctrl<kbd>C</kbd>", "CtrlC"], ["C:\\Users\\", "C:\\Users\\"], ["x * y * z", "x * y * z"],
+];
+function cellComment(quote: string, k: number): Record<string, unknown> {
+  const at = CELLS_NOTE.indexOf(quote);
+  assert.ok(at >= 0, "the note holds " + JSON.stringify(quote));
+  return { id: (T0 + 100 + k) + "-" + at, author: "you", ts: T0 + 100 + k, body: NOTE, anchor: makeAnchor(CELLS_NOTE, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
+}
+
+test("in a browser, the real viewer and panel: Raw comments on the round 2 cells, served before a fresh open, paint in Rendered as the cells show them: same-delimiter nested emphasis (`*a *b* c*`, `**a **b** c**`) as `a b c`, a code span with an escaped pipe (`` `a \\| b` ``) as `a | b`, escaped asterisks (`\\*\\*kwargs`, `\\*required\\*`) with their asterisks, `costs \\$5`, an underscore emphasis beside a strong, an inline html tag's text, a cell ending in a backslash whole, and `x * y * z` still; each card offers Scroll (before: 0 marks and Reveal for all but the last)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const sentinel = { id: (T0 + 99) + "-" + CELLS_NOTE.indexOf("Last paragraph here."), author: "you", ts: T0 + 99, body: NOTE, anchor: makeAnchor(CELLS_NOTE, { start: CELLS_NOTE.indexOf("Last paragraph here."), end: CELLS_NOTE.indexOf("Last paragraph here.") + "Last paragraph here.".length }), anchorAt: CELLS_NOTE.indexOf("Last paragraph here."), replies: [], resolved: false };
+    const comments = [sentinel, ...ROUND2_CELLS.map(([q], k) => cellComment(q, k))];
+    const status = { ...STATUS, store: { ...STATUS.store, comments }, storeMtimeNs: "1757145600000000041", unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } };
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    const html = pageHtml("pane", { [REPORT]: CELLS_NOTE }, MT);
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+    await page.goto(ORIGIN + "/");
+    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await openPanel(page);
+    await markPainted(page, sentinel.id);
+    await frames(page, 3);
+    const shown: string[] = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md td:first-child")).map((td) => (td.textContent || "").replace(/\s+/g, " ").trim()));
+    assert.deepEqual(shown, ROUND2_CELLS.map(([, s]) => s), "the cells render as the cases expect");
+    for (let k = 0; k < ROUND2_CELLS.length; k++) {
+      const [quote, text] = ROUND2_CELLS[k];
+      const r = await readMarks(page, cellComment(quote, k).id as string);
+      assert.ok(r.marks > 0, quote + ": painted (before: 0 marks): " + JSON.stringify(r));
+      assert.equal(r.text.replace(/\s+/g, ""), text.replace(/\s+/g, ""), quote + ": the marks read the cell's whole text (a mark per text node: a nested emphasis or a tag splits the cell's text)");
+      assert.ok(r.cells.length >= 1 && r.cells.every((c) => !!c && c.tag === "TD" && c.index === 0), quote + ": every mark in the first cell: " + JSON.stringify(r.cells));
+      assert.equal(r.card && r.goto, true, quote + ": the card offers Scroll to the passage");
+    }
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
 test("in a browser, the real viewer and panel: the same comments served before a fresh open paint the same in Rendered, on the Files pane and in the chat modal", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {

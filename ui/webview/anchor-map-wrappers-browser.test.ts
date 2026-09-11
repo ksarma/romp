@@ -17,7 +17,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openViewer, openPanel, frames, requireCjs, UI, REPORT, type Mode } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, frames, requireCjs, pageHtml, ORIGIN, UI, REPORT, SID, MT, STATUS, type Mode } from "./real-viewer-leg";
+import { makeAnchor } from "./anchor-map";
 
 const PLAIN = fs.readFileSync(path.join(UI, "anchor-map-fixtures", "wrappers-plain.md"), "utf8");
 const TWO = fs.readFileSync(path.join(UI, "anchor-map-fixtures", "wrappers-2block.md"), "utf8");
@@ -167,6 +168,88 @@ test("in a browser, the real viewer and panel: on the Files pane at 900 and 380 
       assert.ok(table.owners.slice(-4).every((b) => b >= 0), what + ": the top-level children after the wrappers are blocks' own: " + JSON.stringify(table.owners));
       await runScenes(page, what, PLAIN, PLAIN_SCENES);
       assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+// ── the Slice 5 review, round 2: a standalone <img> block with the panel OPEN, and the seeded inline-closer shape ──
+const P3 = "Para 003 delta echo foxtrot golf.";
+/** The notes: a lead-text div closed in the img's block, a fold closed in the img's block, a README's pictures, an <img> then
+ *  a <div> in one block, and the seeded shape (a lead-text div closed inline on its only paragraph, then an img). */
+const IMG_NOTES: Array<{ name: string; src: string; passages: string[]; imgBlock: string }> = [
+  { name: "lead-text div, </div> and <img> in one block", src: `Intro.\n\n<div align="center">Lead 002 charlie.\n\n${P3}\n\n</div>\n<img src="c004.png" alt="c">\n\nAfter 005 hotel india.\n`, passages: [P3, "After 005 hotel india."], imgBlock: "</div>\n<img" },
+  { name: "details, </details> and <img> in one block", src: `Intro.\n\n<details><summary>More</summary>\n\n${P3}\n\n</details>\n<img src="c004.png" alt="c">\n\nAfter 005 hotel india.\n`, passages: [P3, "After 005 hotel india."], imgBlock: "</details>\n<img" },
+  { name: "a README: logo in the div, a screenshot, a fold, a demo", src: `<div align="center">\n<img src="logo.png" alt="logo">\n\nTag 002 line here.\n\n</div>\n\n<img src="shot.png" alt="s">\n\nIntro 003 text.\n\n<details>\n<summary>More</summary>\n\nHidden 005 text here.\n\n</details>\n\n<img src="demo.gif" alt="d">\n\nAfter 006 text.\n`, passages: ["Tag 002 line here.", "Intro 003 text.", "Hidden 005 text here.", "After 006 text."], imgBlock: "<img src=\"shot" },
+  { name: "<img> then <div align=center> in one block", src: `<img src="logo.png" alt="l">\n<div align="center">\n\n# Head 003\n\n${P3.replace("003", "004")}\n\n</div>\n\nAfter 005 hotel india.\n`, passages: ["Head 003", P3.replace("003", "004"), "After 005 hotel india."], imgBlock: "<img src=\"logo" },
+  { name: "the seeded shape: a lead-text div closed inline on its only paragraph, then an img", src: `<div align="center">Lead\n\n**Bold** </div>\n\n<img src="a.png" alt="x">\n\nAfter 005 hotel india.\n`, passages: ["Bold", "After 005 hotel india."], imgBlock: "<img src=\"a.png" },
+];
+const T0 = 1757145600000;
+/** A comment in the host's shape on `quote` (its k-th occurrence 0) in `src`: the exact source slice, its context, its position. */
+function commentOn(src: string, quote: string, k: number): Record<string, unknown> {
+  const at = src.indexOf(quote);
+  assert.ok(at >= 0, "the note holds " + JSON.stringify(quote));
+  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: "Check this passage.", anchor: makeAnchor(src, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
+}
+type Painted = { marks: number; text: string; card: boolean; goto: boolean };
+/** In the page: the passage selected programmatically (a Selection-like over its first and last characters' text nodes) and mapped
+ *  through the probe; the comment's marks and its card's Scroll link; the top-level tag names with their blocks. */
+function readImgScene(args: { src: string; passages: string[]; ids: string[] }): { maps: Array<{ ok: boolean; reason?: string; range?: { start: number; end: number }; quote?: string }>; painted: Painted[]; tops: string[] } {
+  const am = (window as any).__am;
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const texts: Text[] = [];
+  const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) texts.push(t as Text);
+  const maps = args.passages.map((p) => {
+    const si = texts.findIndex((t) => t.data.includes(p));
+    if (si < 0) return { ok: false, reason: "not in the rendered text: " + p };
+    const sNode = texts[si], sOff = sNode.data.indexOf(p);
+    const sel = { anchorNode: sNode, anchorOffset: sOff, focusNode: sNode, focusOffset: sOff + p.length, isCollapsed: false };
+    return am.mapRenderedSelection(sel, md, args.src);
+  });
+  const painted = args.ids.map((id) => {
+    const marks = Array.from(md.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + id + '"]')) as HTMLElement[];
+    const card = document.querySelector('.fileview-aside .fc-card[data-id="' + id + '"]');
+    return { marks: marks.length, text: marks.map((m) => m.textContent).join("").replace(/\s+/g, " ").trim(), card: !!card, goto: !!card && !!card.querySelector('[data-act="fcgoto"]') };
+  });
+  const tops = Array.from(md.children).map((k) => k.tagName + (k.classList.contains("fc-imgwrap") ? ".fc-imgwrap" : "") + "(" + am.renderedBlockIndex(md, args.src, k) + ")");
+  return { maps, painted, tops };
+}
+
+test("in a browser, the real viewer and panel with the panel OPEN, so the regions layer has wrapped every <img> in its span: a standalone <img> block after a lead-text div (closed in the img's block), after a details fold, a README's logo, screenshot and demo pictures, an <img> then <div> block, and the seeded lead-text div closed inline on its only paragraph then an img: every nested passage maps to its own offsets and the comment served on it paints with a Scroll link (before: with the panel open the passage was refused as an HTML block at the img block's offset while it mapped with the panel closed, and its comment showed 0 marks and Reveal; the seeded shape's closer was refused at the img's offset with the panel open or closed)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const probe = probeBundle();
+    for (const scene of IMG_NOTES) {
+      const comments = scene.passages.map((p, k) => commentOn(scene.src, p, k + 1));
+      const status = { ...STATUS, store: { ...STATUS.store, comments }, storeMtimeNs: "17571456000000000" + (30 + comments.length) };
+      const page = await browser.newPage({ viewport: { width: 900, height: 800 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      const html = pageHtml("pane", { [REPORT]: scene.src }, MT);
+      await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+      await page.goto(ORIGIN + "/");
+      await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-md > p, .fileview-md > div"), null, { timeout: 10000 });
+      await frames(page, 2);
+      await page.addScriptTag({ content: probe });
+      await openPanel(page);
+      // the last passage's comment is the pass's sentinel: the paint is one pass over every card
+      const last = comments[comments.length - 1].id as string;
+      await page.waitForFunction((c: string) => !!document.querySelector('.fileview-aside .fc-card[data-id="' + c + '"]'), last, { timeout: 10000 });
+      await frames(page, 3);
+      const r = await page.evaluate(readImgScene, { src: scene.src, passages: scene.passages, ids: comments.map((c) => c.id as string) });
+      assert.ok(r.tops.some((x: string) => x.startsWith("SPAN.fc-imgwrap(")), scene.name + ": the panel wrapped a top-level picture in its span: " + JSON.stringify(r.tops));
+      const imgBlock = scene.src.indexOf(scene.imgBlock);
+      assert.ok(imgBlock >= 0);
+      scene.passages.forEach((p, i) => {
+        const m = r.maps[i];
+        assert.equal(m.ok, true, scene.name + ": " + JSON.stringify(p) + " maps with the panel open (before: refused at the img block's offset): " + JSON.stringify(m));
+        assert.deepEqual(m.range, { start: scene.src.indexOf(p), end: scene.src.indexOf(p) + p.length }, scene.name + ": to its own offsets");
+        assert.ok(r.painted[i].marks >= 1, scene.name + ": the comment on " + JSON.stringify(p) + " paints (before: 0 marks): " + JSON.stringify(r.painted[i]));
+        assert.equal(r.painted[i].text, p, scene.name + ": the marks read the passage");
+        assert.equal(r.painted[i].card && r.painted[i].goto, true, scene.name + ": its card offers Scroll to the passage (before: Reveal)");
+      });
+      assert.deepEqual(errors, [], scene.name + ": no script error");
       await page.close();
     }
   });

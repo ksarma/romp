@@ -183,7 +183,7 @@ test("stripMarkupMapped: the text is the flat strip's, byte for byte, and every 
     ["```python", ""],
     ["![alt](img.png) and [label](http://x) and [ref][r]", " and label and ref"],
     ["<https://example.com/x> and __also__ and ~~del~~", "https://example.com/x and also and del"],
-    ["\\*escaped\\* and \\#", "\\escaped\\ and #"],
+    ["\\*escaped\\* and \\#", "*escaped* and #"],   // an escaped delimiter is the character it shows (before: the pair read as emphasis and the strip gave `\escaped\`)
     ["trailing two  ", "trailing two"],
     ["trailing backslash\\", "trailing backslash"],
     ["| `GET /notes` | GET /notes lists notes |", "| GET /notes | GET /notes lists notes |"],
@@ -193,6 +193,16 @@ test("stripMarkupMapped: the text is the flat strip's, byte for byte, and every 
     ["`__init__` and `f(*args, **kwargs)` and `a*b*c`", "__init__ and f(*args, **kwargs) and a*b*c"],   // a code span's content is the rendering's
     ["`` a ` b `` and **`x`**", " a ` b  and x"],
     ["\\`not code\\` *em*", "`not code` em"],   // an escaped backtick opens no span and is the backtick it shows (before: the backticks went and the backslashes stayed)
+    // the Slice 5 review, round 2: nested emphasis of one delimiter, innermost first; a delimiter at a strong's or a link's edge
+    ["*a *b* c*", "a b c"], ["**a **b** c**", "a b c"], ["_a _b_ c_", "a b c"], ["***a***", "a"], ["*a **b***", "a b"],
+    ["**a**_b_", "ab"], ["_a_**b**", "ab"], ["[link](http://x)_b_", "linkb"], ["**Note:**_draft_", "Note:draft"],
+    // escapes before the emphasis rules, and every ASCII punctuation character escapable
+    ["\\*\\*kwargs", "**kwargs"], ["\\*required\\*", "*required*"], ["*a\\*b*", "a*b"], ["\\*a*b*", "*ab"], ["**a\\*\\*b**", "a**b"],
+    ["costs \\$5", "costs $5"], ["\\<b\\>", "<b>"], ["\\&", "&"], ["\\=a \\^2 \\%", "=a ^2 %"], ["5 \\* 3", "5 * 3"],
+    // inline html, a highlight, a wikilink, a footnote reference, an email autolink, a link with a paren in its URL
+    ["Ctrl<kbd>C</kbd>", "CtrlC"], ["H<sub>2</sub>O", "H2O"], ["a<br>b", "ab"], ["a <!-- c --> b", "a  b"], ["<span style=\"color:red\">r</span>", "r"],
+    ["==hl== and a ==b== c", "hl and a b c"], ["[[Topic]] and see[^1]", "Topic and see1"], ["<a@b.c> <mailto:a@b.c>", "a@b.c mailto:a@b.c"],
+    ["[l](http://x/(a)) [m](http://y \"t (u)\")", "l m"],
     ["-\tTab after the marker", "Tab after the marker"],
     ["# T\n\n| a | b |\n|---|---|\n| `x` | x |\n```\nfence\n```\n", "T\n\n| a | b |\n|---|---|\n| x | x |\n\nfence\n\n"],
   ];
@@ -295,8 +305,10 @@ test("Rendered fallback: a change whose new text is the marked-up cell paints, i
 });
 
 test("Rendered fallback: the count guard still holds for a marked-up quote — an HTML block whose attribute repeats the text paints nothing; a code-span quote with no plain recurrence paints as before", () => {
-  // the rendering shows one "x" (inside the literal "**x**"); the stripped source holds two (the attribute's and the bold's)
-  const html = "# Notes\n\n<div title=\"x\">**x**</div>\n";
+  // the rendering shows two "x" (the entity's, decoded by the parser, and the one inside the literal "**x**"); the stripped source
+  // holds one, the entity keeping its source form (the review's round 2 moved this scene off an attribute's text, which the strip now
+  // drops with its tag, as the rendering does)
+  const html = "# Notes\n\n<div>&#120; **x**</div>\n";
   const box = buildRendered(html);
   const before = serialize(box);
   assert.equal(paintRendered(El(box), html, rangeOf(html, "**x**"), "fc-hl"), null, "the counts disagree, so nothing is painted");
@@ -484,6 +496,97 @@ test("Rendered fallback, a code hole: a quote begun inside the opening fence's i
   h = highlight(FENCED, whole, "PRE");
   assert.ok(h.marks && h.marks.length);
   assert.equal(norm(h.text!), norm("# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)"));
+});
+
+// ── the Slice 5 review, round 2: the strip's emphasis pass, the cell's escapes and pipes, the constructs it had no rule for ──
+
+const NESTED = "# Nested\n\n| Cell | Note |\n|------|------|\n| *a *b* c* | nested |\n| **a **b** c** | strong |\n| _a _b_ c_ | under |\n| x * y * z | stars |\n\n```\n*a *b* c*\n```\n\nAfter.\n";
+
+test("Rendered fallback, a table hole: same-delimiter nested emphasis in a cell, `*a *b* c*`, `**a **b** c**` and `_a _b_ c_`, paints the cell's text `a b c` whole (before: the single-asterisk rule paired the first `*` with the one after `b` and the needle read `a *b c*`, which the cell never shows: nothing painted, the card offering Reveal); `x * y * z`, the case the flanking rule fixed, still paints; the same line inside a code hole reads raw and paints as the code shows it", () => {
+  for (const quote of ["*a *b* c*", "**a **b** c**", "_a _b_ c_"]) {
+    const h = highlight(NESTED, rangeOf(NESTED, quote));
+    assert.ok(h.marks && h.marks.length, quote + ": painted (was null)");
+    assert.equal(norm(h.text!), "a b c", quote + ": the cell's text under the marks");
+    assert.equal(h.cell!.index, 0);
+  }
+  let h = highlight(NESTED, rangeOf(NESTED, "x * y * z"));
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(norm(h.text!), "x * y * z");
+  const code = NESTED.indexOf("```\n") + 4;
+  h = highlight(NESTED, { start: code, end: code + "*a *b* c*".length }, "PRE");
+  assert.ok(h.marks && h.marks.length, "the code line paints");
+  assert.equal(norm(h.text!), "*a *b* c*", "raw, as the code shows it");
+});
+
+const PIPES = "# Pipes\n\n| Cell | Note |\n|------|------|\n| `a \\| b` | span |\n| `string \\| number` | union |\n| `a\\|b` | tight |\n| a \\| b | plain |\n| `a \\\\| b` | parity |\n| c \\\\\\| d | three |\n\nAfter.\n";
+
+test("Rendered fallback, a table hole: a code span holding an escaped pipe in a cell, `` `a \\| b` ``, `` `string \\| number` `` and `` `a\\|b` ``, paints whole as the code `a | b` the cell shows (the REGRESSION the review's round 1 left: the span's mask hid the escape from the escape rule and the needle kept the backslash; on main each painted); a plain `a \\| b` cell in the same table paints its own cell (the count guard had spread the loss to it); a `|` an even count of backslashes precedes is a delimiter, as marked's splitCells reads it (`\\\\|` splits the row, and the quote over the split paints both cells as they render); `\\\\\\|` is an escaped backslash and the pipe", () => {
+  const box = buildRendered(PIPES);
+  const cellText = (row: number, col: number): string => { const trs = elements(box).filter((e) => e.tagName === "TR"); const tds = trs[row].childNodes.filter((c) => c.nodeType === 1) as FakeElement[]; return tds[col].textContent; };
+  assert.equal(cellText(1, 0), "a | b", "marked shows the code with its pipe");
+  assert.equal(cellText(5, 0), "`a \\", "the parity row split at its `\\\\|`: the first cell ends in a backslash");
+  assert.equal(cellText(5, 1), "b`");
+  assert.equal(cellText(6, 0), "c \\| d", "three backslashes: an escaped backslash, then an escaped pipe");
+  for (const [quote, shown] of [["`a \\| b`", "a | b"], ["`string \\| number`", "string | number"], ["`a\\|b`", "a|b"], ["a \\| b", "a | b"], ["c \\\\\\| d", "c \\| d"]] as const) {
+    const h = highlight(PIPES, rangeOf(PIPES, quote, PIPES.indexOf("| " + quote + " |")));   // the quote's own row (the plain `a \| b` occurs inside the span's row too)
+    assert.ok(h.marks && h.marks.length, quote + ": painted (was null)");
+    assert.equal(norm(h.text!), shown, quote + ": the cell's text");
+    assert.equal(h.cell!.index, 0, quote + ": the first cell");
+  }
+  // the parity row: the quote runs across the two cells marked made of it; the marks follow the split
+  const h = highlight(PIPES, rangeOf(PIPES, "`a \\\\| b`"));
+  assert.ok(h.marks && h.marks.length, "the split row paints");
+  const tm = textMarks(h.marks!);
+  assert.deepEqual(tm.map((m) => cellOf(m, "TD").index), [0, 1], "one mark in each cell of the split");
+  assert.equal(norm(tm.map((m) => m.textContent).join(" ")), "a \\ b", "the cells' text, the unmatched backticks unread as before");
+});
+
+const ESCAPES = "# Escapes\n\n| Cell | Note |\n|------|------|\n| \\*\\*kwargs | py |\n| \\*required\\* | req |\n| \\*escaped\\* | esc |\n| *a\\*b* | in |\n| costs \\$5 | price |\n| \\<b\\> | tag |\n| **Note:**_draft_ | adj |\n| _path_**index** | adj2 |\n| Ctrl<kbd>C</kbd> | kbd |\n| H<sub>2</sub>O | sub |\n| ==important== | mark |\n| C:\\Users\\ | path |\n| a\\ | bs |\n| *a | b* |\n\n<div>path C:\\Temp\\ here</div>\n\nAfter.\n";
+
+test("Rendered fallback, a table hole: an escaped `*` or `_` is the character it shows (`\\*\\*kwargs`, `\\*required\\*`, `\\*escaped\\*`, `*a\\*b*`; before: the emphasis rules ran first and paired the escaped asterisks), every ASCII punctuation character is escapable (`costs \\$5`, `\\<b\\>`), an underscore emphasis beside a strong opens (`**Note:**_draft_`), inline html tags render nothing of their own (`Ctrl<kbd>C</kbd>`), a highlight's delimiters go (a wikilink's in test 1: the stand-in here renders the chat's unresolved span, which shows the source), a cell ending in a backslash keeps it (`C:\\Users\\`, `a\\`: the hard break is a line's, not a cell's), an asterisk in one cell pairs with none in another, and a quote in an html block cut mid-line keeps its trailing backslash", () => {
+  const box = buildRendered(ESCAPES);
+  const shownIn = (quote: string): string => { const tds = elements(box).filter((e) => e.tagName === "TD"); const i = ESCAPES.split("\n").filter((l) => l.startsWith("| ") && !l.startsWith("| Cell")).findIndex((l) => l.startsWith("| " + quote + " |")); assert.ok(i >= 0, "a row for " + quote); return tds[i * 2].textContent; };
+  for (const [quote, shown] of [["\\*\\*kwargs", "**kwargs"], ["\\*required\\*", "*required*"], ["\\*escaped\\*", "*escaped*"], ["*a\\*b*", "a*b"], ["costs \\$5", "costs $5"], ["\\<b\\>", "<b>"],
+                                ["**Note:**_draft_", "Note:draft"], ["_path_**index**", "pathindex"], ["Ctrl<kbd>C</kbd>", "CtrlC"], ["H<sub>2</sub>O", "H2O"], ["==important==", "important"],
+                                ["C:\\Users\\", "C:\\Users\\"], ["a\\", "a\\"]] as const) {
+    assert.equal(norm(shownIn(quote)), shown, quote + ": the fixture's cell renders as the case expects");
+    const h = highlight(ESCAPES, rangeOf(ESCAPES, quote, ESCAPES.indexOf("| " + quote + " |")));   // the quote's own row (`a\` occurs inside `*a\*b*` too)
+    assert.ok(h.marks && h.marks.length, quote + ": painted (was " + (quote.startsWith("C:") || quote === "a\\" ? "a partial mark" : "null") + ")");
+    assert.equal(norm(h.text!), shown, quote + ": the whole cell's text under the marks");
+    assert.equal(h.cell!.index, 0, quote + ": the first cell");
+  }
+  // a `*` opening in one cell and closing in the next: both show, and a quote on either cell paints it whole
+  const split = ESCAPES.indexOf("| *a | b* |");
+  let h = highlight(ESCAPES, rangeOf(ESCAPES, "*a", split));
+  assert.ok(h.marks && h.marks.length, "`*a` paints (before: the row's rules paired it with the `*` in the next cell)");
+  assert.equal(h.text, "*a");
+  h = highlight(ESCAPES, rangeOf(ESCAPES, "b*", split));
+  assert.ok(h.marks && h.marks.length);
+  assert.equal(h.text, "b*");
+  // an html block's text, a quote cut mid-line at a backslash
+  h = highlight(ESCAPES, rangeOf(ESCAPES, "C:\\Temp\\"), "DIV");
+  assert.ok(h.marks && h.marks.length, "the html block's text paints (the tags render nothing of their own)");
+  assert.equal(h.text, "C:\\Temp\\", "the trailing backslash is kept: the quote ends mid-line, at no hard break");
+});
+
+test("Rendered fallback: when the range's blocks are paired to nodes that do not hold the quote (a rendering that gained a paragraph the source lacks pairs every later block one node early), the whole rendered text is searched, as when the blocks have no node, and the passage paints by ordinal (before: the scope's text alone was searched and nothing was found, the card offering Reveal where main had painted it)", () => {
+  const source = "Alpha one.\n\nBeta two.\n\nGamma three.\n\nBeta two.\n";
+  // the DOM of a rendering with a paragraph the source lacks: Beta's block pairs the stranger as a mismatch, Gamma's pairs Beta's <p>
+  const box = buildRendered("Alpha one.\n\nChanged.\n\nBeta two.\n\nGamma three.\n\nBeta two.\n");
+  const before = serialize(box);
+  let marks = paintRendered(El(box), source, rangeOf(source, "Gamma three."), "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length === 1, "Gamma paints (was null: its block's node was Beta's <p>)");
+  assert.equal(marks![0].textContent, "Gamma three.");
+  assert.equal(cellOf(marks![0], "P").index, 3, "the fourth paragraph, where the rendering shows it");
+  // the ordinal over the whole text: the second Beta paints the second rendered Beta
+  const second = source.lastIndexOf("Beta two.");
+  marks = paintRendered(El(box), source, { start: second, end: second + "Beta two.".length }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length === 1, "the second Beta paints");
+  assert.equal(cellOf(marks![0], "P").index, 4, "the last paragraph");
+  // a quote the rendering holds nowhere stays unpainted, and the DOM is untouched
+  const box2 = buildRendered("Alpha one.\n\nChanged.\n\nBeta two.\n\nGamma three.\n\nBeta two.\n");
+  assert.equal(paintRendered(El(box2), source + "\n\nDelta four.\n", rangeOf(source + "\n\nDelta four.\n", "Delta four."), "fc-hl"), null);
+  assert.equal(serialize(box2), before);
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

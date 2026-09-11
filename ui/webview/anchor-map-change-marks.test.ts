@@ -334,11 +334,12 @@ test("Rendered fallback: a repeated token in a code fence marks the changed line
 });
 
 test("Rendered fallback: when the rendering shows the text a different number of times than the source holds it, nothing is painted — the change keeps its card, never a mark on the wrong passage", () => {
-  // an HTML block whose attribute repeats its text: the page shows one "note", the source holds two
-  const source = "# Notes\n\n<div title=\"note\">note</div>\n";
-  const attr = source.indexOf("note"), text = source.lastIndexOf("note");
+  // an HTML block whose entity spells its text: the page shows two "note" (the parser decodes `&#110;ote`), the source holds one
+  // (the Slice 5 review's round 2 moved this scene off an attribute's text, which the strip now drops with its tag, as the rendering does)
+  const source = "# Notes\n\n<div>&#110;ote note</div>\n";
+  const attr = source.indexOf("&#110;ote"), text = source.lastIndexOf("note");
   assert.ok(attr < text);
-  for (const [label, from] of [["the visible text", text], ["the attribute", attr]] as [string, number][]) {
+  for (const [label, from] of [["the visible text", text], ["the entity's copy", attr]] as [string, number][]) {
     const box = buildRendered(source);
     const before = serialize(box);
     const res = paintChangesRendered(El(box), source, [ins("h", "web", source, from, "note")], stylesFor);

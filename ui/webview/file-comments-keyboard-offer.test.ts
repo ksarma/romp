@@ -7,7 +7,12 @@
 // offer a scroll hid stays hidden); a collapsed selection hides the float; one arriving while a pointer is down does nothing (a
 // drag keeps its one offer at mouseup, and the float does not flicker mid-drag); one with an end outside the body hides a passage's
 // float and offers nothing; a DIFFERENT non-collapsed selection inside the body shows the float at the new rect; nothing while the
-// editor holds the body; and the listeners leave at dispose. Driven over the behavior suite's DOM stand-in with the selection faked
+// editor holds the body; and the listeners leave at dispose. The press flag takes pressHold's shape (the Slice 5 review, round 2):
+// a right or middle mousedown raises it not at all, since Chromium on Linux and macOS opens the native context menu on that
+// mousedown and the menu takes the release, so a flag raised by one stood until the next left click and every keyboard change in
+// between offered nothing; a contextmenu and the window's blur end a press as a mouseup does (ctrl+click on macOS and a long press
+// on a touch screen end in a contextmenu and no mouseup; a release in another frame never reaches this one). Driven over the
+// behavior suite's DOM stand-in with the selection faked
 // per case (window.getSelection is what the panel reads) and the document's listeners run as the browser runs them.
 // file-comments-keyboard-offer-browser.test.ts presses the keys in Chromium. Nodes hide their edges at construction (hideEdges,
 // ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
@@ -46,8 +51,9 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
+  button: number;   // MouseEvent.button: 0 the primary, 1 the middle, 2 the right (the default a browser gives a MouseEvent)
   detail = 0;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; hideEdges(this); }
+  constructor(public type: string, init: { key?: string; button?: number } = {}) { this.key = init.key || ""; this.button = init.button ?? 0; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -218,6 +224,17 @@ function documentEvent(type: string): void {
 }
 const win: any = new EventTarget();
 win.parent = win; win.innerWidth = 1200; win.innerHeight = 800;
+/** The window's listeners by type, as installed and removed (a native EventTarget lists none): the press flag's blur release. */
+const winListeners: Reg[] = [];
+const winAdd = win.addEventListener.bind(win), winRemove = win.removeEventListener.bind(win);
+win.addEventListener = (type: string, cb: Listener, opts?: boolean | { capture?: boolean }) => {
+  winListeners.push({ type, cb, capture: typeof opts === "boolean" ? opts : !!(opts && opts.capture) }); winAdd(type, cb, opts);
+};
+win.removeEventListener = (type: string, cb: Listener, opts?: boolean | { capture?: boolean }) => {
+  const cap = typeof opts === "boolean" ? opts : !!(opts && opts.capture);
+  const i = winListeners.findIndex((l) => l.type === type && l.cb === cb && l.capture === cap); if (i >= 0) winListeners.splice(i, 1);
+  winRemove(type, cb, opts);
+};
 let selection: any = null;
 win.getSelection = () => selection;
 win.confirm = () => true;
@@ -429,15 +446,69 @@ test("while the editor holds the body its selections are edits: a selectionchang
   assert.equal(float.hidden, false, "the read view back: the same change offers");
 });
 
-test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel and dragend", async (t) => {
+test("a right or middle press raises no press flag (Chromium on Linux and macOS opens the native context menu on the right mousedown and the menu takes the release, so no mouseup follows): the keyboard change after it offers the float (before: the flag stood until the next left click, and the keyboard offered nothing)", async (t) => {
+  const { w, float } = await offered(t);
+  dispatch(w.body, new Ev("mousedown", { button: 2 }));   // the right button: hideFloatOnDown hides the float, as for any press...
+  assert.equal(float.hidden, true, "a press of any button hides the float (hideFloatOnDown)");
+  // ...and no mouseup comes: the menu took it. The reader dismisses the menu and widens the selection from the keyboard
+  selection = selectionOn(w.body, QUOTE, 9, RECT_B);
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the right press raised no flag: the keyboard's change offers the float beside the selection");
+  // the middle button the same way (no click, no selection of its own)
+  dispatch(w.body, new Ev("mousedown", { button: 1 }));
+  assert.equal(float.hidden, true);
+  selection = selectionOn(w.body, QUOTE, 5, RECT_B);
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "a middle press raised no flag either");
+  // a primary press still holds the flag through its drag, and its mouseup ends it
+  dispatch(w.body, new Ev("mousedown", { button: 0 }));
+  selection = selectionOn(w.body, QUOTE, 7, RECT_B);
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "mid-press with the primary button: the drag's changes offer nothing");
+  dispatch(w.body, new Ev("mouseup", { button: 0 }));
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "the primary press over: offered");
+});
+
+test("a primary press the browser ended itself is over at its contextmenu (ctrl+click on macOS, a long press on a touch screen: the menu takes the release and no mouseup follows), and at the window's blur (a release in another frame never reaches this one): the keyboard change after either offers", async (t) => {
+  const { w, float } = await offered(t);
+  dispatch(w.body, new Ev("mousedown", { button: 0 }));
+  assert.equal(float.hidden, true);
+  selection = selectionOn(w.body, QUOTE, 9, RECT_B);
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the press stands: nothing offered");
+  dispatch(w.body, new Ev("contextmenu", { button: 0 }));   // the browser's menu opened on this press; the mouseup goes to the menu
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the contextmenu ended the press: the keyboard's change offers (before: the flag stood until the next left click)");
+  // the window's blur ends a press the same way
+  dispatch(w.body, new Ev("mousedown", { button: 0 }));
+  assert.equal(float.hidden, true);
+  selection = selectionOn(w.body, QUOTE, 5, RECT_B);
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the press stands");
+  win.dispatchEvent(new Event("blur"));
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "the window's blur ended the press: offered");
+  // a touch press has no button and is held as before, to its touchend
+  dispatch(w.body, new Ev("touchstart"));
+  selection = selectionOn(w.body, QUOTE, 7, RECT_B);
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "mid-touch: nothing");
+  dispatch(w.body, new Ev("touchend"));
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "the finger lifted: offered");
+});
+
+test("the document's listeners leave at dispose: selectionchange, and the press flag's mousedown, touchstart, mouseup, touchend, touchcancel, dragend and contextmenu, and the window's blur", async (t) => {
   const count = (type: string) => doc.listeners.filter((l) => l.type === type).length;
-  const before = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
+  const winCount = (type: string) => winListeners.filter((l) => l.type === type).length;
+  const before = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
   const w = world(); t.after(() => w.close());   // beside the explicit close below: a count that fails before it would leave the panel's poll timer holding the process, and the run would hang instead of reporting (dispose tolerates the second call)
   t.after(() => { selection = null; });
   await openPanel(w);
-  const during = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
-  assert.deepEqual(during, { sc: before.sc + 1, md: before.md + 2, ts: before.ts + 2, mu: before.mu + 1, te: before.te + 1, tc: before.tc + 1, de: before.de + 1 }, "one selectionchange listener; the press flag beside hideFloatOnDown on mousedown and touchstart, and its four ends");
+  const during = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
+  assert.deepEqual(during, { sc: before.sc + 1, md: before.md + 2, ts: before.ts + 2, mu: before.mu + 1, te: before.te + 1, tc: before.tc + 1, de: before.de + 1, cm: before.cm + 1, bl: before.bl + 1 }, "one selectionchange listener; the press flag beside hideFloatOnDown on mousedown and touchstart, and its six ends, the window's blur among them");
   w.close();
-  const after = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend") };
+  const after = { sc: count("selectionchange"), md: count("mousedown"), ts: count("touchstart"), mu: count("mouseup"), te: count("touchend"), tc: count("touchcancel"), de: count("dragend"), cm: count("contextmenu"), bl: winCount("blur") };
   assert.deepEqual(after, before, "every one removed with the viewer");
 });

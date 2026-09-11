@@ -22,8 +22,16 @@
 //     and the return puts the picture back at its depth, within the Raw row's whole-pixel snap scaled by the picture's
 //     height over the row's, and the rule at the edge round-trips exactly;
 //   - a Raw row of the wrapper's own (`<summary>`) switched to Rendered: round 2 seated the whole swallowed run at the
-//     row's fraction (paragraph 74 at scrollTop 3585 for 360); now no seat, and still none under Slice 5 (the owner's
-//     ruling 2: the wrapper's own rows are never the place);
+//     row's fraction (paragraph 74 at scrollTop 3585 for 360); the third round and Slice 5's build seated nothing (the
+//     owner's ruling 2: the wrapper's own block is never seated); since the Slice 5 review's round 2 the row reads as
+//     the first block nested in the wrapper (the owner's ruling extended the closing-row rule to the opener rows), which
+//     the shut fold hides, so the seat stands on the block after the fold where its own row was (Place.after);
+//   - the same ruling's round trips (the last three tests): a fold title at the pane's top, open or shut, at 900 and
+//     380px, back within 1.5px (before: the summary's row on top of Raw after the switch, its seat refused, and the way
+//     back off by 26px at 900 and 203 at 380 for an open fold); a `</details>` row followed by a comment block (before:
+//     the comment was the place and the block after it landed 39px low); a README's centred `<h1>`, whose Raw rows
+//     (the opener, the `<h1>`, the `<p>` tagline, an `<img>` line, the blank row before the opener) all read as the
+//     first nested block (before: the wrapper's block, its seat refused, 44 to 153px lost each way);
 //   - two html blocks a blank line apart: the map paired the first to nothing and the second to both elements; round 2
 //     read the second element as its block and put the Raw view one row off, the third round read neither as a place
 //     and seated nothing; since Slice 5's walk each is its own block, so from either element the Raw switch lands on the
@@ -187,7 +195,7 @@ test("in a browser, the real module: a two-tag html block whose first tag carrie
   });
 });
 
-test("in a browser, the real module: after a <details> wrapper the browser nests markdown into, a picture the reader is 100px into and a rule at the edge are their own blocks (Slice 5's flattened walk; before it the wrapper's block took every element after it, the place refused the run and the Raw switch seated nothing; the second round took a textless element for the wrapper's own and the switch jumped 1750px up to <details>): the Raw switch lands on the picture's own row and the return puts the picture back at its depth, within the row's snap scaled by the picture's height; the rule round-trips exactly, the rule's row at the edge in Raw; a Raw row of the wrapper's own switched to Rendered still seats nothing (ruling 2; the second round seated the run, paragraph 74 at 3585 for 360)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: after a <details> wrapper the browser nests markdown into, a picture the reader is 100px into and a rule at the edge are their own blocks (Slice 5's flattened walk; before it the wrapper's block took every element after it, the place refused the run and the Raw switch seated nothing; the second round took a textless element for the wrapper's own and the switch jumped 1750px up to <details>): the Raw switch lands on the picture's own row and the return puts the picture back at its depth, within the row's snap scaled by the picture's height; the rule round-trips exactly, the rule's row at the edge in Raw; a Raw row of the wrapper's own (`<summary>`) switched to Rendered seats the block after the shut fold where its own row was (the Slice 5 review's round 2: the opener rows read as the first nested block, which the shut fold hides, so the carried block after the fold stands; before: no seat under ruling 2; the second round seated the run, paragraph 74 at 3585 for 360)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const DOC = "# Report\n\n" + paras(1, 4) + "\n\n" + WRAP + "\n\n" + paras(5, 40) + "\n\n" + `![a picture](${SVG})` + "\n\n" + paras(41, 60) + "\n\n---\n\n" + paras(61, 80) + "\n";
     // the fixture: the browser nests the inner paragraph inside <details>, the paragraphs after </details> are siblings
@@ -232,18 +240,23 @@ test("in a browser, the real module: after a <details> wrapper the browser nests
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
-    // a Raw row of the wrapper's own: <summary> 8px above the edge, switched to Rendered
+    // a Raw row of the wrapper's own: <summary> 8px above the edge, switched to Rendered. The row reads as the first nested block
+    // (the hidden paragraph), which the shut fold does not show, so the seat stands on the block after the fold, paragraph 5, where
+    // its own row was (the wrapper's own block is still never seated: ruling 2)
     const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: DOC }, raw: true });
     await rowToEdge(page, "<summary>More</summary>", 8); await frames(page, 2);
     const row = (await rowAtTop(page))!;
     assert.equal(row.text, "<summary>More</summary>", "the scene starts on the summary row");
     near(row.top, -8, "8px above the edge", 1);
+    const p5Row = (await box(page, "code.hljs .fv-cl", "Paragraph 5:"))!;
+    assert.ok(p5Row.top > 0 && p5Row.top < 120, `paragraph 5's row, the block after the fold, is below the edge (top ${p5Row.top})`);
     await trapWrites(page);
     await click(page, "Rendered");
+    assert.equal((await writes(page)).length, 1, `the viewer seated once across the switch (before: no write, the wrapper's block refused; the second round seated the run, paragraph 74 at 3585)`);
+    const p5 = (await box(page, ".fileview-md > p", "Paragraph 5:"))!;
+    near(p5.top, p5Row.top, "paragraph 5, the block after the shut fold, is where its own row was (before: the numeric scrollTop standing)");
     const back = (await topBlock(page))!;
-    assert.deepEqual(await writes(page), [], `the viewer wrote no scrollTop across the switch: the wrapper's pairing is refused, so no seat (the top block is ${JSON.stringify(back.text)} at ${back.scrollTop} for ${row.scrollTop}; the second round seated the run, paragraph 74 at 3585)`);
-    const m = /^Paragraph (\d+):/.exec(back.text);
-    assert.ok(/^More/.test(back.text) || (m && Number(m[1]) < 20), `the top block is near the wrapper, not deep in its run (got ${JSON.stringify(back.text)})`);
+    assert.ok(/^More/.test(back.text) || /^Paragraph [1-4]:/.test(back.text), `the top block is the fold or a paragraph before it (got ${JSON.stringify(back.text)})`);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });
@@ -372,6 +385,132 @@ test("in a browser, the real module: a Rendered code block of long lines in a 38
         near(now, -20.4, `with the browser's anchoring ${anchoring}, at ${width}px line 50's first character is where it was (the viewer's scrollTop writes across the drag: ${JSON.stringify(await writes(page))}; the second round: -2.1 at the first drag with anchoring on, the hit row's top seated as the line's; the base with anchoring off: -2502 at 900px, no write)`, 2);
       }
     }
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+/** paragraphs 1 to 10, a details (open or shut) with a one-line summary holding paragraphs 11 to 15, then `tail` and paragraphs 16 to 30 */
+const foldDoc = (open: boolean, tail = "") => "# Report\n\n" + paras(1, 10) + "\n\n<details" + (open ? " open" : "") + ">\n<summary>Fold title</summary>\n\n" + paras(11, 15) + "\n\n</details>\n\n" + tail + paras(16, 30) + "\n";
+const FOLD_ROW = /^(<details|<summary>|<\/details>|Paragraph 1[1-5]:|$)/;
+
+test("in a browser, the real module: Rendered to Raw to Rendered from a fold title at the pane's top edge is exact for an open and a shut fold at 900 and 380px (the summary passed over, the Rendered read names the first nested block, or the block after a shut fold; the Raw seat puts its row there, so a row of the fold's own is on top of Raw; the way back reads that row as the first nested block, carrying the block after the fold, and seats what the view shows; before: the wrapper's block was the place from its own rows, its seat refused, and the way back lost 26px at 900 and 203 at 380 for the open fold); and from Raw, a `</details>` row 9px above the edge followed by a comment block puts the block after both where its row was (before: the comment was the place, seated through the block before it, and the block after landed 39px low)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const open of [true, false]) {
+      for (const width of [900, 380]) {
+        const what = `${open ? "open" : "shut"} fold, pane ${width}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: foldDoc(open) } });
+        await scrollInto(page, ".fileview-md summary", "Fold title", 0); await frames(page, 2);
+        const summary = (await box(page, ".fileview-md summary", "Fold title"))!;
+        near(summary.top, 0, what + ": the scene starts with the summary's top at the edge", 1);
+        const inner = open ? ".fileview-md details > p" : ".fileview-md > p", innerText = open ? "Paragraph 11:" : "Paragraph 16:";
+        const before = (await box(page, inner, innerText))!;
+        assert.ok(before.top > 0, what + `: ${innerText} is below the edge (top ${before.top})`);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        assert.ok(FOLD_ROW.test(row.text), what + `: the top Raw row is one of the fold's own, the scene the way back reads from (got ${JSON.stringify(row.text)} at ${row.top})`);
+        const innerRow = (await box(page, "code.hljs .fv-cl", innerText))!;
+        near(innerRow.top, before.top, what + `: ${innerText}'s own row is where the block was`, 1);
+        await click(page, "Rendered");
+        const back = (await box(page, inner, innerText))!;
+        near(back.top, before.top, what + `: back in Rendered ${innerText} is where it was (before: ${open ? (width === 900 ? "26" : "203") + "px off, the summary row's seat refused" : "exact since round 1 through the closing row"})`);
+        const sum2 = (await box(page, ".fileview-md summary", "Fold title"))!;
+        near(sum2.top, 0, what + ": the summary's top is at the edge again");
+        assert.deepEqual(errors, [], what + ": no script error");
+        await page.close();
+      }
+    }
+    // the closing row 9px above the edge, a comment block after it: from Raw, the block after both where its row was
+    const withComment = foldDoc(false, "<!-- a note to self -->\n\n");
+    const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: withComment }, raw: true });
+    await rowToEdge(page, "</details>", 9); await frames(page, 2);
+    const row = (await rowAtTop(page))!;
+    assert.equal(row.text, "</details>", `the scene starts on the closing row (got ${JSON.stringify(row.text)})`);
+    const p16Row = (await box(page, "code.hljs .fv-cl", "Paragraph 16:"))!;
+    assert.ok(p16Row.top > 0 && p16Row.top < 90, `paragraph 16's row is below the closer, the comment's row and two blanks (top ${p16Row.top})`);
+    await click(page, "Rendered");
+    const p16 = (await box(page, ".fileview-md > p", "Paragraph 16:"))!;
+    near(p16.top, p16Row.top, "paragraph 16 is where its row was (before: the comment block was the place, paragraph 15 seated at the row's depth, and paragraph 16 39px low)");
+    // and the round trip from the summary at the edge over the same note, the recheck's residual scene
+    await scrollInto(page, ".fileview-md summary", "Fold title", 0); await frames(page, 2);
+    const before = (await box(page, ".fileview-md > p", "Paragraph 16:"))!;
+    await click(page, "Raw"); await click(page, "Rendered");
+    const back = (await box(page, ".fileview-md > p", "Paragraph 16:"))!;
+    near(back.top, before.top, "Rendered to Raw to Rendered from the summary at the edge, the comment after the closer: paragraph 16 where it was");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+const LOGO = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect width="200" height="120" fill="darkseagreen"/></svg>');
+/** paragraphs 1 to 5, a centred div whose block holds `lead` (its own rows), then paragraphs 6 to 8 nested, `</div>`, paragraphs 9 to 25 */
+const readme = (lead: string) => "# Report\n\n" + paras(1, 5) + "\n\n<div align=\"center\">\n" + lead + "\n\n" + paras(6, 8) + "\n\n</div>\n\n" + paras(9, 25) + "\n";
+const README = readme("<h1>Project</h1>\n<p>A tagline for the project</p>");
+// the logo carries its dimensions, as a README's usually does: the viewer seats at paint time, and an image with none is laid out at
+// no height until it loads, moving every block below it after the seat (a load, not the place, is then what the scene would measure)
+const IMG_LEAD = readme(`<img src="${LOGO}" alt="logo" width="200" height="120">\n\n## Centred title`);
+const WRAPPER_ROW = /^(<div align|<h1>|<p>A tagline|<img src|$)/;
+
+test("in a browser, the real module: a README's centred header. Rendered to Raw to Rendered with the `<h1>` at the top edge is exact at 900 and 380px (the Rendered read passes over the wrapper's own `<h1>` and `<p>` for the first nested paragraph; the Raw seat puts its row there and a row of the wrapper's block, or the blank row before it, is on top; the way back reads that row as the first nested block; before: the blank row resolved to the wrapper's block, its seat was refused, and the `<h1>` came back 64px low at 900 and 153 at 380); from Raw, the `<h1>` and the `<p>` tagline rows at the edge at 900 and 380px, and an `<img>` lead row at 900, switched to Rendered and back come back within 1.5px (before: no seat from any of them, 44 to 121px lost); and a small logo's top at the edge at 380px round-trips exactly (the `<div align=\"center\">` row on top of Raw; before: 112px lost)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const width of [900, 380]) {
+      const what = `pane ${width}`;
+      const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: README } });
+      await scrollInto(page, ".fileview-md h1", "Project", 0); await frames(page, 2);
+      const before = (await box(page, ".fileview-md h1", "Project"))!;
+      near(before.top, 0, what + ": the scene starts with the h1's top at the edge", 1);
+      const p6 = (await box(page, ".fileview-md div > p", "Paragraph 6:"))!;
+      await click(page, "Raw");
+      const row = (await rowAtTop(page))!;
+      assert.ok(WRAPPER_ROW.test(row.text), what + `: the top Raw row is the wrapper's own or the blank before it (got ${JSON.stringify(row.text)} at ${row.top})`);
+      const p6Row = (await box(page, "code.hljs .fv-cl", "Paragraph 6:"))!;
+      near(p6Row.top, p6.top, what + ": paragraph 6's own row is where the paragraph was", 1);
+      await click(page, "Rendered");
+      const back = (await box(page, ".fileview-md h1", "Project"))!;
+      near(back.top, before.top, what + `: back in Rendered the h1 is where it was (before: ${width === 900 ? 64 : 153}px low, the wrapper's block refused from the blank row)`);
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+    }
+    // from Raw: the wrapper's own rows at the edge, to Rendered and back. The `<img>` row at 900px only: its data: URI wraps to 8 rows
+    // at 380 (144px), taller than the picture (120px), so after the heading's exact seat the paragraph before the wrapper shows 5.5px
+    // above the picture, is the top block, and the way back is by its fraction (the row 40px low): the fraction seat's residual under
+    // ruling 13 whenever a block before the wrapper ends up on top, recorded in the plan's build note; a README's one-line
+    // `<img src="docs/logo.svg">` row is shorter than its picture and round-trips exactly, as the 900px pass shows
+    for (const [doc, rowText, nestedSel, nestedText, widths] of [[README, "<h1>Project</h1>", ".fileview-md div > p", "Paragraph 6:", [900, 380]], [README, "<p>A tagline for the project</p>", ".fileview-md div > p", "Paragraph 6:", [900, 380]], [IMG_LEAD, "<img src=", ".fileview-md div > h2", "Centred title", [900]]] as const) {
+      for (const width of widths) {
+        const what = `${JSON.stringify(rowText)} row, pane ${width}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: doc }, raw: true });
+        await rowToEdge(page, rowText, 0); await frames(page, 2);
+        const row = (await rowAtTop(page))!;
+        assert.ok(row.text.startsWith(rowText.slice(0, 8)), what + `: the scene starts on the row (got ${JSON.stringify(row.text)})`);
+        const nestedRow = (await box(page, "code.hljs .fv-cl", nestedText))!;
+        assert.ok(nestedRow.top > 0, what + `: the first nested block's row is below the edge (top ${nestedRow.top})`);
+        await click(page, "Rendered");
+        if (doc === IMG_LEAD) await imagesDone(page);
+        const nested = (await box(page, nestedSel, nestedText))!;
+        near(nested.top, nestedRow.top, what + ": the first nested block is where its row was (before: no seat, the wrapper's block refused)");
+        await click(page, "Raw");
+        const rowBack = (await box(page, "code.hljs .fv-cl", rowText))!;
+        near(rowBack.top, 0, what + ": the row is back at the edge (before: 44 to 121px low)");
+        assert.deepEqual(errors, [], what + ": no script error");
+        await page.close();
+      }
+    }
+    // the logo's top at the edge at 380px: the Raw seat leaves the opener's row on top, and the way back is exact
+    const { page, errors } = await openViewer(browser, "pane", 380, 600, { docs: { [REPORT]: IMG_LEAD } });
+    await imagesDone(page);
+    const logo = await page.evaluate(() => { const i = document.querySelector(".fileview-md div > img") as HTMLElement; const r = i.getBoundingClientRect(); return { h: r.height, ok: i.parentElement!.tagName === "DIV" }; });
+    assert.ok(logo.ok && logo.h > 100, `the fixture: the logo is the wrapper's own child and laid out (${JSON.stringify(logo)})`);
+    await page.evaluate(() => { const body = document.querySelector(".fileview-body")!; const i = document.querySelector(".fileview-md div > img")!; body.scrollTop += i.getBoundingClientRect().top - body.getBoundingClientRect().top; });
+    await frames(page, 2);
+    const before = await page.evaluate(() => { const body = document.querySelector(".fileview-body")!; return document.querySelector(".fileview-md div > img")!.getBoundingClientRect().top - body.getBoundingClientRect().top; });
+    near(before, 0, "the scene starts with the logo's top at the edge", 1);
+    await click(page, "Raw");
+    const row = (await rowAtTop(page))!;
+    assert.ok(/^<div align|^<img src/.test(row.text), `the top Raw row is the wrapper's own (got ${JSON.stringify(row.text)} at ${row.top}); a paragraph before the wrapper on top would round-trip by that paragraph's fraction instead`);
+    await click(page, "Rendered"); await imagesDone(page);
+    const back = await page.evaluate(() => { const body = document.querySelector(".fileview-body")!; return document.querySelector(".fileview-md div > img")!.getBoundingClientRect().top - body.getBoundingClientRect().top; });
+    near(back, before, "back in Rendered the logo is where it was (before: 112px low, the opener's row's seat refused)");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

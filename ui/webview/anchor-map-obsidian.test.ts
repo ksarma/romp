@@ -366,9 +366,12 @@ test("a selection endpoint inside a formula refuses as touching a formula, with 
     // the formula alone (its whole text): the person selected the formula
     const whole = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), name + ": the formula alone");
     assert.match(whole.reason, /touches a formula/);
-    // from the formula's first character out into the prose: the whole formula is selected, and a formula is not text the mapping places
-    const fromStart = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), name + ": from the formula's start");
-    assert.match(fromStart.reason, /touches a formula/);
+    // from the formula's first character out into the prose: the formula is covered WHOLE, so this is prose holding a formula (the
+    // Slice 5 review's round 2 ruling), and the quote carries the formula's source (before: refused as the formula)
+    const fromStart = ok(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), name + ": from the formula's start");
+    assert.equal(fromStart.quote, "$" + tex + "$ math and", name + ": the formula with its delimiters, then the prose");
+    // from strictly inside it out: the formula's still
+    assert.match(bad(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " math and", true)), El(box), src), name + ": from inside").reason, /touches a formula/);
     // the edge that selects none of the formula: a selection ENDING at its first character (a triple-click on the paragraph before a display
     // formula puts its focus there) maps the prose before; one STARTING past its last character maps the prose after
     const upTo = ok(mapRenderedSelection(sel(point(box, "Inline "), { node: glyphs, offset: 0 }), El(box), src), name + ": up to the formula");
@@ -852,12 +855,13 @@ test("a selection endpoint inside a formula offers the Raw view with the FORMULA
       assert.equal(b.blockStartOffset, start, name + ": " + what + ": the Raw view opens at the formula, as before");
       assert.equal(b.rawRange!.start, start, name + ": " + what + ": the preselection starts where the view opens");
     };
-    // the inline formula: from inside its glyphs out, from the prose in, the formula alone, from its first glyph out
+    // the inline formula: from inside its glyphs out, from the prose in, the formula alone; from its first glyph out it is covered whole
+    // and maps (the review's round 2 ruling, the test above)
     const inl = "$" + tex + "$", at$ = src.indexOf("$");
     offer(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " math and", true)), El(box), src), "from inside", inl, at$);
     offer(mapRenderedSelection(sel(point(box, "Inline "), { node: glyphs, offset: 1 }), El(box), src), "into it", inl, at$);
     offer(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), "alone", inl, at$);
-    offer(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), "from its start", inl, at$);
+    assert.equal(ok(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " math and", true)), El(box), src), name + ": from its start").quote, inl + " math and");
     // the display formula: the triple-click's shape (its first glyph to the next paragraph's start) and a boundary inside its glyphs; the
     // block's raw carries the line feeds after `$$`, which are no part of the formula
     const nextP = topEl(box, 2);
@@ -865,6 +869,47 @@ test("a selection endpoint inside a formula offers the Raw view with the FORMULA
     offer(mapRenderedSelection(sel({ node: dglyphs, offset: 0 }, { node: nextP, offset: 0 }), El(box), src), "display, selected whole", disp, at$$);
     offer(mapRenderedSelection(sel({ node: dglyphs, offset: 1 }, { node: nextP, offset: 0 }), El(box), src), "display, from inside", disp, at$$);
     assert.equal(src.slice(at$$ + disp.length, at$$ + disp.length + 2), "\n\n", name + ": the line feeds after the block are outside the range");
+  }
+});
+
+test("a paragraph that OPENS with a formula, selected whole (a triple-click: its anchor on the formula's first glyph, its focus at the next block's start) or from the formula's first glyph to any word after it, maps with the formula's source inside the quote: a formula the selection covers whole is prose holding a formula (the Slice 5 review's round 2 ruling; before: refused as touching a formula, the Raw view preselecting the formula alone); a selection begun strictly inside the formula is the formula's still, and one ending exactly at a formula's last glyph covers it too; a display formula covered whole with no prose beside it stays the formula's", () => {
+  for (const [name, tex] of [["rendered", "E = mc^2"], ["katex-error", "E\\BROKEN"], ["md-math-src", "\\HUGE" + "x".repeat(40)]] as const) {
+    const src = "# Title\n\n$" + tex + "$ opens this paragraph.\n\nPara after, ending in $" + tex + "$\n\n$$\n" + tex + "\n$$\n\nLast para.\n";
+    const box = buildRendered(src);
+    const first = byClass(topEl(box, 1), name === "rendered" ? "katex" : name);
+    const glyphs = allText(first)[0];
+    assert.ok(glyphs.data.length >= 2, name + ": glyphs to select inside");
+    const nextP = topEl(box, 2);
+    const triple = ok(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: nextP, offset: 0 }), El(box), src), name + ": the triple-click's shape");
+    assert.equal(triple.quote, "$" + tex + "$ opens this paragraph.", name + ": the paragraph's whole source, the formula first");
+    assert.deepEqual(triple.range, { start: src.indexOf("$" + tex), end: src.indexOf("paragraph.") + "paragraph.".length });
+    const toWord = ok(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, point(box, " opens this", true)), El(box), src), name + ": from the first glyph to a word");
+    assert.equal(toWord.quote, "$" + tex + "$ opens this");
+    // a boundary on the paragraph itself, before its first child (Chromium's shape for a triple-click landing on the formula), covers the
+    // formula from outside it; one on the text right after the formula (Chromium's shape for a triple-click on the words, the leading
+    // inline-block left out of its range) does not, and the words alone map
+    const onP = ok(mapRenderedSelection(sel({ node: topEl(box, 1), offset: 0 }, { node: nextP, offset: 0 }), El(box), src), name + ": the paragraph before its first child");
+    assert.equal(onP.quote, "$" + tex + "$ opens this paragraph.");
+    const afterF = ok(mapRenderedSelection(sel(point(box, " opens this"), { node: nextP, offset: 0 }), El(box), src), name + ": the text after the formula to the next paragraph");
+    assert.equal(afterF.quote, "opens this paragraph.", name + ": the words alone, the formula before the selection's start");
+    const inside = bad(mapRenderedSelection(sel({ node: glyphs, offset: 1 }, point(box, " opens this", true)), El(box), src), name + ": from strictly inside");
+    assert.match(inside.reason, /touches a formula/);
+    assert.equal(src.slice(inside.rawRange!.start, inside.rawRange!.end), "$" + tex + "$", name + ": the Raw offer preselects the formula");
+    // a formula at the END covered whole: a drag from the prose to the formula's last glyph
+    const last = byClass(topEl(box, 2), name === "rendered" ? "katex" : name);
+    const lg = allText(last)[allText(last).length - 1];
+    const toEnd = ok(mapRenderedSelection(sel(point(box, "Para after"), { node: lg, offset: lg.data.length }), El(box), src), name + ": to the closing formula's last glyph");
+    assert.equal(toEnd.quote, "Para after, ending in $" + tex + "$", name + ": the closing formula travels inside the quote");
+    const toInside = bad(mapRenderedSelection(sel(point(box, "Para after"), { node: lg, offset: lg.data.length - 1 }), El(box), src), name + ": to inside the closing formula");
+    assert.match(toInside.reason, /touches a formula/);
+    // the display formula selected whole, no prose beside it: the formula's, with its `$$` block preselected
+    const dglyphs = allText(byClass(topEl(box, 3), name === "rendered" ? "katex" : name))[0];
+    const disp = bad(mapRenderedSelection(sel({ node: dglyphs, offset: 0 }, { node: topEl(box, 4), offset: 0 }), El(box), src), name + ": the display formula selected whole");
+    assert.match(disp.reason, /touches a formula/);
+    assert.equal(src.slice(disp.rawRange!.start, disp.rawRange!.end), "$$\n" + tex + "\n$$");
+    // the display formula covered whole WITH the paragraph after it: prose holding a formula, the block's source inside the quote
+    const dispAnd = ok(mapRenderedSelection(sel({ node: dglyphs, offset: 0 }, point(box, "Last para.", true)), El(box), src), name + ": the display formula and the paragraph after");
+    assert.equal(dispAnd.quote, "$$\n" + tex + "\n$$\n\nLast para.");
   }
 });
 

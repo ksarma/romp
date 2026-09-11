@@ -8,8 +8,12 @@
 // anchor lands outside the body, hides a standing float and offers nothing for the page; and a drag still offers the button once, at
 // mouseup. In the list layout (380 px) and the margin layout (900 px), as file-comments-float-scroll-browser.test.ts, whose scenes
 // this leaves as they are (a scroll fires no selectionchange). In Chromium a keyboard selection needs an existing selection or
-// caret browsing, so the drag comes first. Legs await the DOM's own states and frames, never a timer. Skips LOUDLY without a
-// playwright browser (CI installs none). Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
+// caret browsing, so the drag comes first. The second test (the review's round 2): the press flag the listener reads is raised by the
+// PRIMARY button alone and ends at a contextmenu too, since Chromium on Linux and macOS opens the native context menu on the right
+// mousedown and the menu takes the release, so the page sees no mouseup, and the flag stood until the next left click while every
+// keyboard change offered nothing; headless Chromium shows no menu, so the leg presses the right button and never releases it, the
+// shape the page is left in. Legs await the DOM's own states and frames, never a timer. Skips LOUDLY without a playwright browser
+// (CI installs none). Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames } from "./real-viewer-leg";
@@ -123,5 +127,57 @@ test("in a browser, the real module and panel: after a drag, Shift+ArrowLeft thr
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }
+  });
+});
+
+test("in a browser, the real module and panel: a right-button press whose release the page never sees raises no press flag, so Shift+ArrowRight after it offers the float (before: nothing until the next left click); a primary press the browser ended with a contextmenu and no mouseup is over too", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 600);
+    await openPanel(page);
+    await page.evaluate(() => { const w = window as any; w.__ev = []; for (const type of ["mousedown", "mouseup", "contextmenu"]) document.addEventListener(type, (e) => w.__ev.push(type + ":" + (e as MouseEvent).button), true); });
+    await selectIn(page, "Paragraph 1:");
+    let s = await scene(page);
+    assert.deepEqual([s.selected, s.floatHidden], ["Paragraph 1:", false], "the drag offers the float");
+    // the right button pressed on the selection and never released (the native menu's release, on Linux and macOS): the float goes, as
+    // for any press, and the selection stands
+    const mid = await page.evaluate(() => { const r = getSelection()!.getRangeAt(0).getBoundingClientRect(); return { x: (r.left + r.right) / 2, y: r.top + r.height / 2 }; });
+    await page.evaluate(() => { (window as any).__ev = []; });
+    await page.mouse.move(mid.x, mid.y);
+    await page.mouse.down({ button: "right" });
+    await frames(page, 2);
+    const events: string[] = await page.evaluate(() => (window as any).__ev);
+    assert.ok(events.includes("mousedown:2") && !events.some((e) => e.startsWith("mouseup")), "the page saw the right mousedown and no mouseup: " + JSON.stringify(events));
+    s = await scene(page);
+    assert.equal(s.floatHidden, true, "a press of any button hides the float");
+    assert.equal(s.selected, "Paragraph 1:", "the selection stands under the right press");
+    // the keyboard widens the selection: offered (before: the flag raised by the right mousedown stood, and the change offered nothing)
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+    await waitFor(page, () => String(getSelection()) === "Paragraph 1: ", "the selection widened by one character");
+    await offeredAtSelection(page, "the float beside the widened selection after a right press with no release");
+    s = await scene(page);
+    assert.equal(s.floatHidden, false, "offered"); near(s.left, s.expectedLeft, "beside the selection's end"); near(s.top, s.expectedTop, "on its line");
+    await page.mouse.up({ button: "right" });
+    await frames(page, 2);
+    // a primary press the browser ended itself: the left button down on the selection (which stands: a press inside a selection collapses
+    // it at the release, not before), then the contextmenu the browser fires when it opens its menu on the press (ctrl+click on macOS),
+    // and no mouseup; the keyboard's next change offers (before: the flag stood)
+    await page.evaluate(() => { (window as any).__ev = []; });
+    await page.mouse.move(mid.x, mid.y);
+    await page.mouse.down();
+    await frames(page, 2);
+    s = await scene(page);
+    assert.equal(s.floatHidden, true, "the left press hides the float");
+    assert.equal(s.selected, "Paragraph 1: ", "the selection stands under the press");
+    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 0 })); });
+    await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+    await waitFor(page, () => String(getSelection()) === "Paragraph 1: l", "the selection widened by one more");
+    await offeredAtSelection(page, "the float beside the selection after a primary press the contextmenu ended");
+    s = await scene(page);
+    assert.equal(s.floatHidden, false, "offered after the contextmenu ended the press");
+    assert.ok(!((await page.evaluate(() => (window as any).__ev)) as string[]).some((e) => e.startsWith("mouseup")), "and no mouseup reached the page meanwhile");
+    await page.mouse.up();
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
   });
 });

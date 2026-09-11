@@ -12,12 +12,22 @@
 // inside an html wrapper its own element inside the wrapper, read through the wrapper: "what the place refuses" below); in Raw it is the run of
 // rows from its first line to its last, so a blank row between two paragraphs belongs to neither and the block after
 // it is the place (the Slice 2 review: read as its own place, a blank top row seated the paragraph BEFORE the first
-// text the reader saw), while a blank row inside a fenced code block belongs to the code block; a row of a closing tag
-// alone (`</details>`, `</div>`, a wrapper's end, which renders no element of its own) reads as the block after it the
-// same way (the Slice 5 review, round 1: read as its own place, a shut fold's closing row seated nothing in Rendered,
-// since the seat walked back through the fold's unshown paragraphs to the wrapper's refused block, and the numeric
-// scrollTop stood, off by the fold's source height, 370px at 900px; a closing tag that is the document's last block
-// stays its own place). When the reader is
+// text the reader saw), while a blank row inside a fenced code block belongs to the code block; a row of a block that
+// renders nothing of its own (closing tags alone, `</details>`, `</details>\n</div>`, `</details></div>`, a wrapper's
+// end; a comment) or whose own element is never seated (an html block that opens a wrapper the browser nests the
+// markdown after it into: its `<div align="center">` or `<details>` row, its `<summary>`, a README's `<h1>` and `<p>`
+// lead rows, an `<img>` line, and the blank row before it) reads as the block after it the same way, through a run of
+// such blocks (readsAsNext; the Slice 5 review, round 1: read as its own place, a shut fold's closing row seated
+// nothing in Rendered, since the seat walked back through the fold's unshown paragraphs to the wrapper's refused
+// block, and the numeric scrollTop stood, off by the fold's source height, 370px at 900px; round 2: the owner's ruling
+// extended the rule to the wrapper's own rows, which the seat refuses (below), so a fold title at the pane's top lost
+// 26 to 203px on the round trip, and to a block of two closers and a comment's row, which render nothing too; a block
+// that is the document's last stays its own place). A Raw row inside a `<details>` shows its text whether the Rendered
+// view folds it shut or not, and the fold's state is the Rendered DOM's (file-view.ts keeps a fold as the person left
+// it across a paint), so such a row is read as its own block and CARRIES the block after the fold, and after each fold
+// in turn that block lies in, each with its first row's top (Place.after): the seat takes the first of them the view
+// shows when the kept block is not (round 2: a shut fold whose summary wraps put the fold's hidden rows on top of Raw
+// after the switch, the way back refused them, and the reader landed 361 to 562px down). When the reader is
 // partway into a block that shows LINES (any block in Raw; in Rendered a markdown code block, fenced or indented, whose
 // code element shows the block's lines one for one), the line at the edge is kept too, as its own source span and its
 // top edge: the Raw row under the edge, or, in Rendered, the code's row under the edge (code-block.ts wraps every fence
@@ -115,10 +125,12 @@
 // that would borrow such a block's box for a block with no element of its own declines the same way, the body unmoved.
 // The wrapper's own block is one such pairing in the SEAT direction: its source parses to one element, the wrapper with
 // the summary's text or with none, against the wrapper holding the nested paragraphs' text (and its summary beside it),
-// so a Raw row of the wrapper's own (`<div align="center">`, `<summary>`) switched to Rendered seats nothing (the review
-// round 3: a Raw row of `<summary>` seated the whole swallowed run, 3200px, in Rendered; kept under Slice 5, ruling 2),
-// where a Raw row of a nested paragraph seats at the paragraph's own element and a Raw row of the closing tag, which
-// owns no element, at the nearest block before it with one, the last nested paragraph. An html block of sibling tags,
+// so the wrapper's own block is never seated (the review round 3: a Raw row of `<summary>` seated the whole swallowed
+// run, 3200px, in Rendered; kept under Slice 5, ruling 2); since the Slice 5 review's round 2 its Raw rows are read as
+// the first block nested in it (readPlace, the header), so a Raw row of `<div align="center">` or `<summary>` switched
+// to Rendered seats that block where its own row was, where a Raw row of a nested paragraph seats at the paragraph's
+// own element, and a Raw row of the closing tag reads as the block after it (as the document's last block, its own
+// place, seated at the nearest block before it with an element, the last nested paragraph). An html block of sibling tags,
 // each in its source, is read as one block still. Where DOMParser is absent (a stand-in) such a block reads as no place
 // too. Two shapes the parse reads as no place though the pairing is right, both malformed input and each recorded in
 // the plan's Slice 2 build note: an html block holding a tag the sanitizer removes, when the removal changes the block's
@@ -139,7 +151,7 @@
 // file-view-place-closed-details-browser.test.ts) measure the real thing.
 import { Lexer } from "marked";
 import { followPassage } from "./file-comments";
-import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
+import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers, rawRows, rawRowForOffset, rawRowSpan, commentsOnly, type SourceRange } from "./anchor-map";
 
 export type View = "rendered" | "raw";
 /** A line of the kept block at the body's top edge: the span of its text in the file (before its line ending) and its
@@ -157,7 +169,12 @@ export type Place = {
   atTop: boolean;
   prev: SourceRange | null; next: SourceRange | null;
   line?: Line | null;
+  after?: Stand[];
 };
+/** A block after a `<details>` the kept block lies in, read in Raw (the header): its source span and its first row's top
+ *  edge measured from the body's top. The seat stands on the first of these the Rendered view shows when the kept block
+ *  is not shown (the fold shut), where the kept block itself has no box and the block after it is what the reader had. */
+export type Stand = SourceRange & { top: number };
 
 type Box = { top: number; bottom: number };
 
@@ -291,10 +308,103 @@ function isHtmlBlock(source: string, span: SourceRange): boolean {
   if (!/^ {0,3}</.test(source.slice(span.start, Math.min(span.end, span.start + 4)))) return false;
   try { const t = Lexer.lex(source.slice(span.start, span.end))[0]; return !!t && t.type === "html"; } catch { return false; }
 }
-/** Whether the block is a closing tag alone (`</details>`, `</div>`, after at most three spaces, nothing else on its
- *  lines): the end of a wrapper the browser nested markdown into, which owns no element (anchor-map.ts pairs it to none,
- *  as a comment's block) and renders nothing of its own, so its Raw row is read as a blank row between blocks is. */
-const closesAlone = (source: string, span: SourceRange): boolean => /^ {0,3}<\/[a-zA-Z][\w:-]*\s*>\s*$/.test(source.slice(span.start, span.end));
+/** Whether the block is closing tags alone (`</details>`, `</div>`, `</details>\n</div>`, `</details></div>`, after at
+ *  most three spaces, nothing else on its lines): the end of a wrapper the browser nested markdown into, or of two
+ *  nested ones closed on consecutive lines or on one line, which marked lexes as one html block; it owns no element
+ *  (anchor-map.ts pairs it to none, as a comment's block) and renders nothing of its own, so its Raw row is read as a
+ *  blank row between blocks is (the Slice 5 review, round 2: one closing tag alone was accepted, so `</details>\n</div>`
+ *  stayed its own place and seated the last nested paragraph at the row, 63 to 144px off). */
+const closesAlone = (source: string, span: SourceRange): boolean => /^ {0,3}(?:<\/[a-zA-Z][\w:-]*\s*>\s*)+$/.test(source.slice(span.start, span.end));
+/** Whether the block is html comments alone, whitespace between them (`<!-- a note to self -->`): it renders nothing, so
+ *  its Raw row is read as a closing tag's is. The pairing's own reading (anchor-map.ts commentsOnly, which gives such a
+ *  block no node), so the two agree on which block is a comment's. */
+const isCommentBlock = (source: string, span: SourceRange): boolean => commentsOnly(source.slice(span.start, span.end));
+const PROBE = "data-romp-place-probe";
+/** The element carrying the probe attribute under `n`, by a walk over the parsed block (a stand-in's parser offers no
+ *  attribute selector). */
+function probeIn(n: Node): Element | null {
+  for (let i = 0; i < n.childNodes.length; i++) {
+    const c = n.childNodes[i];
+    if (c.nodeType !== 1) continue;
+    if (typeof (c as Element).getAttribute === "function" && (c as Element).getAttribute(PROBE) !== null) return c as Element;
+    const inner = probeIn(c);
+    if (inner) return inner;
+  }
+  return null;
+}
+/** Whether the html block opens a wrapper the browser nests the markdown after it into (`<div align="center">`, a
+ *  `<details>` with its summary, `<div><div>`), told by the browser's own parser: the block's source with a paragraph
+ *  appended, as marked renders the block after it, parsed by DOMParser (the parser the sanitizer read the block with,
+ *  as ownedElements uses it), and the paragraph read back nested inside an element of the block's rather than beside it.
+ *  A `<p>` and not a made-up tag, since the parser closes a `<p>` the block leaves open when the next block's own tag
+ *  comes (every block marked renders opens with one that does), so no markdown nests in it, and foster-parents one out
+ *  of an unclosed `<table>`, as it does the markdown after such a block; anchor-map.ts's tag scan (topTags) reads the
+ *  same implied ends by hand for the pairing. Such a block's own element is never seated (ownedElements refuses it), so
+ *  its rows read as the first block nested in it (readsAsNext, the header). False for any other block, for an html block
+ *  that closes what it opens (`<p>Alpha</p>`), and where DOMParser is absent (a stand-in), which then keeps the block as
+ *  its own place, as before. */
+function opensWrapper(source: string, span: SourceRange): boolean {
+  if (!isHtmlBlock(source, span) || typeof DOMParser !== "function") return false;
+  const body = new DOMParser().parseFromString(source.slice(span.start, span.end) + "\n<p " + PROBE + "></p>", "text/html").body;
+  const probe = probeIn(body);
+  return !!probe && probe.parentNode !== body;
+}
+/** Whether a Raw row of the block reads as the block after it (the header): the block renders nothing of its own (closing
+ *  tags alone, comments alone) or is an html block that opens a wrapper, whose own element is never seated. */
+const readsAsNext = (source: string, span: SourceRange): boolean => closesAlone(source, span) || isCommentBlock(source, span) || opensWrapper(source, span);
+/** The block a Raw row of block `b` reads as: `b` itself, or the first block after it past a run of blocks that read as
+ *  the block after them (readsAsNext); the document's last block whatever it is. */
+function nextShown(source: string, spans: SourceRange[], b: number): number {
+  while (b + 1 < spans.length && readsAsNext(source, spans[b])) b++;
+  return b;
+}
+/** For each block, how many `<details>` are open where it starts, from the source alone: the details tags of the blocks
+ *  before it in order, an end tag closing the innermost open one, a fence's or an indented code block's text and comments
+ *  skipped. The Rendered view's fold state is not read here (a fold the person opened or shut stays so across a paint,
+ *  file-view.ts's fold keeper, and the Raw view has no DOM of it), only which blocks a fold holds, so the seat can be
+ *  handed the block after the fold (Place.after) and decide by the DOM whether the kept block is shown. Kept for the
+ *  last source read, as the anchor map keeps its block table: the viewer reads the same text once per scroll frame. A
+ *  details tag inside inline code miscounts one block's depth, which costs nothing when the block is shown (the seat
+ *  reads the DOM first) and leaves a shut fold's row to the refusal it had when it is not. */
+let foldCache: { source: string; depth: Int32Array } | null = null;
+const CODE_HEAD = /^ {0,3}(?:`{3,}|~{3,})|^(?: {4}|\t)/;
+const DETAILS_TAG = /<!--[\s\S]*?(?:-->|$)|<(\/?)details(?=[\s>\/])[^>]*>/gi;
+function foldDepths(source: string, spans: SourceRange[]): Int32Array {
+  if (foldCache && foldCache.source === source && foldCache.depth.length === spans.length) return foldCache.depth;
+  const depth = new Int32Array(spans.length);
+  let d = 0;
+  for (let b = 0; b < spans.length; b++) {
+    depth[b] = d;
+    const text = source.slice(spans[b].start, spans[b].end);
+    if (text.indexOf("<") < 0 || CODE_HEAD.test(text) || !/details/i.test(text)) continue;
+    DETAILS_TAG.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = DETAILS_TAG.exec(text))) { if (m[0].startsWith("<!--")) continue; if (m[1]) { if (d > 0) d--; } else d++; }
+  }
+  foldCache = { source, depth };
+  return depth;
+}
+/** The blocks the seat stands on when block `b`, read in Raw, is inside a `<details>` the Rendered view folds shut
+ *  (Place.after, the header): the first block after that fold that reads as its own place (nextShown), with its first
+ *  row's top from the body's top; then, when that block lies in a fold itself (a fold right after a fold, a README's
+ *  run of shut sections), the first block after that one, and so on out to a block in no fold. null for a block in no
+ *  fold, or when nothing after the fold reads as its own place. */
+function foldStands(code: Element, source: string, spans: SourceRange[], b: number, edge: number): Stand[] | null {
+  const depth = foldDepths(source, spans);
+  const out: Stand[] = [];
+  for (let k = b, d = depth[b]; d > 0;) {
+    let j = k + 1;
+    while (j < spans.length && depth[j] >= d) j++;
+    if (j >= spans.length) break;
+    j = nextShown(source, spans, j);
+    if (readsAsNext(source, spans[j])) break;
+    const box = rawBlockBox(code, source, spans[j]);
+    if (!box) break;
+    out.push({ start: spans[j].start, end: spans[j].end, top: box.top - edge });
+    k = j; d = depth[j];
+  }
+  return out.length ? out : null;
+}
 /** Block `b`'s elements when the pairing can be trusted, null when it cannot. None always can, and one element of any
  *  block but an html block (every other block renders as exactly one, a paragraph nested in an html wrapper included).
  *  An html block's, one or several, are trusted when the block's own source, parsed by the browser's HTML parser,
@@ -398,8 +508,9 @@ function rawLineTop(code: Element, source: string, span: SourceRange, lineStart:
 
 /** The reader's place in `body` as it stands: the top-visible block of the Rendered view (`.fileview-md`'s children,
  *  read to their blocks, an html wrapper's descended into: readRendered) or of the Raw view (the block holding the top
- *  row of `code.hljs .fv-cl`, or the one after a blank row between blocks or a row of a closing tag alone), read
- *  against `source`, the text that view
+ *  row of `code.hljs .fv-cl`, or the one after a blank row between blocks or after a run of blocks whose rows read as
+ *  the block after them, closing tags, comments and a wrapper's own rows: readsAsNext, the header; a block inside a
+ *  `<details>` carrying the blocks after the fold, Place.after), read against `source`, the text that view
  *  was painted from, with the line at the edge when the reader is partway into a block that shows lines. null when the
  *  body shows neither view, when nothing is in view (a stand-in with no layout), when no element at or below the top
  *  edge is a block's (whitespace between blocks, an html block's leftover node, a row of a wrapper's block's own: the
@@ -426,17 +537,23 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
     if (!rowBox) continue;
     const span = rawRowSpan(code, source, rows[i]);
     if (!span) return null;
-    let b = blockHolding(spans, span.start);
-    if (b < 0) return null;
-    // a row of a closing tag alone (a wrapper's end, which renders no element of its own) reads as the block after it, as a
-    // blank row between blocks does (the header); one that is the document's last block stays its own, seated through the
-    // nearest block before it with a box (renderedBoxNear)
-    while (b + 1 < spans.length && closesAlone(source, spans[b])) b++;
+    const held = blockHolding(spans, span.start);
+    if (held < 0) return null;
+    // a row of a block that renders nothing of its own (closing tags, a comment) or whose element is never seated (a wrapper's
+    // own rows) reads as the block after it, as a blank row between blocks does, through a run of such blocks (the header);
+    // one that is the document's last block stays its own, seated through the nearest block before it with a box
+    // (renderedBoxNear)
+    const b = nextShown(source, spans, held);
     const box = rawBlockBox(code, source, spans[b]);
     if (!box) return null;
     // the row is the block's own when the block starts above the edge: a blank row between blocks, or a closing tag's, reads
     // as the block after it, whose rows all start below the row and so below the edge
-    return placeOf(source, "raw", spans, b, box, edge, atTop, box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
+    const place = placeOf(source, "raw", spans, b, box, edge, atTop, box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
+    // a block inside a `<details>`: the Raw view shows its rows whether the Rendered view folds it shut or not, so the blocks
+    // after the fold travel with the place for the seat to stand on when the block is not shown (the header)
+    const after = foldStands(code, source, spans, b, edge);
+    if (after) place.after = after;
+    return place;
   }
   return null;
 }
@@ -625,6 +742,23 @@ export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place
     }
   }
   const view: View = md ? "rendered" : "raw";
+  // the kept block read in Raw inside a `<details>` the Rendered view folds shut (Place.after, the header): its elements are
+  // there and none is shown (boxOf, checkVisibility), so the seat stands on the first block after the fold the view shows,
+  // where that block's own row was; a fold the person opened shows the kept block itself, and the block is seated as ever
+  if (md && place.after && place.after.length && step === 0 && place.source === source) {
+    const own = ownedElements(md, source, spans[b], b);
+    if (own && own.length && !union(own.map(boxOf))) {
+      for (const s of place.after) {
+        const k = blockIndexAt(spans, s.start);
+        if (k < 0 || spans[k].start !== s.start) continue;
+        const stand = renderedBlockBox(md, source, spans, k);
+        if (!stand) continue;
+        const delta = (stand.top - edge) - s.top;
+        if (Math.abs(delta) >= 0.5) scrollBy(delta);
+        return outcome(true);
+      }
+    }
+  }
   const box = md ? renderedBoxNear(md, source, spans, b) : rawBlockBox(code as Element, source, spans[b]);
   if (!box) return outcome(false);
   // the same block with the same text (a view switch, a reflow, an edit elsewhere), or one the write changed: a
@@ -637,15 +771,14 @@ export function seatPlaceOutcome(body: HTMLElement, source: string, place: Place
 /** Block `b`'s box in the Rendered view, or, when it has no element with a layout (a comment, a hidden element, a block
  *  the sanitizer dropped, a wrapper's closing tag, a paragraph nested in a closed `<details>`, which boxOf reads as
  *  none), the nearest block's before it, else after it. null when block `b`'s own pairing, or the nearest before it
- *  with elements, is one the map got wrong or the wrapper's own (the wrapper's own rows read from Raw; a paragraph
- *  nested in an OPEN wrapper has its own element since Slice 5's walk and never reaches the wrapper here; one nested in
- *  a closed `<details>` walks back through the fold's unshown paragraphs to the wrapper's block and seats nothing, the
- *  body left where it stands; the fold's closing tag reaches here only as the document's last block, since readPlace
- *  reads its Raw row as the block after it): the wrapper's box is the rest of the document's, and no seat is better
- *  than that one (the review round 3: a Raw row of `<summary>` seated the run's union, 3200px, in Rendered; the Slice
- *  5 review, round 1, records the shut fold's own rows, its opener and its hidden source, as a question for the owner,
- *  since a seat at the fold itself, or a Raw read of the opener's rows as the block after them, would land the reader
- *  instead). */
+ *  with elements, is one the map got wrong or the wrapper's own (a paragraph nested in an OPEN wrapper has its own
+ *  element since Slice 5's walk and never reaches the wrapper here; one nested in a closed `<details>` walks back
+ *  through the fold's unshown paragraphs to the wrapper's block and seats nothing, the body left where it stands, when
+ *  the place carries no block after the fold to stand on (Place.after: a place readPlace read in Raw carries one, so
+ *  this walk is reached for such a paragraph only through a place of another making); the wrapper's own rows and the
+ *  fold's closing tag reach here only as the document's last block, since readPlace reads their Raw rows as the block
+ *  after them): the wrapper's box is the rest of the document's, and no seat is better than that one (the review round
+ *  3: a Raw row of `<summary>` seated the run's union, 3200px, in Rendered). */
 function renderedBoxNear(md: Element, source: string, spans: SourceRange[], b: number): Box | null {
   const own = ownedElements(md, source, spans[b], b);
   if (!own) return null;

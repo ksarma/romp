@@ -13,6 +13,12 @@
 //     Now the record is read from the live selection after every paint, and holds no node of a swapped-out render.
 // (3) The same-selection guard ran Selection.toString before the four end compares, and a changed selection stringified twice (the
 //     guard's read and onSelection's). Now the ends come first and the text is read once, for ends that match or handed on.
+// (4) The paint's writes can leave NOTHING selected with no selectionchange at all (the review's round 2): a highlight that is its
+//     paragraph's whole text is the <p>'s only child, so the unwrap and the wrap again of its mark collapse a selection inside it to
+//     the paragraph, and Chromium fires the event only where a text node is merged (the unpaint's normalize) or split (the wrap),
+//     which a lone-child mark never is. The listener's collapsed-selection guard never ran, and a shown float stood beside nothing
+//     until a click on it hid it and opened no composer. Now afterPaint hides a passage's float the writes left beside no selection
+//     (the listener's own rule, passageGone); a float beside a selection cut short but standing stays, as (1) has it.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
 // what afterPaint records), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
 // file-comments-paint-offer-browser.test.ts runs (1) over the real viewer in Chromium, where the paint moves the selection itself.
@@ -458,4 +464,37 @@ test("the same-selection guard reads the selected text once, and only for ends t
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "matching ends, other text: an offer");
   assert.equal(alikeReads(), 1, "the guard's one read is handed to the offer");
+});
+
+test("a paint whose writes collapse the selection to NOTHING, with no selectionchange (a highlight that is its paragraph's whole text: the mark is the <p>'s only child, and Chromium fires the event for a merged or split text node alone): the shown float goes with the paint itself (before: it stood beside nothing, and a click on it opened no composer); the next change offers; a selection cut short but standing keeps the float where it was; hidden, it stays hidden", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
+  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // collapses the selection to the paragraph, nothing selected, and no selectionchange follows: the fake is told, and none is fired
+  live.isCollapsed = true; live.length = 0;
+  externalFilterPick();
+  assert.equal(String(live), "", "the paint left nothing selected");
+  assert.equal(float.hidden, true, "the float went with the paint that left it beside no selection (before: shown, a Comment button that opened nothing)");
+  // the person's next change offers again
+  live.isCollapsed = false; live.length = 5; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next selection offers the float");
+  // a paint that cuts the selection short but not to nothing leaves a shown float where it was (case (1)'s rule stands)
+  live.length = 3;
+  externalFilterPick();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "cut short, still a selection: the float stays where the offer put it");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "...and the paint's own event moves nothing");
+  // hidden by a scroll that moved the passage, a collapsing paint leaves it hidden
+  live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by the scroll");
+  live.isCollapsed = true; live.length = 0;
+  externalFilterPick();
+  assert.equal(float.hidden, true, "hidden it stays");
+  live.isCollapsed = false; live.length = 4; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
 });

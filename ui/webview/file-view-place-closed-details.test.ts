@@ -20,9 +20,19 @@
 // fold's closing row (`</details>`) was the top Raw row, its block owns no element, and its seat walked back through the
 // fold's unshown paragraphs to the wrapper's refused block and seated nothing. So the Raw read treats a row of a closing
 // tag alone as it treats a blank row between blocks: the block after it is the place (the third test; a closing tag that
-// is the document's last block stays its own). The stand-in's elements answer checkVisibility as Chromium does (false
-// under a closed details, outside its summary); the real thing is measured in
-// file-view-place-closed-details-browser.test.ts. Synthetic fixtures only.
+// is the document's last block stays its own). The review's round 2 widened that rule and added a second (the third
+// and fourth tests): a Raw row of any block that renders nothing (closing tags alone, one or several, `</details>\n</div>`;
+// a comment) or whose own element is never seated (a wrapper's html block: its `<details>` or `<div align="center">` row,
+// its `<summary>`, a README's `<h1>` and `<p>` lead rows, an `<img>` line, and the blank row before the opener) reads as
+// the block after it, through a run of such blocks (the owner's ruling on the opener rows; before, the wrapper's block
+// was the place and its refused seat lost a fold title's round trip by 26 to 203px); and a Raw row inside a `<details>`
+// keeps its own block but CARRIES the block after the fold, and after each fold that block lies in, each with its
+// first row's top (Place.after), since the Raw view shows the fold's text whatever the Rendered view's fold state, which
+// is the DOM's alone (file-view.ts keeps a fold as the person left it across a paint): the seat stands on the first
+// carried block the view shows when the kept block is not (before, a shut fold whose summary wrapped put the fold's
+// hidden rows on top of Raw after the switch, the way back refused them, and the reader landed 361 to 562px down). The
+// stand-in's elements answer checkVisibility as Chromium does (false under a closed details, outside its summary); the
+// real thing is measured in file-view-place-closed-details-browser.test.ts. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { marked } from "marked";
@@ -223,12 +233,12 @@ test("readPlace: a paragraph inside a CLOSED details keeps a box in Chromium (co
   assert.equal(textOf(doc, readPlace(H(r.body), doc)), PARA(5), "without checkVisibility the hidden paragraph's rect is read as a box, as before");
 });
 
-test("seatPlace: a Raw place on a paragraph inside a CLOSED details seats nothing and leaves the body where it stands (before: it seated the paragraph's phantom box, two blocks past the fold); one on the block after the fold seats at that block's box; the same fold OPEN seats the nested paragraph at its own box", () => {
+test("seatPlace: a Raw place on a paragraph inside a CLOSED details that carries no block after the fold (a place of another making: readPlace carries one since the review's round 2, the fourth test) seats nothing and leaves the body where it stands (before: it seated the paragraph's phantom box, two blocks past the fold); one on the block after the fold seats at that block's box; the same fold OPEN seats the nested paragraph at its own box", () => {
   const doc = fold(false), spans = sourceBlockSpans(doc);
   const b6 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(6)), b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7));
-  // the reader 3px into paragraph 6's Raw row, inside the fold's source, switched to Rendered: paragraph 6 is not shown, paragraph 5
-  // before it is not shown, and the wrapper's own block before that is refused (its source parses to one element against the
-  // wrapper and its summary: ruling 2), so nothing lends a box and the body stands
+  // a place 3px into paragraph 6's Raw row, inside the fold's source, with no block after the fold to stand on, switched to
+  // Rendered: paragraph 6 is not shown, paragraph 5 before it is not shown, and the wrapper's own block before that is refused
+  // (its source parses to one element against the wrapper and its summary: ruling 2), so nothing lends a box and the body stands
   const onHidden: Place = { source: doc, view: "raw", start: spans[b6].start, end: spans[b6].end, top: -3, height: 18, atTop: false, prev: spans[b6 - 1], next: spans[b6 + 1] };
   const c = scene(false, 0); c.body.scrollTop = 500;
   const phantom = c.hidden[1].box!;
@@ -264,12 +274,20 @@ function raw(src: string, top0 = 0, h = 20): { body: FakeElement; code: FakeElem
   pre.appendChild(code); wrap.appendChild(pre); body.appendChild(wrap);
   return { body, code, rows };
 }
-/** The Raw view with the row whose text is `text` straddling the edge `depth` px in (or `-depth` below it). */
-function rawAt(src: string, text: string, depth: number): ReturnType<typeof raw> & { row: FakeElement } {
-  const lines = src.split("\n"); const k = lines.indexOf(text); assert.ok(k >= 0, "the fixture holds the row " + JSON.stringify(text));
+/** The Raw view with row `k` straddling the edge `depth` px in (or `-depth` below it). */
+function rawRow(src: string, k: number, depth: number): ReturnType<typeof raw> & { row: FakeElement } {
   const r = raw(src, EDGE - depth - k * 20);
   return { ...r, row: r.rows[k] };
 }
+/** The Raw view with the row whose text is `text` straddling the edge `depth` px in (or `-depth` below it). */
+function rawAt(src: string, text: string, depth: number): ReturnType<typeof raw> & { row: FakeElement } {
+  const lines = src.split("\n"); const k = lines.indexOf(text); assert.ok(k >= 0, "the fixture holds the row " + JSON.stringify(text));
+  return rawRow(src, k, depth);
+}
+/** The line index of the row whose text is `text`. */
+const lineOf = (src: string, text: string): number => { const k = src.split("\n").indexOf(text); assert.ok(k >= 0, "the fixture holds the row " + JSON.stringify(text)); return k; };
+/** The span of the block whose text is `text`. */
+const spanOf = (src: string, text: string) => { const spans = sourceBlockSpans(src); const b = spans.findIndex((sp) => src.slice(sp.start, sp.end) === text); assert.ok(b >= 0, "the fixture holds the block " + JSON.stringify(text)); return spans[b]; };
 
 test("readPlace in Raw: a row of a closing tag alone (`</details>`, `</div>`, a wrapper's end, which renders no element of its own) reads as the block after it, as a blank row between blocks does, whether the row straddles the edge or starts below it, and through a run of closers (before: the closing block itself, partway in, whose seat walked back to the fold's unshown paragraphs and the wrapper's refused block, so a shut fold's Rendered-Raw-Rendered round trip lost the place by the fold's source height); a closing tag that is the document's last block stays its own place; a closing tag inside a larger html block is that block's row", () => {
   for (const open of [false, true]) {
@@ -287,11 +305,80 @@ test("readPlace in Raw: a row of a closing tag alone (`</details>`, `</div>`, a 
     // the closing row starting 5px below the edge (the row before it ends there): the same block after it
     const r2 = rawAt(doc, "</details>", -5);
     assert.deepEqual([textOf(doc, readPlace(H(r2.body), doc)), readPlace(H(r2.body), doc)!.top], [PARA(7), 45], "a closing row below the edge: paragraph 7 at its distance");
-    // a row of the fold's own paragraphs reads as ever: paragraph 6, partway in, with its line (the seat then decides by the view)
+    // a row of the fold's own paragraphs reads as ever: paragraph 6, partway in, with its line, and CARRIES the block after the
+    // fold, paragraph 7, with its row's top (Place.after: the seat stands on it when the fold is shut in Rendered, the fourth test);
+    // the same for the fold open in the source, since the Rendered view's fold state is the DOM's, not the source's
     const r3 = rawAt(doc, PARA(6), 4);
     const q3 = readPlace(H(r3.body), doc)!;
     assert.deepEqual([textOf(doc, q3), q3.top, !!q3.line], [PARA(6), -4, true], "a nested paragraph's row is its own place");
+    assert.deepEqual(q3.after, [{ ...spans[b7], top: -4 + 4 * 20 }], (open ? "open" : "closed") + ": the place carries paragraph 7, the block after the fold, at its row's top (paragraph 6's row, a blank, the closing row, a blank, then its own)");
+    // the wrapper's own rows, the opener and the summary, and the blank row before the opener read as the first nested block,
+    // paragraph 5, at its row's distance, carrying paragraph 7 (before: the wrapper's block, whose seat is refused, so the fold
+    // title at the pane's top lost the place on the round trip, 26px at 900 and 203 at 380)
+    const kDet = lineOf(doc, "<details" + (open ? " open" : "") + ">"), k5 = lineOf(doc, PARA(5)), k7 = lineOf(doc, PARA(7));
+    for (const [what, k] of [["the opener's row", kDet], ["the summary's row", kDet + 1], ["the blank row before the opener", kDet - 1]] as const) {
+      const rw = rawRow(doc, k, 9);
+      const qw = readPlace(H(rw.body), doc)!;
+      assert.equal(textOf(doc, qw), PARA(5), (open ? "open" : "closed") + ": " + what + " reads as the first nested block (before: the wrapper's block)");
+      assert.deepEqual([qw.top, qw.line, qw.after], [-9 + (k5 - k) * 20, null, [{ ...spans[b7], top: -9 + (k7 - k) * 20 }]], what + ": paragraph 5 at its row's distance, no line kept, paragraph 7 carried");
+    }
   }
+  // a block of two closing tags, on two lines (`</details>\n</div>`, one html block to marked) or on one (`</details></div>`), reads as
+  // the block after it from either row (before: one closing tag alone was accepted, the block was its own place, and its seat put
+  // the last nested paragraph at the row, 63 to 144px off)
+  for (const closers of ["</details>\n</div>", "</details></div>"]) {
+    const docC = "# Report\n\n<div align=\"center\">\n\n<details open>\n<summary>Inner fold</summary>\n\n" + paras(1, 2) + "\n\n" + closers + "\n\n" + PARA(3) + "\n";
+    const spansC = sourceBlockSpans(docC);
+    assert.equal(docC.slice(spansC[spansC.length - 2].start, spansC[spansC.length - 2].end), closers, "the fixture: the two closing tags are one block, right before paragraph 3");
+    const k3 = lineOf(docC, PARA(3));
+    for (const k of closers.indexOf("\n") >= 0 ? [lineOf(docC, "</details>"), lineOf(docC, "</div>")] : [lineOf(docC, closers)]) {
+      const rc = rawRow(docC, k, 9);
+      const qc = readPlace(H(rc.body), docC)!;
+      assert.deepEqual([textOf(docC, qc), qc.top, qc.after], [PARA(3), -9 + (k3 - k) * 20, undefined], JSON.stringify(closers) + " row " + k + ": the paragraph after the closers, at its row's distance, in no fold");
+    }
+  }
+  // a comment block renders nothing too: after a closing row it is read past with the closer (before: the walk stopped at it, and the
+  // comment was the place, seated through the block before it); on its own, inside a wrapper, it reads as the block after it, and right
+  // after the opener as the first nested block (before: its own place, the walk back to the wrapper's refused block seating nothing)
+  const docM = "# Report\n\n" + paras(1, 2) + "\n\n<details>\n<summary>Folded</summary>\n\n" + PARA(3) + "\n\n</details>\n\n<!-- a note to self -->\n\n" + paras(4, 5) + "\n";
+  const k4 = lineOf(docM, PARA(4));
+  for (const k of [lineOf(docM, "</details>"), lineOf(docM, "<!-- a note to self -->")]) {
+    const qm = readPlace(H(rawRow(docM, k, 9).body), docM)!;
+    assert.deepEqual([textOf(docM, qm), qm.top, qm.after], [PARA(4), -9 + (k4 - k) * 20, undefined], "row " + k + " of the closer and the comment: paragraph 4 at its row's distance");
+  }
+  const docW = "# Report\n\n<div align=\"center\">\n\n<!-- a note to self -->\n\n" + paras(1, 2) + "\n\n<!-- another -->\n\n" + PARA(3) + "\n\n</div>\n\n" + PARA(4) + "\n";
+  const qa = readPlace(H(rawAt(docW, "<!-- another -->", 9).body), docW)!;
+  assert.deepEqual([textOf(docW, qa), qa.top], [PARA(3), -9 + 40], "a comment's row inside a wrapper: the block after it");
+  const qo = readPlace(H(rawAt(docW, "<!-- a note to self -->", 9).body), docW)!;
+  assert.deepEqual([textOf(docW, qo), qo.top], [PARA(1), -9 + 40], "the comment right after the opener: the first nested block");
+  assert.deepEqual([textOf(docW, readPlace(H(rawAt(docW, "<div align=\"center\">", 9).body), docW)), readPlace(H(rawAt(docW, "<div align=\"center\">", 9).body), docW)!.top], [PARA(1), -9 + 80], "the opener's row, through the comment: the first nested block");
+  // a README's centred header: every row of the wrapper's block (the opener, the `<h1>`, the `<p>` tagline, an `<img>` line) and the
+  // blank row before it read as the first nested block (before: the wrapper's block from each, its seat refused, 44 to 121px lost)
+  const docR = "# Report\n\n" + paras(1, 2) + "\n\n<div align=\"center\">\n<h1>Project</h1>\n<p>A tagline for the project</p>\n\n" + paras(3, 4) + "\n\n</div>\n\n" + PARA(5) + "\n";
+  const kDiv = lineOf(docR, "<div align=\"center\">"), k3r = lineOf(docR, PARA(3));
+  for (const k of [kDiv - 1, kDiv, kDiv + 1, kDiv + 2]) {
+    const qr = readPlace(H(rawRow(docR, k, 9).body), docR)!;
+    assert.deepEqual([textOf(docR, qr), qr.top, qr.after], [PARA(3), -9 + (k3r - k) * 20, undefined], "README row " + k + ": the first nested block at its row's distance");
+  }
+  const docI = "# Report\n\n" + paras(1, 2) + "\n\n<div align=\"center\">\n<img src=\"logo.svg\" alt=\"logo\">\n\n## Centred title\n\n" + paras(3, 4) + "\n\n</div>\n\n" + PARA(5) + "\n";
+  const qi = readPlace(H(rawAt(docI, "<img src=\"logo.svg\" alt=\"logo\">", 9).body), docI)!;
+  assert.deepEqual([textOf(docI, qi), qi.top], ["## Centred title", -9 + 40], "the `<img>` line of the wrapper's block: the heading nested after it");
+  // an html block that closes what it opens (`<p>Alpha</p>`) is its own place still
+  const docP = "# Report\n\n" + PARA(1) + "\n\n<p>Alpha</p>\n\n" + PARA(2) + "\n";
+  const qp = readPlace(H(rawAt(docP, "<p>Alpha</p>", 9).body), docP)!;
+  assert.deepEqual([textOf(docP, qp), qp.top, !!qp.line], ["<p>Alpha</p>", -9, true], "a closed html block is its own place");
+  // a fold right after a fold: a row inside the first carries the first block inside the second AND the block after both, in that
+  // order, so the seat stands on the first shown (both shut: the block after both); a details tag inside a fence is text, not a fold
+  const docCh = "# Report\n\n" + paras(1, 2) + "\n\n<details>\n<summary>A</summary>\n\n" + PARA(3) + "\n\n```\n</details>\n<details>\n```\n\n" + PARA(6) + "\n\n</details>\n\n<details>\n<summary>B</summary>\n\n" + PARA(4) + "\n\n</details>\n\n" + PARA(5) + "\n";
+  const rch = rawAt(docCh, PARA(3), 4);
+  const qch = readPlace(H(rch.body), docCh)!;
+  const k3c = lineOf(docCh, PARA(3)), k6c = lineOf(docCh, PARA(6)), k4c = lineOf(docCh, PARA(4)), k5c = lineOf(docCh, PARA(5));
+  assert.equal(textOf(docCh, qch), PARA(3));
+  assert.deepEqual(qch.after, [{ ...spanOf(docCh, PARA(4)), top: -4 + (k4c - k3c) * 20 }, { ...spanOf(docCh, PARA(5)), top: -4 + (k5c - k3c) * 20 }], "paragraph 3 carries paragraph 4 (inside the second fold) then paragraph 5 (after both), each at its row's top; the fence's details tags counted for nothing");
+  const q6 = readPlace(H(rawAt(docCh, PARA(6), 4).body), docCh)!;
+  assert.deepEqual([textOf(docCh, q6), q6.after], [PARA(6), [{ ...spanOf(docCh, PARA(4)), top: -4 + (k4c - k6c) * 20 }, { ...spanOf(docCh, PARA(5)), top: -4 + (k5c - k6c) * 20 }]], "paragraph 6, after the fence and still inside the first fold, carries the same two");
+  const q5 = readPlace(H(rawAt(docCh, PARA(5), 4).body), docCh)!;
+  assert.deepEqual([textOf(docCh, q5), q5.after], [PARA(5), undefined], "paragraph 5, after both folds, carries nothing");
   // a run of closers: a div inside a div, both closed before the paragraph after them; the first closing row reads as that paragraph
   const docN = "# Report\n\n<div align=\"center\">\n<div>\n\n" + paras(1, 2) + "\n\n</div>\n\n</div>\n\n" + PARA(3) + "\n";
   const spansN = sourceBlockSpans(docN);
@@ -314,4 +401,30 @@ test("readPlace in Raw: a row of a closing tag alone (`</details>`, `</div>`, a 
   const rb = rawAt(docB, "</div>", 9);
   const qb = readPlace(H(rb.body), docB)!;
   assert.deepEqual([qb.start, qb.top, !!qb.line], [spansB[bB].start, -29, true], "the html block, its first row 29px above the edge, the closing row the line kept");
+});
+
+test("seatPlace: a Raw place inside a fold that carries the blocks after it (Place.after) stands on the first of them the Rendered view shows when the fold is shut, at that block's carried row top (before: no seat, the numeric scrollTop standing, off by the fold's source height); the fold open in the DOM, the source shut or not, seats the kept block itself at its own box, the carried blocks unused; a carried block that is not shown itself (a fold after a fold, both shut) is passed over for the next", () => {
+  const doc = fold(false), spans = sourceBlockSpans(doc);
+  const b5 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(5)), b6 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(6)), b7 = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === PARA(7));
+  const carried = (...ks: number[]): Place => ({ source: doc, view: "raw", start: spans[b6].start, end: spans[b6].end, top: -4, height: 20, atTop: false, prev: spans[b6 - 1], next: spans[b6 + 1], line: { start: spans[b6].start, end: spans[b6].end, top: -4 }, after: ks.map((k, i) => ({ ...spans[k], top: 76 + i * 60 })) });
+  // the fold shut: paragraph 6 has its elements but none is shown, so the seat stands on paragraph 7 where its Raw row was, 76px below
+  // the edge (the read of the third test)
+  const c = scene(false, 0); c.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c.body), doc, carried(b7)), true, "the shut fold: seated (before: refused)");
+  assert.equal(c.body.scrollTop, 500 + (c.p7.box!.top - EDGE) - 76, "paragraph 7's box 76px below the edge, where its row was");
+  // the fold OPEN in the DOM though the source says shut (the person opened it before the switch; file-view.ts restores it after the
+  // paint, before the seat): paragraph 6 is shown and its own box is seated at the row's depth scaled, the carried block unused
+  const o = scene(false, 0); o.det.setAttribute("open", ""); o.body.scrollTop = 500;
+  assert.equal(o.hidden[1].checkVisibility(), true, "the fixture: the opened fold shows paragraph 6");
+  assert.equal(seatPlace(H(o.body), doc, carried(b7)), true, "the opened fold: seated");
+  assert.equal(o.body.scrollTop, 500 + (o.hidden[1].box!.top - EDGE) - (-4 * H_BLOCK / 20), "paragraph 6's own box at the row's depth scaled (the carried paragraph 7 unused)");
+  // a carried block not shown itself (paragraph 5, inside the same shut fold, standing for the first block of a second shut fold) is
+  // passed over for the next carried block, paragraph 7
+  const s2 = scene(false, 0); s2.body.scrollTop = 500;
+  assert.equal(seatPlace(H(s2.body), doc, carried(b5, b7)), true, "two carried blocks, the first hidden: seated on the second");
+  assert.equal(s2.body.scrollTop, 500 + (s2.p7.box!.top - EDGE) - (76 + 60), "paragraph 7's box at ITS carried top, 136px below the edge");
+  // nothing carried, or every carried block hidden: the refusal of the second test stands
+  const n = scene(false, 0); n.body.scrollTop = 500;
+  assert.equal(seatPlace(H(n.body), doc, carried(b5)), false, "only a hidden block carried: no seat");
+  assert.equal(n.body.scrollTop, 500, "the body stands");
 });

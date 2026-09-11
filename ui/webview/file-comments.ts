@@ -1117,11 +1117,17 @@ class Panel {
    *  round 1). Read from the live selection after each paint, the record holds no node of a swapped-out render: it used to keep the
    *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review). */
   offeredFor: SelectionEnds & { text: string } | null = null;
-  /** A pointer is down (the document's capture mousedown or touchstart; cleared at mouseup, touchend, touchcancel, or the dragend
-   *  of a press that became a drag of the selected text, which ends in no mouseup): a drag's every selectionchange is ignored, so
-   *  the drag keeps its one offer at mouseup (the seam's onSelect) and the float does not flicker mid-drag. */
+  /** A pointer is down (the document's capture mousedown, for the PRIMARY button, or touchstart; cleared at mouseup, touchend,
+   *  touchcancel, the dragend of a press that became a drag of the selected text, which ends in no mouseup, a contextmenu, and the
+   *  window's blur): a drag's every selectionchange is ignored, so the drag keeps its one offer at mouseup (the seam's onSelect) and
+   *  the float does not flicker mid-drag. The flag takes pressHold's shape (actions.ts): a right or middle press selects nothing and
+   *  often ends in no mouseup, since Chromium on Linux and macOS opens the native context menu on the mousedown and the menu takes
+   *  the release, so a flag raised by one stood until the reader's next left click, and every keyboard change of the selection in
+   *  between offered nothing (the Slice 5 review, round 2); a contextmenu means the browser ended the press itself (ctrl+click on
+   *  macOS, a long press on a touch screen, no click following), and the window's blur that a release in another frame never
+   *  reaches this one. A touch press has no button and is held as before. */
   pointerHeld = false;
-  pressBegan = (): void => { this.pointerHeld = true; };
+  pressBegan = (ev: Event): void => { if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return; this.pointerHeld = true; };
   pressEnded = (): void => { this.pointerHeld = false; };
   /** The document's selection changed (plans/markdown-viewer.md Slice 5, item 9): a selection made or changed from the KEYBOARD
    *  (Shift+Arrow over a selection a drag began, caret browsing, assistive technology) reaches no mouseup, so the seam's onSelect
@@ -1136,8 +1142,7 @@ class Panel {
   onSelectionChange = (): void => {
     if (this.pointerHeld || this.ctx.editing()) return;
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
-    const body = this.ctx.body();
-    if (!sel || !sel.rangeCount || sel.isCollapsed || !body.contains(sel.anchorNode) || !body.contains(sel.focusNode)) {
+    if (!sel || this.passageGone(sel)) {
       if (this.floatAt && !this.floatAt.img) this.hideFloat();
       return;
     }
@@ -1149,6 +1154,13 @@ class Panel {
     if (was && atEnds(was, sel)) { text = sel.toString(); if (was.text === text) return; }
     this.onSelection(sel, text);
   };
+  /** Whether `sel` is no passage of the body's: no range, collapsed, or an end outside the body (Ctrl+A puts one at the page's start;
+   *  a selection in the aside). A passage's float answers to such a selection no longer, whichever way it came about: the person's
+   *  keyboard (onSelectionChange) or the panel's own writes over the text (afterPaint); a picture's float has no selection to answer to. */
+  private passageGone(sel: Selection): boolean {
+    const body = this.ctx.body();
+    return !sel.rangeCount || sel.isCollapsed || !body.contains(sel.anchorNode) || !body.contains(sel.focusNode);
+  }
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
   pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
@@ -1474,10 +1486,12 @@ class Panel {
     // ...and the keyboard's selections, which the seam's mouseup and touchend never see (onSelectionChange): the document's
     // selectionchange, heard here and not in the seam, whose onSelect also seeds the quote chip with a fetch of the file per
     // gesture, which must not run per keystroke (Slice 5, item 9). The press flag it reads rides the same document-capture
-    // mousedown and touchstart hideFloatOnDown hears, cleared when the press ends. Installed after the seam's hook, whose line
+    // mousedown (the primary button's) and touchstart hideFloatOnDown hears, cleared when the press ends, by the browser's own hand
+    // included (a contextmenu, the window's blur: pointerHeld's note). Installed after the seam's hook, whose line
     // file-view-place.test.ts reads beside the scroll listener's; removed at dispose with the float's other listeners.
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.pressBegan, true);
-    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend"]) document.addEventListener(ev, this.pressEnded, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.addEventListener(ev, this.pressEnded, true);
+    window.addEventListener("blur", this.pressEnded);
     document.addEventListener("selectionchange", this.onSelectionChange);
     // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
     // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
@@ -2023,7 +2037,8 @@ class Panel {
     this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.pressBegan, true);
-    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend"]) document.removeEventListener(ev, this.pressEnded, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.removeEventListener(ev, this.pressEnded, true);
+    window.removeEventListener("blur", this.pressEnded);
     document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
     this.offeredFor = null;                                                      // ...and the selection it compared with
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
@@ -3393,10 +3408,18 @@ class Panel {
    *  onSelectionChange), so the selectionchange the writes fire is no offer, and a record whose nodes a reload's paint or the editor
    *  replaced holds the live selection's nodes instead of the swapped-out render's. Read after every write of the pass, the overlays'
    *  (paintRegions) included, since a live range's ends move with the nodes around them; the text once (Selection.toString), the
-   *  same read the offer makes. */
+   *  same read the offer makes. And a passage's float the writes left beside NO selection goes (passageGone, the listener's own
+   *  rule): a highlight that is its paragraph's whole text is the <p>'s only child, so the unwrap and the wrap again of its mark
+   *  collapse a selection inside it to the paragraph, and Chromium fires no selectionchange for that move (a text node merged by
+   *  the unpaint's normalize or split by the wrap is what fires it: a highlight beside plain text does, a lone-child mark does
+   *  not), so the listener's collapsed-selection guard never ran, and a peer's comment landing through the poll, or a settings pick
+   *  from another pane, left the float standing beside nothing until a click on it hid it and opened no composer (the Slice 5
+   *  review, round 2). A float the writes left beside a selection cut short but not to nothing stays where it was offered, as
+   *  before; a picture's stands. */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
+    if (sel && this.floatAt && !this.floatAt.img && this.passageGone(sel)) this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
