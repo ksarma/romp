@@ -660,18 +660,19 @@ function sameWire(a, b) {
 // full frame is a fresh parse, every object new) takes its expanded twin, found at its old position first and by
 // `keyField` when the lane was reordered; every other object is expanded by `expandOne`. When every position
 // reused, the previous expanded ARRAY comes back, so a per-lane cache keyed on it keeps hitting. Exact: nothing
-// is reused unless the wire says the same thing.
+// is reused unless the wire says the same thing, and a previous expanded object is handed out once: two wire
+// bars that spell the same id and fields (a duplicate) take two distinct objects, as the eager expansion built.
 function reuseLane(lane, prev, expandOne, keyField) {
   if (!prev || !Array.isArray(prev.wire) || !Array.isArray(prev.ex) || prev.wire.length !== prev.ex.length) return lane.map(expandOne);
   const pw = prev.wire, pe = prev.ex, out = new Array(lane.length);
-  let same = pw.length === lane.length, byKey = null;
+  let same = pw.length === lane.length, byKey = null, taken = null;
   for (let i = 0; i < lane.length; i++) {
     const b = lane[i];
     let j = (i < pw.length && (pw[i] === b || sameWire(pw[i], b))) ? i : -1;
     if (j < 0 && b && typeof b === 'object' && b[keyField] != null) {
       if (!byKey) { byKey = new Map(); for (let k = 0; k < pw.length; k++) { const w = pw[k]; const kk = w && typeof w === 'object' ? w[keyField] : undefined; if (kk != null && !byKey.has(kk)) byKey.set(kk, k); } }
       const k = byKey.get(b[keyField]);
-      if (k !== undefined && sameWire(pw[k], b)) j = k;
+      if (k !== undefined && !(taken && taken.has(k)) && sameWire(pw[k], b)) { j = k; (taken ||= new Set()).add(k); }
     }
     if (j >= 0) { out[i] = pe[j]; if (j !== i) same = false; } else { out[i] = expandOne(b); same = false; }
   }
@@ -2475,7 +2476,6 @@ class TimelinePanel {
   // it; bars carry no tid of their own since T278b), else by name. null if no lane matches.
   _sidForActiveChat(ac) {
     if (!ac || !this.data || !this.data.sessions) return null;
-    const turns = this.data.turns || {};
     if (ac.tid) {
       if (this.data.sessions.some((s) => s.id === ac.tid)) return ac.tid;
     }

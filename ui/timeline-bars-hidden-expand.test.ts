@@ -187,6 +187,26 @@ test("a second full frame whose lanes say the same thing reuses the expansion, l
   done(panel);
 });
 
+test("two wire bars that spell the same id and fields take two expanded objects, never one shared", () => {
+  // The eager expansion built one object per wire bar; the reuse path must not hand a previous expanded object
+  // to two positions when a lane repeats a bar by content and the positions shift (the by-id fallback).
+  const { panel } = mk();
+  resetCounts();
+  panel.update(skeleton());
+  panel.applyBars(fullFrame());
+  const dup = board(); dup.turns[SIDS[2]].push(JSON.parse(JSON.stringify(dup.turns[SIDS[2]][4])));
+  dup.turns[SIDS[2]].unshift(dup.turns[SIDS[2]].pop()!);   // the duplicate lands first, so every position shifts by one
+  panel.applyBars(fullFrame(dup, 1));
+  const lane = panel.data.turns[SIDS[2]];
+  assert.equal(lane.length, LANE_COUNTS[2] + 1);
+  assert.deepEqual(lane[0], lane[5], "the two spell the same bar");
+  assert.notEqual(lane[0], lane[5], "as two objects");
+  assert.equal(new Set(lane).size, lane.length, "no expanded object appears twice in the lane");
+  assert.deepEqual(counts(), { bars: TOTAL_BARS + 1, judging: TOTAL_JUDGING }, "the duplicate alone is expanded afresh");
+  assert.deepEqual(panel.data.turns, ref(() => expandBars(dup.turns)));
+  done(panel);
+});
+
 test("the judging band reuses its entries the same way: one changed entry expands one entry", () => {
   const { panel } = mk();
   panel.update(skeleton());

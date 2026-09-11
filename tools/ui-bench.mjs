@@ -36,7 +36,8 @@
 //      per-frame columns hold the frame handling alone. Chromium itself still renders the page (the
 //      settle stamps land), so the numbers are the frame work under the hold, not the browser's
 //      background throttling. After the last frame the page is shown again (visibilitychange), and
-//      the report carries that return's synchronous cost, the one catch-up paint. The report also
+//      the report carries that return's synchronous dispatch: the panes' catch-up paint plus the pane
+//      shim's and federation's own return handlers (the stale decision, the watchdog pass). The report also
 //      carries the timeline view's count of expanded wire objects (bars, judging entries) where the
 //      page exposes it, before and after the return.
 //
@@ -989,8 +990,9 @@ async function replayOnce({ browser, app, frames, fast, cpuThrottle, front, toke
   // The expansion counts the replay itself produced, before any return step reads the held frames.
   const expand = await page.evaluate(() => window.__rompBench.expandCounts());
   // --hidden: the tab comes back. The synchronous cost of the visibilitychange dispatch is the panes'
-  // catch-up paint (the timeline's _releasePaintHold draws the held frames once); the expansion counts
-  // after it say what that paint expanded.
+  // catch-up paint (the timeline's _releasePaintHold draws the held frames once) plus the pane shim's
+  // return handler (its stale decision and diag row) and federation's foreground watchdog pass, the
+  // same in every tree; the expansion counts after it say what that paint expanded.
   let hiddenReturn = null;
   if (hidden) {
     hiddenReturn = await page.evaluate(() => {
@@ -1676,7 +1678,7 @@ export function renderReport(r) {
   out.push(`end state: JS heap ${fmtBytes(r.end.heapUsed)} used of ${fmtBytes(r.end.heapTotal)} after a forced GC; DOM ${r.end.domElements} elements (${r.end.cdpNodes} nodes, ${r.end.jsEventListeners} listeners)`);
   out.push(`  cumulative since navigation (page load and idle timers included; the timeline redraws every animation frame while it follows now): ${r.end.layoutCount} layouts ${fmtMs(r.end.layoutMs)} ms; ${r.end.recalcStyleCount} style recalcs ${fmtMs(r.end.recalcStyleMs)} ms; script ${fmtMs(r.end.scriptMs)} ms; tasks ${fmtMs(r.end.taskMs)} ms`);
   if (r.expand) out.push(`timeline expansion during the replay (wire objects the view long-named): ${r.expand.bars} bars, ${r.expand.judging} judging entries per run`);
-  if (r.hiddenReturn) out.push(`return of the hidden page (visibilitychange, the catch-up paint): ${fmtMs(r.hiddenReturn.ms)} ms mean, ${fmtMs(r.hiddenReturn.maxMs)} ms max${r.hiddenReturn.expandBars != null ? `; it expanded ${r.hiddenReturn.expandBars} bars, ${r.hiddenReturn.expandJudging} judging entries` : ""}`);
+  if (r.hiddenReturn) out.push(`return of the hidden page (the visibilitychange dispatch: the catch-up paint plus the shim's and federation's return handlers): ${fmtMs(r.hiddenReturn.ms)} ms mean, ${fmtMs(r.hiddenReturn.maxMs)} ms max${r.hiddenReturn.expandBars != null ? `; it expanded ${r.hiddenReturn.expandBars} bars, ${r.hiddenReturn.expandJudging} judging entries` : ""}`);
   out.push(`console: ${r.console.errors.length} errors, ${r.console.pageErrors.length} uncaught exceptions, ${r.console.warnings} warnings`);
   for (const e of r.console.errors.slice(0, 10)) out.push(`  error: ${e.slice(0, 300)}`);
   for (const e of r.console.pageErrors.slice(0, 10)) out.push(`  uncaught: ${e.slice(0, 300)}`);
