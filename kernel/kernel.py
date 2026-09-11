@@ -55050,9 +55050,6 @@ function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
 // detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the feed's own session
 // links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
 var ws=new WebSocket(proto+location.host+'/ws?app=shell&wid='+encodeURIComponent(wid()));
-// the API health detail's pause button sends on THIS socket (the setGlobalRetryPaused handler is
-// app-agnostic); false when the socket is not open, so the button can say so instead of dropping the op
-window.__rompShellSend=function(o){try{if(ws.readyState===1){ws.send(JSON.stringify(o));return true;}}catch(e){}return false;};
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}

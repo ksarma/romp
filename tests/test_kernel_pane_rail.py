@@ -327,6 +327,20 @@ class ApiHealthCell(unittest.TestCase):
         self.assertLess(esc.index("__rompApiClose"), esc.index("__rompUsageClose"), "both ride #ru-back; the detail's hook is checked first")
         self.assertIn("if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose();closed=true;}", esc)
 
+    def test_the_page_binds_the_shell_send_hook_once_to_the_shell_socket_reader(self):
+        # one binding, upstream's module-level reader over shellSock (which each dial's onopen replaces); the fork's
+        # pre-offer closure inside shellWS() rebound the hook on every dial with the same behaviour in every socket
+        # state, and retired with the 4d-4 fold (R1). A second assignment is an auto-merge duplicate, not a feature.
+        reader = ("window.__rompShellSend=function(o){try{if(shellSock&&shellSock.readyState===1)"
+                  "{shellSock.send(JSON.stringify(o));return true;}}catch(e){}return false;};")
+        self.assertEqual(self.html.count("window.__rompShellSend="), 1,
+                         "one binding: the shellSock reader; shellWS rebinds nothing")
+        js = km._LANDING_MOBILE_JS
+        self.assertIn(reader, js)
+        self.assertLess(js.index(reader), js.index("function shellWS()"), "bound at load, before the first dial")
+        shell_ws = js[js.index("function shellWS()"):]
+        self.assertNotIn("__rompShellSend=", shell_ws, "the dial's closure never rebinds it")
+
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))
 
