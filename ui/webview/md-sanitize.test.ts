@@ -2,8 +2,8 @@
 // the DOM post-passes are proven in headless Chromium: md-sanitize-browser.test.ts opens a note in the real file
 // viewer, md-sanitize-postpass-browser.test.ts runs the chat's pipeline, md-sanitize-chat-fragment-browser.test.ts
 // clicks a message's own `#` link over the real chat bundle. Here: the colour grammar an inline `style` is held to,
-// the profile's forbidden tags and attributes, the two hook bodies (the style rewrite, the comment drop), the hooks'
-// install guard, and the source pins that
+// the profile's forbidden tags and attributes, the three hook bodies (the style rewrite, the comment drop, the body
+// title's drop), the hooks' install guard, and the source pins that
 // make md-sanitize.ts the ONE sanitizer the dashboard has (the chat's md() and userMd(), the viewer's mdBlock). The
 // design is plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does; the colour-only rule is its decision 6), and
 // the last test holds SECURITY.md's output-sanitization bullet to the math renderer's trust boundary and its bounds
@@ -13,7 +13,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, installMdSanitizeHooks } from "./md-sanitize";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks } from "./md-sanitize";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -111,7 +111,24 @@ test("dropCommentChildren leaves a non-element alone and cannot throw on a clobb
   assert.equal(empty.removed, 0);
 });
 
-test("installMdSanitizeHooks registers its two hooks ONCE however often it is called: the style rewrite on uponSanitizeAttribute, the comment drop on uponSanitizeElement", () => {
+test("dropBodyTitle: an HTML `<title>` element sets `title` off in the hook's allowedTags, so DOMPurify removes it with its content (title is in FORBID_CONTENTS); an svg's `<title>` sets it back on; every other element, and a non-element named title, leaves the set alone (the Slice 5 review, round 5: the svg profile kept a body title as a hidden element whose text the reader and the paint read as shown)", () => {
+  const HTML_NS = "http://www.w3.org/1999/xhtml", SVG_NS = "http://www.w3.org/2000/svg";
+  const el = (namespaceURI: string, nodeType = ELEMENT) => ({ nodeType, namespaceURI } as unknown as Node);
+  const data = (tagName: string): { tagName: string; allowedTags: Record<string, boolean> } => ({ tagName, allowedTags: { title: true, p: true } });
+  let d = data("title");
+  dropBodyTitle(el(HTML_NS), d);
+  assert.equal(d.allowedTags.title, false, "a body title: off, so DOMPurify drops the element and, title being in its FORBID_CONTENTS, the content with it");
+  dropBodyTitle(el(SVG_NS), d);
+  assert.equal(d.allowedTags.title, true, "an svg title: on again, the drawing's own element");
+  d = data("p");
+  dropBodyTitle(el(HTML_NS), d);
+  assert.deepEqual(d.allowedTags, { title: true, p: true }, "another element: untouched");
+  d = data("title");
+  dropBodyTitle(el(HTML_NS, TEXT), d);
+  assert.equal(d.allowedTags.title, true, "a non-element the walk names title: untouched");
+});
+
+test("installMdSanitizeHooks registers its two hooks ONCE however often it is called: the style rewrite on uponSanitizeAttribute, the comment drop and the body title's drop on uponSanitizeElement", () => {
   // The guard is module-global and never reset, so this test must be the module's FIRST installer: node runs a
   // file's tests in order, and nothing above calls installMdSanitizeHooks or sanitizeMd (which would need a window).
   const calls: { name: string; fn: Function }[] = [];
@@ -128,8 +145,15 @@ test("installMdSanitizeHooks registers its two hooks ONCE however often it is ca
   // the element hook is the comment drop: DOMPurify calls it with the node, the tag data and the config, and only the
   // node matters to it
   const el = fakeNode(ELEMENT, [fakeNode(TEXT), fakeNode(COMMENT), fakeNode(ELEMENT)]);
-  calls[1].fn.call(fake, el as unknown as Node, { tagName: "p", allowedTags: {} }, {});
+  const allowed: Record<string, boolean> = { title: true, p: true };
+  calls[1].fn.call(fake, el as unknown as Node, { tagName: "p", allowedTags: allowed }, {});
   assert.deepEqual(el.childNodes.map((c) => c.nodeType), [TEXT, ELEMENT], "the comment child is gone before DOMPurify's markup guard reads the element's innerHTML");
+  assert.deepEqual(allowed, { title: true, p: true }, "a paragraph leaves the allowed set alone");
+  // the same hook drops a body title: the HTML namespace's `title` is set off in the set DOMPurify judges the element by
+  const title = Object.assign(fakeNode(ELEMENT, [fakeNode(TEXT)]), { namespaceURI: "http://www.w3.org/1999/xhtml" });
+  calls[1].fn.call(fake, title as unknown as Node, { tagName: "title", allowedTags: allowed }, {});
+  assert.equal(allowed.title, false, "the body title's drop rides the same element hook (dropBodyTitle)");
+  assert.deepEqual(title.childNodes.map((c) => c.nodeType), [TEXT], "the title's own text is left to DOMPurify, which drops it with the element");
 });
 
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
@@ -254,6 +278,7 @@ test("the guide says what a file's own HTML may do, in the terms the code enforc
   assert.match(para, /`background=`/);
   assert.match(para, prose("cannot be ticked"));
   assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
+  assert.match(para, /`<title>`/, "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
   assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 

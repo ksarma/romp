@@ -48,7 +48,12 @@
 //     computes, since a wrong rule seats another point over the browser's landing (round 2's row top, -2.1; the block's
 //     fraction, +0.95). With anchoring off (a test-only style on the body) only the viewer's seat can hold the
 //     character; that pass pins the seat's PRESENCE (the base keeps the numeric scrollTop, clamped to 4787 at 900px,
-//     and the character goes to -2502, then +922 back at 380).
+//     and the character goes to -2502, then +922 back at 380);
+//   - the Slice 5 review's rounds 3 to 5 (tests 9 to 15): a wrapper's own picture in both directions (Place.pic), from the
+//     rows before its tag row, through a run of blocks before the wrapper (a comment's row, a closer's, the outer opener of a
+//     wrapper two deep), the picture at the edge among several on one line, a picture in a row beside text, the shown row of
+//     the wrapper's own kept across a same-view reflow (Place.lead: a wrapping fold title across a pane drag, the aside and a
+//     text-size step), and a commented-out tag counted for no picture.
 // A refusal is pinned as what the viewer does, not where the body lands: a setter trap on the body's scrollTop records
 // every script write across the switch, and a refused switch makes none. Where the body lands is then the browser's
 // own: with the sheets' default overflow-anchor Chromium's scroll anchoring re-finds an anchor in the new content and
@@ -59,7 +64,7 @@
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, frames, paintsReach, topBlock, PARA, REPORT } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, topBlock, PARA, REPORT } from "./real-viewer-leg";
 
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
 const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
@@ -657,6 +662,294 @@ test("in a browser, the real module: from Raw, a row of the wrapper's block BEFO
         await click(page, "Raw");
         const imgRow = (await box(page, "code.hljs .fv-cl", "<img src="))!;
         near(imgRow.top, pic.top, where + ": the picture's tag row is where the picture was, the <h1>'s row and the opener above it (round 3: the nested paragraph at its distance below the banner, the write clamped at the document's top)");
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+// ── round 5: the picture through a run of blocks, the picture at the edge among several, a picture beside text, the row kept across a reflow, a commented tag ──
+const LOGO_IMG = `<img src="${LOGO}" alt="logo" width="200" height="120">`;
+/** the nested heading and paragraphs after the wrapper's own rows, the wrapper's end, paragraphs 9 to 25 */
+const NESTED_TAIL = "\n\n## Centred title\n\n" + paras(6, 8) + "\n\n</div>\n\n" + paras(9, 25) + "\n";
+const COMMENT_LEAD = "# Report\n\n" + paras(1, 5) + "\n\n<!-- project logo -->\n\n<div align=\"center\">\n" + LOGO_IMG + NESTED_TAIL;
+const COMMENT_TIGHT = "# Report\n\n" + paras(1, 5) + "\n\n<!-- project logo -->\n<div align=\"center\">\n" + LOGO_IMG + NESTED_TAIL;
+const CLOSER_LEAD = "# Report\n\n" + paras(1, 5) + "\n\n<div align=\"center\">\n\n" + paras(6, 7) + "\n\n</div>\n\n<div align=\"center\">\n" + LOGO_IMG + "\n\n## Centred title\n\n" + PARA(8) + "\n\n</div>\n\n" + paras(9, 25) + "\n";
+const FOLD_CLOSER_LEAD = "# Report\n\n" + paras(1, 5) + "\n\n<details>\n<summary>More</summary>\n\nHidden text.\n\n</details>\n\n<div align=\"center\">\n" + LOGO_IMG + NESTED_TAIL;
+const NEST2_LEAD = "# Report\n\n" + paras(1, 5) + "\n\n<div align=\"center\">\n\n<div>\n" + LOGO_IMG + "\n\n## Centred title\n\n" + paras(6, 8) + "\n\n</div>\n\n</div>\n\n" + paras(9, 25) + "\n";
+const TINY = "data:image/svg+xml;utf8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="tomato"/></svg>');
+const badge = (n: string) => `<img src="${TINY}" alt="${n}" width="24" height="24">`;
+/** an `<h1>`, a line of three 24px badges, the logo on the next line, then the nested heading: the badges and the logo share one line box */
+const BADGES_LOGO = "# Report\n\n" + paras(1, 5) + "\n\n<div align=\"center\">\n<h1>Project</h1>\n" + badge("b1") + " " + badge("b2") + " " + badge("b3") + "\n" + LOGO_IMG + NESTED_TAIL;
+/** the logo inside a centred `<p>` beside a line break and the project's name */
+const P_IMG_LEAD = "# Report\n\n" + paras(1, 5) + "\n\n<div align=\"center\">\n<p align=\"center\">" + LOGO_IMG + "<br><b>Project</b></p>" + NESTED_TAIL;
+/** a commented-out old tag on the line above the live one */
+const COMMENTED_IMG = readme('<!-- <img src="old.svg" alt="old"> -->\n' + LOGO_IMG + "\n\n## Centred title");
+const LONG_SUMMARY = "A rather long summary line that wraps onto several rows in a narrow pane, so that the title of the fold is tall enough to push the block after it well below the edge, and long enough again that the second and third rows wrap too at the wider pane";
+const foldLong = (open: boolean) => "# Report\n\n" + paras(1, 10) + "\n\n<details" + (open ? " open" : "") + ">\n<summary>" + LONG_SUMMARY + "</summary>\n\n" + paras(11, 15) + "\n\n</details>\n\n" + paras(16, 30) + "\n";
+/** The box of the picture whose alt is `alt`, from the body's top edge. */
+const imgByAlt = (page: any, alt: string) => page.evaluate((a: string) => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect(); const r = (x: number) => Math.round(x * 10) / 10;
+  const i = document.querySelector(`.fileview-md img[alt="${a}"]`)!.getBoundingClientRect();
+  return { top: r(i.top - br.top), bottom: r(i.bottom - br.top), height: r(i.height), scrollTop: body.scrollTop };
+}, alt);
+/** Scroll so the picture whose alt is `alt` has its top `above` px above the body's top edge. */
+const imgToEdge = (page: any, alt: string, above = 0) => page.evaluate(([a, x]: [string, number]) => {
+  const body = document.querySelector(".fileview-body")!;
+  const i = document.querySelector(`.fileview-md img[alt="${a}"]`)!;
+  body.scrollTop += i.getBoundingClientRect().top - body.getBoundingClientRect().top + x;
+}, [alt, above]);
+/** One press of a text-size button, awaited through the seam's paint count (the reflow's own paint), never a timer. */
+const sizeStep = async (page: any, label: string) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.locator(`#romp-fileview button[aria-label="${label}"]`).click(); await paintsReach(page, p + 1); await frames(page, 3); };
+/** The pane dragged to `width`: the viewport resized, the reflow's paint awaited. */
+const dragTo = async (page: any, width: number) => { const p: number = await page.evaluate(() => (window as any).__paints); await page.setViewportSize({ width, height: 600 }); await paintsReach(page, p + 1); await frames(page, 3); };
+/** near, with the tolerance a Raw row's whole-pixel snap scales to by the picture's height over the row's (test 3's idiom). */
+const nearScaled = (a: number, b: number, what: string, picH: number, rowH: number) => near(a, b, what, Math.max(1.5, 0.5 * picH / rowH + 1));
+
+test("in a browser, the real module: from Raw, a row that reads as the block after it through a RUN of blocks before the wrapper's (a comment's row before the opener, with and without a blank line between, the blank rows beside the comment, the `</div>` closing a wrapper right before a second one and the blank after it, the `</details>` of a shut fold before the opener, the outer opener of a wrapper two deep and the blanks beside it), at the top edge at 900 and 380px, switched to Rendered puts the wrapper's picture where its tag's row was, below the edge, the first nested block after the picture, and the way back returns the row in view; from the shut fold's closer the picture goes no lower than the fold's summary at the edge, the cap a block read through the closer keeps, and the row returns above the edge by the rows' excess over the summary's box (the review's round 5; round 4 asked the row's own block for the picture, so these rows carried nothing, the nested heading seated at its row's distance put the logo 4 to 22px above the edge at 900 and the row came back 44 to 59px above it, off the pane, where main kept it in view 72 to 82px low)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const SCENES: Array<[string, string, string, number]> = [
+      ["a comment's row before the opener", COMMENT_LEAD, "<!-- project logo", 0],
+      ["the blank row before the comment", COMMENT_LEAD, "<!-- project logo", -1],
+      ["the blank row between the comment and the opener", COMMENT_LEAD, "<!-- project logo", 1],
+      ["a comment's row right above the opener", COMMENT_TIGHT, "<!-- project logo", 0],
+      ["the `</div>` closing a wrapper before a second one", CLOSER_LEAD, "</div>", 0],
+      ["the blank row after that `</div>`", CLOSER_LEAD, "</div>", 1],
+      ["the `</details>` of a shut fold before the opener", FOLD_CLOSER_LEAD, "</details>", 0],
+      ["the outer opener of a wrapper two deep", NEST2_LEAD, "<div align", 0],
+      ["the blank row before the outer opener", NEST2_LEAD, "<div align", -1],
+      ["the blank row between the two openers", NEST2_LEAD, "<div align", 1],
+    ];
+    for (const width of [900, 380]) {
+      for (const [what, doc, text, offset] of SCENES) {
+        const where = `pane ${width}, ${what}`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: doc }, raw: true });
+        await rowNearToEdge(page, text, offset); await frames(page, 2);
+        const row0 = await rowNear(page, text, offset);
+        near(row0.top, 0, where + `: the scene starts with the row at the edge (${JSON.stringify(row0.text)})`, 1);
+        const imgRow0 = (await box(page, "code.hljs .fv-cl", "<img src="))!;
+        assert.ok(imgRow0.top > 0, where + `: the fixture: the picture's tag row is below the edge (top ${imgRow0.top})`);
+        await click(page, "Rendered"); await imagesDone(page);
+        const pic = await imgBox(page);
+        const nested = (await box(page, ".fileview-md div > h2", "Centred title"))!;
+        assert.ok(nested.top > pic.bottom, where + `: the first nested block follows the picture (top ${nested.top}, the picture's bottom ${pic.bottom})`);
+        if (doc === FOLD_CLOSER_LEAD) {
+          // the shut fold right before the wrapper: the picture goes no lower than the fold's summary at the edge (the cap every block read
+          // through a shut fold's closing row keeps; seated at its row's distance, 54px, the picture left paragraph 5's tail 24px under the edge
+          // and the way back, that tail's fraction seat, brought the fold's five Raw rows back between, the closer 127px low), and the way back
+          // returns the row above the edge by the Raw rows' excess over the summary's box, the recorded closing-row class
+          const sum = (await box(page, ".fileview-md summary", "More"))!;
+          near(sum.top, 0, where + `: the fold's summary is at the edge, the picture under it (top ${pic.top}; its row's distance, ${imgRow0.top}, would put paragraph 5's tail under the edge)`);
+          await click(page, "Raw");
+          const row1 = await rowNear(page, text, offset);
+          near(row1.top, pic.top - imgRow0.top, where + `: the row is back above the edge by the three Raw rows' excess over the summary's box (round 4: 57px above it; main 198)`, 2);
+        } else {
+          near(pic.top, imgRow0.top, where + `: the picture's top is where its tag's row was, below the edge (round 4: the nested heading at its row's distance and the picture between the two, its top 4 to 22px above the edge at 900)`);
+          await click(page, "Raw");
+          const row1 = await rowNear(page, text, offset);
+          assert.ok(row1.top > -1 && row1.top <= 65, where + `: the row is back in view, the tail of the paragraph before the wrapper low by its fraction, 41 to 59px measured at both widths (got ${row1.top}; round 4: 44 to 59px above the edge, off the pane; main 72 to 82px low)`);
+        }
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: a README header with three 24px badges and a 200x120 logo on consecutive source lines inside `<div align=\"center\">`, which the browser lays on ONE line box with a common baseline (the badges' tops 96px below the logo's while they come first in the DOM): Rendered to Raw to Rendered with the logo's top at the edge is exact at 900 and 380px, the logo's own tag row the top Raw row between (the review's round 5; rounds 3 and 4 carried the first picture in DOM order, the badges' line, so the Raw seat put the badges' row 96px down and the logo's 276 and the trip lost 129 to 130px; main refused these rows, 108 off); from Raw, the logo's tag row at the edge round-trips within 1.5px (before: 276 at 900 and 438 at 380 low), and from the badges' row too, as before, the badges at the edge and the logo above them", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // the logo's top AT the edge only: 2px below it, the badges' data: URI row (180px at 900, 342 at 380) leaves a 2px tail above the logo's
+    // row in Raw, which the way back reads by its fraction as it reads a paragraph's tail, the recorded class, here with a picture's row
+    // (the badges' picture at 99% of its height above the edge, the logo 120px above it: measured -122 at both widths)
+    for (const width of [900, 380]) {
+      for (const above of [0]) {
+        const where = `pane ${width}, the logo's top ${above ? "2px below" : "at"} the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: BADGES_LOGO } }); await imagesDone(page);
+        const shape = await page.evaluate(() => { const r = (a: string) => document.querySelector(`.fileview-md img[alt="${a}"]`)!.getBoundingClientRect(); const l = r("logo"), b = r("b1"); return { dTop: Math.round(b.top - l.top), dBottom: Math.round(b.bottom - l.bottom), parent: document.querySelector('.fileview-md img[alt="logo"]')!.parentElement!.tagName }; });
+        assert.deepEqual(shape, { dTop: 96, dBottom: 0, parent: "DIV" }, where + ": the fixture: the badges share the logo's line box, their tops 96px below its top, all rows of the div's block");
+        await imgToEdge(page, "logo", above); await frames(page, 2);
+        const before = await imgByAlt(page, "logo");
+        near(before.top, -above, where + ": the scene starts with the logo at its place", 1);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        const logoRow = (await box(page, "code.hljs .fv-cl", 'alt="logo"'))!;
+        assert.ok(row.text.startsWith("<img src=") && /alt="logo"/.test(await page.evaluate(() => { const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect(); for (const r of Array.from(body.querySelectorAll("code.hljs .fv-cl"))) { if (r.getBoundingClientRect().bottom > br.top + 0.5) return r.textContent || ""; } return ""; })), where + `: the LOGO's tag row is the top Raw row (got ${JSON.stringify(row.text)} at ${row.top}; before: the badges' row, the logo's ${Math.round(logoRow.top)}px down)`);
+        near(logoRow.top, before.top, where + ": the logo's row at the logo's distance", 1.5);
+        await click(page, "Rendered"); await imagesDone(page);
+        const after = await imgByAlt(page, "logo");
+        nearScaled(after.top, before.top, where + `: back in Rendered the logo is where it was (before: 129 to 130px low)`, before.height, logoRow.bottom - logoRow.top);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      for (const [what, alt] of [["the logo's tag row", "logo"], ["the badges' row", "b1"]] as const) {
+        const where = `pane ${width}, from Raw, ${what} at the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: BADGES_LOGO }, raw: true });
+        await rowToEdge(page, `alt="${alt}"`, 0); await frames(page, 2);
+        const row0 = (await box(page, "code.hljs .fv-cl", `alt="${alt}"`))!;
+        near(row0.top, 0, where + ": the scene starts on the row", 1);
+        await click(page, "Rendered"); await imagesDone(page);
+        const pic = await imgByAlt(page, alt);
+        near(pic.top, 0, where + `: the picture of that row has its top at the edge${alt === "b1" ? ", the logo above it" : ", the badges 96px below it"}`, 1.5);
+        await click(page, "Raw");
+        const row1 = (await box(page, "code.hljs .fv-cl", `alt="${alt}"`))!;
+        // within the picture's whole-pixel snap scaled by the row's height over the picture's (test 9's bound the other way round: the
+        // badges' three data: URIs make a row of 180px at 900 and 342 at 380 against a 24px picture, so the snap reads back as 4px there)
+        nearScaled(row1.top, row0.top, where + `: the row is back at the edge (before: ${alt === "logo" ? (width === 900 ? "276" : "438") + "px low, the badges' line read from Rendered" : "exact, as here"})`, row0.bottom - row0.top, pic.height);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: a README header whose logo sits inside a centred `<p>` beside a line break and the project's name (`<p align=\"center\"><img><br><b>Project</b></p>`) round-trips Rendered to Raw to Rendered with the picture's top at the edge, 2px below it and 48px into it at 900 and 380px, the `<p>`'s tag row the top Raw row at the picture's distance or fraction between, and from Raw the `<p>`'s row at the edge and 9px above it comes back within 1.5px, the picture at the row's fraction between (the review's round 5: the Rendered read refused a row holding text while the Raw read counted every tag, so the nested heading was seated at its distance and the way back seated the picture, 64 to 82px lost at 900; main 144 to 162 off)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const width of [900, 380]) {
+      for (const above of [0, -2, 48]) {
+        const where = `pane ${width}, the picture's top ${above > 0 ? above + "px above" : above < 0 ? -above + "px below" : "at"} the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: P_IMG_LEAD } }); await imagesDone(page);
+        const parent = await page.evaluate(() => { const i = document.querySelector('.fileview-md img[alt="logo"]')!; return { p: i.parentElement!.tagName, text: (i.parentElement!.textContent || "").trim(), grand: i.parentElement!.parentElement!.tagName }; });
+        assert.deepEqual(parent, { p: "P", text: "Project", grand: "DIV" }, where + ": the fixture: the logo is inside the centred <p> with the name, a row of the div's block");
+        await imgToEdge(page, "logo", above); await frames(page, 2);
+        const before = await imgByAlt(page, "logo");
+        near(before.top, -above, where + ": the scene starts with the picture at its depth", 1);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        assert.ok(row.text.startsWith('<p align="center"><img') || (above < 0 && row.text.startsWith("<div align")), where + `: the <p>'s tag row is the top Raw row, or the opener's tail above it when the picture is below the edge (got ${JSON.stringify(row.text)} at ${row.top}; before: the nested heading where it was, a paragraph before the wrapper or the opener on top)`);
+        const pRow = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
+        const rowH = pRow.bottom - pRow.top;
+        near(pRow.top, above > 0 ? -above * rowH / before.height : -above, where + `: the row at the picture's ${above > 0 ? "fraction of its height" : "distance"} (the row ${rowH}px tall)`, 1);
+        await click(page, "Rendered"); await imagesDone(page);
+        const after = await imgByAlt(page, "logo");
+        nearScaled(after.top, before.top, where + `: back in Rendered the picture is where it was (before: ${above > 0 ? "82" : "64 to 65"}px low at 900)`, before.height, rowH);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      for (const above of [0, 9]) {
+        const where = `pane ${width}, from Raw, the <p>'s row ${above}px above the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: P_IMG_LEAD }, raw: true });
+        await rowToEdge(page, '<p align="center"><img', above); await frames(page, 2);
+        const row0 = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
+        near(row0.top, -above, where + ": the scene starts on the row", 1);
+        await click(page, "Rendered"); await imagesDone(page);
+        const pic = await imgByAlt(page, "logo");
+        const rowH = row0.bottom - row0.top;
+        nearScaled(pic.top, -above * pic.height / rowH, where + ": the picture at the row's fraction of its height", pic.height, rowH);
+        await click(page, "Raw");
+        const row1 = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
+        near(row1.top, row0.top, where + `: the row is back where it was (before: ${width === 900 ? "82" : "9 to 11"}px low)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: a same-view reflow in RENDERED with a shown row of a wrapper's block's own at the top edge keeps that row (reader-place.ts Place.lead, the review's round 5): a fold title that wraps to three lines at 900px and six at 380, shut and open, at the edge and 10px into it, holds across a pane drag from 900 to 380 and back (at the edge within 1.5px; 10px in at the same fraction of its height), and from 380 to 900 and back; the Comments aside opening at 900 with the title at the edge holds it, and closing restores it; a text-size step (A+, then A-) holds it; a README's lead `<h1>` at the edge with the banner under it holds across A+ (round 4 kept the kept block's distance, the block after the shut fold or the first nested one, so the title's own growth landed above the edge: 90px on the drag to 380, 180 to 190 down after the drag back, 23 on the aside's open, 4.5 to 4.9 per step, 7.6 for the <h1>; before the slice the browser's own anchoring held every one within 0.2px)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const summary = (page: any) => box(page, ".fileview-md summary", "A rather long");
+    for (const open of [false, true]) {
+      for (const at of [0, 10]) {
+        const where = `${open ? "the open fold" : "the shut fold"}, the title ${at ? at + "px in" : "at the edge"}, pane 900`;
+        const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: foldLong(open) } });
+        await scrollInto(page, ".fileview-md summary", "A rather long", at); await frames(page, 2);
+        const s0 = (await summary(page))!;
+        near(s0.top, -at, where + ": the scene starts with the title at its place", 1);
+        assert.ok(s0.bottom - s0.top > 60, where + `: the fixture: the title wraps (${s0.bottom - s0.top}px tall)`);
+        await dragTo(page, 380);
+        const s1 = (await summary(page))!;
+        assert.ok(s1.bottom - s1.top > 1.5 * (s0.bottom - s0.top), where + `: the fixture: the title grew on the drag (${s0.bottom - s0.top} to ${s1.bottom - s1.top}px)`);
+        near(s1.top, at ? s0.top * (s1.bottom - s1.top) / (s0.bottom - s0.top) : 0, where + `: after the drag to 380 the title is ${at ? "at its fraction of its height" : "at the edge"} (round 4: ${Math.round(s0.bottom - s0.top - (s1.bottom - s1.top))}px, its own growth above the edge)`);
+        await dragTo(page, 900);
+        const s2 = (await summary(page))!;
+        near(s2.top, s0.top, where + ": after the drag back to 900 the title is where it was");
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+    {
+      const where = "the shut fold, the title at the edge, pane 380, dragged to 900 and back";
+      const { page, errors } = await openViewer(browser, "pane", 380, 600, { docs: { [REPORT]: foldLong(false) } });
+      await scrollInto(page, ".fileview-md summary", "A rather long", 0); await frames(page, 2);
+      const s0 = (await summary(page))!;
+      near(s0.top, 0, where + ": the scene starts with the title at the edge", 1);
+      await dragTo(page, 900);
+      near((await summary(page))!.top, 0, where + ": after the drag to 900 the title is at the edge (round 4: 90px down)");
+      await dragTo(page, 380);
+      near((await summary(page))!.top, 0, where + ": after the drag back the title is at the edge (round 4: 180 to 190px down)");
+      assert.deepEqual(errors, [], where + ": no script error");
+      await page.close();
+    }
+    {
+      const where = "the shut fold, the title at the edge, pane 900, the Comments aside";
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: foldLong(false) } });
+      await scrollInto(page, ".fileview-md summary", "A rather long", 0); await frames(page, 2);
+      const s0 = (await summary(page))!;
+      near(s0.top, 0, where + ": the scene starts with the title at the edge", 1);
+      await openPanel(page);
+      const s1 = (await summary(page))!;
+      assert.ok(s1.bottom - s1.top > s0.bottom - s0.top + 10, where + `: the fixture: the title grew when the aside took its width (${s0.bottom - s0.top} to ${s1.bottom - s1.top}px)`);
+      near(s1.top, 0, where + ": with the aside open the title is at the edge (round 4: 23px above it)");
+      await closePanel(page);
+      near((await summary(page))!.top, 0, where + ": with the aside closed the title is at the edge");
+      assert.deepEqual(errors, [], where + ": no script error");
+      await page.close();
+    }
+    {
+      const where = "the shut fold, the title at the edge, pane 900, a text-size step";
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: foldLong(false) } });
+      await scrollInto(page, ".fileview-md summary", "A rather long", 0); await frames(page, 2);
+      near((await summary(page))!.top, 0, where + ": the scene starts with the title at the edge", 1);
+      await sizeStep(page, "Larger text");
+      near((await summary(page))!.top, 0, where + ": after A+ the title is at the edge (round 4: 4.5 to 4.9px above it)", 1);
+      await sizeStep(page, "Smaller text");
+      near((await summary(page))!.top, 0, where + ": after A- the title is at the edge", 1);
+      assert.deepEqual(errors, [], where + ": no script error");
+      await page.close();
+    }
+    {
+      const where = "the <h1> lead with the banner under it, pane 900, a text-size step";
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: H1_BANNER } }); await imagesDone(page);
+      await scrollInto(page, ".fileview-md div > h1", "Project", 0); await frames(page, 2);
+      near((await box(page, ".fileview-md div > h1", "Project"))!.top, 0, where + ": the scene starts with the <h1> at the edge", 1);
+      await sizeStep(page, "Larger text");
+      near((await box(page, ".fileview-md div > h1", "Project"))!.top, 0, where + ": after A+ the <h1> is at the edge (round 4: 7.6px above it, the banner keeping its distance)", 1);
+      await sizeStep(page, "Smaller text");
+      near((await box(page, ".fileview-md div > h1", "Project"))!.top, 0, where + ": after A- the <h1> is at the edge", 1);
+      assert.deepEqual(errors, [], where + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the real module: a commented-out `<img` tag on the line above the live one in a wrapper's block (`<!-- <img src=\"old.svg\"> -->`, a README's leftover) counts for no picture: Rendered to Raw with the logo's top at the edge puts the LIVE tag's row at the edge at 900 and 380px, the comment's row above it, and from Raw the opener's row at the edge switched to Rendered puts the logo where its tag's row was (the review's round 5; before, the comment's tag was counted, so the k-th picture took the tag before its own: the comment's row landed at the edge with the live row 18px below it, and from the opener the logo landed a row higher than its tag row)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const width of [900, 380]) {
+      {
+        const where = `pane ${width}, Rendered to Raw with the logo at the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: COMMENTED_IMG } }); await imagesDone(page);
+        assert.equal(await page.evaluate(() => document.querySelectorAll(".fileview-md img").length), 1, where + ": the fixture: one picture rendered (the comment makes none)");
+        await imgToEdge(page, "logo", 0); await frames(page, 2);
+        near((await imgBox(page)).top, 0, where + ": the scene starts with the logo's top at the edge", 1);
+        await click(page, "Raw");
+        const row = (await rowAtTop(page))!;
+        assert.ok(row.text.startsWith("<img src="), where + `: the live tag's row is the top Raw row (got ${JSON.stringify(row.text)} at ${row.top}; before: the comment's row)`);
+        near(row.top, 0, where + ": at the edge", 1.5);
+        const comment = (await box(page, "code.hljs .fv-cl", "<!-- <img"))!;
+        assert.ok(comment.bottom <= row.top + 0.5, where + `: the comment's row is above it (bottom ${comment.bottom})`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+      {
+        const where = `pane ${width}, from Raw, the opener's row at the edge`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: COMMENTED_IMG }, raw: true });
+        await rowToEdge(page, "<div align", 0); await frames(page, 2);
+        const liveRow = (await box(page, "code.hljs .fv-cl", 'alt="logo"'))!, commentRow = (await box(page, "code.hljs .fv-cl", "<!-- <img"))!;
+        assert.ok(commentRow.top > 0 && liveRow.top > commentRow.top, where + `: the fixture: the comment's row (${commentRow.top}) then the live tag's (${liveRow.top}) below the edge`);
+        await click(page, "Rendered"); await imagesDone(page);
+        const pic = await imgBox(page);
+        near(pic.top, liveRow.top, where + `: the logo's top is where the live tag's row was (before: where the comment's row was, ${Math.round(commentRow.top)})`);
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }

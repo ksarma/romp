@@ -13,7 +13,14 @@
 // whole text is the <p>'s only child, so the unwrap and the wrap again of its mark collapse a selection inside it to the paragraph,
 // and the event fires for a merged or split text node alone (the prefix highlight of the first leg, beside plain text, fires it; a
 // lone-child mark does not), so the listener never saw the collapse and the float stood beside nothing until a click on it hid it
-// and opened no composer. Now paintAll ends by hiding a passage's float it left beside no selection (afterPaint, passageGone). Legs
+// and opened no composer. Now paintAll ends by hiding a passage's float it left beside no selection (afterPaint, passageGone). The
+// review's round 5 added the remnant with NO box: a real drag from inside the lone-child mark into the next paragraph's start, and the
+// poll's paint moves the anchor to the paragraph's end (a removed node's descendant boundary points move to its parent: the mark's
+// text out of the mark, the mark out of the paragraph, the text into the new mark) while the focus at the next paragraph's start
+// stays, a selection of a bare line break between the two blocks, in the body and not collapsed but with no client rect, which
+// passageGone read as a standing passage, so the float stood beside text nobody can see and a click on it opened a composer the
+// whitespace refusal closed at once; now afterPaint hides it by the offer's own test (a range with no width and no height is no
+// subject, floatSubjectRect). Legs
 // await the DOM's own states (the peer's mark appearing, the selectionchange count moving) and frames, never a timer; the poll's own
 // interval is the panel's. Each leg asserts what the browser fired for the paint's move of the selection, its premise: one or more
 // events for the prefix highlight, none for the lone-child mark (the Slice 5 review, round 3: a browser firing one there would hide
@@ -39,18 +46,20 @@ const MARK_A = '.fileview-body mark.fc-hl[data-id="aaaa-1"]', MARK_C = '.filevie
 const STORE_MT_1 = "1757145600000000002", STORE_MT_2 = "1757145600000000777";
 const withComments = (comments: unknown[], storeMtimeNs: string) => ({ ...STATUS, storeMtimeNs, store: { ...STATUS.store, comments }, unsent: { ...STATUS.unsent, comments: comments.map((c: any) => c.id) } });
 
-type Scene = { hidden: boolean; left: number; top: number; selected: string; collapsed: boolean; expectedLeft: number; expectedTop: number; selChanges: number; anchorIsP: boolean; pChildren: string; composer: boolean };
+type Scene = { hidden: boolean; left: number; top: number; selected: string; collapsed: boolean; expectedLeft: number; expectedTop: number; selChanges: number; anchorIsP: boolean; pChildren: string; composer: boolean; boxless: boolean; inBody: boolean };
 /** The float's state and inline place, the selection's text and whether it is collapsed, where showFloat would put the button for the
  *  selection's last range now, the count of selectionchange events the page has seen since the counter was armed, the anchor's
- *  paragraph's child nodes when the anchor is one, and whether a composer stands. */
+ *  paragraph's child nodes when the anchor is one, whether a composer stands, whether the selection's last range has no box (no
+ *  width and no height: the offer's own refusal) and whether both its ends lie in the body. */
 const scene = (page: any): Promise<Scene> => page.evaluate(() => {
-  const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!;
+  const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!; const body = document.querySelector(".fileview-body");
   const r = sel.rangeCount ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
   const anchorIsP = !!sel.anchorNode && sel.anchorNode.nodeName === "P";
   return { hidden: f.hidden, left: parseFloat(f.style.left), top: parseFloat(f.style.top), selected: String(sel), collapsed: sel.isCollapsed,
     expectedLeft: r ? Math.min(Math.max(8, r.right + 6), window.innerWidth - 90) : NaN, expectedTop: r ? Math.min(Math.max(8, r.top - 30), window.innerHeight - 34) : NaN,
     selChanges: w.__selChanges as number, anchorIsP, pChildren: anchorIsP ? Array.from(sel.anchorNode!.childNodes).map((c) => c.nodeName).join(",") : "",
-    composer: !!document.querySelector(".fileview-aside .fc-composer .fc-input") };
+    composer: !!document.querySelector(".fileview-aside .fc-composer .fc-input"),
+    boxless: !r || (!r.width && !r.height), inBody: !!body && !!sel.anchorNode && !!sel.focusNode && body.contains(sel.anchorNode) && body.contains(sel.focusNode) };
 });
 const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 0.01, what + ": " + a + " against " + b);
 
@@ -102,6 +111,21 @@ async function dragAcross(page: any, markSel: string, n: number): Promise<void> 
     const b = document.createRange(); b.setStart(after, k - 1); b.setEnd(after, k); const rb = b.getBoundingClientRect();
     return { x1: ra.left + 1, y1: ra.top + ra.height / 2, x2: rb.right - 1, y2: rb.top + rb.height / 2 };
   }, [markSel, n]);
+  await page.mouse.move(r.x1, r.y1); await page.mouse.down(); await page.mouse.move(r.x2, r.y2, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+  await frames(page, 2);
+}
+/** A real mouse drag from character `from` inside a highlight's text to the START of the next paragraph's text (its first character's
+ *  left edge), so the selection's anchor lies in the mark's text node and its focus at the next block's start, the paragraph's end and
+ *  the block boundary selected with the text; the seam's mouseup offers the float. */
+async function dragIntoNext(page: any, markSel: string, from: number): Promise<void> {
+  await page.evaluate(() => getSelection()!.removeAllRanges());
+  const r = await page.evaluate(([s, a]: [string, number]) => {
+    const m = document.querySelector(s) as HTMLElement; const t = m.firstChild as Text; const next = (m.parentElement as HTMLElement).nextElementSibling!.firstChild as Text;
+    const ra = document.createRange(); ra.setStart(t, a); ra.setEnd(t, a + 1); const x = ra.getBoundingClientRect();
+    const rb = document.createRange(); rb.setStart(next, 0); rb.setEnd(next, 1); const y = rb.getBoundingClientRect();
+    return { x1: x.left + 1, y1: x.top + x.height / 2, x2: y.left + 1, y2: y.top + y.height / 2 };
+  }, [markSel, from]);
   await page.mouse.move(r.x1, r.y1); await page.mouse.down(); await page.mouse.move(r.x2, r.y2, { steps: 6 }); await page.mouse.up();
   await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
   await frames(page, 2);
@@ -208,6 +232,38 @@ test("in a browser, the real viewer and panel: a highlight that is its paragraph
     assert.equal(s.selected, P2.slice(3, 12), "the keyboard widened the selection by one character");
     assert.equal(s.hidden, false, "the keyboard's change offers the float"); near(s.left, s.expectedLeft, "beside the selection's end");
     assert.equal(s.composer, false, "no composer opened on its own");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser, the real viewer and panel: a real drag from inside a whole-paragraph highlight into the next paragraph's start, and a peer's comment landing through the poll: the paint moves the anchor to the paragraph's end and leaves a bare line break selected, in the body, not collapsed, with NO box, and the float goes with the paint (before: it stood beside text nobody can see, and a click on it opened a composer the whitespace refusal closed at once); a fresh drag offers again", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openWith(browser, [W], MARK_W);
+    const only = await page.evaluate((s: string) => { const m = document.querySelector(s)!; return Array.from(m.parentNode!.childNodes).map((c) => c.nodeName).join(","); }, MARK_W);
+    assert.equal(only, "MARK", "the whole paragraph's mark is the <p>'s only child");
+    const from = P2.length - 8;
+    await dragIntoNext(page, MARK_W, from);
+    let s = await scene(page);
+    assert.equal(s.selected.replace(/\n+$/, ""), P2.slice(from), "the drag selected the paragraph's last eight characters and the block boundary after them");
+    assert.ok(/\n$/.test(s.selected), "...the boundary read as a line break");
+    assert.deepEqual([s.hidden, s.collapsed, s.boxless], [false, false, false], "the drag's mouseup offers the float beside a selection with a box");
+    await peerCommentLands(page, null, [W]);
+    s = await scene(page);
+    // the leg's premise: the paint's unwrap and wrap again of the lone-child mark moved the anchor to the paragraph's end (after the
+    // mark) while the focus stayed at the next paragraph's start, so what stands selected is the line break between the blocks: in the
+    // body, not collapsed (passageGone's rule reads it as a passage), and with no client rect (the offer's own guard refuses it)
+    assert.equal(s.selected.trim(), "", "the paint left only the block boundary selected, a bare line break");
+    assert.ok(/^\n+$/.test(s.selected), "...read as one or more line breaks");
+    assert.equal(s.anchorIsP, true, "its anchor the paragraph itself (the mark's text out and in again moved the end to the paragraph)");
+    assert.deepEqual([s.collapsed, s.inBody, s.boxless], [false, true, true], "not collapsed, both ends in the body, and no box: the remnant passageGone reads as a standing passage and the offer refuses");
+    assert.equal(s.hidden, true, "the float went with the paint that left it beside a selection with no box (before: shown at the drag's place, a Comment button whose composer the whitespace refusal closed at once)");
+    assert.equal(s.composer, false, "no composer opened on its own");
+    // the person's next gesture, a drag inside the highlight: the seam's mouseup offers again, beside a selection with a box
+    await dragInside(page, MARK_W, 3, 11);
+    s = await scene(page);
+    assert.deepEqual([s.selected, s.hidden, s.boxless], [P2.slice(3, 11), false, false], "a fresh drag inside the highlight offers the float again");
+    near(s.left, s.expectedLeft, "beside the selection's end");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

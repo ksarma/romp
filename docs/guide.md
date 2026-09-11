@@ -473,7 +473,8 @@ heading in the file still lands on it, and a link to an element's own `id` or `<
 on it under the prefix. A link in the file is handled by its target, not by the element that
 carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
 target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
-`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. The same
+`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. A `<title>` is
+dropped with its text, since a browser shows one nowhere outside the page's head. The same
 rules apply to the HTML in a chat message, where a link to an element's own `id` or `<a name>`
 lands on it under the prefix.
 

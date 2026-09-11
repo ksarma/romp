@@ -2658,7 +2658,8 @@ class Panel {
     this.floatAt = { top: rect.top, right: rect.right, img };
   }
   /** The float's subject as it sits on screen now: the picture's box, or the live selection's last range (null once the
-   *  selection is gone or collapsed, or the picture has left the document); what hideFloatOnScroll compares with floatAt. */
+   *  selection is gone or has no box, or the picture has left the document); what hideFloatOnScroll compares with floatAt, and
+   *  what afterPaint reads of the selection its writes left (a remnant with no box is no subject). */
   private floatSubjectRect(): { top: number; right: number } | null {
     const at = this.floatAt;
     if (!at) return null;
@@ -3561,11 +3562,17 @@ class Panel {
    *  not), so the listener's collapsed-selection guard never ran, and a peer's comment landing through the poll, or a settings pick
    *  from another pane, left the float standing beside nothing until a click on it hid it and opened no composer (the Slice 5
    *  review, round 2). A float the writes left beside a selection cut short but not to nothing stays where it was offered, as
-   *  before; a picture's stands. */
+   *  before, unless the remnant has no box: a selection from inside a paragraph's mark into the next block's start is cut to a bare
+   *  line break between the two blocks (the rewrap moves an anchor inside the mark's text to the paragraph's end, a removed node's
+   *  descendant boundary points moving to its parent, while the focus at the next block's start stays), a range in the body and not
+   *  collapsed but with no client rect, text nobody can see, which the offer itself refuses (onSelection's guard on a range with no
+   *  width and no height) and whose Comment button opened a composer the whitespace refusal closed at once; it goes too, by the
+   *  subject test hideFloatOnScroll reads (floatSubjectRect: null for a boxless range; the Slice 5 review, round 5). A picture's
+   *  stands. */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
-    if (sel && this.floatAt && !this.floatAt.img && this.passageGone(sel)) this.hideFloat();
+    if (sel && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.floatSubjectRect())) this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every

@@ -3,9 +3,12 @@
 // shows it (stripMarkupMapped, renderedQuote): the blank the hay puts at a raw table's cell boundary, an element the sanitizer
 // drops with its text (svg's foreignObject), the character references (HTML 4.01's names, the legacy names with no semicolon in
 // an html block, the numeric quirks), an RCDATA element inline, and svg's title as an ordinary element (the Slice 5 review,
-// round 4). Pure text, no DOM stand-in: the browser legs over the real viewer (anchor-map-code-table-paint-browser.test.ts,
-// md-sanitize-anchor-map-browser.test.ts) check the DOM's side of each rule. Every case here fails over a git archive of
-// 50b19bfdb's module, the tree the round reviewed. Non-ASCII characters are written as escapes throughout.
+// round 4). Pure text, no DOM stand-in, so every assertion here compares the reader with itself; the DOM's side of each rule
+// is anchor-map-html-text-browser.test.ts (round 5), which renders these same shapes through the viewer's pipeline in
+// headless Chromium and checks the reader's text against the DOM's and each quote's real paint over it. (The browser legs
+// over the real viewer and panel, anchor-map-code-table-paint-browser.test.ts and md-sanitize-anchor-map-browser.test.ts,
+// hold rounds 2 and 3's cell shapes and the sanitizer's text drops, none of this round's.) Every case here fails over a git
+// archive of 50b19bfdb's module, the tree the round reviewed. Non-ASCII characters are written as escapes throughout.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applyMdConfig } from "./md-config";
@@ -53,7 +56,7 @@ test("svg's `<foreignObject>` goes with its text, as the sanitizer drops it (DOM
   assert.equal(quote(INLINE, "<svg>", "</svg>"), "svg text");
 });
 
-test("the named character references decode as the parser decodes them, HTML 4.01's names with `apos` and the upper-case aliases, in every construct the fallback serves (an html block, a heading, a list item, a quote, a link's text, strong, a cell, a `<pre>`, a refused paragraph); an HTML5-only name keeps its source form, recorded (before: six names decoded, so `&mdash;`, `&copy;` and the rest never matched the DOM's glyph)", () => {
+test("the named character references decode as the parser decodes them, HTML 4.01's names with `apos` and the upper-case aliases, in every construct the fallback serves (an html block, a heading, a list item, a quote, a link's text, strong, a cell, a `<pre>`, a refused paragraph); an HTML5-only name keeps its source form where no DOM decodes it, the shim (before: six names decoded, so `&mdash;`, `&copy;` and the rest never matched the DOM's glyph)", () => {
   const DIV = "Intro.\n\n<div align=\"center\">Cost &copy; w000 &mdash; done &amp; ok</div>\n\npara.\n";
   assert.equal(quote(DIV, "w000 &mdash; done &amp; ok"), "w000 " + MDASH + " done & ok", "an html block");
   assert.equal(quote(DIV, "Cost &copy;"), "Cost " + COPY);
@@ -73,8 +76,10 @@ test("the named character references decode as the parser decodes them, HTML 4.0
   assert.equal(shown(MANY), "Fish & chips \u2122 a " + EURO + " b \u2192 c \u00d7 d \u00b0 e \u00bd f \u00abg\u00bb h \u00b7 i \u2022 j " + REG + " k \u27e8l\u27e9 end",
                "HTML5's code points (lang and rang moved from HTML 4's)");
   assert.equal(shown("a &AMP; b &COPY; c &LT; d &GT; e &QUOT; f &REG; g &apos; h\n"), "a & b " + COPY + " c < d > e \" f " + REG + " g ' h", "the upper-case aliases and apos");
-  // a name the table lacks: an HTML5-only one keeps its form (recorded); one the parser reads as a legacy name and a tail decodes so
-  assert.equal(shown("a &check; b &star; c\n"), "a &check; b &star; c", "an HTML5-only name stays as written");
+  // a name the table lacks: under the shim, where no DOM decodes it, an HTML5-only one keeps its form (the table stands in; in
+  // the webview the reader decodes it as the browser does, which anchor-map-html-text-browser.test.ts pins against the DOM);
+  // one the parser reads as a legacy name and a tail decodes so
+  assert.equal(shown("a &check; b &star; c\n"), "a &check; b &star; c", "an HTML5-only name stays as written where no DOM decodes it");
   assert.equal(shown("a &notit; b\n"), "a " + NOT + "it; b", "the parser's longest legacy match: `&not` then `it;`");
   assert.equal(shown("a &Mdash; b &MDASH; c\n"), "a &Mdash; b &MDASH; c", "the table is case-sensitive, as the parser's");
 });
@@ -109,7 +114,7 @@ test("a numeric character reference shows what the parser's numeric reference en
   assert.equal(shown("&#129; &#141; &#159;\n"), "\u0081 \u008d \u0178");
 });
 
-test("an RCDATA element inline (a `<textarea>`, a `<title>`) shows everything up to its end tag as text, marked's HTML for the tokens between included and character references decoded, as the parser reads it and the sanitizer's unwrap leaves it, in a paragraph and in a cell; the html-block form reads so already (before: the tokens inside were read as markup, the needle `a b c` for a DOM showing `a <b>b</b> <em>c</em>`)", () => {
+test("an RCDATA element inline (a `<textarea>`) shows everything up to its end tag as text, marked's HTML for the tokens between included and character references decoded, as the parser reads it and the sanitizer's unwrap leaves it, in a paragraph and in a cell; the html-block form reads so already (before: the tokens inside were read as markup, the needle `a b c` for a DOM showing `a <b>b</b> <em>c</em>`); a body `<title>` inline is dropped with its content since the review's round 5, as the sanitizer drops it (before: its text was read as shown)", () => {
   const PARA = "Fish &amp; <textarea>a <b>b</b> *c*</textarea> end\n";
   assert.equal(shown(PARA), "Fish & a <b>b</b> <em>c</em> end");
   assert.equal(quote(PARA, "a <b>b</b> *c*"), "a <b>b</b> <em>c</em>", "the textarea's content");
@@ -117,7 +122,7 @@ test("an RCDATA element inline (a `<textarea>`, a `<title>`) shows everything up
   const CELL = "| h |\n|---|\n| x &amp; <textarea>a <b>b</b> *c*</textarea> y |\n";
   assert.equal(quote(CELL, "a <b>b</b> *c*"), "a <b>b</b> <em>c</em>", "the same in a cell");
   assert.equal(quote(CELL, "y"), "y");
-  assert.equal(shown("Lead <title>t &amp; *u*</title> tail\n"), "Lead t & <em>u</em> tail", "an inline title");
+  assert.equal(shown("Lead <title>t &amp; *u*</title> tail\n"), "Lead tail", "an inline body title: dropped content (round 5)");
   const BLOCK = "<div><textarea>d <i>e</i> *f*</textarea> tail</div>\n";
   assert.equal(quote(BLOCK, "d <i>e</i> *f*"), "d <i>e</i> *f*", "the block form: an html block's raw takes no emphasis (as before)");
   // no end tag in the block: the block's rest is the text (recorded; the parser reads on past the block)

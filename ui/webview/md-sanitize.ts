@@ -176,16 +176,35 @@ export function dropCommentChildren(node: Node): void {
   }
 }
 
+/** The HTML namespace, an element's `namespaceURI` when it is HTML's and not SVG's or MathML's. */
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+/** The other DOMPurify uponSanitizeElement hook body: an HTML `<title>` in the body goes WITH its content. The browser never
+ *  shows a title outside the page's head (the parser keeps one met in the body as an element the UA sheet hides, `title {
+ *  display: none }`), but `title` is in DOMPurify's svg profile, so the namespace check kept a body `<title>` as a hidden
+ *  element: a `<title>` block in a note, one inside a `<div>`, inline in a paragraph or in a table cell rendered nothing while
+ *  its text stood in the DOM, in the comment painter's hay and in the fallback reader's text (which read it as shown), so a
+ *  comment on that text painted a mark with no box and its card offered Scroll to nothing (the Slice 5 review, round 5). An
+ *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. Through the hook's `allowedTags`, the lever
+ *  DOMPurify hands a hook (it clones the set for a hook to mutate, and its own custom-element recipe sets a tag there): set for
+ *  THIS element right before DOMPurify judges it, `false` has it removed, and `title` is in DOMPurify's FORBID_CONTENTS, so the
+ *  content goes with the tag, as a `<style>`'s does, and no unwrapped text is left behind. The viewer and the chat share the
+ *  profile, so a chat message's `<title>` goes the same way (it showed nothing there either). Reads the DOM's three names,
+ *  `nodeType`, `localName` (through the hook's lower-cased tagName) and `namespaceURI`, and touches the node itself not at all. */
+export function dropBodyTitle(node: Node, data: { tagName: string; allowedTags: Record<string, boolean> }): void {
+  if (data.tagName !== "title" || node.nodeType !== 1 /* Node.ELEMENT_NODE */) return;
+  data.allowedTags.title = (node as Element).namespaceURI !== HTML_NS;
+}
+
 let hooksInstalled = false;
 /** Install the two hooks on the (module-global) DOMPurify instance, once: the style rewrite on every attribute
- *  (styleAttributeHook) and the comment drop on every element (dropCommentChildren). Idempotent: DOMPurify's hooks
- *  are a list, and a second registration would run the same rewrite twice per attribute. `purify` is a seam for
- *  the node tests, which have no window for the real instance to sanitize in. */
+ *  (styleAttributeHook) and, on every element, the comment drop (dropCommentChildren) and the body title's drop
+ *  (dropBodyTitle). Idempotent: DOMPurify's hooks are a list, and a second registration would run the same rewrite twice
+ *  per attribute. `purify` is a seam for the node tests, which have no window for the real instance to sanitize in. */
 export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"> = DOMPurify): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   purify.addHook("uponSanitizeAttribute", (_node, ev) => { styleAttributeHook(ev); });
-  purify.addHook("uponSanitizeElement", (node) => { dropCommentChildren(node); });
+  purify.addHook("uponSanitizeElement", (node, data) => { dropCommentChildren(node); dropBodyTitle(node, data as { tagName: string; allowedTags: Record<string, boolean> }); });
 }
 
 /** marked's task checkbox is the one control a note keeps, inert: every other <input> goes, and a
