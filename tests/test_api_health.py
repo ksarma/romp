@@ -15,6 +15,8 @@ redirected before the module loads.
 """
 import asyncio
 import ast
+import builtins
+import io
 import inspect
 import textwrap
 import hashlib
@@ -1392,6 +1394,49 @@ class StateFile(unittest.TestCase):
         self.assertEqual(len(hits), 1, lines)
         self.assertIn("4", hits[0])
         self.assertEqual([(r["from"], r["to"]) for r in _rows(d)], [("thrashing", "unknown")])
+
+    def test_a_state_dir_with_only_the_first_cuts_jsonl_starts_empty_and_never_reads_it(self):
+        """K4 (the 4d-4 fold): a boot without api-health.json starts with no history. The fork's first cut
+        appended one row per transition to STATE/api-health.jsonl, and later fork builds seeded a missing
+        state file once from that ledger's last 64 KB; upstream never had the ledger, and every box that has
+        booted since the state file arrived holds one, so the seed retired whole. A stale ledger is neither
+        opened nor reflected in the state: its buckets are absent, the tail is empty, nothing is logged and
+        nothing is written. Synthetic rows in the retired seed's shape, so the old code would have read them."""
+        d = tempfile.mkdtemp()
+        quiet = "key:aaaaaaaaaaaa|haiku"
+
+        def row(bucket, t, to):
+            a, f = bucket.split("|")
+            return json.dumps({"t": t, "bucket": bucket, "auth": a, "family": f, "from": "unknown", "to": to,
+                               "why": "w", "evidence": {"window": 300, "rate429": 0.4, "rate5xx": 0.0, "n": 20}}) + "\n"
+        blob = row(KEY, T0 - 100, "thrashing") + row(quiet, T0 - 50, "healthy")
+        p = os.path.join(d, "api-health.jsonl")
+        with open(p, "w") as f:
+            f.write(blob)
+        # every open the boot makes, by either door (builtins.open, and io.open for Path.read_text)
+        opened, real_open = [], builtins.open
+
+        def spy(file, *a, **kw):
+            opened.append(os.fspath(file))
+            return real_open(file, *a, **kw)
+        builtins.open, io.open = spy, spy
+        try:
+            lines = []
+            ah = sb.ApiHealth(d, log=lines.append, boot_at=T0 + 10)
+        finally:
+            builtins.open, io.open = real_open, real_open
+        self.assertNotIn(p, opened, "the ledger is never opened")
+        self.assertEqual(ah._last_state, {}, "no bucket is seeded from it")
+        self.assertEqual(ah.boot_stamp, T0 + 10, "nothing restored, so nothing to clamp past")
+        snap = ah.snapshot(T0 + 11)
+        self.assertEqual((snap["buckets"], snap["transitions"]), ({}, []), "no bucket, no tail")
+        self.assertNotIn(quiet, json.dumps(snap))
+        self.assertEqual(lines, [], "a missing state file is a fresh start, not an error")
+        self.assertEqual(os.listdir(d), ["api-health.jsonl"], "no state file is written: nothing was filed")
+        with open(p) as f:
+            self.assertEqual(f.read(), blob, "left as it was")
+        self.assertFalse(hasattr(sb, "API_HEALTH_LEGACY_LEDGER"), "the constant retired with the seed")
+        self.assertFalse(hasattr(sb.ApiHealth, "_read_legacy_tail"), "the reader retired with the seed")
 
     def test_a_churning_bucket_does_not_truncate_a_quiet_neighbours_history(self):
         """A per-bucket `transitions` that is a filter of the GLOBAL 50-row tail lets a neighbour
