@@ -12,7 +12,9 @@
 // and its exit when the node process that started it is SIGKILLed. With a browser as well: a synthetic feed stream and a synthetic timeline stream replayed
 // back-to-back into the REAL pages, served by the kernel's own page route and the built bundles, must
 // produce a report with every frame type measured and settled and no console error, uncaught
-// exception or failed resource load; the feed run also writes a CPU profile. Those tests skip, naming
+// exception or failed resource load; the feed run also writes a CPU profile, and the timeline stream is
+// replayed once more into a page that reports itself hidden (--hidden), where the view must expand
+// nothing until the return step, whose record the report carries. Those tests skip, naming
 // the reason, when a prerequisite is missing, unless ROMP_UI_BENCH_REQUIRE is set (CI sets it), when
 // the skip becomes a failure so a runner image that lost its browser cannot pass silently.
 //
@@ -282,6 +284,66 @@ test("compareReports subtracts B from A per type and for the totals", () => {
   assert.match(td, /first content frame: .*; dispatch 90 → 60 ms \(-30, -33\.3%\); settled/);
   assert.match(td, /^feed\s+count .*; dispatch p50 90 → 60 ms \(-30, -33\.3%\)$/m);
   assert.match(renderCompare(compareReports(A, B2)), /dispatch p50 - → 60 ms/, "one side only: the missing side prints as -, as every other one-sided field does");
+});
+
+test("compareReports carries the regime: two hidden reports compare with the expansion and return lines, a hidden report against a visible one is refused", () => {
+  const base = {
+    app: "timeline", cpuThrottle: 1, fast: true, frames: { replayMs: 1000 },
+    first: { type: "data", bytes: 5000, handlerMs: 10, settleMs: 20 },
+    types: { bars: { count: 1, bytes: 9000, handlerMs: { p50: 2, p90: 2, max: 2 }, settleMs: { p50: 5, p90: 5, max: 5 } } },
+    loaf: { count: 0, durationMs: 0, blockingMs: 0, maxMs: 0 },
+    end: { heapUsed: 4000, domElements: 100, layoutCount: 5, scriptMs: 50, taskMs: 80 },
+    console: { errors: [] },
+  };
+  const H = { ...base, hidden: true, expand: { bars: 0, judging: 0 }, hiddenReturn: { ms: 30, maxMs: 32, expandBars: 120, expandJudging: 40 } };
+  const H2 = { ...base, hidden: true, expand: { bars: 0, judging: 0 }, hiddenReturn: { ms: 20, maxMs: 21, expandBars: 100, expandJudging: 40 } };
+  const V = { ...base, hidden: false, expand: { bars: 120, judging: 40 }, hiddenReturn: null };
+  // two hidden reports: the header names the regime on both sides, the deltas print, and so do the two lines
+  const hh = compareReports(H, H2);
+  assert.deepEqual(hh.hidden, [true, true]); assert.equal(hh.sameRegime, true); assert.equal(hh.endComparable, true);
+  assert.deepEqual(hh.hiddenReturn.ms, { a: 30, b: 20, diff: -10, pct: -33.3 });
+  assert.deepEqual(hh.hiddenReturn.expandBars, { a: 120, b: 100, diff: -20, pct: -16.7 });
+  assert.deepEqual(hh.expand.bars, { a: 0, b: 0, diff: 0, pct: null });
+  const th = renderCompare(hh);
+  assert.match(th, /^compare: timeline \(cpu x1, fast, hidden\) → timeline \(cpu x1, fast, hidden\)$/m);
+  assert.match(th, /^bars\s+count 1 → 1 \(unchanged\); settle p50 5 → 5 ms \(unchanged\)/m, "the deltas print for two reports of one regime");
+  assert.match(th, /^timeline expansion during the replay: bars 0 → 0 \(unchanged\); judging entries 0 → 0 \(unchanged\)$/m);
+  assert.match(th, /^return of the hidden page: 30 → 20 ms \(-10, -33\.3%\) mean, 32 → 21 ms \(-11, -34\.4%\) max; it expanded bars 120 → 100 \(-20, -16\.7%\), judging entries 40 → 40 \(unchanged\)$/m);
+  assert.match(th, /^console errors: 0 → 0$/m, "the lines sit before the console line, as in the report");
+  // a hidden report against a visible one: the header names the one hidden side, then one line and nothing else
+  const hv = compareReports(H, V);
+  assert.deepEqual(hv.hidden, [true, false]); assert.equal(hv.sameRegime, false); assert.equal(hv.endComparable, false, "the cumulative counters are not comparable across regimes either");
+  const tv = renderCompare(hv);
+  assert.match(tv, /^compare: timeline \(cpu x1, fast, hidden\) → timeline \(cpu x1, fast\)$/m);
+  assert.match(tv, /different regimes \(hidden page → visible page\)/);
+  assert.equal(tv.split("\n").length, 2, `the header and the refusal, no deltas:\n${tv}`);
+  assert.doesNotMatch(tv, /settle p50|end state|console errors|%/);
+  assert.match(renderCompare(compareReports(V, H)), /^compare: timeline \(cpu x1, fast\) → timeline \(cpu x1, fast, hidden\)\n.*\(visible page → hidden page\)/, "the other way round names the sides the other way round");
+  // two reports written before the field existed read as visible pages and compare as they always did
+  const old = compareReports(base, { ...base });
+  assert.deepEqual(old.hidden, [false, false]); assert.equal(old.sameRegime, true); assert.equal(old.endComparable, true);
+  assert.deepEqual(old.expand.bars, { a: null, b: null, diff: null, pct: null });
+  const to = renderCompare(old);
+  assert.doesNotMatch(to, /hidden|timeline expansion|return of the hidden page|NaN|undefined/);
+  assert.match(to, /^console errors: 0 → 0$/m);
+  // two visible timeline reports carry the expansion count and no return: the one line prints, the other does not
+  const vv = renderCompare(compareReports(V, { ...V, expand: { bars: 60, judging: 40 } }));
+  assert.match(vv, /^timeline expansion during the replay: bars 120 → 60 \(-60, -50%\); judging entries 40 → 40 \(unchanged\)$/m);
+  assert.doesNotMatch(vv, /return of the hidden page/);
+  // the CLI: a refused compare prints the same two lines and exits 1; an accepted one exits 0
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-compare-"));
+  try {
+    const hp = path.join(tmp, "h.json"), vp = path.join(tmp, "v.json"), h2p = path.join(tmp, "h2.json");
+    fs.writeFileSync(hp, JSON.stringify(H)); fs.writeFileSync(vp, JSON.stringify(V)); fs.writeFileSync(h2p, JSON.stringify(H2));
+    const refused = spawnSync(process.execPath, [TOOL, "--compare", hp, vp], { encoding: "utf8", timeout: 30_000 });
+    assert.equal(refused.status, 1, `a cross-regime compare exits 1\n${refused.stdout}\n${refused.stderr}`);
+    assert.equal(refused.stdout.trimEnd(), tv);
+    const ok = spawnSync(process.execPath, [TOOL, "--compare", hp, h2p], { encoding: "utf8", timeout: 30_000 });
+    assert.equal(ok.status, 0, `two hidden reports compare\n${ok.stdout}\n${ok.stderr}`);
+    assert.equal(ok.stdout.trimEnd(), th);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 // ── the dispatch hook's records: matching frames to the bundle's inbound calls ───────────────────
@@ -1143,12 +1205,12 @@ test("ROMP_UI_BENCH_REQUIRE turns the browser skip into a failure that names the
     const r = spawnSync(process.execPath, ["--test", "--test-name-pattern", "^replay:", THIS_FILE], { env, encoding: "utf8", timeout: 50_000 });
     assert.notEqual(r.status, 0, `the nested run must fail\n${r.stdout}\n${r.stderr}`);
     assert.match(r.stdout, /ROMP_UI_BENCH_REQUIRE is set and this test cannot run: no browser/);
-    assert.match(r.stdout, /# fail 2/, "both replay tests, not a skip");
+    assert.match(r.stdout, /# fail 3/, "all three replay tests (feed, timeline, timeline hidden), not a skip");
     assert.doesNotMatch(r.stdout, /# skipped [1-9]/);
     delete env.ROMP_UI_BENCH_REQUIRE;
     const s = spawnSync(process.execPath, ["--test", "--test-name-pattern", "^replay:", THIS_FILE], { env, encoding: "utf8", timeout: 50_000 });
     assert.equal(s.status, 0, `without the variable the same run skips\n${s.stdout}\n${s.stderr}`);
-    assert.match(s.stdout, /# skipped 2/);
+    assert.match(s.stdout, /# skipped 3/);
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });
   }
@@ -1330,8 +1392,11 @@ test("the Handler subprocess ends and removes its directory when the node proces
 
 // ── a real replay, when a browser is at hand ─────────────────────────────────────────────────────
 
-for (const app of ["feed", "timeline"]) {
-  test(`replay: a synthetic ${app} stream renders in headless Chromium, every frame type measured, no console errors`,
+// The third entry replays the timeline stream into a page that reports itself hidden (--hidden): the same
+// assertions hold (Chromium renders the page, so every settle stamp lands), and the report must show the view
+// expanding nothing under the hold and the return step expanding the held bars.
+for (const { app, hidden } of [{ app: "feed", hidden: false }, { app: "timeline", hidden: false }, { app: "timeline", hidden: true }]) {
+  test(`replay: a synthetic ${app} stream renders in headless Chromium${hidden ? " with the page hidden" : ""}, every frame type measured, no console errors`,
     { ...gate(skipReplay), timeout: 180_000 }, async () => {
       requireOrSkip(skipReplay);
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "romp-ui-bench-replay-"));
@@ -1342,13 +1407,14 @@ for (const app of ["feed", "timeline"]) {
         const jsonOut = path.join(tmp, "report.json");
         const cpuProfile = app === "feed" ? path.join(tmp, "prof", "feed.cpuprofile") : undefined;
         const timersBefore = process.getActiveResourcesInfo().filter((x) => x === "Timeout").length;
-        const report = await replay({ app, framesFile: file, fast: true, jsonOut, cpuProfile, log: () => {} });
+        const report = await replay({ app, framesFile: file, fast: true, hidden, jsonOut, cpuProfile, log: () => {} });
         const timersAfter = process.getActiveResourcesInfo().filter((x) => x === "Timeout").length;
         assert.ok(timersAfter <= timersBefore, `replay left ${timersAfter - timersBefore} timer(s) armed (the handshake timeout must be cleared)`);
         assert.equal(process.listenerCount("SIGINT"), 0, "the signal handlers are removed on the way out");
         assert.equal(report.tool, "ui-bench");
         assert.equal(report.app, app);
         assert.equal(report.fast, true);
+        assert.equal(report.hidden, hidden);
         assert.equal(report.cpuThrottle, 1);
         assert.equal(report.frames.total, frames.length);
         assert.equal(report.frames.misaligned, 0, "every page record matched its frame by length");
@@ -1431,6 +1497,27 @@ for (const app of ["feed", "timeline"]) {
         assert.match(text, new RegExp(`^ui-bench ${app}: ${frames.length} frames`));
         assert.match(text, /console: 0 errors, 0 uncaught exceptions/);
         assert.doesNotMatch(text, /warning:/);
+        // The timeline view's expansion counter, read through the page's module shim (window.module.exports._expandCounts);
+        // the feed page has none. Under --hidden the view expands nothing while the page is hidden, and the return step
+        // (window.__rompBenchHidden.show() plus a visibilitychange) is where the held full frame's bars expand; the judging
+        // band is off in the bench page, so it is never read.
+        if (app === "timeline") assert.ok(report.expand && Number.isInteger(report.expand.bars) && Number.isInteger(report.expand.judging), `the timeline page exposes its expansion counter: ${JSON.stringify(report.expand)}`);
+        else assert.equal(report.expand, null, "the feed page has no expansion counter");
+        if (hidden) {
+          assert.deepEqual(report.expand, { bars: 0, judging: 0 }, "under the hold the view expanded nothing");
+          assert.ok(report.hiddenReturn, "the return step was recorded");
+          assert.ok(Number.isFinite(report.hiddenReturn.ms) && report.hiddenReturn.ms >= 0, `the return's synchronous cost (${report.hiddenReturn.ms} ms)`);
+          assert.ok(report.hiddenReturn.maxMs >= report.hiddenReturn.ms);
+          assert.ok(report.hiddenReturn.expandBars > 0, `the return's catch-up paint expanded the held bars (${report.hiddenReturn.expandBars})`);
+          assert.equal(report.hiddenReturn.expandJudging, 0, "and no judging entry: the band is off");
+          assert.match(text, /page hidden\)/);
+          assert.match(text, /^timeline expansion during the replay .*: 0 bars, 0 judging entries per run$/m);
+          assert.match(text, /^return of the hidden page .*: [\d.]+ ms mean, [\d.]+ ms max; it expanded [1-9]\d* bars, 0 judging entries$/m);
+        } else {
+          assert.equal(report.hiddenReturn, null, "no return step on a visible page");
+          assert.doesNotMatch(text, /page hidden|return of the hidden page/);
+          if (app === "timeline") assert.ok(report.expand.bars > 0, `a visible timeline expands the bars it draws (${report.expand.bars})`);
+        }
         if (cpuProfile) {
           const cp = report.cpuProfile;
           assert.ok(cp, "a CPU profile was taken");
