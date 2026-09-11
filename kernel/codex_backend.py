@@ -829,6 +829,24 @@ class CodexBackend:
         with s.lock:
             return None if s.dead else bool(s.turn_id or s.queue)
 
+    def restart_impact(self):
+        """(live, busy): how many Codex sessions a kernel restart would stop right now, and how many of
+        them it would interrupt. The same shape as SdkBackend.restart_impact; the kernel's _restart_impact
+        sums the two for the update banner's confirm step (review round 1, 2026-09-10: the banner read the
+        SDK backend alone, so a Codex-only box read as nothing to stop). Live is every session not dead:
+        the app-server is this process's child and dies with it. Busy is a turn in flight (turn_id) only,
+        not busy()'s `turn_id or queue`: a queued send is persisted and re-armed by the next kernel's
+        constructor, so the restart does not cut it; the turn is not persisted, and is."""
+        live = busy = 0
+        for _sid, s in self._session_items():
+            with s.lock:
+                if s.dead:
+                    continue
+                live += 1
+                if s.turn_id:
+                    busy += 1
+        return live, busy
+
     # ── control ──────────────────────────────────────────────────────────────────────────────────
     def send(self, sid, text):
         s = self._session(sid)

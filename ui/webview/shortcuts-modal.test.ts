@@ -49,8 +49,10 @@ test("Escape is one level at a time and owned by the shell chain: recording → 
   assert.match(MODAL, /if \(e\.key === "Escape"\) return;\s*\/\/ the shell Escape chain routes it/);
   assert.match(MODAL, /if \(recId\) \{ cancelRecord\(\); return true; \}/);
   assert.match(MODAL, /if \(!back \|\| back\.hidden\) return false;/);
-  // …and the kernel's chain asks this dialog FIRST (topmost, z300)
-  assert.match(KERNEL, /if\(window\.__rompKeysClose&&window\.__rompKeysClose\(\)\)\{closed=true;\}/);
+  // ...and the kernel's chain asks this dialog right after the update banner's armed confirm step
+  // (window.__rompUpdDisarm, which sits over every panel) and before every other panel: the order
+  // is pinned, not just the call
+  assert.match(KERNEL, /if\(window\.__rompUpdDisarm&&window\.__rompUpdDisarm\(\)\)\{closed=true;\}\nelse if\(window\.__rompKeysClose&&window\.__rompKeysClose\(\)\)\{closed=true;\}/);
 });
 
 test("the built-in section keeps the non-command keys — without an Enter-to-send row", () => {

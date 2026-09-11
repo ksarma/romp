@@ -29,7 +29,17 @@ update` starts a session called "update".
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
-`main`, for new commits, and offers each one once as a banner with an Update button. The gear's
+`main`, for new commits, and offers each one once as a banner with an Update button. Update takes
+two clicks: the first replaces the button with a label naming the restart it is about to run, with a
+red Restart button and a Cancel beside it; the second, on Restart, runs it. The label names how many
+sessions the restart stops (every Claude and Codex session this kernel runs) and how many of them it
+interrupts, with a turn in flight or background work running; a tmux session survives a restart and is
+not counted. When the manager runs more than one kernel, the restart stops the other kernels' sessions
+too: the label says so, and does not count them; when the manager does not answer, the label says other
+kernels may restart too. When no manager started the kernel (a `romp-kernel` started by hand), nothing
+restarts: the first click reads "Update romp on disk now; restart it yourself to run it" with a green
+Update confirm, and the second click converges in place when the change is outside kernel code, else
+lands the kernel code on disk and the banner names `romp up` as the step that runs it. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it

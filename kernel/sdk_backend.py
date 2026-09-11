@@ -10707,13 +10707,23 @@ class SdkBackend:
             sessions = list(self.sessions.values())
         inflight = background = 0
         for s in sessions:
-            if s.ended:
+            if s.ended or not self._restart_disrupts(s):
                 continue
             if s.inflight:
                 inflight += 1
-            elif s._bg_tasks or s._subagents:
+            else:
                 background += 1
         return inflight, background
+
+    @staticmethod
+    def _restart_disrupts(s) -> bool:
+        """The one predicate for a session a restart DISRUPTS: a turn in flight, or live background work
+        between its own turns (a Workflow run, a background agent or shell: _bg_tasks / _subagents),
+        which the restart kills with the CLI it runs inside (_drop_live_work). busy_breakdown, busy_count
+        and restart_impact all read it, so the manager's quiet-window gate and the update banner's
+        confirm step name the same sessions (review round 1 of the confirm step, 2026-09-10: the banner
+        read s.inflight alone, and a box of five sessions driving Workflow runs read as cutting none)."""
+        return bool(s.inflight or s._bg_tasks or s._subagents)
 
     def busy_count(self) -> int:
         """How many SDK sessions a restart would DISRUPT right now — a turn in flight OR live
@@ -10722,6 +10732,19 @@ class SdkBackend:
         and the task stream keep."""
         inflight, background = self.busy_breakdown()
         return inflight + background
+
+    def restart_impact(self) -> tuple:
+        """(live, busy): how many SDK sessions a restart-all would stop right now, and how many of them
+        it would interrupt: a turn in flight, or live background work the restart kills (_restart_disrupts,
+        the predicate busy_count reads, so the label and the quiet-window gate name one set of sessions).
+        The update banner's confirm step shows both under its first click (2026-09-10: a click that only
+        meant to focus the dashboard window landed on Update, and one click was the whole gesture). The
+        kernel's _restart_impact sums this with the Codex backend's, which returns the same shape. A
+        session already flagged ended is not stopped again, so it is not counted."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        live = [s for s in sessions if not s.ended]
+        return len(live), sum(1 for s in live if self._restart_disrupts(s))
 
     # ── deploy-drain hold (T121 part 1) ─────────────────────────────────────
     # While a quiet deploy restart is PARKED at the manager, this kernel holds NEW turn starts so
