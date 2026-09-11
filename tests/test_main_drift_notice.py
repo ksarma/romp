@@ -549,7 +549,7 @@ class UiOnlyConverge(unittest.TestCase):
         km._converge_classes = lambda a, b: {"kernel": [], "bus": [],
                                              "skip": ["ui/webview/feed.ts"], "ast_equal": []}
         self.notices, self.banners, self.rebuilds = [], [], []
-        km._sync_notice = lambda msg, ok=True: self.notices.append((msg, ok))
+        km._sync_notice = lambda msg, ok=True, kind="sync": self.notices.append((msg, ok))   # the refusal path passes kind (round 2)
         km._send_to_app = lambda app, payload: self.banners.append(payload)
         km._update_mode = lambda: "ask"
         km._kernel_sha = lambda: "cur-sha"
@@ -718,8 +718,12 @@ class PersistentDismissal(unittest.TestCase):
 
     def test_update_check_route_blanks_dismissed_offers(self):
         src = inspect.getsource(km)
-        self.assertIn('"tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0])', src,
+        self.assertIn('tag = "" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]', src,
                       "a page load can no longer re-derive a dismissed offer")
+        # the answer's own `tag` line, anchored on the `mode` line under it: '"tag": tag,' alone matches the five
+        # report dicts _run_update writes as well (review round 7, 2026-09-10)
+        self.assertEqual(src.count('"tag": tag,\n                    "mode": _update_mode(),'), 1,
+                         "and the answer carries the filtered tag (the counts are read only when it, or a drift sha, is set)")
 
 
 class PlainInstallCopy(unittest.TestCase):
@@ -790,7 +794,7 @@ class ConvergePullStep(unittest.TestCase):
 
         env = {"HTTP_PROXY": proxy, "http_proxy": proxy} if proxy else {}
         with mock.patch.object(km.subprocess, "run", side_effect=fake_run), \
-             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True: rec.notices.append((m, ok))), \
+             mock.patch.object(km, "_sync_notice", side_effect=lambda m, ok=True, kind="sync": rec.notices.append((m, ok))), \
              mock.patch.object(km, "_kernel_sha", return_value="cur-sha"), \
              mock.patch.object(km, "_kernel_code_changed", return_value=True), \
              mock.patch.object(km, "_rebuild_dist", return_value=(True, "")), \

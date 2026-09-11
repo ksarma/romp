@@ -90,7 +90,7 @@ test('the qualified rule is the code\'s: the focused card at its mark, the cards
   assert.ok(layout.includes('put(fit, focusTop);'), 'the focused card holds its mark');
   assert.ok(layout.includes('const top = Math.min(tops.get(it) as number, ceiling - it.height);'), 'a card above the focus moves up');
   assert.ok(layout.includes('negative, how far above it the focus moved it (below)'), 'the module comment amends its own "never up" the way the note now does');
-  assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const { it } of marked) put(it, Math.max(it.desired as number, floor));'), 'without a focus the push-down rule stands as the note\'s "without a focus" says');
+  assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const it of marked) put(it, Math.max(it.desired as number, floor));'), 'without a focus the push-down rule stands as the note\'s "without a focus" says');
   assert.ok(panel.includes('if (pull >= 1) { node.dataset.pulled = "1"; node.style.setProperty("--fc-pull", pull + "px"); }'), 'the panel marks a card the focus moved up');
   for (const [name, css] of sheets) {
     assert.ok(css.includes('.fc-margin .fc-card[data-pulled]::after {'), name + ': the leader down');

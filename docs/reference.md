@@ -20,7 +20,7 @@ update` starts a session called "update".
 | `romp new -t <name>` | Start it as a terminal (tmux) session and attach; add `--detach` to leave it running |
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
-| `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
+| `romp refresh` | Restart every kernel immediately through the manager, then the postal bus, picking up new code (cut turns resume with their history). Exits 3 when the manager answered and refused the restart (see [The manager's control port](#the-managers-control-port)): nothing restarted, the bus included |
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them at once (every deploy restart is immediate; boot reconcile resumes the cut turns with their history); a remote stopped by `romp down` is synced and left stopped |
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
@@ -29,7 +29,17 @@ update` starts a session called "update".
 | `romp help` | The same list, from the terminal |
 
 **Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
-`main`, for new commits, and offers each one once as a banner with an Update button. The gear's
+`main`, for new commits, and offers each one once as a banner with an Update button. Update takes
+two clicks: the first replaces the button with a label naming the restart it is about to run, with a
+red Restart button and a Cancel beside it; the second, on Restart, runs it. The label names how many
+sessions the restart stops (every Claude and Codex session this kernel runs) and how many of them it
+interrupts, with a turn in flight or background work running; a tmux session survives a restart and is
+not counted. When the manager runs more than one kernel, the restart stops the other kernels' sessions
+too: the label says so, and does not count them; when the manager does not answer, the label says other
+kernels may restart too. When no manager started the kernel (a `romp-kernel` started by hand), nothing
+restarts: the first click reads "Update romp on disk now; restart it yourself to run it" with a green
+Update confirm, and the second click converges in place when the change is outside kernel code, else
+lands the kernel code on disk and the banner names `romp up` as the step that runs it. The gear's
 **Automatic updates** control (under *Updates & debug*) decides what happens: *Check and
 ask* shows the banner, *Install automatically* converges on its own, and *Off* stops both the
 checks and the banners, so a machine whose owner merges to `main` all day hears nothing about it
@@ -536,8 +546,37 @@ chat shows the CLI's own reply.
 The backends apply the change differently. A Claude Code session switches
 model live but reloads to apply a new effort: the chat shows "Reloading
 session…" and the effort badge shows switching-dots until the reload completes,
-and a session that is mid-turn reloads when the turn ends. A Claude Code (tmux)
-session gets the CLI's own command typed into its pane. `/model` there asks for a
+and a session that is mid-turn reloads when the turn ends. A session with live
+subagents or background tasks holds the pick rather than cutting them off, and
+reloads at the end of the first turn that finds none left: the CLI starts a turn
+of its own to deliver each finished task's result, so in the usual case that is
+the turn right after the last one ends; if no turn follows, the session's next
+turn. One ordering is not covered: when a second task finishes while the turn
+delivering the first one's result is still running, that turn's end finds no
+work left and reloads, and the turn the CLI then starts to deliver the second
+result is cut by the reload. While the pick is held the chat says so in place of the reloading line
+("The effort pick is waiting on 2 subagents and 1 background task", then "The
+effort pick applies when this turn finishes" once the work is done, or "applies
+when the next turn finishes" when no turn is open at that point), and the badge
+keeps showing the value the session runs with a small mark beside it. Its menu,
+the tab menu's Billing flyout and the tab tooltip's rows all read the hold the
+same way: the check mark stays on the value you picked, the value the session
+runs meanwhile is tagged "running", and a tooltip row reads "high until the
+background work finishes, then max".
+The same hold and the same line apply to a permission-mode pick into bypass,
+the first fast-mode opt-in and a billing switch. Once nothing holds them, a
+mode pick into bypass and the first fast-mode opt-in reload the way an effort
+pick does: the chat shows the same reloading line while the reload runs, and the
+mode or fast badge dims and pulses until it lands. A billing switch's reload
+shows no chat line and no badge pulse; the tab menu's Billing flyout sub-line
+reads "applying…" until it lands. The reload that takes a refused opt-in's flag
+back off shows no reloading line and no pulse either. When the CLI refuses that
+opt-in, the reload that takes the flag back off is held the same way, and the
+line says the fast mode control is restored when the work finishes, or when
+the turn does once no work is running. A pick equal to what the
+session already runs with (the same effort, the same billing) reloads nothing.
+A Claude Code (tmux) session
+gets the CLI's own command typed into its pane. `/model` there asks for a
 confirmation, which the kernel accepts on your behalf so the pane is never
 left waiting on a keystroke the dashboard cannot send; `/effort` and `/fast`
 apply in place.
@@ -675,9 +714,12 @@ describes such a box truthfully and stays quiet; `ROMP_EXPECTED_AUTH=login`
 flags every unpicked session's keyed landing in the Log panel, and the session
 keeps billing the key); without a helper, the declaration seeds what an
 unpicked session is *taken* to bill: the Billing row's fallback before the CLI
-has reported, the picker's written-out choice, and the spend pause's reading of
-a session that reports nothing all read the declared side, where they read the
-login before. One explicit gear **Billing** pick supersedes
+has reported and the picker's written-out choice both read the declared side,
+where they read the login before. The spend pause's reading of a session that
+reports nothing, a Claude Code (tmux) session or a Claude Code session before
+its init has landed, reads only whether a helper is configured, never the
+declaration: such a session is taken to bill the key on a box with a helper and
+the login on a box without one. One explicit gear **Billing** pick supersedes
 the declaration from then on: the remembered pick becomes the box's expectation
 and the env var goes inert (it described the unpicked design), so re-seeded
 spawns are judged against your pick, never against stale doctrine. The one
@@ -857,6 +899,83 @@ line you added to the unit or the plist by hand; a drop-in survives it (see
 service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
 the two collide.
+
+### The manager's control port
+
+The manager (`romp up`, or the login service) listens on loopback at `:7432`
+(`ROMP_MANAGER_PORT`). `GET /status` is open: `romp status` and the probes read
+it. Every request that changes state needs a serve token in an `X-Romp-Token`
+header:
+
+- `POST /restart-all`: `romp refresh`, the automatic converge, the release
+  self-update, and the dashboard's Restart, which posts the kernel's own
+  `/restart` and is forwarded here by the kernel.
+- `POST /restart`: `romp-manager restart [kernel]`, one kernel. No romp verb and
+  no front end uses it.
+- `POST /stop`: `romp down`.
+- `POST /ensure`: a front end asking for a kernel (the VS Code extension).
+
+The token is the same 0600 file the kernel gates its own writes with
+(`~/.local/state/romp/serve-token`, or `ROMP_SERVE_TOKEN`). The manager accepts
+the token of every kernel it manages: the primary root's file, and each
+`kernels.json` profile's own `<stateDir>/serve-token`, since a profile kernel
+serves with its own root's token and presents it when its dashboard's Restart or
+its converge posts here. Every file is read fresh on every request, so a
+reminted token is honoured without a manager restart. A request with no token,
+or one the manager does not hold, is answered 401 with a one-line body, and the
+manager logs one line naming the address and the door, never the token.
+
+When nothing is at the primary root's token path as the manager starts, it mints
+the file itself (the kernel's shape: 18 random bytes as base64url, mode 0600,
+written whole) before its port opens, so a manager whose kernel never got as far
+as minting one can still be stopped. While a token file that does exist cannot
+be read by the manager (another owner, an unreadable mode, a directory), or is
+a symlink (the manager reads no token through a link, as the kernel does),
+every state-changing request is answered 503, saying so, until the file is
+repaired: the doors never open on a missing token. A readable file with a loose
+mode is accepted as it is; the kernel tightens the mode at its next start.
+Before this gate (2026-09-10) a local process restarted every session by
+posting to the port.
+
+`romp refresh`, `romp down`, the dashboard's Restart, the release self-update,
+the automatic converge and the VS Code extension all send the header. When the
+manager refuses one of them anyway, the refusal is said where that caller
+reports. The manager's control client (`romp refresh`, `romp-manager
+restart-all` and `romp-manager restart [kernel]`) exits 3 when the manager
+answered and refused, against 1 when nothing answered, prints the manager's
+answer, and puts one line on stderr naming the door, the status and the way
+out (`romp down` runs the same client but captures its output, composes its
+own line from it and exits 1; see Stopping): on a 401, whether it sent the
+token it read from the file under
+its own state root (then the manager runs under another root, and the fix is
+to run the command from a shell whose state root, `ROMP_STATE_DIR` or
+`XDG_STATE_HOME`, is the manager's) or from `ROMP_SERVE_TOKEN` (then unset or
+correct it), or found none to send (then the file and the reason); on a 503,
+the manager's own file to repair. `romp refresh` bounces the postal bus only
+after the manager took the request, so a refused refresh restarts nothing.
+The dashboard's Restart answers the page with the refusal instead of acking a
+restart that will not happen, and both it and the converge put a notice in the
+bell naming the status and the way out (`romp refresh` from a shell whose
+state root is the manager's: the client reads the token file under its own
+root, or `ROMP_SERVE_TOKEN` when set, so a shell under another root sends a
+token the manager does not hold), with one line on the kernel's stderr that
+names where the kernel read its token and a `manager-refused-restart-all` row
+in `restart-audit.jsonl`; `romp down` prints the refusal and the remedy (below,
+under Stopping); the extension's toast says whether this window found a token
+and where it read it, and, for a token read from the file, that the manager
+runs under another state root. A script of your own that posts to the port
+needs the header too. Read the file and hand it to curl on stdin rather than
+in argv, which every account on the machine can read:
+
+    printf 'header = "X-Romp-Token: %s"\n' "$(cat ~/.local/state/romp/serve-token)" \
+      | curl -fsS -X POST --config - http://127.0.0.1:7432/restart-all
+
+The manager and the pieces that call it ship in one checkout, so a `romp
+refresh` after an update moves them together. A caller on older code than the
+manager (another checkout's `romp` on PATH, or a script of your own without the
+header) is refused with 401, and the manager's log names it; `romp refresh`
+from the checkout the manager runs from recovers, and the script needs the
+header above.
 
 ### The kernel's Python
 
@@ -1171,11 +1290,29 @@ it run every time:
   `romp down: the login service did not stop` and exits 1.
 - The manager probe: `romp-manager status` on the control port (`:7432` by
   default). A manager that answers is stopped through its own control endpoint
-  (`romp-manager down`, a `POST /stop`) and given up to seven seconds to leave
-  (the manager itself waits five for its kernels, then sends SIGKILL). One
-  still answering after that: `romp down` releases the hold, removes the
-  marker, prints `romp down: a manager is still running on :<port> (pid <pid>)`,
-  which says to stop it by hand and run `romp down` again, and exits 1.
+  (`romp-manager down`, a `POST /stop` carrying the serve token; see [The
+  manager's control port](#the-managers-control-port)). Two outcomes:
+  - The manager answers and refuses (HTTP 401: the manager does not hold the
+    token this romp sent, so it runs under another state root or belongs to
+    another romp, or this romp found no token to send, at its token file or in
+    `ROMP_SERVE_TOKEN`, and sent none; HTTP 503: the manager cannot read its
+    own token file). Said at once, with no poll: `romp down` releases the hold,
+    removes the marker, writes a `down-failed` row naming the status, prints
+    `romp down: the manager on :<port> refused the stop (HTTP <status>: <the
+    manager's words>). <the remedy> The kernel keeps running.` and exits 1. The
+    remedy names where this romp read its token: for the file under its state
+    root it says to check `ROMP_STATE_DIR` and `ROMP_MANAGER_PORT`; for
+    `ROMP_SERVE_TOKEN` it says to unset the variable in this shell or set it to
+    the manager's token, or check `ROMP_MANAGER_PORT` (the state root changes
+    nothing while the variable is set); when this romp found no token, it
+    names the file and the reason and says to point `ROMP_STATE_DIR` at the
+    manager's state root or set `ROMP_SERVE_TOKEN`; on a 503 it says to repair
+    the manager's file.
+  - The manager takes the stop and is given up to seven seconds to leave (the
+    manager itself waits five for its kernels, then sends SIGKILL). One still
+    answering after that: `romp down` releases the hold, removes the marker,
+    prints `romp down: a manager is still running on :<port> (pid <pid>)`,
+    which says to stop it by hand and run `romp down` again, and exits 1.
 - The kernel probe: `GET /healthz` on the kernel port (`:29855` by default). A
   kernel the earlier steps already asked to stop gets three seconds of drain
   first. One still answering (it ran with no manager, or outlived the
@@ -2546,15 +2683,10 @@ pre-restart state is not carried over: an empty ring is no
 evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the Claude Code backend from starting.
 
-Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
-kernel that boots without a state file seeds one from that ledger's last 64 KB,
-once, and leaves the ledger alone; once the state file exists the ledger is
-never read again and can be deleted.
-
 ### The bottom bar's indicator
 
 The dashboard's bottom bar carries an API cell (a dot and a word beside the
-spend figures) that is computed independently of this signal, from two things
+usage readout) that is computed independently of this signal, from two things
 the kernel owns directly:
 
 - Each alive session's newest transcript API-error record, latched until the
@@ -2572,11 +2704,14 @@ the kernel owns directly:
   reads it); both ride every later write until a newer spend un-pause
   replaces them, and a spend-limit record older than `liftedAt` engages
   nothing, since the lift already ruled on it. A limit or manual un-pause
-  records neither. When a limit pause lifts while a spend-limit record is
-  standing, the file reads unpaused for one cycle before the spend pause
-  engages: each writer rules on one signal per cycle, and the spend engage
-  runs before the lift in the pusher's order, so it sees a paused file and
-  rules on the record the next cycle.
+  records neither. A limit pause lifts when the usage report stops naming an
+  account-wide window at 100%, a manual pause when any live session not
+  blocked on an API error writes to its transcript after the pause began.
+  When a limit pause lifts while a spend-limit record is standing, the file
+  reads unpaused for one cycle before the spend pause engages: each writer
+  rules on one signal per cycle, and the spend engage runs before the lift in
+  the pusher's order, so it sees a paused file and rules on the record the
+  next cycle.
 
 The kernel pushes the cell's frame to shell clients only when it changed, and
 again to a shell that sends `ready`:
@@ -2595,11 +2730,11 @@ on the detail's pause button writes that file, so the frame that answers the
 press carries a moved `seq` whatever state it brings, and the shell clears
 the button's acknowledgment on it; a frame from before the press carries the
 old one. It is an event counter, not a clock, and restarts at 0 with the
-kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class over the
-affected sessions, ties resolved 429, then 529, then offline, then errors.
-`since` is the pause's time when paused, else the earliest affected session's
-event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
-counts alive Claude Code (tmux) sessions, which the cell sees through their
+kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class
+over the affected sessions, ties resolved 429, then 529, then offline, then
+errors. `since` is the pause's time when paused, else the earliest affected
+session's event (a record's timestamp, or the retrying turn's start), else 0.
+`tmux` counts alive Claude Code (tmux) sessions, which the cell sees through their
 transcripts only. Every timestamp is an event's time, never the clock, so an
 unchanged world sends nothing. On-you failures (a too-long prompt, a spent
 model allowance, a dead credential, a refusal) are not counted; a spend cap is,
@@ -2629,8 +2764,9 @@ hold from before `bootAt` ends at the boot, since every bucket comes back
 restarted`; where the tail crosses `bootAt` without such a row (the bucket
 was already `unknown` when the previous kernel stopped, so the boot filed
 nothing), a `kernel restarted` divider is inserted, and it takes none of the
-six slots. A read that fails (a non-2xx, or no answer) shows one line saying
-so in place of the rows, never the previous numbers.
+six slots. A read that fails (a non-2xx, no answer, or an answer without
+the signal's shape) shows one line saying so in place of the rows,
+never the previous numbers.
 
 ## Where things live
 
@@ -2656,7 +2792,7 @@ Three small files there hold settings you set by hand: `session-flags.json`
 (the saved tab and lane order) and `notify-cards.json` (the bell overrides). A
 change to one of them is refused, never written over an empty, when the file
 exists but cannot be read; the refusal reaches the dashboard's error center
-under the `not saved` kind, with the reason, and the same change can be tried
+under the `refused` kind, with the reason, and the same change can be tried
 again. A file whose bytes cannot be parsed (a torn write) is moved aside, never
 deleted, to `<file>.corrupt-<UTC stamp>` in the same directory (a `-1`, `-2`
 suffix when two land in the same second), the store starts over empty, and an

@@ -47,6 +47,20 @@ class BusyCount(unittest.TestCase):
 
     def test_empty_backend_is_quiet(self):
         self.assertEqual(self._backend().busy_count(), 0)
+        self.assertEqual(self._backend().restart_impact(), (0, 0))
+
+    def test_restart_impact_counts_the_sessions_a_restart_stops_and_the_ones_it_interrupts(self):
+        # the update banner's confirm step (2026-09-10): "Restart N sessions now, interrupting M" reads
+        # (N, M) from here. Every unended session is stopped by a restart, in flight or not; M is those
+        # of them the restart interrupts, by the SAME predicate busy_count reads: a turn in flight OR live
+        # background work (a Workflow run between its own turns dies with the CLI it runs inside). An
+        # ended session is not stopped again, so it is not counted
+        be = self._backend()
+        be.sessions = {"a": _sess(1), "b": _sess(0), "c": _sess(2), "d": _sess(1, ended=True), "e": _sess(0, bg=True)}
+        self.assertEqual(be.restart_impact(), (4, 3))
+        self.assertEqual(be.restart_impact()[1], be.busy_count(), "one rule for what a restart disrupts")
+        be.sessions["f"] = _sess(0, ended=True, bg=True)
+        self.assertEqual(be.restart_impact(), (4, 3), "an ended session's leftovers are nobody's work")
 
     def test_kernel_serves_busy_route(self):
         # Source pin: the kernel must expose busy_count as GET /busy (auth-exempt, like /healthz) —

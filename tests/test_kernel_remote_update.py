@@ -171,6 +171,33 @@ class UpdateRemote(unittest.TestCase):
         self.assertNotIn("quiet window", detail)
         self.assertIs(km._remotes["TESTHOST"]["restartExpected"]["quiet"], False)
 
+    def test_a_far_manager_that_refuses_the_restart_is_a_false_verdict_naming_the_refusal_and_the_remedy(self):
+        # review round 2 (2026-09-10): the control client's exit 3 (the far manager ANSWERED and refused, its
+        # write gate) used to fall through to the last-resort path like exit 1 (no answer): the managed kernel
+        # was pkilled out from under the manager that had just answered for it, a false "no owning manager"
+        # row was written, and the detail said "restarting now". The apply now echoes REFUSED and exits with
+        # no kill, and the verdict says what did not happen, the status and the way out, and withdraws the
+        # expectation (nothing restarts).
+        calls = self._wire(apply_out="REFUSED:abcdef0:401")
+        km._remotes["TESTHOST"] = {"host": "TESTHOST"}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        ok, detail = km._update_remote("TESTHOST")
+        self.assertFalse(ok, detail)
+        self.assertIn("synced to abcdef0", detail, "the code did land")
+        self.assertIn("the manager on TESTHOST refused the restart (HTTP 401", detail)
+        self.assertIn("keeps running the old code", detail)
+        self.assertIn("run romp refresh from a shell whose state root is the manager's", detail)
+        self.assertIn("serve-token file", detail)
+        self.assertNotIn("restarting now", detail)
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"], "nothing restarted: the expectation is withdrawn")
+        apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
+        i = apply.index
+        self.assertIn('if [ "$MRC" = 3 ]', apply, "the client's exit 3 is told apart from 1")
+        self.assertIn("manager-refused-restart-all", apply, "the refusal is on the far host's ledger, under the kernel's own action for it")
+        self.assertLess(i('if [ "$MRC" = 3 ]'), i('REFUSED:$NEW'))
+        self.assertLess(i('REFUSED:$NEW'), i('pkill -f "bin/romp-kern[e]l"'), "the REFUSED exit precedes the kill: a refusal never reaches it")
+        self.assertLess(i("manager-refused-restart-all"), i('REFUSED:$NEW'), "the row lands before the tag")
+
     def test_the_managed_path_requires_the_manager_to_own_the_polled_kernel(self):
         # a manager owning nothing (or a bare kernel beside a crash-looping managed one) answers 202
         # and restarts nothing — trusting it turned the update into a silent never-restart (review)
@@ -181,8 +208,9 @@ class UpdateRemote(unittest.TestCase):
         self.assertLess(apply.index('romp-manager" status'), apply.index('restart-all >>'))
         self.assertIn('if [ "$OWNED" = 1 ]', apply)
         # per-branch audit rows: the request row precedes the manager call; the fallback writes its own
-        # row right before pkill, so the cut row joins the request that happened
-        self.assertEqual(apply.count("restart-audit.jsonl"), 2)
+        # row right before pkill, so the cut row joins the request that happened; the third writer is the
+        # refusal row of the REFUSED branch (review round 2, 2026-09-10), between the two
+        self.assertEqual(apply.count("restart-audit.jsonl"), 3)
         self.assertLess(apply.index("p2p-update"), apply.index('restart-all >>'),
                         "the request row lands before the manager request")
         self.assertLess(apply.index('restart-all >>'), apply.index("immediate: no owning manager"),
@@ -505,7 +533,7 @@ class UpdateRemote(unittest.TestCase):
         self.assertLess(apply.index('if [ "$OWNED" = 1 ]'), apply.index(owned_row))
         self.assertLess(apply.index(owned_row), apply.index('restart-all >>'),
                         "a manager beside a marker: the row lands before the restart it attributes")
-        self.assertEqual(apply.count("restart-audit.jsonl"), 2, "one helper writer, one immediate-fallback writer")
+        self.assertEqual(apply.count("restart-audit.jsonl"), 3, "one helper writer, the REFUSED branch's refusal writer, one immediate-fallback writer")
         self.assertEqual(apply.count("arow;"), 2)
         self.assertNotIn("'when':'quiet'", apply, "T269: the p2p row is an immediate request at both sites")
 
@@ -781,6 +809,85 @@ class ApplyHonesty(unittest.TestCase):
         self.assertLess(i("merge-base --is-ancestor"), i("status --porcelain"))
         self.assertLess(i("status --porcelain"), i('reset --hard "$WANT"'))
         self.assertLess(i("STATERR"), i("DIRTYNOW"), "a failed status refuses before the content is even looked at")
+
+    def _far_host_with_a_manager(self, restart_all_rc, restart_all_err):
+        """Stand-ins on the far host: a launcher, a `romp-manager` whose `status` owns the kernel on the polled port
+        and whose `restart-all` exits `restart_all_rc` after `restart_all_err` on stderr, a `node` so the managed
+        branch is taken, and a `pkill` that records instead of killing. The stand-ins live under the repo's bin/
+        (the apply resolves them as $R/bin/...) and are excluded from git status so the tree still reads clean."""
+        import shlex
+        bindir = os.path.join(self.repo, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        with open(os.path.join(self.repo, ".git", "info", "exclude"), "a") as fh:
+            fh.write("bin/\n")
+        with open(os.path.join(bindir, "romp-serve"), "w") as fh:
+            fh.write("#!/usr/bin/env bash\nexit 0\n")
+        with open(os.path.join(bindir, "romp-manager"), "w") as fh:
+            fh.write('#!/usr/bin/env bash\n'
+                     'case "$1" in\n'
+                     '  status) printf \'{"ok": true, "manager": {"pid": 4242}, "kernels": [{"id": "main", "port": %d, "pid": 4243}]}\\n\'; exit 0 ;;\n'
+                     '  restart-all) echo %s >&2; echo \'{"ok": false, "error": "serve token required"}\'; exit %d ;;\n'
+                     '  ensure) echo ensure >> %s; exit 0 ;;\n'
+                     'esac\nexit 1\n' % (km._REMOTE_KERNEL_PORT, shlex.quote(restart_all_err), restart_all_rc,
+                                          shlex.quote(os.path.join(self.home, "ensure-called"))))
+        for name in ("romp-serve", "romp-manager"):
+            os.chmod(os.path.join(bindir, name), 0o755)
+        shim = os.path.join(self.home, "shim")
+        os.makedirs(shim, exist_ok=True)
+        with open(os.path.join(shim, "node"), "w") as fh:
+            fh.write("#!/usr/bin/env bash\nexit 0\n")
+        with open(os.path.join(shim, "pkill"), "w") as fh:
+            fh.write('#!/usr/bin/env bash\necho "pkill $*" >> %s\nexit 0\n' % shlex.quote(os.path.join(self.home, "pkill-called")))
+        for name in ("node", "pkill"):
+            os.chmod(os.path.join(shim, name), 0o755)
+        with open(km.SSH_BIN, "w") as fh:            # the same stub, with the shims first on the apply shell's PATH
+            fh.write('#!/usr/bin/env bash\nfor last in "$@"; do :; done\n'
+                     'exec env -i HOME="%s" PATH="%s:/usr/bin:/bin" ROMP_REPO_ROOT="%s" bash -c "$last"\n'
+                     % (self.home, shim, self.repo))
+        return os.path.join(self.home, ".local", "state", "romp")
+
+    def _audit_rows(self, logdir):
+        try:
+            with open(os.path.join(logdir, "restart-audit.jsonl")) as fh:
+                return [json.loads(x) for x in fh.read().splitlines() if x.strip()]
+        except OSError:
+            return []
+
+    def test_a_far_manager_that_refuses_the_restart_kills_nothing_and_writes_one_refusal_row(self):
+        # review round 2 (2026-09-10), the whole chain against a scratch far repo: the stand-in manager owns the
+        # kernel and answers restart-all with the control client's exit 3 (it printed the manager's 401). The
+        # code is synced, NOTHING is killed or started, the far ledger gets one manager-refused-restart-all row
+        # with the status, the client's line is in update.log, and this side's verdict is the refusal.
+        logdir = self._far_host_with_a_manager(3, "romp-manager: the manager on :7432 answered HTTP 401 to POST /restart-all: it does not hold the serve token this romp read from /x/serve-token")
+        ok, detail, calls = self._drive(self.B, landed=self.B)
+        self.assertFalse(ok, detail)
+        self.assertIn("refused the restart (HTTP 401", detail)
+        self.assertIn("run romp refresh", detail)
+        self.assertEqual(self.g("rev-parse", "HEAD"), self.B, "the code is synced")
+        self.assertEqual(self._scratch(), "", "the scratch ref is cleaned up")
+        self.assertFalse(os.path.exists(os.path.join(self.home, "pkill-called")), "a managed kernel is never killed out from under a manager that answered")
+        self.assertFalse(os.path.exists(os.path.join(self.home, "ensure-called")), "and nothing is started")
+        rows = self._audit_rows(logdir)
+        refused = [r for r in rows if r.get("action") == "manager-refused-restart-all"]
+        self.assertEqual(len(refused), 1, rows)
+        self.assertEqual((refused[0]["door"], refused[0]["status"]), ("/restart-all", 401))
+        self.assertIn("p2p-update from", refused[0]["reason"])
+        self.assertEqual([r["action"] for r in rows], ["p2p-update", "manager-refused-restart-all"],
+                         "the request row, then its refusal; no false 'no owning manager' row: %r" % rows)
+        self.assertNotIn("no owning manager", json.dumps(rows))
+        with open(os.path.join(logdir, "update.log")) as fh:
+            self.assertIn("answered HTTP 401 to POST /restart-all", fh.read(), "the client's own line, with the remedy, is on the far host")
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"])
+
+    def test_a_far_manager_that_takes_the_restart_is_the_managed_verdict_with_no_refusal_row(self):
+        # the same stand-ins answering 0: the positive path through the new capture is unchanged
+        logdir = self._far_host_with_a_manager(0, "")
+        ok, detail, calls = self._drive(self.B, landed=self.B)
+        self.assertTrue(ok, detail)
+        self.assertIn("through its manager", detail)
+        self.assertEqual([r["action"] for r in self._audit_rows(logdir)], ["p2p-update"])
+        self.assertFalse(os.path.exists(os.path.join(self.home, "pkill-called")))
+        self.assertEqual(km._remotes["TESTHOST"]["restartExpected"]["sha"], self.B)
 
 
 class UpdateListing(unittest.TestCase):

@@ -22,7 +22,9 @@ test("the Billing submenu renders on availability, not only when both sides exis
 test("both options are listed; the unavailable one is greyed, titled with its reason, and inert", () => {
   assert.match(RENDER, /value: "login", why: avail\.login \? "" : \(avail\.loginWhy \|\| "no Claude login signed in on this machine"\)/);
   assert.match(RENDER, /value: "key", why: avail\.key \? "" : \(avail\.keyWhy \|\| "no apiKeyHelper configured"\)/);
-  assert.match(RENDER, /\(st\.auth === c\.value \? " current" : ""\) \+ \(c\.why \? " disabled" : ""\)/);
+  // (the check reads `current`, the held-pick mark's resolution of st.auth, and a running tag rides beside it; the
+  // disabled class is appended whatever the hold says: auth-selector.test.ts pins the held half)
+  assert.match(RENDER, /\(current \? " current" : ""\) \+ \(running \? " running" : ""\) \+ \(c\.why \? " disabled" : ""\)/);
   assert.match(RENDER, /opt\.title = c\.why;\s*\n\s*opt\.setAttribute\("aria-disabled", "true"\);/);
   assert.match(RENDER, /if \(c\.why\) return;\s*\/\/ a disabled option posts nothing/);
   // the click handler posts setAuth only past that guard

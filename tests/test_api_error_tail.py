@@ -170,7 +170,7 @@ class ApiErrorTailWindow(unittest.TestCase):
         above also holds against a scan that always starts at byte 0, i.e. with the speedup silently gone."""
         p = self._write(recs)
         starts = []
-        real = km._api_error_pass                       # the ONE pass both readers share (round 1, 2026-09-07)
+        real = km._api_error_pass                       # the ONE pass both transcript readers share
 
         def recording(path, start):
             starts.append(start)
@@ -240,7 +240,7 @@ class ApiErrorTailWindow(unittest.TestCase):
         self.assertEqual(km._api_error(p), first)
 
 
-# ── _api_last_failed: the LATCH behind the bottom bar's API health cell (2026-09-07) ─────────────────
+# ── _api_last_failed: the LATCH behind the bottom bar's API health cell ──────────────────────────────
 from datetime import datetime, timezone
 
 T_BASE = 1_700_000_000
@@ -277,7 +277,7 @@ def _ts_tool_result_rec(t, i=0):
 
 class ApiLastFailedLatch(unittest.TestCase):
     """_api_last_failed is _api_error's latched sibling: an isApiErrorMessage record holds until ASSISTANT
-    OUTPUT follows it — through romp's own injected RETRY_MSG and through a human prompt alike, both of which
+    OUTPUT follows it, through romp's own injected RETRY_MSG and through a human prompt alike, both of which
     clear _api_error (a retry rightly un-blocks the session; it says nothing about the API). Same tail-first
     widening, its own (mtime, size) cache; the scan's default keyword leaves _api_error's verdicts untouched."""
 
@@ -339,6 +339,12 @@ class ApiLastFailedLatch(unittest.TestCase):
                     _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
         self.assertTrue(km._api_last_failed(self.p)["tooLong"], "the frame excludes it by this flag")
 
+    def test_a_refusal_record_marks_the_latched_episode_too(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=400, category="invalid_request"),
+                    _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG), _filler(1), _refusal_rec())
+        self.assertIsNone(km._api_error(self.p), "the prompt cleared the blocking verdict before the refusal record")
+        self.assertTrue(km._api_last_failed(self.p)["refusal"], "the latched record is the one the refusal annotates")
+
     def test_the_cache_serves_an_unchanged_transcript_and_busts_on_a_size_change(self):
         self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5))
         e = km._api_last_failed(self.p)
@@ -349,9 +355,9 @@ class ApiLastFailedLatch(unittest.TestCase):
             self.assertIs(km._api_last_failed(self.p), e)
         finally:
             km._api_error_pass = scan
-        self._append(_ts_out_rec(T_BASE + 20))                # the size moved → a fresh scan → a fresh answer
+        self._append(_ts_out_rec(T_BASE + 20))                # the size moved: a fresh scan, a fresh answer
         self.assertIsNone(km._api_last_failed(self.p))
-        self.assertIsNotNone(km._api_error(self.p) is None or True, "the sibling keeps its own cache")
+        self.assertIsNone(km._api_error(self.p), "the sibling reads the same fresh answer")
 
     def test_the_two_caches_are_independent(self):
         self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
@@ -387,7 +393,7 @@ class ApiLastFailedLatch(unittest.TestCase):
     def test_missing_file_is_none(self):
         self.assertIsNone(km._api_last_failed(os.path.join(self.td.name, "absent.jsonl")))
 
-    # ── one pass answers both readers (review round 1, 2026-09-07) ──
+    # ── one pass answers both readers ──
     def _recording(self, passes):
         real = km._api_error_pass
         km._api_error_pass = lambda path, start: passes.append(start) or real(path, start)
@@ -434,7 +440,7 @@ class ApiLastFailedLatch(unittest.TestCase):
             km._api_error_pass = real
 
     def test_the_newest_output_record_s_time_is_kept_beside_the_latch(self):
-        # the limit pause's recovery signal (tests/test_retry_pause_autoresume.py): the time of the newest
+        # the spend pause's recovery signal (tests/test_retry_pause_autoresume.py): the time of the newest
         # ASSISTANT OUTPUT record when it is the newest assistant record, else 0
         self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG),
                     _ts_out_rec(T_BASE + 20))

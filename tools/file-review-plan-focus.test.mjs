@@ -66,7 +66,7 @@ test('the focus as stated is the code\'s: set before the render, given to the ru
   assert.ok(layout.includes('for (const it of above) if (spilled.has(it)) put(it, Math.max(it.desired as number, floor));'), 'and laid below the focus, the marked ones first');
   assert.ok(layout.includes('for (const it of loose) if (spilled.has(it)) put(it, floor);'), 'then the loose ones');
   assert.ok(note.includes('Without a focus the rule is unchanged'));
-  assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const { it } of marked) put(it, Math.max(it.desired as number, floor));'), 'the old rule, verbatim, without a focus');
+  assert.ok(layout.includes('if (f < 0) {\n    for (const it of items) if (it.desired === null) put(it, floor);\n    for (const it of marked) put(it, Math.max(it.desired as number, floor));'), 'the old rule, verbatim, without a focus');
   assert.ok(note.includes('`focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus changed'));
   // the statements before the focus line are Slice 4's (plans/markdown-viewer.md): a mark inside a closed <details> is revealed
   // first, and the pass that follows a reveal reads the opened fold; the focus, then the centering, come next as before

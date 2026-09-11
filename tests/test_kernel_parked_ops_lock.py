@@ -635,6 +635,37 @@ class TheMirrorIsWrittenPerWriter(_Drain):
                              "published from the file's own directory (a same-filesystem rename)")
 
 
+
+class ParkIsLogged(unittest.TestCase):
+    """A park used to leave no trace: a pick that queued behind an open turn and fired minutes later
+    (over the live work the turn had launched, before 2026-09-09) could not be placed in the kernel log
+    at all. One line per park, naming the op and the session, in the kernel's stderr voice."""
+
+    def setUp(self):
+        km._pending_ops.pop(SID, None)
+
+    def tearDown(self):
+        km._pending_ops.pop(SID, None)
+
+    def test_a_park_writes_one_line_naming_the_op_and_the_sid(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._park_op(SID, ("effort", "max"))
+        lines = [l for l in err.getvalue().splitlines() if l.startswith("parked-op:")]
+        self.assertEqual(len(lines), 1, err.getvalue())
+        self.assertIn("effort", lines[0])
+        self.assertIn(SID[:8], lines[0])
+        self.assertIn("depth 1", lines[0])
+        err = io.StringIO()
+        with redirect_stderr(err):
+            km._park_op(SID, ("effort", "low"))                # a repeat pick replaces in place
+            km._park_op(SID, ("send", "a message", None))
+        lines = [l for l in err.getvalue().splitlines() if l.startswith("parked-op:")]
+        self.assertEqual(len(lines), 2, "every park says so, a replacement included")
+        self.assertIn("replaced", lines[0])
+        self.assertIn("depth 2", lines[1])
+
+
 if __name__ == "__main__":
     unittest.main()
 

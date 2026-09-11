@@ -3415,8 +3415,9 @@ class UnknownSessionRefused(_RouteServer):
         # io.open whatever io.open is patched to (3.11 and later call io.open directly), and the names registry
         # is read through pathlib (_names_parts, _names_snapshot). Without that patch the guard saw none of those
         # reads on 3.10, and the control at the end found its open only in a process whose SDK backend was not
-        # yet built (the backend's first build opens the API-health legacy ledger, STATE/api-health.jsonl, the
-        # seed of a missing api-health.json, through builtins.open; the settings reads run on the model-catalog
+        # yet built (the backend's first build reads the API-health state file, STATE/api-health.json, through
+        # Path.read_text, an open of its own that the pathlib patch above catches on 3.10 as well; until the
+        # 2026-09-10 fold it was the legacy ledger's through builtins.open; the settings reads run on the model-catalog
         # thread and never decided the control, round 13): CI's 3.10 job failed
         # the control at 61ee8e50 in an xdist worker where an earlier test had built the backend, while it passed
         # alone and on 3.12, where _name_of's read is the first open (round 12).
@@ -3498,10 +3499,10 @@ class UnknownSessionRefused(_RouteServer):
                 # names the probe file here); then with the fake, so the answer is shown to cost no read
                 for who in spellings:
                     refused(who, "plain")
-                # the SDK backend is built before the guard goes up: its first build opens the API-health legacy
-                # ledger (STATE/api-health.jsonl), an open of its own that would stand in for the names read the
-                # control below expects (in a fresh process on 3.10 at 61ee8e50 it was the only open the control
-                # caught)
+                # the SDK backend is built before the guard goes up: its first build reads the API-health state
+                # file (STATE/api-health.json, through Path.read_text), an open of its own that would stand in for
+                # the names read the control below expects (in a fresh process on 3.10 at 61ee8e50 it was the only
+                # open the control caught, then the legacy ledger's through builtins.open)
                 km._sdk()
                 with mock.patch("builtins.open", guard), mock.patch.object(iolib, "open", guard), path_open:
                     for who in spellings:

@@ -102,7 +102,10 @@ USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's pe
 # `ensure`), and the kernel's own copy of this refusal repeats on bin/romp-manager's respawn backoff
 # (a traceback in manager.log every 10 s at the cap), so both repeat until the file is repaired and
 # stop by themselves once it is, with the token every client holds untouched throughout (review
-# find, 2026-09-08).
+# find, 2026-09-08). The sweep of `serve-token.*.tmp` below runs under the lock; bin/romp-manager's
+# own mint of an absent primary token (mintServeTokenIfAbsent) holds no lock and names its temp
+# `serve-token-mgr.<pid>.tmp`, outside that glob on purpose, so the sweep never unlinks a manager's
+# temp mid-mint (review round 2, 2026-09-10); keep the two names apart.
 def _serve_token_read_or_mint(f, who):
     lock = f.with_name(f.name + ".lock")
 

@@ -68,6 +68,10 @@ FAKE
     tmux_private_socket_dir "$TEST_DIR"   # private socket dir, and the ROMP_CLI_SCOPE=0 floor
     # The manager's registry root is private too: a real `up` writes there.
     export ROMP_STATE_DIR="$TEST_DIR/state"; mkdir -p "$ROMP_STATE_DIR"
+    # The manager's /stop (teardown) takes the serve token: the state root carries one, the env spelling
+    # is dropped so the file is the token for both sides (a synthetic value, never a real token).
+    unset ROMP_SERVE_TOKEN
+    TOK=tmux-scope-suite-token; printf '%s\n' "$TOK" > "$ROMP_STATE_DIR/serve-token"
     # Fake kernel launcher: stays alive without binding a real port.
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
@@ -77,7 +81,7 @@ FAKE
 }
 
 teardown() {
-    curl -fsS -X POST "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
     # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
     # its failure is teardown's status: bats swallows a failing command mid-teardown.

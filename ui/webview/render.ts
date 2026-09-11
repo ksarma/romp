@@ -87,6 +87,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { billingRowText, billingSubText, pickerBillingRow, pickerBillingTitle } from "./billing-label";
+import { pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld } from "./pick-held";   // a settings pick held for live work: the chat line, the badge tips, the tab tooltip's held rows and the menus' marks (pick-held.ts)
 import { userMdHtml } from "./chat-md";
 import { applyMdConfig } from "./md-config";   // the one markdown configuration, shared with the viewer and the anchor map (md-config.ts)
 import { setTip, pruneTip } from "./tip";
@@ -241,7 +242,7 @@ type ChatEvent = (
   // LIVE session reconnect in progress (kernel-driven): an /effort switch reconnects the session to apply
   // (--effort is connect-time), so an animated "Reloading session…" element shows while it re-reads the
   // transcript, clearing when the new client connects (the user 2026-07-06). No ts → off the rail (transient).
-  | { kind: "reconnecting"; effort?: string; ts?: string; uuid?: string }
+  | { kind: "reconnecting"; effort?: string; held?: PickHeld | null; picks?: string[]; switching?: boolean; ts?: string; uuid?: string }
   // LIVE api_retry in progress (kernel-driven, event-based, SDK-only): the API returned a retryable error
   // (rate-limit / overload) and the CLI is backing off + retrying, so the turn stalls. An animated "API
   // retrying…" element (the amber retrying status color) with the live attempt count; clears the instant
@@ -298,7 +299,7 @@ type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: stri
 // which billing sides this box can bill, and why not for the other (kernel _auth_avail, 2026-09-08): the
 // Billing submenu lists both and greys the unavailable one with the reason in its hover
 interface AuthAvail { login?: boolean; key?: boolean; loginWhy?: string; keyWhy?: string; acct?: string; default?: string }
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; awaitingItems?: AwaitRow[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; pickHeld?: PickHeld | null; fastPending?: boolean; modePending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAvail?: AuthAvail; authPickUnavailable?: string; authPickFell?: string; authAcct?: string; authPicked?: boolean; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions): the #bg-tasks box renders it as the header of the in-flight rows (renderBgTasks; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried: retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried: a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4004,19 +4005,42 @@ function renderCompacting(): HTMLElement {
 
 // LIVE session reconnect (the user 2026-07-06): an /effort switch has no SDK runtime control, so romp applies
 // it by RECONNECTING the session (resume = the CLI re-reads the transcript) — otherwise invisible in the chat.
-// While the reconnect is pending, an animated "Reloading session — applying <effort> effort…" element shows
+// While the reconnect is pending, an animated "Reloading session: applying <effort> effort…" element shows
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.
+// While a pick is HELD (ev.held: the kernel waits for the session's live subagents and background tasks
+// to finish before it reloads, since the reload would kill them; 2026-09-09) nothing is reloading yet, so
+// the element says which pick waits and on what, in plain words, with no loader dots: the animation
+// claimed a reload in progress for the whole hold, sometimes hours (review round 1). The kernel sends the
+// event for every held kind (effort, permission mode, fast mode, billing), and the words come from
+// pick-held.ts, keyed on the counts: work running names it; none left says the pick applies when this
+// turn finishes (review round 2).
 function renderReconnecting(ev: Extract<ChatEvent, { kind: "reconnecting" }>): HTMLElement {
   const turn = el("div", "turn turn-reconnecting");
   turn.appendChild(dot("ring"));
   const line = el("div", "reconnecting-line");
-  line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge — "it's romp, working"
   const txt = el("span", "reconnecting-text");
-  txt.textContent = ev.effort ? `Reloading session — applying ${ev.effort} effort…` : "Reloading session…";
+  if (ev.held) {
+    turn.classList.add("turn-reconnecting-held");
+    txt.textContent = pickHeldLine(ev.held);
+    line.title = pickHeldTitle(ev.held);
+  } else {
+    line.appendChild(metaDots());   // the same pulsing accent-blue dots as the switching-dots badge: "it's romp, working"
+    if (ev.switching) {
+      // the landing's live permission-mode switch is in flight (review round 10): nothing reloads for that round
+      // trip, so the line says the mode change is being applied; the title names any reload that follows for the
+      // other picks riding the same reconnect (pick-held.ts)
+      txt.textContent = "Applying the permission mode change…";
+      line.title = switchingTitle(ev.picks);
+    } else {
+      txt.textContent = ev.effort ? `Reloading session: applying ${ev.effort} effort…` : "Reloading session…";
+      // the title names the change the reload applies (ev.picks: effort, permission mode, fast mode; review round 9),
+      // since the element shows for a fast or mode reload too (round 7's gate) and said "effort" for all of them
+      line.title = reloadingTitle(ev.picks, ev.effort);
+    }
+  }
   line.appendChild(txt);
-  line.title = "applying the effort change — reloading the session (it re-reads the transcript); any message you send lands once it's back";
   turn.appendChild(line);
   return turn;
 }
@@ -5466,9 +5490,19 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.cwd) rows.push(["📁", s.cwd]);
   if (s.gitBranch) rows.push(["⎇", s.gitBranch]);
   if (s.workTree) rows.push(["Worktree", s.workTree.dir + (s.workTree.branch ? "  ⎇ " + s.workTree.branch : "")]);
-  if (s.status.mode) rows.push(["Mode", prettyMode(s.status.mode)]);
+  // Mode and Effort while a pick of theirs is HELD for the session's live work (review round 4, 2026-09-10):
+  // the status reports the value the session RUNS, and the row says so and when the pick takes over, in the
+  // Billing row's shape and with the same "until" clause (pick-held.ts heldRowValue). Until round 4 the two
+  // rows showed the running value flat while the Billing row beside them explained its hold, and for a tab
+  // that is not the active one this tooltip is the only place its mode and effort can be read
+  const held = s.status.pickHeld;
+  // the picked value as the row displays it (pickHeld.picked, review round 5; a mode prettified like the running
+  // one), so the row says "high until ..., then max" rather than naming the pick by its kind
+  const pickedOf = (kind: string) => { const p = ((held && held.picked) || {})[kind]; return p ? (kind === "mode" ? prettyMode(p) : p) : undefined; };
+  const heldRow = (kind: string, now: string) => held && held.surfaces.includes(kind) ? heldRowValue(now, kind, held, pickedOf(kind)) : now;
+  if (s.status.mode) rows.push(["Mode", heldRow("mode", prettyMode(s.status.mode))]);
   if (s.status.model) rows.push(["Model", s.status.model]);
-  if (s.status.effort) rows.push(["Effort", s.status.effort]);
+  if (s.status.effort) rows.push(["Effort", heldRow("effort", s.status.effort)]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
   if (be === "sdk" || be === "tmux" || be === "codex") rows.push(["Backend", backendLabel(be)]);   // the shared names (T288); a tmux session keeps its label whatever the offer setting says
@@ -7124,10 +7158,22 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
       const open = menu.querySelector(".ctx-sub");
       if (open) { open.remove(); return; }                       // second click folds the flyout
       const sub = el("div", "ctx-menu ctx-sub");
+      // while the billing pick is HELD for live work the check stays on the pick and the side the CLI reports
+      // (what bills meanwhile) wears the running tag: the one menu convention the badge menus follow too
+      // (pick-held.ts heldMenuMarks, review round 5); not held, the check marks the intent as before.
+      // Auth is the one kind whose status field (st.auth) carries the PICK rather than the running value
+      // (authLive is the CLI's report), so when the held payload names no picked value (an older kernel)
+      // the flyout falls back to it, as it did before round 5 (review round 6); the badge kinds' fields
+      // report the running value and have nothing to fall back on, so their menus check no row then.
+      // The side this box cannot bill (c.why, from st.authAvail) stays greyed with its reason, held or not (2026-09-08)
+      const heldAuth = heldMenuMarks("auth", st.pickHeld, st.authLive || "");
       for (const c of [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login", why: avail.login ? "" : (avail.loginWhy || "no Claude login signed in on this machine") },
                        { label: "API key", value: "key", why: avail.key ? "" : (avail.keyWhy || "no apiKeyHelper configured") }]) {
-        const opt = el("div", "ctx-item" + (st.auth === c.value ? " current" : "") + (c.why ? " disabled" : ""));
+        const current = heldAuth ? (heldAuth.current || st.auth) === c.value : st.auth === c.value;
+        const running = !!heldAuth && heldAuth.running === c.value;
+        const opt = el("div", "ctx-item" + (current ? " current" : "") + (running ? " running" : "") + (c.why ? " disabled" : ""));
         opt.textContent = c.label;
+        if (running) opt.appendChild(runningTag());
         if (c.why) {   // unavailable here: greyed, the reason on hover, inert (the user 2026-09-08)
           opt.title = c.why;
           opt.setAttribute("aria-disabled", "true");
@@ -10158,12 +10204,18 @@ function refillOpenCommentPop(): void {
 /** The open thread's status, in the chat's own Status shape — what the SHARED statusline builders
  *  (syncMetaControls / toggleMetaMenu) consume, so the popover renders the chat statusline's full
  *  element set (mode · model · effort · fast; the user 2026-08-25) through the one code path.
- *  metaPending's switching-dots ride the same keys, sid-scoped. */
+ *  metaPending's switching-dots ride the same keys, sid-scoped. A pick HELD for the thread's live work
+ *  rides too (pickHeld, and effortPending for the armed effort reload; review round 6, 2026-09-10): the
+ *  frame's effort is the value the thread RUNS, and the held marker beside it is what syncMetaControls'
+ *  held mark and tip, and metaRowMarks' check-on-the-pick, read. Without it the popover's effort badge
+ *  check-marked a held pick as applied while the chat's badge tagged it as waiting. */
 function threadMetaStatus(th: CommentThread): Status {
   const stuck = threadStuck(th.state);
   return { state: stuck ? "needsInput" : (threadBusy(th.state) ? "working" : "ready"),
            sinceEpoch: th.sinceEpoch || null, mode: th.mode || "", model: th.model || "",
            effort: th.effort || "default", fast: th.fast || "", backend: "sdk",
+           pickHeld: th.pickHeld || null, effortPending: !!th.effortPending,
+           fastPending: !!th.fastPending, modePending: !!th.modePending,   // the fast and mode reloads' pulse (review round 7)
            modelColor: th.modelColor, effortColor: th.effortColor,
            modelTone: (th as any).modelTone, effortTone: (th as any).effortTone } as Status;
 }
@@ -14582,17 +14634,45 @@ function metaCurrent(kind: MetaKind, st: Status): string {
     : st.mode) || "";
 }
 
-// Is this menu entry the session's current value? Effort matches exactly; the
-// model var holds a display name ("Opus 4.8"), so match on the leading word.
-function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
-  if (kind === "effort") return (st.effort || "").toLowerCase() === value;
-  if (kind === "fast") return (st.fast || "").toLowerCase() === value;   // "cooldown" marks neither entry
+// Does a menu entry name this value of its kind? Effort and fast match exactly ("cooldown" marks neither fast
+// entry); the mode entry's default aliases '' / default / normal; the model var holds a display name
+// ("Opus 4.8"), so match on the leading word. The value compared is the session's current one (isCurrentMeta)
+// or, while a pick of the kind is held, the picked and the running values (metaRowMarks).
+function matchesMeta(kind: MetaKind, current: string, value: string): boolean {
+  const m = (current || "").toLowerCase();
+  if (kind === "effort" || kind === "fast") return m === value;
   if (kind === "mode") {
-    const m = (st.mode || "").toLowerCase();
     if (value === "default") return m === "" || m === "default" || m === "normal";
     return m === value.toLowerCase();                                          // auto / acceptEdits / plan match exactly
   }
-  return (st.model || "").toLowerCase().startsWith(value);
+  return m.startsWith(value);
+}
+// Is this menu entry the session's current value? (the model rule spelled out on st.model: the version rows
+// and the comment popover's parity test read it here)
+function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
+  if (kind === "model") return (st.model || "").toLowerCase().startsWith(value);
+  return matchesMeta(kind, metaCurrent(kind, st), value);
+}
+// A menu row's marks (review round 5, 2026-09-10): the check on the current value, or, while a pick of this kind
+// is HELD for the session's live work, the check on the PICKED value and a "running" tag on the value the session
+// runs meanwhile (the status reports the running one; pickHeld.picked carries the pick), the one convention the
+// tab menu's Billing flyout follows too (pick-held.ts heldMenuMarks). Until round 5 the effort and mode menus
+// check-marked the running value during a hold, so the menu disagreed with the flyout and with the tab tooltip's
+// held rows in the same popover.
+function metaRowMarks(kind: MetaKind, st: Status, value: string): { current: boolean; running: boolean } {
+  const held = heldMenuMarks(kind, st.pickHeld, metaCurrent(kind, st));
+  if (!held) return { current: isCurrentMeta(kind, st, value), running: false };
+  // the running value is compared as it stands, an empty mode included ('' aliases default, as in isCurrentMeta);
+  // a payload without the picked value checks no row
+  return { current: !!held.current && matchesMeta(kind, held.current, value),
+           running: matchesMeta(kind, held.running, value) };
+}
+// The "running" tag a held menu's running row wears: the menu sub-line vocabulary (0.82em at 0.6 opacity, the
+// one sub-line size across every romp menu), never a size of its own
+function runningTag(): HTMLElement {
+  const tag = el("span", "meta-item-sub running-tag");
+  tag.textContent = " " + RUNNING_TAG;
+  return tag;
 }
 
 // "<sessionId>:<kind>" → set when the user picks a value, cleared when the tmux
@@ -14606,6 +14686,32 @@ function isMetaPending(kind: MetaKind, st: Status): boolean {
   const cur = metaCurrent(kind, st);
   if (cur !== p.was || Date.now() > p.until) { metaPending.delete(key); return false; }
   return true;
+}
+// A menu pick arms the local loader (the dots, or the dim .meta-pending pulse for mode and fast) only when the
+// picked value differs from the one the session runs: a click on the row that IS the running value changes
+// nothing (the kernel reconnects nothing for it, and during a hold it is the cancel: the withdrawal clears the
+// hold that hid the loader, which then ran to the 20 s timer though nothing reloaded; review round 6,
+// 2026-09-10). The model kind is exempt: matchesMeta's model rule is a family-prefix match ("Opus 4.8" matches the
+// family row and its Latest row alike), so a match there does not prove no change (Latest on a pinned family, a
+// family row whose default is not the running version), and model is never a held kind.
+function armMetaPending(opSid: string, kind: MetaKind, btn: HTMLElement, was: string, value: string): void {
+  if (kind !== "model" && matchesMeta(kind, was, value)) return;
+  metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
+  btn.classList.add("meta-pending");
+}
+// "<sessionId>:<kind>" → the kind was held on the last statusline sync for that session (syncMetaControls).
+// The frame where the hold ENDS is the event that retires any local loader a pick armed during the hold (a
+// re-pick, or a pick the hold then withdrew): the loader was hidden while held and would otherwise run from
+// that frame to its 20 s timer with nothing reloading. After the hold the server drives each badge: an effort
+// reload's dots from st.effortPending, and a mode or fast pick's dim pulse from st.modePending and st.fastPending
+// (review round 7), from the arm to the landing. The LOCAL loader (armMetaPending's 20 s timer) covers only the
+// sub-second before the first push on a no-hold pick; a pick made during a hold never shows it, and this retires
+// it at the hold-end frame (review round 6). The timer itself is a recorded follow-up.
+const metaHeldLast = new Set<string>();
+function settleMetaHold(sid: string, kind: MetaKind, held: boolean): void {
+  const key = `${sid}:${kind}`;
+  if (held) { metaHeldLast.add(key); return; }
+  if (metaHeldLast.delete(key)) metaPending.delete(key);
 }
 
 // Three pulsing accent-blue dots shown IN the model badge while a /model switch resolves (the user
@@ -14636,12 +14742,17 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
   caret.textContent = "▾";
   btn.appendChild(caret);
   // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
-  setTip(btn, kind === "model" ? "change model (sends /model)"
-    : kind === "effort" ? "change thinking effort (sends /effort)"
-    : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : "change permission mode (shift+tab cycle)");
+  setTip(btn, metaTip(kind));
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
   return btn;
+}
+
+// A badge's standing tip; syncMetaControls restores it when a hold on that kind ends.
+function metaTip(kind: MetaKind): string {
+  return kind === "model" ? "change model (sends /model)"
+    : kind === "effort" ? "change thinking effort (sends /effort)"
+    : kind === "fast" ? "toggle fast mode (sends /fast)"
+    : "change permission mode (shift+tab cycle)";
 }
 
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
@@ -14696,8 +14807,16 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     // model resolves live; effort reconnects to apply (--effort is connect-time) — both drive the switching-
     // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
     // before the first server push (the user 2026-07-06).
-    const pending = (kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || isMetaPending(kind, st);
+    // A pick HELD for the session's live work (st.pickHeld names the kinds; 2026-09-09) is neither
+    // resolving nor reloading: the kernel reports the value the session RUNS for that kind, so the label
+    // shows it, a small mark beside it says a change waits, and the tip names the pick and what it waits
+    // on. Neither the loader dots nor the dim pulse: both claimed a change in progress, and the badge
+    // disagreed with the chat's waiting line beside it (review round 2).
+    const held = !!st.pickHeld && st.pickHeld.surfaces.includes(kind);
+    settleMetaHold(forSid || activeId || "", kind, held);   // the hold-cleared frame retires a loader armed during it
+    const pending = !held && ((kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
+      || (kind === "mode" && !!st.modePending) || (kind === "fast" && !!st.fastPending)   // the reload of a mode or fast pick (review round 7): the dim pulse
+      || isMetaPending(kind, st));
     const showDots = pending && (kind === "model" || kind === "effort");   // both apply via a resolve/reconnect the server tracks
     if (label) {
       if (showDots) {
@@ -14708,6 +14827,17 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
       label.style.color = showDots ? "" : metaColor(kind, st);   // tint the model name / effort by the colormap rank
     }
     b.classList.toggle("meta-pending", pending);
+    b.classList.toggle("meta-held", held);
+    const mark = b.querySelector(".meta-held-mark") as HTMLElement | null;
+    if (held && !mark) {
+      const m = el("span", "meta-held-mark");
+      m.textContent = "•";
+      m.setAttribute("aria-hidden", "true");   // decoration: the pick's words are in the chat's held line and the tip
+      b.insertBefore(m, b.querySelector(".meta-caret"));
+    } else if (!held && mark) {
+      mark.remove();
+    }
+    setTip(b, held && st.pickHeld ? badgeHeldTip(kind, st.pickHeld) : metaTip(kind));   // idempotent: tip.ts wires once
   }
 }
 
@@ -14757,8 +14887,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin
       vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
-      metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
-      btn.classList.add("meta-pending");
+      armMetaPending(opSid, kind, btn, was, value);   // the local loader, only for a value that differs from the running one
     }
     closeMetaMenu();
   };
@@ -14804,7 +14933,10 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     loadModelChoices();
   }
   for (const c of rows) {
-    const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+    // the check on the current value, or during a hold on the PICKED one with the running value tagged
+    // (metaRowMarks, review round 5)
+    const marks = metaRowMarks(kind, s.status, c.value);
+    const item = el("div", "meta-item" + (marks.current ? " current" : "") + (marks.running ? " running" : ""));
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
@@ -14819,6 +14951,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
       const head = el("div");
       if (rowIco) head.appendChild(rowIco);
       head.appendChild(document.createTextNode(c.label));
+      if (marks.running) head.appendChild(runningTag());
       const sub = el("div", "meta-item-sub");
       sub.textContent = c.sub;
       item.appendChild(head);
@@ -14826,8 +14959,10 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     } else if (rowIco) {
       item.appendChild(rowIco);
       item.appendChild(document.createTextNode(c.label));
+      if (marks.running) item.appendChild(runningTag());
     } else {
       item.textContent = c.label;
+      if (marks.running) item.appendChild(runningTag());
     }
     // A model family with more than one live version wears the side-submenu affordance (the user
     // 2026-08-25): hover or an arrow key reveals every version, each directly pickable with the ✓

@@ -64,6 +64,7 @@ ROMP_WORDS = [
     ("dismissal", "a board gesture"),
     ("status check", "announces a form rather than asking a question"),
     ("nudge", "romp's name for this message"),
+    ("key cycle", "romp's name for a credential rotation"),
 ]
 
 
@@ -788,9 +789,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         self.assertIn("3 background tasks you had running were cut off when the claude process that started them "
                       "ended (a restart or crash): a; b. Their completion notifications will never arrive. Check "
                       "whether each is still running before relaunching it; if they aren't needed, carry on.", three)
-        # the reconnect cause reads as the parenthesis after "ended", with "it" the process that ended
-        self.assertIn("ended (a settings switch or a rewind restarted it): a",
-                      sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
+        # the reconnect cause reads as the parenthesis after "ended"; the session reads it, so it passes
+        # the same screen as the rest (review round 1, 2026-09-09: "a rewind or a key cycle restarted it"
+        # named romp's own operation) and says the one thing the session needs: the restart was meant
+        with_cause = sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE)
+        self.assertIn("ended (a deliberate restart): a", with_cause)
+        cause_body = with_cause[with_cause.index("[romp]"):].split("]", 1)[1].lower()
+        for word, why in ROMP_WORDS:
+            self.assertNotIn(word, cause_body, "the cause speaks plainly too (%r: %s)" % (word, why))
+        self.assertNotIn("crash", cause_body, "a reconnect is neither a crash nor an unexplained restart")
 
     def test_the_crash_resume_notices_speak_plainly_past_their_prefix(self):
         # the three crash resume forms (bare; out of memory; killed by signal 9 with no out-of-memory kill on record,
