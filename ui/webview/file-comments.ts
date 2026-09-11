@@ -614,21 +614,40 @@ const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew thi
  *  taken the copy nearest the confirmed place, a different copy when the view's text had moved past the status (the
  *  review, 2026-09-11). */
 type PanelCard = Card & { confirmedAt?: number };
+/** What the save copyUnsureWords asks for does, for a passage comment: the host's comment verb mints a NEW comment on the
+ *  copy the selection is made in, so the guessed card keeps its tag until it is resolved (docs/guide.md says the same).
+ *  The guessed copy's Reveal carries it in its title after the line it names, and the open card says it in a line of its
+ *  own under the words that ask for the save (renderCard), since a button's title never reaches touch: on a phone the
+ *  person who followed the instruction saw the old card still tagged and still asking for the save just made, with
+ *  nothing saying the tag stays until they resolve it (the review, round 2, 2026-09-11). */
+const SAVE_FROM_COPY = "a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
+const SAVE_FROM_COPY_NOTE = "A" + SAVE_FROM_COPY.slice(1) + ".";
+/** The ending of a REGION comment's words for a guessed copy (copyUnsureWords): the recourse a region has, and why the
+ *  two controls its card offers are not it. */
+const REGION_CONFIRM = "To confirm the copy, draw a new region on the figure you mean; this comment keeps its tag until you resolve it. Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. Drawing a region needs a mouse.";
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
  *  open card, since a tag's title never reaches touch. Three states, by the hint the paint took (paintAll): the host's
  *  confirmed place, when the view's text has moved past it (`confirmedAt`: the poll's reload paints before the fresh
  *  status lands, and a refused refresh keeps the old one), the copy nearest THAT place; else no stored position, the
  *  first copy; else the stored position, the copy nearest it. They end by saying how to confirm the copy (the tie-break,
  *  2026-09-11): a comment saved from the right copy stores the position, ordinal and heading path the host confirms by,
- *  and the card offers the Reveal the sentence names (renderCard). */
+ *  and the card offers the Reveal the sentence names (renderCard), with what that save does said under it
+ *  (SAVE_FROM_COPY_NOTE). A REGION comment (`target`) whose embed line ties is in the same state, its rectangle on the
+ *  figure nearest the hint (paintRegions, by regionImageFor), but that recourse is not open to it: reveal() for a region
+ *  scrolls to its picture and never switches to Raw, and Re-place sends the rectangle alone (onRegionDrawn; the host's
+ *  doRetarget keeps the anchor, its position and its copy fields), so the one thing that places a comment on the figure
+ *  meant is a NEW region drawn on it, with a mouse. Its words end with that (REGION_CONFIRM) and its card offers no
+ *  Reveal (the review, round 2, 2026-09-11: a region card wore a Reveal titled for the Raw view that scrolled to the
+ *  picture already framed, over words naming a save a region cannot make). */
 function copyUnsureWords(c: PanelCard): string {
-  return "This passage occurs in the file more than once with the same surroundings, and "
+  const state = "This passage occurs in the file more than once with the same surroundings, and "
     + (c.confirmedAt !== undefined
       ? "the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted"
       : c.anchorAt === null
       ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
-      : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
-    + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
+      : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted");
+  if (c.target) return state + ", not a confirmed one. " + REGION_CONFIRM;
+  return state + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
 /** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branches as
  *  copyUnsureWords, so the mark and the card never disagree about which place the copy is the nearest to, or whether a
@@ -5681,6 +5700,9 @@ class Panel {
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
     if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
+    // ...and for a passage comment what the save those words ask for does (SAVE_FROM_COPY_NOTE): the Reveal's title says it
+    // too, and a button's title never reaches touch either; a region's words end with its own recourse (REGION_CONFIRM)
+    if (this.unsureCopies.has(c.id) && !c.target) card.appendChild(el("div", "fc-note", SAVE_FROM_COPY_NOTE));
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
@@ -5705,16 +5727,17 @@ class Panel {
         const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
         rv.title = "Show the passage in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "");
         acts.appendChild(rv);
-      } else if (c.anchor && loc && loc.range && this.unsureCopies.has(c.id)) {
+      } else if (c.anchor && !c.target && loc && loc.range && this.unsureCopies.has(c.id)) {
         // a guessed copy (copyUnsure) is painted, so the branch above offers nothing, but its words end by asking the person
         // to reveal it and save again from the right copy (copyUnsureWords), so the control they name is offered here too:
         // Reveal switches to Raw and scrolls to the guessed copy, the other copies near it, where a selection places a
         // comment on the copy it is made in. Before this the card named a button it did not have (the review, 2026-09-11;
-        // ui/CLAUDE.md: a compact view never dead-ends). The title says what that save does: the host's comment verb mints
-        // a new comment, so this card keeps its tag until it is resolved (docs/guide.md says the same)
+        // ui/CLAUDE.md: a compact view never dead-ends). The title says what that save does (SAVE_FROM_COPY; the open card
+        // says it in a line too, above). A passage comment's alone: a region's words name no Reveal (REGION_CONFIRM), and
+        // reveal() for a region scrolls to its picture, which paintRegions has framed already, never to Raw, so a Reveal
+        // titled for Raw was false of it (the review, round 2, 2026-09-11)
         const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
-        rv.title = "Show this copy in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "")
-          + "; a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it";
+        rv.title = "Show this copy in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "") + "; " + SAVE_FROM_COPY;
         acts.appendChild(rv);
       }
     }

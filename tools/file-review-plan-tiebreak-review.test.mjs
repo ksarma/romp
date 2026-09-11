@@ -2,13 +2,18 @@
 // anchors follow-on note still said a passage still at its position costs the refresh no scan, a sentence from before
 // the tie-break: since it, the refresh stamps `ordinal`, `copies` and `section` on every comment whose position names
 // its copy, and the stamp needs the count of the whole anchor's matches, so such a comment costs one classification
-// pass per distinct anchor on every write (a fresh process each), charged to the same budget and skipped past it with
-// no note; the paragraph's own stamping sentence conceded the cost two sentences on. And decision 51 said a tie with
-// no position still refuses, unconditionally, where locateStored runs the ordinal rule and the section rule before the
-// hintless refusal, so a comment whose position an editor dropped is confirmed from its fields and only a comment with
-// neither position nor field is refused. The plan now says both; this module holds each corrected sentence to the
-// source that makes it true: fullMatches's charge and memo, the stamping pass of refreshAnchorAts, and locateStored on
-// a tied text. Synthetic: the repo's own text and an invented report, no session data.
+// pass per distinct anchor on every write (a fresh process each), charged to the same budget; past it the comment keeps
+// the fields it has, or none, and stderr says how many were left, once per write (noteUnstamped, the review's own fix:
+// before it the skip was silent). The paragraph's own stamping sentence conceded the cost two sentences on. And
+// decision 51 said a tie with no position still refuses, unconditionally, where locateStored runs the ordinal rule and
+// the section rule before the hintless refusal, so a comment whose position an editor dropped is confirmed from its
+// fields and only a comment with neither position nor field is refused. The plan now says both; this module holds each
+// corrected sentence to the source that makes it true: fullMatches's charge and memo, the stamping pass of
+// refreshAnchorAts and the note told after it, and locateStored on a tied text. The review's second round found this
+// module's first cut pinning the plan's word that the skip past the budget leaves no note, a sentence the first round's
+// fix had made false, with a source pin over the stamping loop alone, which ends before the note is told; the pin now
+// reads the note's source and the plan says what stderr says. Synthetic: the repo's own text and an invented report,
+// no session data.
 // Run: node --test tools/file-review-plan-tiebreak-review.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,16 +72,17 @@ const span = (from, confirmed, by) => ({ from, to: from + ANCHOR.quote.length, c
 
 // ── the cost of a passage still at its position ─────────────────────
 
-test('the host paragraph and the note say a passage still at its position costs its copy fields one classification pass per distinct anchor on every write, charged to the budget and skipped past it with no note; the old sentence is gone', () => {
-  assert.ok(op.includes('is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`); a passage still at its position costs no scan to place, only the one classification pass per distinct anchor that stamping its copy fields takes on every write since the tie-break (below; before it such a passage cost nothing), and past the budget the remaining comments keep their position and stderr says how many, once per write, and a comment whose stamp the budget refuses keeps the fields it has, with no note; and a stored comment\'s anchor is located with its `anchorAt` as the hint.'));
+test('the host paragraph and the note say a passage still at its position costs its copy fields one classification pass per distinct anchor on every write, charged to the budget, and past it keeps the fields it has while stderr says how many, once per write; the old sentences are gone', () => {
+  assert.ok(op.includes('is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`); a passage still at its position costs no scan to place, only the one classification pass per distinct anchor that stamping its copy fields takes on every write since the tie-break (below; before it such a passage cost nothing), and past the budget the remaining comments keep their position and stderr says how many, once per write, and a comment whose stamp the budget refuses keeps the fields it has, or none, and stderr says how many of those, once per write; and a stored comment\'s anchor is located with its `anchorAt` as the hint.'));
   assert.ok(!op.includes('a passage still at its position costs no scan,'), 'the host paragraph no longer says the passage costs no scan at all');
+  assert.ok(!op.includes('with no note'), 'and no longer says a refused stamp leaves no note: the host tells how many, once per write (noteUnstamped, the review\'s fix), and the record said the silence the fix ended');
   assert.ok(note.includes("every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one budget per write, and a passage still at its position costs none to place, one classification pass per distinct anchor for its copy fields on every write since the tie-break (below)."));
   assert.ok(!note.includes('costs none. '), 'the note no longer stops at costs none');
   // the paragraph's stamping sentence, which the corrected sentence agrees with
   assert.ok(op.includes('The refresh stamps the three fields on every comment whose position names its copy once its pass is done (`stampCopy`), under the same budget'));
 });
 
-test('the stamping pass of refreshAnchorAts scans every seated comment through the budget and skips past it without a note; fullMatches charges one pass per distinct anchor and text and none for a repeat', () => {
+test('the stamping pass of refreshAnchorAts scans every seated comment through the budget, tells nothing per comment, and once done counts the stamps the budget refused and tells stderr how many, once per write; fullMatches charges one pass per distinct anchor and text and none for a repeat', () => {
   const refresh = fn(host, 'refreshAnchorAts');
   // the placing pass seats a comment still at its position without a scan...
   assert.ok(refresh.includes('if (at !== undefined && sitsAt(text, c.anchor, at)) { seated.push(c); continue; }'), 'seated without a scan to place');
@@ -91,8 +97,30 @@ test('the stamping pass of refreshAnchorAts scans every seated comment through t
     'if (cut || more) continue;',
     'stampCopy(c, text, at, hits, markdown);',
   ], 'the stamping pass');
-  assert.ok(!loop.includes('process.stderr'), 'past the budget the stamp is skipped with no note');
+  assert.ok(!loop.includes('process.stderr'), 'the loop tells nothing per comment: the count is told once, after it');
   assert.ok(!loop.includes('budget.unscanned') && !loop.includes('budget.skipped'), 'and it is not counted among the positions kept');
+  // ...and once the loop is done, the stamps the budget refused are counted and told, once per write. The review's fix:
+  // the first cut skipped them silently, and this module's first cut pinned the plan saying so with the slice above,
+  // which ends at the loop's closing brace, before the note; the pin reads past it now.
+  const afterLoop = refresh.slice(a + loop.length);
+  inOrder(afterLoop, [
+    'budget.unstamped = seated.filter((c) => stampRefused(text, c.anchor)).length;',
+    'noteUnstamped(budget);',
+  ], 'after the stamping pass');
+  assert.ok(refresh.includes('budget.unstamped = 0;'), 'the count is reset per pass, as the position counts are');
+  const noted = fn(host, 'noteUnstamped');
+  inOrder(noted, [
+    'if (budget.unstamped === budget.keptUnstamped) return;',
+    'budget.keptUnstamped = budget.unstamped;',
+    'if (budget.unstamped) {',
+    "process.stderr.write(`file-comments-host: ${budget.unstamped} comment(s) kept the copy fields they had, or none: counting the copies of their passage would scan past the refresh's budget for one write\\n`);",
+  ], 'noteUnstamped: told when the count changes, so once per write (the measure\'s pass and the stage\'s pass share the budget and the memos)');
+  assert.ok(host.includes('refreshBudget.keptUnstamped = 0;'), 'what stderr was last told starts at none, so the first refusal of a write is told');
+  // the host suite drives the note from the real host (a near-cap file with more seated anchors than one write's budget
+  // scans) and reads it off stderr by this sentence, so the two suites cannot drift apart on what the host says
+  const hostSuite = read('tools', 'file-comments-host-tiebreak-review.test.mjs');
+  assert.ok(hostSuite.includes("comment\\(s\\) kept the copy fields they had, or none: counting the copies of their passage would scan past the refresh's budget for one write/g"), 'the host suite reads the same sentence');
+  assert.ok(hostSuite.includes('unstampedNotes(res.stderr), [left.length]'), 'and asserts it is written when the budget refuses a stamp');
   // fullMatches: the pass is charged once per distinct anchor and text; a repeat is the memo's
   const budget = { left: 48_000_000 };
   const first = fullMatches(TEXT, ANCHOR, 64, budget);
@@ -114,7 +142,8 @@ test('decision 51 says a tie with no position refuses only when neither field te
   assert.ok(decision51.includes('a tie with no position still refuses `anchor-ambiguous` when neither field tells (the fields settle it as for any other comment, so one whose position an editor dropped is confirmed from its ordinal or its heading path, and a comment the CLI made, which carries neither until the next host write stamps it, is refused as before), and the other editors write the object back whole, so the fields survive them (docs/adr/0002: six additive fields now).'));
   assert.ok(!decision51.includes('still refuses, and'), 'the unconditional clause is gone');
   assert.ok(decision51.includes('`tools/file-review-plan-tiebreak-review.test.mjs` (the review\'s two corrections to this record: the stamp\'s pass on a passage still at its position, and the fields settling a tie with no position)'));
-  assert.ok(tests.includes('`tools/file-review-plan-tiebreak-review.test.mjs` holds the tie-break review\'s two corrections to the record against the host: a passage still at its position costs its copy fields one classification pass per distinct anchor on every write, charged to the budget and skipped past it with no note (the stamping pass of `refreshAnchorAts`, `fullMatches`\'s memo), and a tie with no position is settled by the fields before it is refused (`locateStored`).'));
+  assert.ok(tests.includes('`tools/file-review-plan-tiebreak-review.test.mjs` holds the tie-break review\'s two corrections to the record against the host: a passage still at its position costs its copy fields one classification pass per distinct anchor on every write, charged to the budget, and past it keeps the fields it has while stderr says how many, once per write (the stamping pass of `refreshAnchorAts`, `noteUnstamped`, `fullMatches`\'s memo), and a tie with no position is settled by the fields before it is refused (`locateStored`).'));
+  assert.ok(!tests.includes('with no note'), 'the Tests section no longer says the skip leaves no note');
   assert.ok(!decision51.includes('\u2014'), 'decision 51 has no em dash');
   // the host paragraph already scoped the refusal to the fall-through; the decision now agrees with it
   assert.ok(op.includes('else the match nearest the position, a guess, and a tie with no position refuses `anchor-ambiguous` as before'));

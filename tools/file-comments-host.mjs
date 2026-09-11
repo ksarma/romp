@@ -298,9 +298,13 @@ export const ANCHOR_CTX_CAP = 480;
 // every write, after the positions have had the budget, so a write that moved none of a sidecar's passages
 // costs one pass per distinct anchor and no more, and the budget bounds the comments whose passages moved,
 // which the next write takes up where this one stopped. The reply's `placed` map (placedFor) draws on the
-// same budget and adds no scan of its own: a tie's nearest copy is read off the whole matches already
-// enumerated (locateStored). About half a second of scanning on the machine the figure was taken on, at
-// the engine's rate.
+// same budget: one classification pass per distinct anchor, free after a write's refresh (the memo) and its
+// own on a status, and never the engine's scan (a whole anchor that sits nowhere is the engine's to place,
+// and the map carries no engine verdict, so locateStored under a budget answers it unplaced with no further
+// scan: the review's second round, 2026-09-11, found a hundred such comments on a near-cap file spending the
+// budget on a status, and every tied comment behind them losing its confirmed verdict, silently); a tie's
+// nearest copy is read off the whole matches already enumerated (locateStored). About half a second of
+// scanning on the machine the figure was taken on, at the engine's rate.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
 export const REFRESH_PASS_DIVISOR = 32;
 // The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
@@ -1386,10 +1390,15 @@ function capHeading(words) {
 }
 
 // Whether the lines between a front-matter block's rules read as a YAML block mapping: the viewer's own test
-// (ui/webview/md-config.ts, isYamlMapping, line for line), so the block this reader skips is the block the viewer
-// folds. Every line at the left margin is a `key:` line, a `- ` item under a key, a `#` comment or blank, and an
-// indented line belongs to the key above; prose, a list or a fence between two rules fails it.
-const YAML_KEY_RE = /^(?:"[^"\n]*"|'[^'\n]*'|[\p{L}\p{N}_][^:\n]*?)[ \t]*:(?:[ \t]|$)/u;
+// (ui/webview/md-config.ts, isYamlMapping), the same lines accepted and refused, so the block this reader skips is
+// the block the viewer folds. Every line at the left margin is a `key:` line, a `- ` item under a key, a `#` comment
+// or blank, and an indented line belongs to the key above; prose, a list or a fence between two rules fails it. The
+// key regex takes a bare key greedily to its colon (the whitespace before the colon is inside the run it takes), where
+// the viewer's lazy `[^:\n]*?` before `[ \t]*:` backtracks quadratically over a run of whitespace in a line with no
+// colon: a front-matter line of 80k spaces cost five seconds here, and a write on the file ran past the kernel's
+// deadline (the review's second round, 2026-09-11). The two accept the same lines: the first colon must be followed
+// by whitespace or the end of the line either way.
+const YAML_KEY_RE = /^(?:(?:"[^"\n]*"|'[^'\n]*')[ \t]*|[\p{L}\p{N}_][^:\n]*):(?:[ \t]|$)/u;
 function isYamlMapping(lines) {
   let underKey = false;
   for (const line of lines) {
@@ -1435,8 +1444,12 @@ function frontMatterLines(lines) {
 // heading of a CRLF file, so the stored path lost its top level or was '' throughout such files, and the section rule
 // could not confirm a copy the viewer showed under a heading. Setext headings (a line underlined with `=` or `-`) are
 // not read; the reports this feature is for write ATX headings, and a rule that told an underline from a table's rule
-// or a thematic break would cost more than the headings it found. Memoized per text for this one-verb process: the
-// refresh and the reply ask for many comments' sections over the one text.
+// or a thematic break would cost more than the headings it found. The heading regex takes everything after the marks
+// and their whitespace whole, and the trim below drops the trailing whitespace: the first cut's lazy `(.*?)` before
+// `[ \t]*$` backtracked quadratically over a run of whitespace inside the line (a heading line of 120k spaces held a
+// `comment` on the file 13 s, past the kernel's deadline; the review's second round, 2026-09-11), for the same words.
+// Memoized per text for this one-verb process: the refresh and the reply ask for many comments' sections over the one
+// text.
 const headingMemo = { text: null, list: null };
 function headings(text) {
   if (headingMemo.text === text) return headingMemo.list;
@@ -1452,7 +1465,7 @@ function headings(text) {
   let at = 0;
   for (let i = 0; i < raw.length; i++) {
     const line = lines[i];
-    const m = i < skip ? null : /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$/.exec(line);
+    const m = i < skip ? null : /^ {0,3}(#{1,6})(?:[ \t]+([\s\S]*))?$/.exec(line);
     if (m && (m[2] !== undefined || line.trim() === m[1]) && !inFencedRange(fences, at)) {
       const level = m[1].length;
       const words = capHeading((m[2] || '').replace(/(^|[ \t])#+[ \t]*$/, '').trim().replace(/\s+/g, ' '));
@@ -1839,14 +1852,22 @@ function stampCopy(c, text, at, hits, markdown) {
 //     took 13 s, past the kernel's deadline, so the file's comments could not be opened at all;
 //   * `engine`: the whole anchor sits nowhere (its context edited) and the engine's scoring places it, confirmed when
 //     it has one best hit and a guess when a tie there is broken by the position; a tie with no position is
-//     `anchor-ambiguous`, as locateExact answers.
+//     `anchor-ambiguous`, as locateExact answers. Under a budget the answer is `{by: 'engine'}` alone, unplaced: the
+//     one budgeted reader (placedFor) carries no engine verdict, so the engine's scan, the costliest of these, is
+//     not charged to the reply for a verdict it drops (the review's second round, 2026-09-11: on a near-cap file a
+//     hundred comments whose context was edited spent the budget on a status, and every tied comment behind them in
+//     the store answered null, so the panel painted its confirmed copy as a guess, with nothing on stderr).
 // The copy fields are read defensively (ordinalOf, sectionOf), and a stored `section` on a non-markdown file is ''
 // like every copy's, so the section rule never confirms there. The scans are memoized per anchor and text like the
 // refresh's. With a `budget` (the reply's pass over a sidecar, placedFor) every scan is charged to it and a comment
 // whose scan does not fit answers null, nothing known, rather than run past the kernel's deadline; without one
-// (passageFigure, doRetarget: one comment) the scans run. More copies than the refresh enumerates
-// (REFRESH_COPIES_MAX) leave the tie to nearest-wins, a guess, by the engine's own scan of every occurrence, charged
-// like the engine's placing of a nowhere anchor (affordable) since the enumerated matches are then not all of them.
+// (passageFigure, doRetarget: one comment) the scans run whole, a classification the budget cut short included
+// (fullMatches serves a cut result to no caller without a budget; before the review's second round it did, and this
+// answered null to passageFigure, which read `.error` off it: every write on a file holding a src-less region
+// comment whose scan the budget had cut died with a TypeError until the sidecar was edited by hand). More copies than
+// the refresh enumerates (REFRESH_COPIES_MAX) leave the tie to nearest-wins, a guess, by the engine's own scan of
+// every occurrence, charged like the engine's placing of a nowhere anchor (affordable) since the enumerated matches
+// are then not all of them.
 export function locateStored(text, c, markdown, budget) {
   const anchor = c.anchor;
   const at = hintOf(c);
@@ -1854,9 +1875,9 @@ export function locateStored(text, c, markdown, budget) {
   if (at !== undefined && sitsAt(text, anchor, at)) return span(at, true, 'position');
   if (budget && !affordableScan(budget, text, anchor)) return null;
   const { hits, more, cut } = fullMatches(text, anchor, REFRESH_COPIES_MAX, budget);
-  if (cut) return null;
+  if (cut) return null;   // only under a budget: without one fullMatches runs a cut scan whole
   if (hits.length === 0) {
-    if (budget && !affordable(budget, text, anchor)) return null;
+    if (budget) return { by: 'engine' };   // the engine's to place, and the budgeted reader drops its verdict: no scan charged for it
     const loc = locateExact(text, anchor, at);
     if (loc.error) return loc;
     const { first, last } = boundaryHits(text, anchor);
@@ -1894,7 +1915,10 @@ function nearestOf(hits, at) {
 // entry, and the panel places those itself as before. A read never rewrites the sidecar: the stored
 // position stands until the next host write. `at` is an offset into the text this script read (the reply's `bom`
 // says how the panel maps it, as for anchorAt). Charged to the refresh's budget: the process is one verb, and the
-// refresh this reply may have run has memoized the same scans.
+// refresh this reply may have run has memoized the same scans; on a status no refresh ran, and the one classification
+// pass per distinct anchor is this map's own. The engine's scan never is: a whole anchor that sits nowhere is the
+// engine's to place, and this map carries no engine verdict, so locateStored under a budget answers it unplaced
+// (`{by: 'engine'}`) with nothing charged past the classification.
 function placedFor(store, text, markdown) {
   const out = {};
   if (!store || typeof text !== 'string') return out;
@@ -1935,12 +1959,19 @@ function sitsAt(text, anchor, at) {
 // With a `budget` (the refresh's) the scan is charged as it runs — one pass over the text, then the
 // needle's length per hit, what indexOf compares to confirm each — and stops with `more` and `cut` set
 // when the budget is spent, so a whole anchor that sits at nearly every offset costs what it costs and
-// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, the tests) nothing is charged.
+// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, locateStored for passageFigure and
+// doRetarget, the tests) nothing is charged, and a memoized result the budget cut short is no answer:
+// the scan runs whole and the whole result replaces the cut one, so the budgeted callers after it (the
+// stage's refresh pass, stampRefused, placedFor) have it for free. The cut result stays memoized for the
+// budgeted callers otherwise (the refresh's second pass must not pay the cut scan again). Before the
+// review's second round (2026-09-11) the cut result served every caller: locateStored answered null to
+// passageFigure, which read `.error` off it, and every write on a file holding a src-less region comment
+// whose scan the budget had cut died with a TypeError.
 const matchMemo = new Map();
 export function fullMatches(text, anchor, max, budget) {
   const key = `${max} ${anchorKey(anchor)}`;
   const m = matchMemo.get(key);
-  if (m && m.text === text) return m.result;
+  if (m && m.text === text && (budget || !m.result.cut)) return m.result;
   const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
   const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
   const needle = prefix + anchor.quote + suffix;
@@ -2128,7 +2159,7 @@ function affordable(budget, text, anchor) {
 // heading path (stampCopy, below), is the judgment stamped on the store at load from the file's name
 // (MARKDOWN_FILE, markdownOf), never the store's own `path` field.
 function refreshAnchorAts(store, text) {
-  if (typeof text !== 'string') return;
+  if (typeof text !== 'string' || !store) return;   // no sidecar (a save on a tracked file before its first comment or change): nothing to refresh, and no store for markdownOf to judge
   let bounds = null;
   const budget = refreshBudget;
   budget.skipped = 0;
@@ -2209,6 +2240,8 @@ function refreshAnchorAts(store, text) {
 // (withSidecar), so a store carrying none reaches here only through a caller using this module as a library
 // (stageSidecar on a store of its own); such a store has its heading paths left as they are, and stderr says so once,
 // rather than have the file judged from the sidecar JSON's own `path` field, which any writer can leave stale or absent.
+// A save on a file with no sidecar has no store at all, and the refresh returns before judging (the review's second
+// round, 2026-09-11: the note went out on every such save, and the kernel logged it).
 let unjudgedTold = false;
 function markdownOf(store) {
   const m = store ? store[MARKDOWN_FILE] : undefined;
@@ -2231,7 +2264,9 @@ function stampRefused(text, anchor) {
 
 // The stamping pass's note: how many seated comments kept the copy fields they had, or none, for the budget
 // (refreshAnchorAts, `unstamped`), told once per write and only when the count changes, as the position notes are
-// (the measure's pass and the stage's pass share the budget and the memos, so the second pass tells nothing new).
+// (the measure's pass and the stage's pass share the budget and the memos, so the second pass tells nothing new,
+// unless a reader without a budget ran a cut anchor's scan whole between the two passes, fullMatches: the stage's
+// pass then stamps that anchor's comments for free, and the lower count is told, when it is not none).
 function noteUnstamped(budget) {
   if (budget.unstamped === budget.keptUnstamped) return;
   budget.keptUnstamped = budget.unstamped;

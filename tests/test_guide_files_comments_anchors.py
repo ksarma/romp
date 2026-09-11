@@ -5,7 +5,11 @@ changed around that occurrence and it can no longer tell which copy was meant (a
 "passage recurs" tag: the copy shown is a guess; the review's fourth painted state), says what places a
 comment again once the file changes around its occurrence (its position, its copy and the heading above it:
 the tie-break, 2026-09-11, decision 51), and the ADR's Consequences name the additive sidecar fields that
-make it so.
+make it so. The sentence after that one, what a person does about a guessed copy (saving the comment again
+from the right copy adds a new card and the old one keeps its tag), is pinned ONCE, in
+tests/test_guide_files_comments_confirm.py, which also walks it on the real host; this module stops where that
+one starts. The review of the tie-break (2026-09-11) reworded that sentence and both modules had pinned it, so
+one of them was red whichever way the guide read.
 
 This module pins the prose and proves the promise by behaviour: the real host's `uniqueAnchor` and the
 vendored engine's `locateAnchor` run under node on a synthetic text, the way tests/test_file_comments_e2e.py
@@ -87,11 +91,13 @@ class GuideAnchors(unittest.TestCase):
     def test_the_guide_says_a_comment_on_repeated_text_stays_where_it_was_put(self):
         guide = _flat(_read("docs", "guide.md"))
         self.assertIn("a comment on text that occurs more than once stays on the occurrence you chose", guide)
-        # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text)
+        # ...and qualifies it with the one case the panel cannot keep it, said in the panel's own terms (the tag's text).
+        # The pin ends where the guide turns to what the person does about the guess: that sentence is pinned in
+        # tests/test_guide_files_comments_confirm.py alone (see the module docstring).
         self.assertIn("When the file has changed around that occurrence, the comment's own record of where it was, which "
                       "copy it is and the heading above it places it again. When none of those can tell which copy the "
                       "comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy "
-                      "shown is a guess, the card says so, and saving it again from the right copy confirms it.", guide)
+                      "shown is a guess, and the card says so.", guide)
         panel = _read("ui", "webview", "file-comments.ts")
         self.assertIn('el("span", "fc-tag", "passage recurs")', panel, "the tag the guide names is the one the panel adds")
 

@@ -4,10 +4,11 @@
 // writes `ordinal`, `copies` and `section` beside `anchorAt` and breaks the tie by them, in order, before falling back
 // to the nearest copy; the panel paints a copy the host confirmed plainly, and the guessed copy's words end by saying
 // how to confirm it. This module holds each record to the source that makes it true: the plan's sentences to the host
-// (locateStored's order, stampCopy, buildComment's fields, the two readers, the reply's `placed`, the decisions'
-// carve-out), the panel (placedAt, the paint pass's hint, the words), the model (the fields and the verdict type), the
-// ADR's field list and the guide's sentence; and the test modules the note names to the tree. Synthetic: the repo's own
-// text and fixtures, no session data.
+// (locateStored's order, stampCopy, buildComment's fields, the store's markdown judgment stamped at load or seed and
+// read by the refresh, the two readers, the reply's `placed`, the decisions' carve-out), the panel (placedAt, the
+// paint pass's hint, the words), the model (the fields and the verdict type), the ADR's field list and the guide's
+// sentence; and the test modules the note names to the tree. Synthetic: the repo's own text and fixtures, no session
+// data.
 // Run: node --test tools/file-review-plan-tiebreak.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -99,10 +100,18 @@ test('the contract names the three fields beside anchorAt with their rule, and t
   assert.ok(/anchor: stored\.anchor,\s*\n\s*anchorAt: loc\.from,\s*\n\s*\.\.\.copy,\s*\n\s*\.\.\.about,/.test(host), 'after the position, before the about spread');
   assert.ok(fn(host, 'buildComment').includes('stampCopy(copy, text, loc.from, stored.unique ? [loc.from] : fullMatches(text, stored.anchor, REFRESH_COPIES_MAX).hits, !!(opts && opts.markdown));'), 'an anchor made unique is 1 of 1 with no further scan');
   const stamp = fn(host, 'stampCopy');
-  inOrder(stamp, ['const k = hits.indexOf(at);', 'if (k < 0) return;', 'c.ordinal = k + 1;', 'c.copies = hits.length;', 'c.section = sectionAt(text, at, markdown);'], 'stampCopy');
+  inOrder(stamp, ['const k = hits.indexOf(at);', 'if (k < 0) return;', 'c.ordinal = k + 1;', 'c.copies = hits.length;', 'if (markdown === undefined) return;', 'c.section = sectionAt(text, at, markdown);'], 'stampCopy');
+  assert.ok(stamp.includes('if (markdown === undefined) return;'), 'a store with no judgment of the file\'s kind keeps its heading path, rather than have the file judged from anything but its name');
   // the refresh: every comment whose position names its copy once the pass is done, under the same budget
   const refresh = fn(host, 'refreshAnchorAts');
-  assert.ok(refresh.includes('const seated = [];') && refresh.includes('const markdown = isMarkdownPath(store && store.path);'), 'the seated comments, and whether the file is markdown from the sidecar\'s own path');
+  assert.ok(refresh.includes('const seated = [];') && refresh.includes('const markdown = markdownOf(store);'), 'the seated comments, and whether the file is markdown from the judgment stamped on the store');
+  assert.ok(!host.includes('isMarkdownPath(store'), 'the sidecar JSON\'s own path field never judges the file (the review, 2026-09-11)');
+  const judged = fn(host, 'markdownOf');
+  assert.ok(judged.includes('const m = store ? store[MARKDOWN_FILE] : undefined;') && judged.includes("if (typeof m === 'boolean') return m;") && judged.includes('return undefined;'), 'the judgment is the boolean stamped under the symbol, else none');
+  assert.ok(host.includes("const MARKDOWN_FILE = Symbol('romp.markdownFile');"), 'a symbol key, so saveStore\'s JSON never carries it');
+  assert.equal((host.match(/store\[MARKDOWN_FILE\] = ctx\.markdown;/g) || []).length, 2, 'stamped from the request path\'s name at load and at seed');
+  assert.ok(/case 'ok': \{[^]*?store\[MARKDOWN_FILE\] = ctx\.markdown;\s*\n\s*return store;/.test(host), 'the load stamps the store it returns');
+  assert.ok(host.includes('if (!store) { store = seedStore(pathsToBe.rel); store[MARKDOWN_FILE] = ctx.markdown; }'), 'a seeded store is stamped where it is made');
   inOrder(refresh, ['for (const c of seated) {', "if (c[ENGINE_PLACED]) { delete c[ENGINE_PLACED]; stampCopy(c, text, at, [at], markdown); continue; }", 'if (!affordableScan(budget, text, c.anchor)) continue;', 'stampCopy(c, text, at, hits, markdown);'], 'the stamping pass');
   assert.ok(op.includes('The refresh stamps the three fields on every comment whose position names its copy once its pass is done (`stampCopy`), under the same budget, and the decisions\' self-check carves them out with `anchorAt`.'));
   assert.ok(fn(host, 'commentsApartFromAnchorAt').includes('const { anchorAt, ordinal, copies, section, ...rest } = c;'), 'the carve-out');
@@ -168,11 +177,12 @@ test('the painting paragraph and the note state the confirmed paint and the word
 
 // ── the ADR, the guide and the Tests section ────────────────────────
 
-test('the ADR counts six additive fields and names the three new ones; the guide says what places a comment again and how a guess is confirmed; the Tests section names this module', () => {
+test('the ADR counts six additive fields and names the three new ones; the guide says what places a comment again and what saving again from the right copy does; the Tests section names this module', () => {
   assert.ok(adr.includes('Under that rule the sidecar now carries six additive fields on a comment: `target` (a region), `anchorAt`'));
   assert.ok(adr.includes('and `ordinal`, `copies` and `section` (the copy\'s index among the anchor\'s matches and their count, and the heading path above the passage, which place a comment once its position no longer names a copy; the tie-break, 2026-09-11)'));
   assert.ok(!adr.includes('three additive fields'), 'the old count is gone');
-  assert.ok(guide.includes("When the file has changed around that occurrence, the comment's own record of where it was, which copy it is and the heading above it places it again. When none of those can tell which copy the comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy shown is a guess, the card says so, and saving it again from the right copy confirms it."));
+  assert.ok(guide.includes("When the file has changed around that occurrence, the comment's own record of where it was, which copy it is and the heading above it places it again. When none of those can tell which copy the comment meant, its highlight is dashed and the card carries a **passage recurs** tag: the copy shown is a guess, and the card says so. Saving the comment again from the right copy, as the card asks, adds a new card on that copy with no tag; the old card keeps its tag, so resolve it once the new one is saved."), 'the guide\'s sentence, as the review reworded it');
+  assert.ok(!guide.includes('saving it again from the right copy confirms it'), 'the earlier wording promised a confirmation of the same comment, which no verb performs (the review, 2026-09-11)');
   assert.ok(tests.includes('`tools/file-review-plan-tiebreak.test.mjs` pins decision 51 and the tie-break\'s sentences here against the host (`locateStored`, `stampCopy`, the fields), the panel (`placedAt`, the words), the model, the ADR\'s six fields and the guide\'s sentence, and the tie-break modules against the tree.'));
   // no em dash in the tie-break's records
   for (const [name, text] of [['decision 51', decisions.slice(decisions.indexOf('51. **'))], ['the ADR bullet', adr.slice(adr.indexOf('six additive'), adr.indexOf('- A romp-only field'))], ['the guide sentence', guide.slice(guide.indexOf('When the file has changed around that occurrence'), guide.indexOf('When the session has'))]]) {
