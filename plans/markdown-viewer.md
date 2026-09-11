@@ -2052,14 +2052,14 @@ items 1b and 2), and 40a4db43a moved file-view-place-blocks.test.ts's node-list 
 the review's round 1 landed as e5295ffa6, its round 2 as b1c6cb303 and its round 3 as 481b5f346; the branch then
 merged the fork's main at 213fde5fa (50b19bfdb: fork PRs 740 and 741, the upstream folds, 746, and 747 and 748, the
 file-review sidecar and tie-break slices; five files hand-resolved, item 9), and the review's round 4 landed as the
-commit after the merge, 701728eae, and its round 5 as the commit after that, each round's findings in the build
-report's round section. A probe over the real viewer (2026-09-09, at 4def8dd8) recorded each defect before the build,
-and the ten rulings of 2026-09-09 on the points the text above left open are cited below by number with what each
-said. The items take the numbers of the sentence above, in the order it names them (the parenthesis on `<details>` is
-item 5; the reader's place inside a wrapper is item 1b and the merge review's text-alike node item 1c), and a
-reference to an item below is to that numbering. The standing rule for the build: these changes cause the
-file-comments feature no trouble, which item 10's last entry states as the guarantees every test family re-verifies.
-Where the code as built departs from the text above, why, and which test holds each rule:
+commit after the merge, 701728eae, and its round 5 as the commit after that and its round 6 as the one after it, each
+round's findings in the build report's round section. A probe over the real viewer (2026-09-09, at 4def8dd8) recorded
+each defect before the build, and the ten rulings of 2026-09-09 on the points the text above left open are cited below
+by number with what each said. The items take the numbers of the sentence above, in the order it names them (the
+parenthesis on `<details>` is item 5; the reader's place inside a wrapper is item 1b and the merge review's text-alike
+node item 1c), and a reference to an item below is to that numbering. The standing rule for the build: these changes
+cause the file-comments feature no trouble, which item 10's last entry states as the guarantees every test family
+re-verifies. Where the code as built departs from the text above, why, and which test holds each rule:
 1. *Item 1, the flattened walk: a linear tag scan and the nodes a wrapper nests.* An html block that leaves a
    `<div align="center">` or a `<details><summary>x</summary>` open is one top-level node holding the rest of the
    document in a browser, so its nested blocks' text occurred in no top-level node, the resync across it (`runFits`)
@@ -2140,34 +2140,50 @@ Where the code as built departs from the text above, why, and which test holds e
    element child, now decides in the run check and the scan's take as in the loop). `TopTag.kids` lists the nodes the
    raw itself puts inside an open top-level tag (each element closed directly under it, each run of non-blank text),
    which the pairing reads past after the splice (`pastKids`: a child the sanitizer drops with its text or a
-   non-checkbox input passed over, an unwrapped one read as its text, the first the DOM does not hold as described
-   ending the read), so the wrapper's own children are its block's without the resync and the next html block's scan
-   starts at the first nested block (round 1's recorded edge closed: `<div align="center"><div>Lead</div>` then
-   `<div class="in">`, and `<div><p>Lead</p>` then `<p>Alpha</p>` pairs the leftover to the wrapper). The run check
-   reads a comment's mark over an unwrapped element's hoisted text as that text (`pastHoisted`, a run of text nodes
-   and MARK elements whose text together is the block's `htext`; before, a comment spanning into a `<form>`'s lead
-   unpaired every later block on the re-analysis). A block whose scan took nothing and whose run no end confirms hands
-   the nodes back at the next html block's own element (`nextAnchor`, the blocks between passed over, `handedTo`), not
-   at the document's end (a `<button>` opener whose paragraph's own `<button>` closes it now loses the paragraphs up
-   to the next html block's element, or up to a block of closing tags alone (`</center>`), where the pairing resumes
-   at the first end from which the blocks after it line up through to the content's end, or to an html block's own
-   element (`runFits` with `toEnd`), main's per-block resync at such a block (the review's round 4: with a `</center>`
-   alone as the only later html block the swallow had run to the document's end; its round 5: the resume took the
-   first end where TWO blocks lined up, so a paragraph after the closer repeating one inside the swallowed run paired
-   to the inner copy, the first rendered copy mapped to the last copy's offsets and a comment on the last copy painted
-   on the first, where round 3's swallow to the end had refused the selection and painted the right copy through the
-   fallback), and no more; an html block whose element is nowhere in the content, an unwrapped `<button>` or a dropped
-   `<style>`, is read past to the next html block (the review's round 5, fuzz seed 1322's shape: the search ended at
-   such a block, so a `<tr><td>` note the parser drops before a `<button>` opener swallowed every paragraph to the
-   document's end)). And a selection's end boundary is placed by the last character it selects (`locate`, `descend`),
-   never by the node that starts where it ends, so a whole-paragraph selection right before a bare hoisted text node,
-   or a mark a comment painted over one, maps (main's rule and round 2's refused it as touching that block while a
-   selection one character short mapped). Then the resync runs from there. Where no end lines up and the scan took an
-   element, the scan's answer stands and the mismatch that follows is refused with its own node (the stripped-style
-   scene of anchor-map-fixtures/blank-scenes.json, the Slice 4 note's item 10 (d): the list item whose source the
-   sanitizer shortened is a mismatch with its own element and the paint reaches the closing paragraph); a block whose
-   scan took nothing (a dropped `<style>` before a mismatched paragraph) takes every node up to the next html block's
-   own element (`nextAnchor`, the review's round 3), where it took every node to the document's end before. Three
+   non-checkbox input passed over, an unwrapped one listed as its own children, which the unwrap leaves in its place
+   (`topTags` flattens an UNWRAPPED element's kids into its parent's at its end tag, a `<textarea>`'s content as a
+   text kid; the review's round 6: a `<button>` holding a badge picture or a `<form>` holding a `<b>` before the
+   depth-1 wrapper left that element at k unread, the inner wrapper was not found and the nested paragraphs were
+   refused as mismatches, a regression against 701728eae and, for the `<button><img>` badge shape, against main), the
+   first the DOM does not hold as described ending the read), so the wrapper's own children are its block's without
+   the resync and the next html block's scan starts at the first nested block (round 1's recorded edge closed:
+   `<div align="center"><div>Lead</div>` then `<div class="in">`, and `<div><p>Lead</p>` then `<p>Alpha</p>` pairs the
+   leftover to the wrapper). The run check reads a comment's mark over an unwrapped element's hoisted text as that
+   text (`pastHoisted`, a run of text nodes and MARK elements whose text together is the block's `htext`; before, a
+   comment spanning into a `<form>`'s lead unpaired every later block on the re-analysis). A block whose scan took
+   nothing and whose run no end confirms hands the nodes back at the next html block's own element (`nextAnchor`, the
+   blocks between passed over, `handedTo`; the element being, for a block that leaves no tag open, the first node of
+   the block's first tag from which the blocks after the block line up through to the content's end or an html block's
+   own element, past the nodes its own scan takes, `scanTake` and `runFits` with `toEnd`, else and when no candidate
+   lines up the first node of the tag; the review's round 6: the first node of the tag was taken whatever followed, so
+   an html `<p>Go</p>` block after a swallowed run of paragraphs was handed the first swallowed paragraph's `<p>`, the
+   paragraph Go after it paired with the html copy, a selection in the html copy mapped to the paragraph's offsets and
+   a comment made there stored on the wrong passage; and an html `<p></p>` block after the run took the run's first
+   minted `<p></p>`, so it owned the run and the run's refusal carried its offset, past the passage, where the Raw
+   offer's search from it missed), not at the document's end (a `<button>` opener whose paragraph's own `<button>`
+   closes it now loses the paragraphs up to the next html block's element, or up to a block of closing tags alone
+   (`</center>`), where the pairing resumes at the first end from which the blocks after it line up through to the
+   content's end, or to an html block's own element (`runFits` with `toEnd`; past two confirmations the run reads one
+   block that does not fit with its node, as the pairing loop pairs a mismatch: round 6, a paragraph the sanitizer
+   shortened third or later in the tail after a `</center>` closer had ended the run at every candidate, the swallow
+   ran to the document's end and every tail paragraph was refused as an HTML block where 701728eae and main mapped the
+   others), main's per-block resync at such a block (the review's round 4: with a `</center>` alone as the only later
+   html block the swallow had run to the document's end; its round 5: the resume took the first end where TWO blocks
+   lined up, so a paragraph after the closer repeating one inside the swallowed run paired to the inner copy, the
+   first rendered copy mapped to the last copy's offsets and a comment on the last copy painted on the first, where
+   round 3's swallow to the end had refused the selection and painted the right copy through the fallback), and no
+   more; an html block whose element is nowhere in the content, an unwrapped `<button>` or a dropped `<style>`, is
+   read past to the next html block (the review's round 5, fuzz seed 1322's shape: the search ended at such a block,
+   so a `<tr><td>` note the parser drops before a `<button>` opener swallowed every paragraph to the document's end)).
+   And a selection's end boundary is placed by the last character it selects (`locate`, `descend`), never by the node
+   that starts where it ends, so a whole-paragraph selection right before a bare hoisted text node, or a mark a
+   comment painted over one, maps (main's rule and round 2's refused it as touching that block while a selection one
+   character short mapped). Then the resync runs from there. Where no end lines up and the scan took an element, the
+   scan's answer stands and the mismatch that follows is refused with its own node (the stripped-style scene of
+   anchor-map-fixtures/blank-scenes.json, the Slice 4 note's item 10 (d): the list item whose source the sanitizer
+   shortened is a mismatch with its own element and the paint reaches the closing paragraph); a block whose scan took
+   nothing (a dropped `<style>` before a mismatched paragraph) takes every node up to the next html block's own
+   element (`nextAnchor`, the review's round 3), where it took every node to the document's end before. Three
    consumers of the top-level assumption changed with it: a selection boundary descends from the top-level node to the
    deepest node holding it that a block renders as (`locate`), whitespace between nested blocks snapping to the nested
    block beside it and a boundary on a wrapper landing on its first or last nested block; `formulaExtra` reads the
@@ -2275,23 +2291,43 @@ Where the code as built departs from the text above, why, and which test holds e
    and with one repeated paragraph as the document's last block, a comment stored on the second copy painting on the
    second rendered copy, the `<button>` opener after a `<tr><td>` note the parser drops, with a `<div>marker</div>`
    and a `<style>` swallower in the note's place, and the next html block's bare nodes at the wrapper's level after a
-   lead text, an unwrapped `<option>` and a `<mark>` block, with the refusal at the option block's offset; and test 27
-   given the two selections that distinguish the trees, the whole paragraph ending at the hoisted text node's offset 0
-   and at the root's child index, red over b1c6cb303 where round 3's pin had passed) and
-   anchor-map-wrappers-browser.test.ts (6 legs over the real viewer and the real panel, real-viewer-leg.ts: the Files
-   pane at 900 and 380 px, the two-block fixture, the chat modal, and, the review's round 2, the panel OPEN over a
-   standalone `<img>` block after a lead-text div and after a details, a README's logo, screenshot and demo pictures,
-   an `<img>` then `<div>` block and the seeded lead-text div closed inline on its only paragraph then an img, every
-   nested passage mapping and the comment served on it painting with a Scroll link; and, its round 3, comments served
-   on a details summary, a two-line summary, a centred div's lead text and a README banner's tagline and heading
-   painting with marks and Scroll, a comment spanning from the paragraph before a `<tr><td>` note into its nested
-   paragraph with the five passages mapping after, the open `<p>` with `<br>`, `<img>` and `<span>` blocks and with a
-   table, the same-tag leftover, the stray `</p>` after an open `<p>`, and the `<button>` opener with the paragraphs
-   inside its run refused at the button's block and every passage after the next html block mapping; each drag maps to
-   the passage's offsets, offers the float and opens the composer with the quote and Save; the anchor-map exports ride
-   a probe bundle injected after the load, so its cache is not the panel's, and the panel's own mapping is read
-   through the composer's quote). md-config-paint-trim-browser.test.ts's confinement of its rendered-blank oracle to
-   the blocks the paint reached is lifted: every scene reaches its closing paragraph, and the fixture's note says so.
+   lead text, an unwrapped `<option>` and a `<mark>` block, with the refusal at the option block's offset; test 37's
+   `<p>` block scene from its round 6, `<p></p>` and `<p>marker</p>` after the `<tr><td>` note and the `<button>`
+   opener's run: the paragraphs after the `<p>` block map, the block owns its own element alone, the run's paragraphs
+   are refused at the note's block, whose offset is before the passage, so the Raw offer's search from it lands on the
+   passage (the round found the title claiming the scene with no scene pinning it, and the code handing the `<p>`
+   block the run's minted `<p></p>`); and test 27 given the two selections that distinguish the trees, the whole
+   paragraph ending at the hoisted text node's offset 0 and at the root's child index, red over b1c6cb303 where round
+   3's pin had passed), anchor-map-pairing-r6.test.ts (4, new in the review's round 6, each red over a git archive of
+   8924fa17e: the unwrapped kid leaving an element before the depth-1 wrapper,
+   `<div align="center"><button><img></button><div>`, a `<form>`, a `<label>` or a `<fieldset>` holding a `<b>`, a
+   `<p>` or a lead text, a `<select>` with two options, a `<textarea>`, a `<button>`'s picture before a
+   `<details><summary>`, with the kept-kid, text-only-kid and top-level-form controls, the nested paragraph and the
+   one after mapping and the opener's block holding its two wrappers; the html `<p>Final para three.</p>` copy after a
+   swallowed run refused as an HTML block with the paragraph after it mapping from its own `<p>` and a comment on it
+   painting there, with the distinct-text and `<div>` controls; the `<p></p>` block owning its one element with the
+   swallower owning the run and the refusal's offset before the passage, after the `<button>` opener, after a dropped
+   `<tr><td>` note and with the intro repeating the passage, with a `<div>marker</div>` control; and the shortened
+   paragraph `Weird <style>x{}</style> line.` third, last and fourth of five in the tail after a `</center>` closer,
+   the other tail paragraphs mapping and the shortened one refused as a mismatch at its own offset, with a no-closer
+   control) and anchor-map-wrappers-browser.test.ts (6 legs over the real viewer and the real panel,
+   real-viewer-leg.ts: the Files pane at 900 and 380 px, the two-block fixture, the chat modal, and, the review's
+   round 2, the panel OPEN over a standalone `<img>` block after a lead-text div and after a details, a README's logo,
+   screenshot and demo pictures, an `<img>` then `<div>` block and the seeded lead-text div closed inline on its only
+   paragraph then an img, every nested passage mapping and the comment served on it painting with a Scroll link; and,
+   its round 3, comments served on a details summary, a two-line summary, a centred div's lead text and a README
+   banner's tagline and heading painting with marks and Scroll, a comment spanning from the paragraph before a
+   `<tr><td>` note into its nested paragraph with the five passages mapping after, the open `<p>` with `<br>`, `<img>`
+   and `<span>` blocks and with a table, the same-tag leftover, the stray `</p>` after an open `<p>`, and the
+   `<button>` opener with the paragraphs inside its run refused at the button's block and every passage after the next
+   html block mapping, and, its round 6, the `<tr><td>` note, `<button>` opener and `<p></p>` block scene, the
+   `<p></p>` block owning one P and the note's block the run's four, and a centred div holding a `<button>` around a
+   badge picture before its inner `<div>` wrapper, the nested paragraph and the one after mapping and the opener's
+   block owning the outer div, the badge and the inner div; each drag maps to the passage's offsets, offers the float
+   and opens the composer with the quote and Save; the anchor-map exports ride a probe bundle injected after the load,
+   so its cache is not the panel's, and the panel's own mapping is read through the composer's quote).
+   md-config-paint-trim-browser.test.ts's confinement of its rendered-blank oracle to the blocks the paint reached is
+   lifted: every scene reaches its closing paragraph, and the fixture's note says so.
 2. *Item 1b, the reader's place inside a wrapper* (ruling 1: build the descent in this slice, since the pairing alone
    made the Raw to Rendered direction seat a nested paragraph while Rendered to Raw still read no place). readPlace's
    Rendered read (reader-place.ts `readRendered`) is one level of element children at a time: topVisibleIndex over the
@@ -2349,59 +2385,87 @@ Where the code as built departs from the text above, why, and which test holds e
    or a shut fold ending a wrapper before the block; round 3, HIGH: seated where its row was, 54 to 90 px down, the
    block after the fold left the block before the fold's tail 13 to 35 px under the edge, the way back read that tail
    by its fraction, and the fold's whole source came back between, 427 to 463 px at 900 and 787 to 823 at 380; now the
-   way back loses the Raw rows' excess over the summary's box alone, 24 to 60 px, the recorded class; the cap costs
-   the plain closing row AT the edge 6 px on its round trip, exact before, its block's row 36 px down against the
-   summary's 30, and a shut fold's summary 2 to about 8 px below the edge in Rendered, the paragraph before the fold
-   out of view, its depth on the Rendered to Raw to Rendered trip, the summary pulled to 0.2 px (2 and 5 px measured
-   at 900 and 380; the band is the summary's margin over the block before the fold; the review's round 4's record),
-   where the summary at or above the edge is exact; a carried block whose row's distance leaves the summary partway
-   above the edge keeps it, so the round trip from a wrapped summary 10 px in stays exact where a seat AT the edge
-   from any hidden row would lose the 10 px (the cap, not a seat at the edge from every hidden row, is the rule,
-   accepted by the review's round 4; the closed-details node test 4 and browser tests 4, 7 and 8 pin it); and the
-   round trip from the fold's OWN rows, the opener, the summary, the blank after it, still loses the fold's source
-   height, 402 to 420 px at 900 and 744 to 780 at 380, round 2's 406 to 413 and 683 to 690 with the landing now right,
-   since the way back from the summary at the edge is ruling 13's, the block after the fold at its distance with the
-   fold's source above), and a fold the person opened seats the row's own paragraph as before (the review's round 4:
-   round 3's `shutFoldBefore` had read an OPEN fold's summary, met as the previous shown sibling of the fold's first
-   nested block, as a shut fold's, so from the fold's own Raw rows the first nested block was capped at the summary,
-   the `<summary>` row's round trip lost 6 px where it had been exact, paragraph 11 at 30 px against its 36, and the
-   opener's row put the summary at the edge in place of the row's own distance; a summary whose fold is open caps
-   nothing now, paragraph 11 back at 36 with the summary at 6.2, the opener row landing it at 54 and returning 31 px
-   low, the recorded open-fold class, and the shut fold's summary a stand-in reading rects alone reaches is capped as
-   before; the closed-details node test 6 and browser test 9 pin it); a paragraph inside a shut fold whose place
-   carries no block after the fold (a place of another making) still seats nothing. file-view-place-blocks.test.ts
-   (14; the two wrapper tests rewritten, the stand-in's wrapper children given boxes stacked inside the wrapper; built
-   with the stand-in on the shim ratchet's allowlist, unswitched, then switched by the merge of main 6aef10815, which
-   brought fork PR #569: FakeNode, FakeText and FakeElement end their constructors in hideEdges, main's projection
-   case is the fourteenth, the ratchet's allowlist is empty with ALLOWLIST_MAX at 0, and 40a4db43a asserts the file's
-   non-empty node lists through sameNodes, by identity; the merge's hand resolve kept the rewritten test 10 with
-   main's one sameNodes assertion carried onto its equivalent line), file-view-place-html-browser.test.ts (15; tests 3
-   and 4 exact round trips as before: the picture after a `<details>` back at its depth within the Raw row's
-   whole-pixel snap scaled by the picture's height over the row's, about 5 px at 900 px; the rule scene moved 2 px
-   below the edge, since `.fileview-md hr` is a 1 px hairline whose bottom at 0 sits on the very bound topVisibleIndex
-   reads and the browser's sub-pixel snap then decides which block is the place; test 3's summary row switched to
-   Rendered puts the fold's summary at the edge (round 3; round 2: the block after the shut fold where its row was,
-   100 px down); and from the review's round 2 a fold title at the top edge, open and shut, at 900 and 380 px, exact,
-   with the closing row followed by a comment, and a README's centred header from Rendered and from each of the
-   wrapper's rows; and, its round 3, the wrapper's own picture, a logo and a 900x600 banner, at 900 and 380: from the
-   picture's top to 300 px in, the picture back within the row's whole-pixel snap scaled by the picture's height over
-   the row's, test 3's bound (4.5 px for the banner at 900, under 2 px for the other three; the review's round 4
-   measured 3 px for the banner 300 px in at 900 and 0 to 1 px in every other scene), and from its Raw tag row at the
-   edge and 9 px above it, the picture at the row's fraction within the same bound, 0.5 px measured, and the row back
-   within 1.5 px; and, its round 4, test 10: from the `<div align="center">` opener row and the blank before it, the
-   logo and the banner at 900 and 380, the picture at its row's distance below the edge and the row back in view; test
-   8's `<img src=` row scene at both widths; and, its round 5, tests 11 to 15 at 900 and 380, each red over a git
-   archive of 701728eae: the run's ten rows, a comment's before the opener with and without a blank line and the
-   blanks beside it, the `</div>` closing a wrapper before a second one and the blank after it, a shut fold's
-   `</details>` before the opener, and the outer opener of a wrapper two deep with the blanks beside it, the picture
-   where its tag row was and the row back in view; the logo at the edge and 30 px in and 10 px into the badges from
-   Rendered, and the way back from the badges' row; the `<p align="center">` holding a picture and the project's name
-   from both views; the wrapping fold title across a drag and back, the aside and A+; and the commented-out `<img` tag
-   paired with no picture), file-view-place-wrapper-end-browser.test.ts (3; tests 1 and 2 exact: nested paragraph 60
-   in a centred div closed last, never closed and `<details open>` closed at the end lands on its own Raw row and
-   returns within 1.5 px, and its Raw row 3 px above the edge seats its own `<p>` at the row's depth scaled),
+   way back loses the Raw rows' excess over the summary's box alone, 24 to 60 px, the recorded class, 78 from the
+   `</details>` closing a shut fold two deep, five rows of closers and blanks to the block after the wrapper (the
+   review's round 6); the cap costs the plain closing row AT the edge 6 px on its round trip, exact before, its
+   block's row 36 px down against the summary's 30, and a shut fold's summary 2 to about 8 px below the edge in
+   Rendered, the paragraph before the fold out of view, its depth on the Rendered to Raw to Rendered trip, the summary
+   pulled to 0.2 px (2 and 5 px measured at 900 and 380; the band is the summary's margin over the block before the
+   fold; the review's round 4's record), where the summary at or above the edge is exact; a carried block whose row's
+   distance leaves the summary partway above the edge keeps it, so the round trip from a wrapped summary 10 px in
+   stays exact where a seat AT the edge from any hidden row would lose the 10 px (the cap, not a seat at the edge from
+   every hidden row, is the rule, accepted by the review's round 4; the closed-details node test 4 and browser tests
+   4, 7 and 8 pin it); and the round trip from the fold's OWN rows, the opener, the summary, the blank after it, still
+   loses the fold's source height, since the way back from the summary at the edge is ruling 13's, the block after the
+   fold at its distance with the fold's source above: 402 to 420 px at 900 and 744 to 780 at 380 for a five-paragraph
+   fold (round 2's 406 to 413 and 683 to 690 with the landing now right), and the loss has no bound but the fold's
+   length (the review's round 6, two probes agreeing, identical at 50b19bfdb and 701728eae): the same fold with
+   fifteen paragraphs 1122 to 1140 at 900 and 2202 to 2220 at 380; a fifteen-paragraph fold nested in a second
+   `<details>` inside a `<div align="center">` 1248 from the outer `<summary>` row and 1302 from the `<div>` opener's
+   at 900, 2328 and 2382 at 380, 1194 and 2274 from the inner summary's, up to four times a 600 px pane's height, the
+   `</div>` on top of Raw and the title the reader had on top off the pane. For the fold's own rows that inverts
+   main's outcome: main, which refused the wrapper's block and left the numeric scrollTop standing, returned the outer
+   summary's, the opener's and the `<div align="center">` opener's row 52 to 210 px BELOW the edge in every shut-fold
+   scene measured, five or fifteen paragraphs, top-level or two deep, in view at both widths, its Rendered stop having
+   put the summary 32 to 227 px down with the paragraph before the fold on top (the pre-slice landing, recorded
+   above); the fold's hidden rows both trees put above the edge, main by 216 to 414 px and this tree by the rest of
+   the fold's source, 222 to 1950, and the closers after an OPEN fold main put 432 to 630 above where this tree keeps
+   them in view (the tail class below). The fix shape is `Place.lead`'s carry, below, honoured across a view switch as
+   the picture's is, the `<summary>` row put back where the summary was; it touches rulings 2 and 13 and is the
+   owner's call, recorded here and in the build report, not built), and a fold the person opened seats the row's own
+   paragraph as before (the review's round 4: round 3's `shutFoldBefore` had read an OPEN fold's summary, met as the
+   previous shown sibling of the fold's first nested block, as a shut fold's, so from the fold's own Raw rows the
+   first nested block was capped at the summary, the `<summary>` row's round trip lost 6 px where it had been exact,
+   paragraph 11 at 30 px against its 36, and the opener's row put the summary at the edge in place of the row's own
+   distance; a summary whose fold is open caps nothing now, paragraph 11 back at 36 with the summary at 6.2, the
+   opener row landing it at 54 and returning 31 px low, the recorded open-fold class, and the shut fold's summary a
+   stand-in reading rects alone reaches is capped as before; the closed-details node test 6 and browser test 9 pin
+   it); a paragraph inside a shut fold whose place carries no block after the fold (a place of another making) still
+   seats nothing; a paragraph inside a shut fold with NOTHING standing after the fold, the document's last block or
+   only a comment, a wrapper's end or a reference definition after it, carries an EMPTY list (`foldStands`, since the
+   review's round 6) and the seat stands on the fold's summary at the edge, the cap's own limit (before, such a place
+   carried no list, the seat walked back through the hidden paragraphs to the wrapper's refused block and left the
+   numeric scrollTop standing over the shorter view, the summary 617 to 636 px down at 380, off the pane, and the way
+   back 505 to 729 px low; the pane's end mostly clamps the summary's write, the summary lands near the pane's bottom,
+   and a clamped seat holds the Raw place in file-view.ts, so the way back returns the row exactly;
+   file-view-place-last-fold-browser.test.ts, 1 leg, new in round 6 and red over a git archive of 8924fa17e: at 380
+   and 900, a fold ending the document, one followed by a comment alone and one by a reference definition alone, from
+   the `<summary>` row, the `<details>` row and a hidden paragraph's row, the switch writes scrollTop, the summary is
+   at the edge or the body at its end with the summary in view, and the way back returns the row within 1.5 px, a fold
+   with paragraphs after it the control; the closed-details node test 4's hidden-only and empty-list cases seat the
+   summary at the edge). file-view-place-blocks.test.ts (14; the two wrapper tests rewritten, the stand-in's wrapper
+   children given boxes stacked inside the wrapper; built with the stand-in on the shim ratchet's allowlist,
+   unswitched, then switched by the merge of main 6aef10815, which brought fork PR #569: FakeNode, FakeText and
+   FakeElement end their constructors in hideEdges, main's projection case is the fourteenth, the ratchet's allowlist
+   is empty with ALLOWLIST_MAX at 0, and 40a4db43a asserts the file's non-empty node lists through sameNodes, by
+   identity; the merge's hand resolve kept the rewritten test 10 with main's one sameNodes assertion carried onto its
+   equivalent line), file-view-place-html-browser.test.ts (15; tests 3 and 4 exact round trips as before: the picture
+   after a `<details>` back at its depth within the Raw row's whole-pixel snap scaled by the picture's height over the
+   row's, about 5 px at 900 px; the rule scene moved 2 px below the edge, since `.fileview-md hr` is a 1 px hairline
+   whose bottom at 0 sits on the very bound topVisibleIndex reads and the browser's sub-pixel snap then decides which
+   block is the place; test 3's summary row switched to Rendered puts the fold's summary at the edge (round 3; round
+   2: the block after the shut fold where its row was, 100 px down); and from the review's round 2 a fold title at the
+   top edge, open and shut, at 900 and 380 px, exact, with the closing row followed by a comment, and a README's
+   centred header from Rendered and from each of the wrapper's rows; and, its round 3, the wrapper's own picture, a
+   logo and a 900x600 banner, at 900 and 380: from the picture's top to 300 px in, the picture back within the row's
+   whole-pixel snap scaled by the picture's height over the row's, test 3's bound (4.5 px for the banner at 900, under
+   2 px for the other three; the review's round 4 measured 3 px for the banner 300 px in at 900 and 0 to 1 px in every
+   other scene), and from its Raw tag row at the edge and 9 px above it, the picture at the row's fraction within the
+   same bound, 0.5 px measured, and the row back within 1.5 px; and, its round 4, test 10: from the
+   `<div align="center">` opener row and the blank before it, the logo and the banner at 900 and 380, the picture at
+   its row's distance below the edge and the row back in view; test 8's `<img src=` row scene at both widths; and, its
+   round 5, tests 11 to 15 at 900 and 380, each red over a git archive of 701728eae: the run's ten rows, a comment's
+   before the opener with and without a blank line and the blanks beside it, the `</div>` closing a wrapper before a
+   second one and the blank after it, a shut fold's `</details>` before the opener, and the outer opener of a wrapper
+   two deep with the blanks beside it, the picture where its tag row was and the row back in view; the logo at the
+   edge and 30 px in and 10 px into the badges from Rendered, and the way back from the badges' row; the
+   `<p align="center">` holding a picture and the project's name from both views; the wrapping fold title across a
+   drag and back, the aside and A+; and the commented-out `<img` tag paired with no picture),
+   file-view-place-wrapper-end-browser.test.ts (3; tests 1 and 2 exact: nested paragraph 60 in a centred div closed
+   last, never closed and `<details open>` closed at the end lands on its own Raw row and returns within 1.5 px, and
+   its Raw row 3 px above the edge seats its own `<p>` at the row's depth scaled),
    file-view-place-edits-browser.test.ts (4; test 1 tightened to exact, paragraph 80's own row and back at the same
-   height), file-view-place-closed-details.test.ts (14, the review's rounds 1 to 5: a stand-in whose elements answer
+   height), file-view-place-closed-details.test.ts (14, the review's rounds 1 to 6: a stand-in whose elements answer
    checkVisibility as Chromium does and one without the API; the read; the seat's refusal for a place carrying no
    block after the fold; the Raw read of closers, comments, the wrapper's rows and the carried blocks, a chain of two
    folds included; the seat standing on a carried block, capped at the summary since round 3; and, round 3, the
@@ -2411,35 +2475,46 @@ Where the code as built departs from the text above, why, and which test holds e
    reflow; and, round 5, the Raw carry through the run in five shapes, every row named and the shut fold's cap, the
    picture at the edge among badges and a logo both ways, a picture in a row with text, Place.lead across a summary
    grown from 40 to 80 px, shut and open, at 0 and 10 px, with a Raw seat and other text leaving it unused, and the
-   commented-out tag) and file-view-place-closed-details-browser.test.ts (10 legs over the real viewer: the round trip
-   at 900 and 380 px; the closing row from Raw for a shut and an open fold; the hidden row seating the block after the
-   fold and the opened fold seating its own paragraph; the wrapped summary's exact round trip at both widths; the
-   two-closer block from either row; comment rows inside a wrapper; and, the review's round 3, the long fold's rows
-   and the sibling `</div>` rows at 900 and 380 with the summary at the edge, and the closing-row round trips with a
-   comment, a reference definition, the blanks beside the closer and the wrapper's `</div>`; and, its round 4, the
-   open fold's `<summary>` row round-tripping exactly with the first nested block at its own distance, and eight Raw
-   rows held within 0.4 px across A+, A- and a pane drag at 900 and 380). The edge inside a wrapper's own lead picture
-   (a README's banner or logo in a centred div, a linked logo, a badge row), or a row of the block's own at the edge
-   with the picture below it, is the one row of a wrapper's block the seat stands on in both directions (the review's
-   round 3, widened in its round 4 and corrected in its round 5; `Place.pic`, the picture's tag line and its box:
-   readRendered carries the picture AT the edge among the block's own rows' pictures, from the level's first box on,
-   the one the edge is inside whose top is nearest it, else the topmost below it, so the picture the edge is inside or
-   the first one below the edge under a lead `<h1>` the edge is inside (`atEdge`; not the first in document order:
-   pictures of different heights on one line share a baseline, so a line of small badges before a tall logo has its
-   tops 96 px below the logo's while it comes first in the DOM, and round 4's first-in-DOM carry took the badges' line
-   with the edge at the logo's top, the Raw seat put the badges' row 96 px down and the logo's 276, and the round trip
-   lost 129 to 440 px; and not the deepest, since from the badges' own row Rendered puts the badges at the edge with
-   the logo above it and the way back must read the badges again, which the shallowest-inside rule does: the logo's
-   top at the edge round-trips exactly at 900 and 380, and the badges' row within the picture's snap scaled by the
-   row's height, 4 px at 380 for a 342 px data-URI row over a 24 px picture), every `<img>` of a row counting whether
-   or not the row holds text of the note's (`picturesOf` over `ownRows`, the one definition for both reads; round 5:
-   the Rendered read had refused a row with text, so `<p align="center"><img><br><b>Name</b></p>` was a picture to the
-   Raw read alone and the round trip with the picture at the edge lost 64 px at 900, 40 % in 82, exact now both ways
-   at 900 and 380), a commented-out `<img` tag counting for none (`IMG_TAG` skips html comments, `DETAILS_TAG`'s
-   idiom; round 5: it paired the k-th picture with the tag before its own and put the comment's row where the picture
-   was, 18 px off), the walk ending at the first nested block or wrapper; readPlace's Raw branch carries the first
-   `<img` line of the first block holding one in the RUN from the top row's block to the block before the one the row
-   reads as, at or after the row in the top row's block and anywhere in a later one: the tag row itself, the
+   commented-out tag; and, round 6, test 4's hidden-only and empty-list cases seating the summary at the edge and test
+   11's way back from the badges' row reading the line's union) and file-view-place-closed-details-browser.test.ts (10
+   legs over the real viewer: the round trip at 900 and 380 px; the closing row from Raw for a shut and an open fold;
+   the hidden row seating the block after the fold and the opened fold seating its own paragraph; the wrapped
+   summary's exact round trip at both widths; the two-closer block from either row; comment rows inside a wrapper;
+   and, the review's round 3, the long fold's rows and the sibling `</div>` rows at 900 and 380 with the summary at
+   the edge, and the closing-row round trips with a comment, a reference definition, the blanks beside the closer and
+   the wrapper's `</div>`; and, its round 4, the open fold's `<summary>` row round-tripping exactly with the first
+   nested block at its own distance, and eight Raw rows held within 0.4 px across A+, A- and a pane drag at 900 and
+   380). The edge inside a wrapper's own lead picture (a README's banner or logo in a centred div, a linked logo, a
+   badge row), or a row of the block's own at the edge with the picture below it, is the one row of a wrapper's block
+   the seat stands on in both directions (the review's round 3, widened in its round 4 and corrected in its round 5;
+   `Place.pic`, the picture's tag line and its box: readRendered carries the picture AT the edge among the block's own
+   rows' pictures, from the level's first box on, the one the edge is inside whose top is nearest it, else the topmost
+   below it, so the picture the edge is inside or the first one below the edge under a lead `<h1>` the edge is inside
+   (`atEdge`; not the first in document order: pictures of different heights on one line share a baseline, so a line
+   of small badges before a tall logo has its tops 96 px below the logo's while it comes first in the DOM, and round
+   4's first-in-DOM carry took the badges' line with the edge at the logo's top, the Raw seat put the badges' row
+   96 px down and the logo's 276, and the round trip lost 129 to 440 px; and not the deepest, since from the badges'
+   own row Rendered puts the badges at the edge with the logo above it and the way back must read the badges again,
+   which the shallowest-inside rule does: the logo's top at the edge round-trips exactly at 900 and 380, and the
+   badges' row within the picture's snap scaled by the row's height, 4 px at 380 for a 342 px data-URI row over a
+   24 px picture; and, since round 6, the pictures whose tags share ONE source line are one box to both reads, their
+   union, `pictureLines`, `linePictures` and `picBox`, since one Raw row cannot tell them apart and the union is the
+   one box it inverts: read one by one, the edge 105 px into a logo with a 24 px badge beside it on the line carried
+   the badge, the picture the edge was inside whose top was nearest, the Raw seat put the shared row at the badge's
+   fraction and the way back took the line's first tag, the logo, at that fraction, 60 to 62 px lost, 12 to 13 for two
+   badges of 48 and 24 px and 56 with the badge first, where 701728eae's first-in-DOM carry had named one picture both
+   ways; the pick AMONG lines is unchanged, so badges and a logo on two lines read as before;
+   file-view-place-picture-line-browser.test.ts test 2 at 900 and 380 pins the shared row at the line's fraction and
+   the tracked picture back within the row's snap scaled, and the closed-details node test 11's way back from the
+   badges' row reads the line's union over the stand-in's stacked badges), every `<img>` of a row counting whether or
+   not the row holds text of the note's (`picturesOf` over `ownRows`, the one definition for both reads; round 5: the
+   Rendered read had refused a row with text, so `<p align="center"><img><br><b>Name</b></p>` was a picture to the Raw
+   read alone and the round trip with the picture at the edge lost 64 px at 900, 40 % in 82, exact now both ways at
+   900 and 380), a commented-out `<img` tag counting for none (`IMG_TAG` skips html comments, `DETAILS_TAG`'s idiom;
+   round 5: it paired the k-th picture with the tag before its own and put the comment's row where the picture was,
+   18 px off), the walk ending at the first nested block or wrapper; readPlace's Raw branch carries the first `<img`
+   line of the first block holding one in the RUN from the top row's block to the block before the one the row reads
+   as, at or after the row in the top row's block and anywhere in a later one: the tag row itself, the
    `<div align="center">` opener, an `<h1>` lead row, the blank before the opener and, since round 5, a comment's row
    or a closer's before the opener, the `</details>` of a shut fold or the `</div>` of a wrapper closed right before
    it, the outer opener of a wrapper two deep and the blanks beside them, with that line's own row, and asks
@@ -2457,30 +2532,44 @@ Where the code as built departs from the text above, why, and which test holds e
    tail 24 px under the edge, and the way back brought the fold's five Raw rows back between, the closer 127 to 128 px
    low at 900 and 380; capped, the summary is at the edge, the picture under it, and the row returns above the edge by
    the three Raw rows' excess over the summary's box, about 32 px, the recorded closing-row class); the picture is
-   found from the tag's index among the block's `<img` tags outside comments, `picturesOf`, `imgLine`,
-   `imgIndexBefore`, `picBox`, and a picture the view does not show leaves the seat to the rules below). Round 4's
-   correction (HIGH, against main: a wrapper's own row BEFORE its lead picture's tag row read as the first nested
-   block at its row's distance, so the switch to Rendered put that block there and the picture, 120 to 508 px tall
-   against one Raw row, above the edge, the logo's top at -40.5 and the banner's at -428.5 at 900, and the way back
-   seated the tag row at the picture's fraction, the opener's row 32 to 109 px above the edge and off the pane, where
-   main had kept it in view 38 to 45 px low): from the opener row and the blank before it the picture lands at its
-   row's distance, 18 and 36 px, and the row returns in view 23 to 27 px low at 900 and 380 (the paragraph before the
-   wrapper's tail by its fraction, the recorded class); the `<h1>`-and-banner README's opener, blank and `<h1>` rows
-   round-trip exactly (65 to 109 px off before); the picture's top 2 px below the edge round-trips exactly (59 to
-   447 px off before); and the `<h1>` 10 px in round-trips exactly at 900 and 380 (the review's round 5 re-measured
-   the scene, which round 4's record had as 26 px low; what returns low is the `<h1>` 2 px below the edge with the
-   banner under it, 24 px at both widths, and a lead taller in Rendered than its Raw rows, an `<h1>`, two `<p>` and
-   the banner, 50 to 54 px: the way back seats the paragraph before the wrapper by its fraction, the recorded class
-   below, where 50b19bfdb read 0 at 900 only because its Raw write clamped at the document's top and lost 137 to
-   155 px at 380, and main 126). The closed-details node tests 7 and 8 and the html leg's test 10 pin it. One residual
-   of the same class, recorded and not fixed (the review's round 5): the logo's top 2 px below the edge with a tall
-   badge row above it, three data-URI badges on the line before the logo, a Raw row of 180 px at 900 and 342 at 380,
-   returns 122 px high at both widths on the Rendered to Raw to Rendered trip (701728eae: 63 at 900 and 135 at 380),
-   the badges' row's 2 px tail above the logo's row being the top Raw row on the way back, read by its fraction as a
-   paragraph's tail is; the two Raw rows share one Rendered line box, so no per-picture rule inverts it, and the logo
-   AT the edge is exact and pinned. The owner's round-3 ruling asked for the picture's top at the edge both ways, the
-   same rule at the top level; the fraction was kept instead, since the top level's fraction round-trips exactly and
-   the header states it, and the picture's top alone would lose the reader's depth (150 to 300 px into a banner) and
+   found from the tag's index among the block's `<img` tags outside comments, `picturesOf`, `pictureLines`, `imgLine`,
+   `imgIndexBefore`, `linePictures`, `picBox` (the line's pictures' union since round 6), and a picture the view does
+   not show leaves the seat to the rules below). Round 4's correction (HIGH, against main: a wrapper's own row BEFORE
+   its lead picture's tag row read as the first nested block at its row's distance, so the switch to Rendered put that
+   block there and the picture, 120 to 508 px tall against one Raw row, above the edge, the logo's top at -40.5 and
+   the banner's at -428.5 at 900, and the way back seated the tag row at the picture's fraction, the opener's row 32
+   to 109 px above the edge and off the pane, where main had kept it in view 38 to 45 px low): from the opener row and
+   the blank before it the picture lands at its row's distance, 18 and 36 px, and the row returns in view 23 to 27 px
+   low at 900 and 380 (the paragraph before the wrapper's tail by its fraction, the recorded class); the
+   `<h1>`-and-banner README's opener, blank and `<h1>` rows round-trip exactly (65 to 109 px off before); the
+   picture's top 2 px below the edge round-trips exactly (59 to 447 px off before); and the `<h1>` 10 px in
+   round-trips exactly at 900 and 380 (the review's round 5 re-measured the scene, which round 4's record had as 26 px
+   low; what returns low is the `<h1>` 2 px below the edge with the banner under it, 24 px at both widths, and a lead
+   taller in Rendered than its Raw rows, an `<h1>`, two `<p>` and the banner, 50 to 54 px: the way back seats the
+   paragraph before the wrapper by its fraction, the recorded class below, where 50b19bfdb read 0 at 900 only because
+   its Raw write clamped at the document's top and lost 137 to 155 px at 380, and main 126). The closed-details node
+   tests 7 and 8 and the html leg's test 10 pin it. One residual of the same class, recorded and not fixed (the
+   review's round 5): the logo's top 2 px below the edge with a tall badge row above it, three data-URI badges on the
+   line before the logo, a Raw row of 180 px at 900 and 342 at 380, returns 122 px high at both widths on the Rendered
+   to Raw to Rendered trip (701728eae: 63 at 900 and 135 at 380), the badges' row's 2 px tail above the logo's row
+   being the top Raw row on the way back, read by its fraction as a paragraph's tail is; the two Raw rows share one
+   Rendered line box, so no per-picture rule inverts it, and the logo AT the edge is exact and pinned. The residual's
+   second face, from RAW (the review's round 6, recorded and not fixed): the same header with a row of the wrapper's
+   block BEFORE the badge line at the edge, the opener, the `<h1>` or the blank before the opener, comes back 245 to
+   454 px high on the Raw to Rendered to Raw trip: the Raw carry names the badge line at its row's distance, Rendered
+   puts the badges there with the logo, 96 px taller on the same baseline, reaching above the edge, and the way back
+   reads the logo, the picture the edge is inside, whose row the Raw seat puts at that fraction; that Rendered
+   geometry is the one a reader 60 to 78 px into the logo makes from Rendered, whose own trip must read the logo to
+   invert (the html leg's test 12 and the closed-details node test 11 pin the logo pick), so no rule of the Rendered
+   view alone tells the two scenes apart (701728eae's first-in-DOM carry inverted these rows by accident while losing
+   the logo's own trips, 129 to 440 px). The one stateless rule that inverts every scene, the recorded 122 included,
+   is a wider unit, the pictures of CONSECUTIVE tag lines as one box in both reads, the union in Rendered and the run
+   of their tag rows in Raw; it changes which Raw row tops the view from the logo at the edge (the badge line's, not
+   the logo's, which the html leg's test 12 pins) and waits on the owner's word; holding a seated place across every
+   view switch until the reader scrolls is the wider change still. Not pinned: the plan records residuals without
+   pinning known-wrong numbers. The owner's round-3 ruling asked for the picture's top at the edge both ways, the same
+   rule at the top level; the fraction was kept instead, since the top level's fraction round-trips exactly and the
+   header states it, and the picture's top alone would lose the reader's depth (150 to 300 px into a banner) and
    regress the from-Raw scenes with the tag row partway above the edge; the review's round 4 accepted the fraction as
    the rule, pinned by the html leg's test 9 and the closed-details node test 5. Before: read as the first nested
    block below the picture, whose row the Raw seat put where the block was, the paragraph before the wrapper topped
@@ -2492,37 +2581,51 @@ Where the code as built departs from the text above, why, and which test holds e
    excess over the Rendered box between the previous block's tail and the block after them, by that tail's fraction
    seat: 38 to 78 px for an open fold's closer, 41 to 43 from a `<div align="center">` opener row, 96 to 121 after a
    display formula inside a wrapper (three Raw rows, one 18 px line rendered), 78 to 96 from the opener row of a shut
-   fold whose text sits in its html block, 60 to 78 from its summary row, 42 to 60 from its text row (900 to 380),
-   against 9 for a plain blank row: the fraction seat of the partway block is the design's rule, and the residual
-   grows with the rows. A reflow of the same RENDERED text with a shown row of a wrapper's block's own at the top edge
-   keeps that row where it was since the review's round 5 (`Place.lead`, the picture's mechanism widened to every
-   shown row of a wrapper's block for a same-view reflow, built on the coordinator's ruling: readRendered carries the
-   row of the block's own at the edge, by `atEdge` from the level's first box on, as the wrapper block's span, the
-   row's ordinal among the block's own rows less its wrappers, `ownRows`, and its box; seatPlaceOutcome, for a
-   Rendered seat over the same source in the same view, before the picture's rule, puts that row back at its distance
-   below the edge or at its fraction of its height when the edge is inside it, `seatedTop`, the picture's rule; a view
-   switch or other text leaves it unused, and the row is still never the place, so rulings 2 and 13 stand). Round 4
-   had recorded the drift for a text-size step alone, 4.5 to 4.9 px above the edge per step, compounding (-4.7, -9.3,
-   -15.3 over three steps at 900), the kept block, the block after a shut fold or the first nested one, keeping its
-   distance while the summary's own growth landed above the edge, and left the fix to the owner as touching rulings 2
-   and 13; round 5 measured the same mechanism at a pane drag with a wrapping fold title, shut and open, 67 to 90 px
-   above the edge from 900 to 380 and 147 to 190 down after the drag back, and 23 px above it when the Comments aside
-   opened, where main held every one within 0.2 px. Now, over the real pane with a title 67.3 px tall at 900 and 134.5
-   at 380: the drag to 380 with the title at the edge exact, 10 px in at its fraction, the drag back exact, 380 to 900
-   and back exact, the aside opening and closing exact, A+ then A- exact, and a lead `<h1>` with the banner under it
-   across A+ exact (was 7.6 px off). The closed-details node test 13 and the html leg's test 14 pin it. In RAW the
-   rows hold since the review's round 4: a reflow of the same Raw text (a text-size step, the pane dragged, the
-   Comments aside opening or closing) keeps the top ROW (`Place.row`, the row at the edge when the kept block starts
-   at or below it, its span and its top, set by readPlace's Raw branch; seatPlaceOutcome, for a seat in Raw over the
-   same source, puts that row back where it was, before every other rule), so the `<summary>` row, a comment's, a
-   closer's, a wrapper's opener, the blank before a fold's opener, the blank after a closer, a blank between
-   paragraphs, a reference definition's row and a logo README's opener hold within 0.4 px across A+, A- and a pane
-   drag at 900 and 380 (before, a row read as the block after it rose 2.7 px for each row between them, 5 to 11 px per
-   step, where main, which read each such row as its own block, held them within half a pixel: the `<summary>` row 4.9
-   to 5.4, the blank before a shut fold's opener 10.8, the logo README's opener 15.9 at 900 and 47.1 at 380; a plain
-   blank row rose 3 px on main and here alike, and holds now); a paragraph's own row is unchanged (`Place.line`). The
-   closed-details node test 9 and browser test 10 pin it. The Slice 2 note above records refusals (1) and (2) as
-   history now.
+   fold whose text sits in its html block, 60 to 78 from its summary row, 42 to 60 from its text row (900 to 380), 86
+   to 111 from the rows of a fold two deep opened, `<details open>` inside `<details open>` inside a
+   `<div align="center">`, the outer `<summary>` 96 to 97, the inner fold's `</details>` 98 to 111 and the `<div>`
+   opener 86 to 98, and 83 at 380 from the `<table>` row of a wrapper's own eight-row table, each `<tr>` row wrapping
+   to two Raw lines there, exact at 900 where they do not (the review's round 6, identical at 701728eae, where
+   50b19bfdb had put the open fold's outer summary and `<div>` opener rows 60 and 114 px above the edge; main returned
+   them 72 to 144 px low, the fold's closer 432 to 630 above the edge and the table's row 116 low), against 9 for a
+   plain blank row: the fraction seat of the partway block is the design's rule, and the residual grows with the rows.
+   A reflow of the same RENDERED text with a shown row of a wrapper's block's own at the top edge keeps that row where
+   it was since the review's round 5 (`Place.lead`, the picture's mechanism widened to every shown row of a wrapper's
+   block for a same-view reflow, built on the coordinator's ruling: readRendered carries the row of the block's own at
+   the edge, by `atEdge` from the level's first box on, as the wrapper block's span, the row's ordinal among the
+   block's own rows less its wrappers, `ownRows`, and its box; seatPlaceOutcome, for a Rendered seat over the same
+   source in the same view, before the picture's rule, puts that row back at its distance below the edge or at its
+   fraction of its height when the edge is inside it, `seatedTop`, the picture's rule, unless the edge is inside the
+   place's picture or the row holds one of its line's pictures and the view shows them, when the picture's rule stands
+   (`picOutranksRow`, the review's round 6: an inline `<a>` around a logo has its font's box, 18 px at the picture's
+   bottom, so seated by the row a linked logo, `<a href><img></a>`, the common README header, fell 2.1 px per
+   text-size step and 4.3 over two, and the `<p>` around a logo and the project's name drifted 1.9 to 2.9 by the
+   `<p>`'s fraction, where 701728eae's picture rule alone had held both within 0.1; a row holding no picture of the
+   line, a summary or a lead `<h1>` over a banner, keeps the row's rule; file-view-place-picture-line-browser.test.ts
+   test 1, new in round 6 and red over a git archive of 8924fa17e, holds the linked logo at the edge, 48 and 100 px
+   in, and the `<p>` row 48 px in within 1 px across A+, A+, A-, A- at 900, and the linked logo across a drag 900,
+   380, 900 and the Comments aside); a view switch or other text leaves it unused, and the row is still never the
+   place, so rulings 2 and 13 stand). Round 4 had recorded the drift for a text-size step alone, 4.5 to 4.9 px above
+   the edge per step, compounding (-4.7, -9.3, -15.3 over three steps at 900), the kept block, the block after a shut
+   fold or the first nested one, keeping its distance while the summary's own growth landed above the edge, and left
+   the fix to the owner as touching rulings 2 and 13; round 5 measured the same mechanism at a pane drag with a
+   wrapping fold title, shut and open, 67 to 90 px above the edge from 900 to 380 and 147 to 190 down after the drag
+   back, and 23 px above it when the Comments aside opened, where main held every one within 0.2 px. Now, over the
+   real pane with a title 67.3 px tall at 900 and 134.5 at 380: the drag to 380 with the title at the edge exact,
+   10 px in at its fraction, the drag back exact, 380 to 900 and back exact, the aside opening and closing exact, A+
+   then A- exact, and a lead `<h1>` with the banner under it across A+ exact (was 7.6 px off). The closed-details node
+   test 13 and the html leg's test 14 pin it. In RAW the rows hold since the review's round 4: a reflow of the same
+   Raw text (a text-size step, the pane dragged, the Comments aside opening or closing) keeps the top ROW
+   (`Place.row`, the row at the edge when the kept block starts at or below it, its span and its top, set by
+   readPlace's Raw branch; seatPlaceOutcome, for a seat in Raw over the same source, puts that row back where it was,
+   before every other rule), so the `<summary>` row, a comment's, a closer's, a wrapper's opener, the blank before a
+   fold's opener, the blank after a closer, a blank between paragraphs, a reference definition's row and a logo
+   README's opener hold within 0.4 px across A+, A- and a pane drag at 900 and 380 (before, a row read as the block
+   after it rose 2.7 px for each row between them, 5 to 11 px per step, where main, which read each such row as its
+   own block, held them within half a pixel: the `<summary>` row 4.9 to 5.4, the blank before a shut fold's opener
+   10.8, the logo README's opener 15.9 at 900 and 47.1 at 380; a plain blank row rose 3 px on main and here alike, and
+   holds now); a paragraph's own row is unchanged (`Place.line`). The closed-details node test 9 and browser test 10
+   pin it. The Slice 2 note above records refusals (1) and (2) as history now.
 3. *Item 1c, the text-alike html node* (ruling 10: the tag test with the two-block confirmation, the last-block
    exception stated). `fits` requires a mapped block's element tag as well as its text when the block has text
    (`tagOf` names P, H1 to H6, UL, OL, BLOCKQUOTE, PRE, TABLE, HR, DETAILS, DIV); the empty-text branch stays
@@ -2633,70 +2736,88 @@ Where the code as built departs from the text above, why, and which test holds e
    (`FOREIGN`), so an svg's `<title>` is an ordinary element closed by its own end tag or the svg's (round 3 read
    `<svg><title>inner title</svg> beside` as the title's text to the block's end), in the inline read too since round
    5 (a stack of open foreign roots, `ForeignRoot`, shared with `lenientHtml` through `closeForeign`: the root's end
-   tag closes every element opened inside it, `</svg>` a `<foreignObject>` and the drop stack with it; round 4's
-   inline branch had no such stack, so `<svg><title>icon</svg> beside` in a paragraph, a list item, a quote, a heading
-   or a cell read the title's text to the block's end, tags and all); and a raw html table's cell boundary reads a
-   blank, the one `hayRuns` puts between two adjacent table parts (`TABLE_PARTS`), so a quote across `</td><td>`
-   matches where it read the cells run together, and only there (`nextIsTablePart`, since round 5: the raw going on,
-   past whitespace and comments, with another part's start tag; round 4 put the blank at EVERY part's end tag, so text
-   after a table's last part, `</td></tr></table>tail`, which the DOM runs on from the cell, read a blank the hay
-   lacked, and a quote from a cell across the table's end into it, painted at 50b19bfdb, matched nothing; the
-   recheck's three shapes, the tail after a bare table, a nested minified table and a stray `<td>`, paint again).
-   `stripMarkupMapped(s)` is the rendered text of `s` read as a document of its own (`buildSourceTable`, beside the
-   cached `sourceTable`), and `renderedQuote(source, range)` is exported for the corpus test. The hole reasons are
-   constants (CODE_HOLE, INDENTED_CODE_HOLE, TABLE_HOLE), their strings unchanged. The list inherited from the strip
-   at the build is closed: a code line opening with three backticks inside a longer fence has been code since the
-   review's round 1 read the fence lines by offset, the `*` pairing across two cells and the `\|` inside a code span
-   in a cell since round 2 read a row cell by cell, and a code line beginning `>` inside a QUOTED fence since round 3,
-   the container's markers coming off through the walk's suffix view (the quote-marker rule had taken the line's own
-   `>`); so are the constructs round 2 left, the rule of 3 and punctuation flanking, html entities, the shortcut
-   reference link and the bracketed label, which the pipeline reads as marked does (a formula inside a cell stays
-   routed to Slice 8, item 10 (j)). A range spanning prose and a hole is placed by the exact path from its positioned
-   characters, the hole at the edge unpainted (item 10 (b) below), so the mixed-kind needle matters only for a range
-   with no positioned character, where both sides agree line by line. anchor-map-fallback-markup.test.ts (25; six new,
-   main's projection case, which the merge of main 6aef10815 appended after them, two from the review's round 1: a
-   code span's content in a cell and a quote begun inside a fence line, with the strip's case list extended, and four
-   from its round 2: same-delimiter nested emphasis in a cell, the code span with an escaped pipe and the backslash
-   parity of a delimiter, the escapes with the inline tag, the mark, the wikilink, the strong-then-underscore and the
-   cell's trailing backslash, and the fallback widening to the whole text when the range's blocks are paired to nodes
-   that do not hold the quote; test 1's case list extended again, and test 6's count-guard scene, an html block whose
-   attribute repeated its text, re-aimed at an entity spelling the text, since the strip now drops a tag with its
-   attributes as the rendering does; anchor-map-change-marks.test.ts test 6's scene the same; and from its round 3:
-   test 1 rewritten against the stand-in's rendering, test 6 re-aimed, the entity in an html block now painting by
-   ordinal and a refused block whose node shows the passage twice staying unpainted over the whole text too, test 16's
-   parity assertion on the unmatched backticks the cells show, and five new: the 300-cell seeded corpus as cells and
-   as refused paragraphs, each read as the rendering shows it and painted whole, the 110 hand cases of rounds 1 to 3,
-   the prose shapes a cell cannot hold, hard breaks, soft-break constructs and the code span's backslash, the cut
-   ranges, `bold words** more`, `2024. It was`, `# of items`, the `3. ` continuation and a cut escape, and the html
-   blocks, `costs \$5 raw`, `C:\Temp\</div>` and a `<script>` inside; the corpus fails over b1c6cb303 on 488 of its
-   600 checks and the hand cases on 185 of 220; and from its round 4 the verdict's pin, `corpusVerdict`: the failure
-   message counts failing checks against twice the cell count, each half against the cells and the distinct failing
-   cells, where it had counted both halves against the cells alone, 300 of 300 with the prose half alone failing;
-   anchor-map-change-marks.test.ts test 6 moved its count-disagreement scene to a rendering that gained a copy of the
-   passage and pins the entity scene as painting the second shown `note`), anchor-map-html-text.test.ts (7, new in the
-   review's round 4, each red over a git archive of 50b19bfdb: the minified raw table across cells and rows, the
-   spaced table and a table inside a dropped script; block and inline `<foreignObject>` dropped with svg `<text>` and
-   `<desc>` kept; the named references, the aliases, the legacy forms in a block and their literal reading in a
-   paragraph, the case-sensitive table; the numeric reference quirks with the map's length equal to the text's; the
-   inline `<textarea>` in a paragraph and a cell, an inline `<title>`, the block form and the open textarea; and the
-   svg `<title>` in foreign content with a style inside an svg dropped; test 6's inline-title pin re-aimed to the drop
-   in its round 5), anchor-map-html-rules.test.ts (6, new in the review's round 5, each red over a git archive of
-   701728eae's module: the raw table's blank only between two adjacent parts, with the recheck's three shapes and
-   every part kind, the reference table read through an own-property test, the legacy rule kept off the legacy-headed
-   HTML5 names where no DOM decodes them, the foreign rule in the inline read in a paragraph, a list item, a quote, a
-   heading and a cell, the body `<title>` dropped in four places with the leading-title record closed, and the
-   textarea's wikilink rendered with the file kind's walk), anchor-map-html-text-browser.test.ts (1 leg, 60 subtests,
-   new in the review's round 5: every html-text shape rendered through marked, applyMdConfig and sanitizeMd in
-   headless Chromium, the reader's text against the box's textContent and each quote's real paintRendered marks over
-   that DOM, the plan's recorded open-textarea divergence pinned on both sides; red over a git archive of 701728eae on
-   the eight round-5 shapes, and 9 of 59 red under a sanitizer mutation that kept foreignObject and dropped every
-   title while the text test stayed green, the gap the leg closes), anchor-map-dom-rules-browser.test.ts (1 leg, new
-   in the review's round 5, over the real viewer and panel: one `<title>` left in the DOM and it the svg's, the
-   titles' text gone from the viewer and from the chat's sanitizeMd, a comment inside a title painting nothing with
-   its card offering Reveal and one across it painting the text beside it alone, `&ltimes;` and `&notxyz;` read and
-   painted as the glyphs the DOM shows, and the comment on a textarea's wikilink content painting with Scroll; red
-   over 701728eae), anchor-map-code-table-paint-browser.test.ts (4 legs over the real viewer and panel: a Raw drag
-   over each passage saved through the float and the composer, the posted anchors the exact slices, then the switch to
+   tag closes every element opened inside it, `</svg>` a `<foreignObject>` and the drop stack with it, unless an HTML
+   element stands open inside the foreignObject, when the parser ignores the end tag, the foreignObject's own too, and
+   the block's rest stays inside the dropped foreignObject (`ForeignRoot.open`, round 6:
+   `<svg><foreignObject><b>x</svg> y` read `Intro y` against a DOM showing `Intro`; the parser swallows the later
+   blocks too, which no tree models, recorded); round 4's inline branch had no such stack, so
+   `<svg><title>icon</svg> beside` in a paragraph, a list item, a quote, a heading or a cell read the title's text to
+   the block's end, tags and all); and a raw html table's cell boundary reads a blank, the one `hayRuns` puts between
+   two adjacent table parts (`TABLE_PARTS`), so a quote across `</td><td>` matches where it read the cells run
+   together, and only there (`nextIsTablePart`, since round 5: the raw going on with another part's start tag past
+   whitespace and comments, and, since round 6, past whatever leaves the DOM's parts adjacent, a `<style>` or a
+   `<script>` with its content, an empty `<form>`, a hidden `<input>`, and any element the parser foster-parents
+   before the table, `<br>`, `<img>`, an empty `<span>`, an `<a name>` anchor, not a `<template>`, kept in the row,
+   and not text, the round-5 rechecks' residuals: a `<style>` or an empty `<form>` between two cells of a minified raw
+   table read the cells run together against a hay with the blank, and a quote across them painted nothing; round 4
+   put the blank at EVERY part's end tag, so text after a table's last part, `</td></tr></table>tail`, which the DOM
+   runs on from the cell, read a blank the hay lacked, and a quote from a cell across the table's end into it, painted
+   at 50b19bfdb, matched nothing; the recheck's three shapes, the tail after a bare table, a nested minified table and
+   a stray `<td>`, paint again). `stripMarkupMapped(s)` is the rendered text of `s` read as a document of its own
+   (`buildSourceTable`, beside the cached `sourceTable`), and `renderedQuote(source, range)` is exported for the
+   corpus test. The hole reasons are constants (CODE_HOLE, INDENTED_CODE_HOLE, TABLE_HOLE), their strings unchanged.
+   The list inherited from the strip at the build is closed: a code line opening with three backticks inside a longer
+   fence has been code since the review's round 1 read the fence lines by offset, the `*` pairing across two cells and
+   the `\|` inside a code span in a cell since round 2 read a row cell by cell, and a code line beginning `>` inside a
+   QUOTED fence since round 3, the container's markers coming off through the walk's suffix view (the quote-marker
+   rule had taken the line's own `>`); so are the constructs round 2 left, the rule of 3 and punctuation flanking,
+   html entities, the shortcut reference link and the bracketed label, which the pipeline reads as marked does (a
+   formula inside a cell stays routed to Slice 8, item 10 (j)). A range spanning prose and a hole is placed by the
+   exact path from its positioned characters, the hole at the edge unpainted (item 10 (b) below), so the mixed-kind
+   needle matters only for a range with no positioned character, where both sides agree line by line.
+   anchor-map-fallback-markup.test.ts (25; six new, main's projection case, which the merge of main 6aef10815 appended
+   after them, two from the review's round 1: a code span's content in a cell and a quote begun inside a fence line,
+   with the strip's case list extended, and four from its round 2: same-delimiter nested emphasis in a cell, the code
+   span with an escaped pipe and the backslash parity of a delimiter, the escapes with the inline tag, the mark, the
+   wikilink, the strong-then-underscore and the cell's trailing backslash, and the fallback widening to the whole text
+   when the range's blocks are paired to nodes that do not hold the quote; test 1's case list extended again, and test
+   6's count-guard scene, an html block whose attribute repeated its text, re-aimed at an entity spelling the text,
+   since the strip now drops a tag with its attributes as the rendering does; anchor-map-change-marks.test.ts test 6's
+   scene the same; and from its round 3: test 1 rewritten against the stand-in's rendering, test 6 re-aimed, the
+   entity in an html block now painting by ordinal and a refused block whose node shows the passage twice staying
+   unpainted over the whole text too, test 16's parity assertion on the unmatched backticks the cells show, and five
+   new: the 300-cell seeded corpus as cells and as refused paragraphs, each read as the rendering shows it and painted
+   whole, the 110 hand cases of rounds 1 to 3, the prose shapes a cell cannot hold, hard breaks, soft-break constructs
+   and the code span's backslash, the cut ranges, `bold words** more`, `2024. It was`, `# of items`, the `3. `
+   continuation and a cut escape, and the html blocks, `costs \$5 raw`, `C:\Temp\</div>` and a `<script>` inside; the
+   corpus fails over b1c6cb303 on 488 of its 600 checks and the hand cases on 185 of 220; and from its round 4 the
+   verdict's pin, `corpusVerdict`: the failure message counts failing checks against twice the cell count, each half
+   against the cells and the distinct failing cells, where it had counted both halves against the cells alone, 300 of
+   300 with the prose half alone failing; anchor-map-change-marks.test.ts test 6 moved its count-disagreement scene to
+   a rendering that gained a copy of the passage and pins the entity scene as painting the second shown `note`),
+   anchor-map-html-text.test.ts (7, new in the review's round 4, each red over a git archive of 50b19bfdb: the
+   minified raw table across cells and rows, the spaced table and a table inside a dropped script; block and inline
+   `<foreignObject>` dropped with svg `<text>` and `<desc>` kept; the named references, the aliases, the legacy forms
+   in a block and their literal reading in a paragraph, the case-sensitive table; the numeric reference quirks with
+   the map's length equal to the text's; the inline `<textarea>` in a paragraph and a cell, an inline `<title>`, the
+   block form and the open textarea; and the svg `<title>` in foreign content with a style inside an svg dropped; test
+   6's inline-title pin re-aimed to the drop in its round 5), anchor-map-html-rules.test.ts (8: six new in the
+   review's round 5, each red over a git archive of 701728eae's module: the raw table's blank only between two
+   adjacent parts, with the recheck's three shapes and every part kind, the reference table read through an
+   own-property test, the legacy rule kept off the legacy-headed HTML5 names where no DOM decodes them, the foreign
+   rule in the inline read in a paragraph, a list item, a quote, a heading and a cell, the body `<title>` dropped in
+   four places with the leading-title record closed, and the textarea's wikilink rendered with the file kind's walk;
+   and two from its round 6, red over a git archive of 8924fa17e: the blank between two table parts past a `<style>`
+   holding `<td>` in its text, a `<script>` between two tbodies, a `<br>` between two rows, an empty `<form>`, a
+   hidden `<input>`, an `<a name>` anchor and the other between-cell shapes, with the template, text, two-tables,
+   tail, comment and unclosed-style controls, and the element left open inside a `<foreignObject>` at `</svg>` in a
+   paragraph, an html block and a list item, a second open element, `</i>` and `</foreignObject>` ignored, with the
+   closed-element, `fo</svg>`, `<br>`, nested-svg and `<g>` controls), anchor-map-html-text-browser.test.ts (1 leg, 63
+   subtests, new in the review's round 5: every html-text shape rendered through marked, applyMdConfig and sanitizeMd
+   in headless Chromium, the reader's text against the box's textContent and each quote's real paintRendered marks
+   over that DOM, the plan's recorded open-textarea divergence pinned on both sides; red over a git archive of
+   701728eae on the eight round-5 shapes, and 9 of 59 red under a sanitizer mutation that kept foreignObject and
+   dropped every title while the text test stayed green, the gap the leg closes; its round 6: three round-5 entries'
+   `shown` strings carried a blank the rule removed and passed under the marks' whitespace-blind compare, so each
+   `shown` is the text test's string now and the needle compare is whitespace-normalized rather than blind, and three
+   shapes from the round's rules, a `<style>` and a `<br>` between two cells and the element left open inside a
+   foreignObject, red over a git archive of 8924fa17e), anchor-map-dom-rules-browser.test.ts (1 leg, new in the
+   review's round 5, over the real viewer and panel: one `<title>` left in the DOM and it the svg's, the titles' text
+   gone from the viewer and from the chat's sanitizeMd, a comment inside a title painting nothing with its card
+   offering Reveal and one across it painting the text beside it alone, `&ltimes;` and `&notxyz;` read and painted as
+   the glyphs the DOM shows, and the comment on a textarea's wikilink content painting with Scroll; red over
+   701728eae), anchor-map-code-table-paint-browser.test.ts (4 legs over the real viewer and panel: a Raw drag over
+   each passage saved through the float and the composer, the posted anchors the exact slices, then the switch to
    Rendered painting the code line whole inside the fence's first row and one mark in each of the row's two cells,
    each card offering Scroll and not Reveal; the same comments served before a fresh open, on the pane and in the chat
    modal; and, the review's round 2, Raw comments on the round 2 cells, the nested emphasis, the code span with an
@@ -2890,50 +3011,63 @@ Where the code as built departs from the text above, why, and which test holds e
    that is its paragraph's whole text is the `<p>`'s only child, so the unwrap and the wrap again of its mark collapse
    a selection inside it to the paragraph and Chromium fires no selectionchange for that move, a merged or split text
    node being what fires it, so a peer's comment through the poll or a settings pick from another pane left the float
-   standing beside nothing; a float beside a selection cut short but not to nothing stays where it was offered, unless
-   the remnant has no box: a selection from inside a paragraph's whole-text mark into the next block's start is cut to
-   a bare line break between the two blocks when the rewrap moves an anchor inside the mark's text to the paragraph's
-   end, a removed node's descendant boundary points moving to its parent, while the focus at the next block's start
-   stays, a range in the body and not collapsed but with no client rect, text nobody can see, which the offer itself
-   refuses and whose Comment button opened a composer the whitespace refusal closed at once; it goes too, by the
-   subject test hideFloatOnScroll reads, `floatSubjectRect`, null for a range with no width and no height, one
-   getBoundingClientRect per paint pass while a passage's float shows and none otherwise; the review's round 5, low,
-   no regression against main, which keeps the float after any cut); a different non-collapsed selection inside the
-   body shows the float at its rect. The quote-chip seed stays on mouseup and touchend; the seam comment at
-   file-view.ts onSelection says where the keyboard's path lives. In Chromium a keyboard selection needs an existing
-   selection or caret browsing (F7), so the gain is the float following a keyboard-adjusted selection and the offer
-   for caret-browsing and assistive users. file-comments-keyboard-offer.test.ts (10; two from the review's round 2: a
-   right or middle press raises no flag and the next keyboard change offers, a primary press is over at contextmenu
-   and at the window's blur while a touch press holds to touchend, and the dispose case counts the contextmenu and
-   blur listeners' install and removal; one from its round 4: the passage-gone hide drops the record, in its aside and
-   collapsed faces, the scroll's record kept), file-comments-keyboard-offer-browser.test.ts (3 legs over the real
-   panel: at 380 and 900 px a drag, then Shift+ArrowLeft three times, the float at the shrunk selection's own rect, a
-   text-size step leaves it hidden, the next keyboard change offers again at the reflowed rect, Ctrl+A hides it, a
-   drag offers once more; and, the review's round 2, a right-button press whose release the page never sees, then
-   Shift+ArrowRight offering at the selection's rect, and a left press ended by a dispatched contextmenu with no
-   mouseup, then the same; and, its round 4, at 800 by 650 px over a thirty-paragraph note, a drag of the last
-   paragraph, Shift+ArrowDown until the focus leaves the body, each press awaited on a selectionchange and the float
-   asserted beside each in-body extension, the float hidden with the focus in the aside, and one Shift+ArrowUp landing
-   at exactly the kept ends, by node identity and offsets, offered again), file-comments-paint-offer.test.ts (5; three
-   from the review's round 1: the float across a paint that cuts a live selection, a WeakRef over the offer's text
-   node collected after a reload, and one toString a change; one from its round 2: a paint that collapses a live
-   selection to nothing with no selectionchange hides the float, the next change offers, a selection cut short keeps
-   it and a hidden float stays hidden; one from its round 5: a settings-signal paint that leaves a live selection of
-   one line break, not collapsed, in the body and with no box, hides the float, the next change offers, a remnant with
-   a box keeps it and a hidden float stays hidden) and file-comments-paint-offer-browser.test.ts (3 legs over the real
-   pane: a peer's comment through the real poll cuts a real drag's selection, the hidden float stays hidden and a
-   shown one stays put, and Shift+ArrowRight offers; and, the review's round 2, a comment over the whole of a
-   paragraph, a real drag inside its mark and a peer's comment through the poll collapsing the selection with 0
-   selectionchange events, the count asserted since the review's round 3 (a browser firing one for the collapse would
-   hide the float through the listener's rule and the leg would pass without reaching afterPaint's), the float hidden,
-   then a fresh drag and Shift+ArrowRight offering at the widened selection's rect; and, its round 5, a comment over
-   the whole of a paragraph, a real drag from its last eight characters into the next paragraph's first character and
-   a peer's comment through the real poll, the remnant asserted as one or more line breaks anchored on the `<p>`, not
-   collapsed, both ends in the body and with no box, then the float hidden, no composer, and a fresh drag offering
-   again). The same round found four of the panel's node tests reading the selection through per-test fakes that
-   asserted their world's nodes at call time, or pinning paintAll's shape: file-comments-about-review2 and
-   file-comments-markclick-controls read their fake once, and file-comments-regions, file-comments-reveal-landing and
-   file-comments-behavior pin the pass with afterPaint in it.
+   standing beside nothing; a float beside a selection cut short but not to nothing answers to the test the scroll's
+   listener reads (`subjectHeld`, one method since the review's round 6: the remnant has a box and its top and right
+   edges sit within a pixel of the offer's, `floatSubjectRect` against `floatAt`, one getBoundingClientRect per paint
+   pass while a passage's float shows and none otherwise): it stays where it was offered while the remnant sits under
+   the button (a cut that trims the selection inside the line box the button sits beside), and goes once the remnant
+   has no box or has moved a pixel or more. No box (the review's round 5): a selection from inside a paragraph's
+   whole-text mark into the next block's start is cut to a bare line break between the two blocks when the rewrap
+   moves an anchor inside the mark's text to the paragraph's end, a removed node's descendant boundary points moving
+   to its parent, while the focus at the next block's start stays, a range in the body and not collapsed but with no
+   client rect, text nobody can see, which the offer itself refuses and whose Comment button opened a composer the
+   whitespace refusal closed at once. Moved (the review's round 6): the same drag carried into the next paragraph's
+   middle leaves the line break and that paragraph's first half, a remnant with a box a line or more below the
+   offer's, and the float stayed where the drag offered it, 74 px above the passage it now offered to comment on,
+   while a scroll that moves the passage one pixel from under the button hides it; low, no regression against main,
+   which keeps the float after any cut, and a rule the round aligned with the scroll's rather than recorded); a
+   different non-collapsed selection inside the body shows the float at its rect. The quote-chip seed stays on mouseup
+   and touchend; the seam comment at file-view.ts onSelection says where the keyboard's path lives. In Chromium a
+   keyboard selection needs an existing selection or caret browsing (F7), so the gain is the float following a
+   keyboard-adjusted selection and the offer for caret-browsing and assistive users.
+   file-comments-keyboard-offer.test.ts (10; two from the review's round 2: a right or middle press raises no flag and
+   the next keyboard change offers, a primary press is over at contextmenu and at the window's blur while a touch
+   press holds to touchend, and the dispose case counts the contextmenu and blur listeners' install and removal; one
+   from its round 4: the passage-gone hide drops the record, in its aside and collapsed faces, the scroll's record
+   kept), file-comments-keyboard-offer-browser.test.ts (3 legs over the real panel: at 380 and 900 px a drag, then
+   Shift+ArrowLeft three times, the float at the shrunk selection's own rect, a text-size step leaves it hidden, the
+   next keyboard change offers again at the reflowed rect, Ctrl+A hides it, a drag offers once more; and, the review's
+   round 2, a right-button press whose release the page never sees, then Shift+ArrowRight offering at the selection's
+   rect, and a left press ended by a dispatched contextmenu with no mouseup, then the same; and, its round 4, at 800
+   by 650 px over a thirty-paragraph note, a drag of the last paragraph, Shift+ArrowDown until the focus leaves the
+   body, each press awaited on a selectionchange and the float asserted beside each in-body extension, the float
+   hidden with the focus in the aside, and one Shift+ArrowUp landing at exactly the kept ends, by node identity and
+   offsets, offered again), file-comments-paint-offer.test.ts (6; three from the review's round 1: the float across a
+   paint that cuts a live selection, a WeakRef over the offer's text node collected after a reload, and one toString a
+   change; one from its round 2: a paint that collapses a live selection to nothing with no selectionchange hides the
+   float, the next change offers, a selection cut short keeps it and a hidden float stays hidden; one from its round
+   5: a settings-signal paint that leaves a live selection of one line break, not collapsed, in the body and with no
+   box, hides the float, the next change offers, a remnant with a box keeps it and a hidden float stays hidden; one
+   from its round 6: a settings-signal paint that cuts a live selection to a remnant with a box moved 74 px down and
+   55 px in hides the float, the paint's own event re-offers nothing, the next change offers, a remnant within a pixel
+   keeps it, one moved a pixel loses it, and a hidden float stays hidden) and
+   file-comments-paint-offer-browser.test.ts (4 legs over the real pane: a peer's comment through the real poll cuts a
+   real drag's selection, the hidden float stays hidden and a shown one stays put, and Shift+ArrowRight offers; and,
+   the review's round 2, a comment over the whole of a paragraph, a real drag inside its mark and a peer's comment
+   through the poll collapsing the selection with 0 selectionchange events, the count asserted since the review's
+   round 3 (a browser firing one for the collapse would hide the float through the listener's rule and the leg would
+   pass without reaching afterPaint's), the float hidden, then a fresh drag and Shift+ArrowRight offering at the
+   widened selection's rect; and, its round 5, a comment over the whole of a paragraph, a real drag from its last
+   eight characters into the next paragraph's first character and a peer's comment through the real poll, the remnant
+   asserted as one or more line breaks anchored on the `<p>`, not collapsed, both ends in the body and with no box,
+   then the float hidden, no composer, and a fresh drag offering again; and, its round 6, a comment over the whole of
+   a paragraph, a real drag from its character 20 to the next paragraph's character 60 and a peer's comment through
+   the real poll, the remnant asserted as the line break and that paragraph's first sixty characters, not collapsed,
+   both ends in the body, with a box a pixel or more below the offer's, the float hidden where it stood, no composer,
+   and a fresh drag offering again). Round 5 found four of the panel's node tests reading the selection through
+   per-test fakes that asserted their world's nodes at call time, or pinning paintAll's shape:
+   file-comments-about-review2 and file-comments-markclick-controls read their fake once, and file-comments-regions,
+   file-comments-reveal-landing and file-comments-behavior pin the pass with afterPaint in it.
 11. *Item 10, the records, and what was routed here from Slice 4.* docs/guide.md's Comments paragraph gains three
    clauses (the button follows a keyboard selection; two comments over one text carry one highlight and a click on the
    overlap opens both cards, the clicked one in front; going to a comment inside a closed fold opens the fold first),
@@ -2956,13 +3090,25 @@ Where the code as built departs from the text above, why, and which test holds e
    no box whose card offered Scroll to nothing), viewer and chat alike; item 4's reader drops it on its side (`TITLE`
    in `DROPPED_CONTENT`, an svg's kept); md-sanitize.test.ts (16: the unit test over fake nodes in both namespaces,
    the hook test reading both bodies, the header), anchor-map-dom-rules-browser.test.ts (1 leg, new, item 4) and
-   docs/guide.md's HTML paragraph gains a second sentence, a `<title>` is dropped with its text, since a browser shows
-   one nowhere outside the page's head, with its pin in md-sanitize.test.ts. The ledger entry is
-   upstream/2026-09-10-markdown-viewer-slice5.md (tier feature). CONTEXT.md is unchanged: the build coined no term (a
-   wrapper is the Slice 2 note's own word for the element the browser nests markdown into). From the Slice 4 note's
-   item 10, decided with the build: (a) the html-block resync defect, its same-text trigger closed by item 1c's tag
-   test and its sanitizer-shortened trigger by item 1's closed-tag rule, the trim leg's confinement lifted; (b) a hole
-   at a range's edge stays unpainted and the callout title stays text, the rule as it stands with its two pins
+   docs/guide.md's HTML paragraph gains a second sentence, an HTML `<title>` is dropped with its text, since a browser
+   shows one nowhere outside the page's head, and the `<title>` of an inline `svg`, the drawing's tooltip, stays (the
+   svg clause from the review's round 6, which found the sentence had said every `<title>` is dropped while the same
+   paragraph says an inline `svg` is kept), with its pin in md-sanitize.test.ts over both halves. From its round 6 one
+   change outside the slice's units, in the shared Copy button, pre-existing on main: the execCommand fallback of a
+   fence's Copy (code-block.ts `fallbackCopy`, the path an insecure origin, a denied permission or a refused Clipboard
+   write takes) moved the document's selection into its textarea and left it collapsed outside the passage, and the
+   focus on the body, with no selectionchange the document hears, so a passage's Comment button stood beside a
+   selection that was gone and a click on it opened nothing (the review's fuzz: 27 steps in 5,040 on main, 3 on the
+   slice's tree), and Space on a focused Copy button lost the keyboard's place; the fallback now clones the
+   selection's ranges before the textarea takes the selection and puts them back after, and gives the focus back to
+   the element that held it, as the Clipboard API path leaves both; code-block-copy-keeps-selection.test.ts (4, new)
+   over a stand-in and file-comments-copy-fallback-browser.test.ts (1 leg, new) over the real Files pane, whose origin
+   carries no Clipboard API; file-view-place.test.ts's hideFloatOnScroll pin moved with `subjectHeld`. The ledger
+   entry is upstream/2026-09-10-markdown-viewer-slice5.md (tier feature). CONTEXT.md is unchanged: the build coined no
+   term (a wrapper is the Slice 2 note's own word for the element the browser nests markdown into). From the Slice 4
+   note's item 10, decided with the build: (a) the html-block resync defect, its same-text trigger closed by item 1c's
+   tag test and its sanitizer-shortened trigger by item 1's closed-tag rule, the trim leg's confinement lifted; (b) a
+   hole at a range's edge stays unpainted and the callout title stays text, the rule as it stands with its two pins
    (anchor-map-obsidian.test.ts: the alert body maps, a nested fold's title inside the range is painted with the
    rest), since painting a hole at the edge would paint tables and code blocks there too and is Slice 8's
    neighbourhood; (c) the whitespace alphabet at a selection's edge stays JavaScript's `\s` on every side, since a

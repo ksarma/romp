@@ -8,7 +8,9 @@
 // its whitespace removed, and a markdown table's delimiter row is text to the reader alone (item 8's rule), so it is taken
 // out of the reader's text first. (2) Each quote the text test reads: the real paint (paintRendered) over that DOM, which
 // must wrap something, its marks reading the shown text the text test pins for the same slice (whitespace aside: the marks
-// of two cells hold no blank between them), in the cells named where a table is involved. So a sanitizer profile that kept
+// of two cells hold no blank between them), in the cells named where a table is involved; the reader's needle for the slice
+// is that shown text normalized, so an entry's `shown` IS the text test's string (round 6: three round-5 entries carried a
+// blank the rule removed, and passed under the marks' whitespace-blind compare). So a sanitizer profile that kept
 // svg's foreignObject, or dropped a title, would go red here (the foreignObject and svg title shapes) while the text test,
 // reading the reader alone, stayed green: that gap is what this leg closes. The plan's one recorded divergence is pinned both
 // ways (RECORDED: the DOM's text and the reader's, so a change on either side is seen). The shapes of the findings round 5's
@@ -17,7 +19,11 @@
 // `&notni;`, and `&toString;` read with `in`), a quote from a cell across a table's end into trailing text (three shapes:
 // lenientHtml's blank at every part's end where the hay puts one only between two adjacent parts), an inline svg title
 // closed by the svg's end tag (no FOREIGN counter inline), and a `<title>` block the document begins with, which the reader
-// read as its text. A body `<title>` anywhere is dropped content to the reader since round 5, and this leg holds the
+// read as its text. Round 6's three shapes (anchor-map-html-rules.test.ts tests 7 and 8) were red over a git archive of
+// 8924fa17e the same way: a `<style>` or a `<br>` between two cells of a minified raw table, which the DOM leaves adjacent
+// (the reader read the cells run together), and an HTML element left open inside a `<foreignObject>` at `</svg>`, which
+// keeps the parser from closing the svg (the reader read the passage's tail as shown text where the DOM shows `Intro`
+// alone). A body `<title>` anywhere is dropped content to the reader since round 5, and this leg holds the
 // sanitizer to the same rule: its text is out of the DOM too (the profile drops the element with its content), so the three
 // inline `<title>` shapes read `Lead tail` on both sides. Not a shape here: a wikilink inside an inline `<textarea>`, whose
 // divergence (the reader rendered the singleton's dead span against a DOM showing the file kind's anchor) exists only under
@@ -63,12 +69,13 @@ const SHAPES: Shape[] = [
   { name: "a raw table written with whitespace between its parts", src: "Intro.\n\n<table>\n<tr>\n<td>cell *a*</td>\n<td>b cell</td>\n</tr>\n</table>\n\npara\n",
     quotes: [{ from: "cell *a*</td>\n<td>b cell", shown: "cell *a* b cell", cells: ["TD0", "TD1"] }] },
   { name: "a table part inside a script adds nothing", src: "<div><script><table><tr><td>x</td></tr></table></script>y</div>\n", quotes: [{ from: "y", shown: "y" }] },
-  // round 5: no blank at a part's end that no part follows (red at 701728eae: the needle `a2 tail` against a hay of `a1 a2tail`)
+  // round 5: no blank at a part's end that no part follows (red at 701728eae: the needle `a2 tail` against a hay of `a1 a2tail`);
+  // `shown` is the text test's string for each (`a2tail`, `inout`, `bc`), which the needle compare holds it to since round 6
   { name: "a quote from a cell across the table's end into trailing text", whole: "blanks", src: "<table><tr><td>a1</td><td>a2</td></tr></table>tail\n",
-    quotes: [{ from: "a2</td></tr></table>tail", shown: "a2 tail", cells: ["TD1", null] }] },
+    quotes: [{ from: "a2</td></tr></table>tail", shown: "a2tail", cells: ["TD1", null] }] },
   { name: "a quote out of a nested minified table into its holding cell", whole: "blanks", src: "<table><tr><td><table><tr><td>in</td></tr></table>out</td><td>z</td></tr></table>\n",
-    quotes: [{ from: "in</td></tr></table>out", shown: "in out" }] },
-  { name: "a stray td in a div, whose tags the parser ignores", src: "<div>a<td>b</td>c</div>\n", quotes: [{ from: "b</td>c", shown: "b c" }] },
+    quotes: [{ from: "in</td></tr></table>out", shown: "inout" }] },
+  { name: "a stray td in a div, whose tags the parser ignores", src: "<div>a<td>b</td>c</div>\n", quotes: [{ from: "b</td>c", shown: "bc" }] },
   // test 2: svg's foreignObject
   { name: "svg's foreignObject goes with its text in an html block; text and desc keep theirs",
     src: "Intro.\n\n<div><svg viewBox=\"0 0 10 10\"><text>svg text</text><desc>desc text</desc><foreignObject><p>fo text</p></foreignObject></svg></div>\n\npara.\n",
@@ -148,6 +155,17 @@ const SHAPES: Shape[] = [
   // round 5: a title block the document begins with shows nothing (the parser puts it in the head), and the reader reads nothing
   // of it either (red at 701728eae, where it read `Doc title Para.`)
   { name: "a title block the document begins with", src: "<title>Doc title</title>\n\nPara.\n", quotes: [{ from: "Para.", shown: "Para." }] },
+  // round 6 (the rules pinned in anchor-map-html-rules.test.ts tests 7 and 8, red over a git archive of 8924fa17e): a `<style>` between
+  // two cells of a minified raw table goes with its text and leaves the cells adjacent, a `<br>` there is foster-parented before the
+  // table, so the hay's blank stands between the cells in both (round 5 looked past whitespace and comments alone and read the cells
+  // run together); and an HTML element left open inside a `<foreignObject>` at `</svg>` keeps the parser from closing the svg, so the
+  // rest of the passage stays inside the dropped foreignObject and the paint shows `Intro` alone (round 5 read ` y` as shown text)
+  { name: "a style between two cells of a minified raw table", whole: "blanks", src: "<div><table><tr><td>s1</td><style>td{}</style><td>s2</td></tr></table></div>\n",
+    quotes: [{ from: "s1</td><style>td{}</style><td>s2", shown: "s1 s2", cells: ["TD0", "TD1"] }] },
+  { name: "a br between two cells of a minified raw table, foster-parented before it", whole: "blanks", src: "<table><tr><td>a1</td><br><td>a2</td></tr></table>\n",
+    quotes: [{ from: "a1</td><br><td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
+  { name: "an HTML element left open inside a foreignObject at the svg's end tag, inline", src: "Intro <svg><foreignObject><b>x</svg> y\n",
+    quotes: [{ from: "Intro", to: " y", shown: "Intro" }] },
 ];
 
 /** The plan's recorded divergence (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. */
@@ -239,7 +257,7 @@ test("in a browser, over the viewer's pipeline: the fallback reader's text for e
         (s.quotes || []).forEach((q, i) => {
           const p = r.paints[i], what = JSON.stringify(q.to === undefined ? q.from : q.from + " .. " + q.to);
           assert.equal(p.error, undefined, what + ": " + p.error);
-          assert.equal(nows(p.needle), nows(q.shown), what + ": the reader's needle is the shown text (as the text test pins it)");
+          assert.equal(norm(p.needle), norm(q.shown), what + ": the reader's needle is the shown text (as the text test pins it, normalized)");
           assert.ok(p.marks > 0, what + ": the paint over the real DOM wraps something (needle " + JSON.stringify(p.needle) + ")");
           assert.equal(nows(p.text), nows(q.shown), what + ": the marks read the shown text");
           if (q.cells) assert.deepEqual(p.cells, q.cells, what + ": the marks sit in the cells named");

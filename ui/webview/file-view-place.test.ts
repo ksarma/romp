@@ -399,8 +399,11 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /note\?\.remove\(\); note = null;\n\s*renderBody\(\);\n\s*\/\/ a fetch that landed while the editor was up/, "the editor's exit removes the edit's notices, as the repaint used to");
   // the float hides on the body's scroll, installed with the float's other listeners (the constructor), not in installLayout
   const PANEL = read("file-comments.ts");
-  assert.match(PANEL, /hideFloatOnScroll = \(\) => \{\n\s*if \(this\.float\.hidden\) return;\n\s*const was = this\.floatAt, now = this\.floatSubjectRect\(\);\n\s*if \(was && now && Math\.abs\(now\.top - was\.top\) < 1 && Math\.abs\(now\.right - was\.right\) < 1\) return;[^\n]*\n\s*this\.hideFloat\(\);\n\s*\};/,
+  assert.match(PANEL, /hideFloatOnScroll = \(\) => \{\n\s*if \(this\.float\.hidden \|\| this\.subjectHeld\(\)\) return;[^\n]*\n\s*this\.hideFloat\(\);\n\s*\};/,
     "hides on the body's scroll unless the passage stayed within a pixel of where the button was offered (Chromium's anchoring adjustment)");
+  // the pixel test itself, one method since the panel's own paint reads it too (afterPaint; the Slice 5 review, round 6)
+  assert.match(PANEL, /private subjectHeld\(\): boolean \{\n\s*const was = this\.floatAt, now = this\.floatSubjectRect\(\);\n\s*return !!\(was && now && Math\.abs\(now\.top - was\.top\) < 1 && Math\.abs\(now\.right - was\.right\) < 1\);\n\s*\}/,
+    "the subject's rect against the offer's, within a pixel on both edges the button sits beside");
   assert.match(PANEL, /ctx\.body\(\)\.addEventListener\("scroll", this\.hideFloatOnScroll, \{ passive: true \}\);\n\s*ctx\.onSelection\(\(sel\) => this\.onSelection\(sel\)\);/, "beside the selection hook in the constructor");
   assert.match(PANEL, /this\.ctx\.body\(\)\.removeEventListener\("scroll", this\.hideFloatOnScroll\);/, "and removed with the float at dispose");
   const install = PANEL.split("private installLayout(row: HTMLElement): void {")[1].split("\n  }\n")[0];

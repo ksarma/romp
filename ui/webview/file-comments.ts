@@ -1518,11 +1518,18 @@ class Panel {
    *  adjustment included, so the one comparison tells the two figures apart. The selection itself stands either way,
    *  and the next mouseup over it offers the button again. */
   hideFloatOnScroll = () => {
-    if (this.float.hidden) return;
-    const was = this.floatAt, now = this.floatSubjectRect();
-    if (was && now && Math.abs(now.top - was.top) < 1 && Math.abs(now.right - was.right) < 1) return;   // anchoring held the passage under the button
+    if (this.float.hidden || this.subjectHeld()) return;   // anchoring held the passage under the button
     this.hideFloat();
   };
+  /** Whether the float's subject still sits within a pixel of where the button was offered beside it (floatAt): the passage (or
+   *  picture) has a box now, and its top and right edges are under a pixel from the offer's. The one test for a float whose subject
+   *  the page may have moved from under it, wherever the move came from: the body's scroll and a figure's load (hideFloatOnScroll,
+   *  whose comment says why a pixel) and the panel's own writes over the text (afterPaint). False for a subject that is gone or has
+   *  no box (floatSubjectRect: null). */
+  private subjectHeld(): boolean {
+    const was = this.floatAt, now = this.floatSubjectRect();
+    return !!(was && now && Math.abs(now.top - was.top) < 1 && Math.abs(now.right - was.right) < 1);
+  }
   // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
   // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
   // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
@@ -2658,8 +2665,8 @@ class Panel {
     this.floatAt = { top: rect.top, right: rect.right, img };
   }
   /** The float's subject as it sits on screen now: the picture's box, or the live selection's last range (null once the
-   *  selection is gone or has no box, or the picture has left the document); what hideFloatOnScroll compares with floatAt, and
-   *  what afterPaint reads of the selection its writes left (a remnant with no box is no subject). */
+   *  selection is gone or has no box, or the picture has left the document); what subjectHeld compares with floatAt, on the body's
+   *  scroll (hideFloatOnScroll) and after the panel's own writes (afterPaint: a remnant with no box is no subject). */
   private floatSubjectRect(): { top: number; right: number } | null {
     const at = this.floatAt;
     if (!at) return null;
@@ -3561,18 +3568,23 @@ class Panel {
    *  the unpaint's normalize or split by the wrap is what fires it: a highlight beside plain text does, a lone-child mark does
    *  not), so the listener's collapsed-selection guard never ran, and a peer's comment landing through the poll, or a settings pick
    *  from another pane, left the float standing beside nothing until a click on it hid it and opened no composer (the Slice 5
-   *  review, round 2). A float the writes left beside a selection cut short but not to nothing stays where it was offered, as
-   *  before, unless the remnant has no box: a selection from inside a paragraph's mark into the next block's start is cut to a bare
-   *  line break between the two blocks (the rewrap moves an anchor inside the mark's text to the paragraph's end, a removed node's
-   *  descendant boundary points moving to its parent, while the focus at the next block's start stays), a range in the body and not
-   *  collapsed but with no client rect, text nobody can see, which the offer itself refuses (onSelection's guard on a range with no
-   *  width and no height) and whose Comment button opened a composer the whitespace refusal closed at once; it goes too, by the
-   *  subject test hideFloatOnScroll reads (floatSubjectRect: null for a boxless range; the Slice 5 review, round 5). A picture's
-   *  stands. */
+   *  review, round 2). A float the writes left beside a selection cut short but not to nothing answers to the test the scroll's
+   *  listener reads (subjectHeld): it stays while the remnant sits within a pixel of where the button was offered beside it (a cut
+   *  that trims the selection inside the line box the button sits beside keeps its top and right edges), and goes once the remnant
+   *  has no box or has moved a pixel or more. No box: a selection from inside a paragraph's mark into the next block's start is cut
+   *  to a bare line break between the two blocks (the rewrap moves an anchor inside the mark's text to the paragraph's end, a
+   *  removed node's descendant boundary points moving to its parent, while the focus at the next block's start stays), a range in
+   *  the body and not collapsed but with no client rect, text nobody can see, which the offer itself refuses (onSelection's guard
+   *  on a range with no width and no height) and whose Comment button opened a composer the whitespace refusal closed at once
+   *  (the Slice 5 review, round 5). Moved: the same drag carried into the next paragraph's middle leaves the line break and that
+   *  paragraph's first half, a remnant with a box a line or more below the offer's, and the float, which stayed where it was
+   *  offered as it did on main, stood 74 px above the passage it now offered to comment on, while a scroll that moves the passage
+   *  one pixel from under the button hides it (the same review, round 6); the paint is the event and the subject's rect the test,
+   *  as for the scroll. A picture's stands. */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
-    if (sel && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.floatSubjectRect())) this.hideFloat();
+    if (sel && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.subjectHeld())) this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every

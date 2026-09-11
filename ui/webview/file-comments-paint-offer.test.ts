@@ -26,6 +26,11 @@
 //     itself refuses such a selection (onSelection's guard on a range with no width and no height), and a click on the button opened a
 //     composer the whitespace refusal closed at once. Now afterPaint hides the float when the remnant has no box too, by the subject
 //     test hideFloatOnScroll reads (floatSubjectRect); a remnant with a box keeps the float, as (4) has it.
+// (6) The writes can cut the selection to a remnant WITH a box that has MOVED from under the button (the review's round 6): the same
+//     drag carried into the next paragraph's middle leaves the line break and that paragraph's first half, a line or more below the
+//     offer's box, and the float stayed where the offer put it, 74 px above the passage it now offered to comment on, while a scroll
+//     that moves the passage one pixel hides it. Now afterPaint reads the scroll's whole test (subjectHeld: the remnant's top and
+//     right edges within a pixel of the offer's): a remnant under the button keeps the float, one moved a pixel or more loses it.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
 // what afterPaint records), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
 // file-comments-paint-offer-browser.test.ts runs (1) over the real viewer in Chromium, where the paint moves the selection itself.
@@ -334,6 +339,7 @@ const RECT_A: Rect = { left: 100, top: 200, right: 300, bottom: 220, width: 200,
 const RECT_B: Rect = { left: 100, top: 200, right: 240, bottom: 220, width: 140, height: 20 };
 const RECT_MOVED: Rect = { left: 100, top: 40, right: 300, bottom: 60, width: 200, height: 20 };
 const RECT_NONE: Rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 };   // a range with no client rect: a bare line break between two blocks
+const RECT_BELOW: Rect = { left: 100, top: 274, right: 245, bottom: 314, width: 145, height: 40 };   // a remnant a line or more below the offer's box: the next paragraph's first half (the review's 500 px measurement: top 74 px down, the right edge 55 px in)
 /** A selection as the panel reads it: the passage's text node from `at` for `length` characters, its rect `rect` (a fake
  *  selection's; the stand-in lays nothing out). */
 function selectionOn(root: El, passage: string, length: number, rect: Rect): any {
@@ -418,17 +424,19 @@ test("the panel's own paint cuts an overlapping selection short and fires select
   live.length = 5;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's change after the paint offers the float");
-  // a paint with no gesture while the float SHOWS (a settings pick from another pane: paintAll with no hideFloat, the poll's shape):
-  // the float stays as the paint found it, where main left it before the panel heard selectionchange at all
-  live.length = 3; live.rect = RECT_A;   // the paint cuts the selection again; the fake's rect differs, so an offer would move the button
+  // a paint with no gesture while the float SHOWS (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // that cuts the selection again and leaves the remnant's box where the offer read it (the cut trims the selection inside the line
+  // box the button sits beside: the fake's rect stays): the float stays as the paint found it, where main left it before the panel
+  // heard selectionchange at all, and the paint's own event is no offer (a remnant the paint MOVES from under the button is (6)'s)
+  live.length = 3;
   const mid = live.anchorNode;
   externalFilterPick();
   assert.notEqual(live.anchorNode, mid, "the pick's paint replaced the node again");
-  assert.equal(float.hidden, false, "the pick itself hides nothing");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the remnant under the button: the pick itself hides nothing and moves nothing");
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the paint's own event moves nothing: the float stands where the person's selection put it");
-  // ...and a person's change after that paint is an offer again
-  live.length = 7;
+  // ...and a person's change after that paint is an offer again, beside the selection's own rect
+  live.length = 7; live.rect = RECT_A;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the next change offers beside the selection");
 });
@@ -541,6 +549,52 @@ test("a paint whose writes cut the selection to a remnant with NO box (a selecti
   externalFilterPick();
   assert.equal(float.hidden, true, "hidden it stays");
   remnant = null; live.length = 4; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
+});
+
+test("a paint whose writes cut the selection to a remnant WITH a box that has MOVED from under the button (a drag from inside a whole-paragraph highlight into the next paragraph's middle: the rewrap moves the anchor to the paragraph's end, and the remnant, the line break and that paragraph's first half, sits a line or more below the offer's box): the shown float goes with the paint, by the test the scroll reads (before: it stood where the offer put it, 74 px above the passage it now offered to comment on); the paint's own event re-offers nothing; the next change offers; a remnant within a pixel keeps the float and one moved a pixel loses it; hidden, it stays hidden", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
+  // a paint with no gesture while the float shows (a settings pick from another pane: paintAll with no hideFloat, the poll's shape)
+  // cuts the selection and leaves the remnant's box a line below the offer's and shorter: the fake is told (in the body, not
+  // collapsed, a box, moved), and the browser's selectionchange for the move, where it fires one, follows the paint
+  live.length = 9; live.rect = RECT_BELOW;
+  externalFilterPick();
+  assert.deepEqual([String(live), live.isCollapsed, w.body.contains(live.anchorNode)], [QUOTE.slice(0, 9), false, true], "the paint left a remnant selected, in the body");
+  const box = live.getRangeAt(0).getBoundingClientRect();
+  assert.ok(box.width && box.height, "...with a box");
+  assert.deepEqual([box.top - RECT_A.top, box.right - RECT_A.right], [74, -55], "...that moved from under the button by the review's measurement");
+  assert.equal(float.hidden, true, "the float went with the paint that moved its subject from under it, as it goes on a scroll that moves the passage a pixel (before: shown where the offer put it, 74 px above the remnant, and a click on it commented on text the person had not chosen)");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the paint's own selectionchange is no offer: hidden it stays");
+  // the person's next change offers, beside the selection as it stands
+  live.length = 12;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "the keyboard's next selection offers the float beside the remnant");
+  // a paint whose cut leaves the remnant within a pixel of the offer's box (the sub-pixel drift the scroll rule allows for) keeps it
+  live.length = 10; live.rect = { ...RECT_BELOW, top: RECT_BELOW.top + 0.4, right: RECT_BELOW.right - 0.6 };
+  externalFilterPick();
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "a remnant within a pixel of the offer's box keeps the float where the offer put it");
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_BELOW) }, "...and the paint's own event moves nothing");
+  // ...and one whose right edge moved a pixel loses it, the scroll's threshold
+  live.length = 11; live.rect = { ...RECT_BELOW, right: RECT_BELOW.right + 1 };
+  externalFilterPick();
+  assert.equal(float.hidden, true, "a remnant whose edge moved a pixel: the float goes, as on a scroll");
+  // hidden by a scroll that moved the passage, a paint that moves the remnant leaves it hidden, and the next change offers
+  live.length = 12; live.rect = RECT_BELOW;
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, false, "offered again for the next change");
+  live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by the scroll");
+  live.length = 9; live.rect = RECT_A;
+  externalFilterPick();
+  assert.equal(float.hidden, true, "hidden it stays");
+  live.length = 4; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
 });

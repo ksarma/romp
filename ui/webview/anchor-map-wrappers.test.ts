@@ -1217,7 +1217,7 @@ test("nextAnchor's resume after a block of closing tags alone is the first end f
   for (const t of ["Note tango sierra.", "Final para after tail."]) mapsWhole(box3, DISTINCT, t);
 });
 
-test("a block whose scan took nothing and whose run no end confirms hands the nodes back PAST an html block whose element is nowhere in the content: after a `<tr><td>` note the parser drops (its text a bare node) or a `<style>` block the sanitizer drops, then a `<button>` opener the sanitizer unwraps, the paragraphs after the `</center>` closer, after a `<div>marker</div>` block or after a `<p>` block map to their own offsets, the paragraphs inside the run refused at the note's block (the review's round 5, fuzz seed 1322's shape: nextAnchor ended its search at the `<button>` block, whose BUTTON element the sanitizer unwrapped, and the note's block took every node to the document's end, the paragraphs after the closer refused as an HTML block where main mapped them)", () => {
+test("a block whose scan took nothing and whose run no end confirms hands the nodes back PAST an html block whose element is nowhere in the content: after a `<tr><td>` note the parser drops (its text a bare node) or a `<style>` block the sanitizer drops, then a `<button>` opener the sanitizer unwraps, the paragraphs after the `</center>` closer or after a `<div>marker</div>` block map to their own offsets, the paragraphs inside the run refused at the note's block (the review's round 5, fuzz seed 1322's shape: nextAnchor ended its search at the `<button>` block, whose BUTTON element the sanitizer unwrapped, and the note's block took every node to the document's end, the paragraphs after the closer refused as an HTML block where main mapped them); after an html `<p>` block, `<p></p>` or `<p>marker</p>`, the paragraphs after it map too, the `<p>` block owns its OWN element alone and the run's paragraphs are refused at the note's block, the swallower, whose offset is before the passage, so the Raw offer's search from it lands on the passage (the review's round 6: the title had claimed the `<p>` scene and no scene pinned it, and nextAnchor's by-tag search from k took the first same-tag node, the run's minted `<p></p>`, for the `<p>` block's element, so that block owned the run and the refusal carried its offset, past the passage; the candidate is now confirmed by the blocks after it lining up)", () => {
   const RUN = "<button>\n\n<button>probe xray quebec</button>\n\nNovember table bravo.\n\nLast line kilo.\n\n";
   const NOTE = "Intro one here.\n\n<tr><td>xray golf juliet.</td></tr>\n\n";
   const RUN_DOM = "<p></p>probe xray quebec<p></p>\n<p>November table bravo.</p>\n<p>Last line kilo.</p>\n";
@@ -1239,6 +1239,30 @@ test("a block whose scan took nothing and whose run no end confirms hands the no
   const box3 = domOf("<p>Intro one here.</p>\n" + RUN_DOM + "<p>Note tango sierra.</p>\n<p>Final para after tail.</p>\n");
   for (const t of ["Note tango sierra.", "Final para after tail."]) mapsWhole(box3, S3STYLE, t);
   assert.match(bad(mapText(box3, S3STYLE, "Last line kilo."), "inside the run").reason, /an HTML block/);
+  // an html `<p>` block after the run: the paragraphs after it map (before round 5: swallowed to the document's end), the `<p>` block owns
+  // its own element alone and the run's paragraphs are refused at the note's block, the swallower (the review's round 6: nextAnchor's
+  // by-tag search from k took the FIRST `<p>` from k, the unwrapped button opener's minted `<p></p>`, an empty `<p>` by emptiness as the
+  // block's own is, for the `<p>` block's element, so that block's scan resumed inside the run, it owned the run's four elements and
+  // its own, the note's block owned nothing, and the refusal's offset was the `<p>` block's, after the passage, where the Raw offer's
+  // search from the refusal's offset missed; a candidate is now taken only when the blocks after the block line up from the nodes its
+  // scan takes, runFits with toEnd, so the run's `<p></p>` is passed over and the block's own element is the first that lines up)
+  const P_BLOCKS: Array<[string, string, string]> = [["an empty `<p>`", "<p></p>", ""], ["a `<p>marker</p>`", "<p>marker</p>", "marker"]];
+  for (const [what, tag, inner] of P_BLOCKS) {
+    const S3P = NOTE + RUN + tag + "\n\nAfter one lima.\n\nAfter two mike.\n";
+    const box4 = domOf("<p>Intro one here.</p>\nxray golf juliet.\n" + RUN_DOM + tag + "\n<p>After one lima.</p>\n<p>After two mike.</p>\n");
+    for (const t of ["After one lima.", "After two mike."]) mapsWhole(box4, S3P, t);
+    for (const t of ["November table bravo.", "Last line kilo."]) {
+      const rp = bad(mapText(box4, S3P, t), what + ": " + t + ", inside the run");
+      assert.match(rp.reason, /an HTML block/, what + ": " + t);
+      assert.equal(rp.blockStartOffset, at(S3P, "<tr>"), what + ": refused at the note's block, the swallower (round 5: the `<p>` block's offset, after the passage)");
+      assert.equal(rp.rawHasQuote, true, what + ": the passage occurs in the source");
+      assert.deepEqual(rp.rawRange, { start: at(S3P, t), end: at(S3P, t) + t.length }, what + ": the refusal carries the passage's own source range");
+      assert.equal(S3P.indexOf(t, rp.blockStartOffset as number), at(S3P, t), what + ": the Raw offer's search from the refusal's offset lands on the passage");
+    }
+    assert.deepEqual(elems(box4, S3P, blockAt(S3P, tag)), ['P:"' + inner + '"'], what + ": the `<p>` block owns its own element alone (round 5: the run's four and its own)");
+    assert.deepEqual(elems(box4, S3P, blockAt(S3P, "<tr>")), ['P:""', 'P:""', 'P:"November table bravo."', 'P:"Last line kilo."'], what + ": the note's block, the swallower, owns the run's elements");
+    assert.deepEqual(elems(box4, S3P, blockAt(S3P, "<button>")), [], what + ": the button block owns nothing");
+  }
 });
 
 test("the wrapper's own text kid is read as the run of text nodes and marks whose text is the kid's and no further: the bare nodes the NEXT html block leaves at the wrapper's level, an unwrapped `<option>`'s hoisted text or a `<mark>` block's element, are that block's, so the wrapper's block owns its wrapper alone, the option's or the mark's block owns its node, a selection on that text is refused with THAT block's offset, and when the lead repeats the option's words the Raw offer's search from the refusal's offset lands on the option's own copy (the review's round 5: the run took every text node and mark from its place, so the option's text and the mark were the wrapper's, their blocks owned nothing, the refusal carried the wrapper's offset and the search preselected the lead's copy)", () => {

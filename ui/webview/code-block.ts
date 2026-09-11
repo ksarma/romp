@@ -82,15 +82,34 @@ export function copyText(text: string): Promise<boolean> {
   }
   return Promise.resolve(fallbackCopy(text));
 }
+/** The fallback: a textarea off screen takes the text, the focus and the selection (execCommand copies the selection), and
+ *  is removed. Those two moves are the copy's and not the person's, so both are undone once the command has run: the
+ *  selection's ranges are cloned before the textarea takes it and put back after (a clone, since the Range a selection hands
+ *  out is the selection's own and follows it), and the element that held the focus takes it back. Left as the textarea's
+ *  removal leaves them, the selection sat collapsed outside whatever was selected and the focus on the body, with no
+ *  selectionchange the document hears: in the file viewer a passage stood with its Comment button beside it and nothing
+ *  selected under the button, and a click on the button opened nothing (the Slice 5 review of plans/markdown-viewer.md,
+ *  round 6; file-comments-copy-fallback-browser.test.ts), and Space on a focused Copy button lost the keyboard's place.
+ *  The Clipboard API path moves neither, and this path now leaves the page as that one does. A document with no
+ *  selection API (a test stand-in) restores nothing. */
 function fallbackCopy(text: string): boolean {
+  const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+  const ranges: Range[] = [];
+  if (sel) for (let i = 0; i < sel.rangeCount; i++) ranges.push(sel.getRangeAt(i).cloneRange());
+  const active = document.activeElement as HTMLElement | null;
+  let ok = false;
   try {
     const ta = document.createElement("textarea");
     ta.value = text; ta.style.position = "fixed"; ta.style.top = "-9999px"; ta.style.opacity = "0";
     document.body.appendChild(ta); ta.focus(); ta.select();
-    const ok = document.execCommand("copy");
+    ok = document.execCommand("copy");
     document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
+  } catch { ok = false; }
+  try {
+    if (sel) { sel.removeAllRanges(); for (const r of ranges) sel.addRange(r); }
+    if (active && active !== document.body && typeof active.focus === "function") active.focus({ preventScroll: true });
+  } catch { /* the copy's verdict stands whatever the restore could not do */ }
+  return ok;
 }
 
 // The fence the press was on, for the acknowledgement after a swap (the header): its SOURCE, the text its Copy copies,

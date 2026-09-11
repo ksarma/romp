@@ -278,7 +278,8 @@ test("the guide says what a file's own HTML may do, in the terms the code enforc
   assert.match(para, /`background=`/);
   assert.match(para, prose("cannot be ticked"));
   assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
-  assert.match(para, /`<title>`/, "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
+  assert.match(para, prose("An HTML `<title>` is dropped with its text"), "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
+  assert.match(para, prose("the `<title>` of an inline `svg`, the drawing's tooltip, stays"), "and its one exception, dropBodyTitle's namespace test: an svg's own <title> is kept (review round 6: the sentence had said every <title> is dropped, while the same paragraph says an inline svg is kept)");
   assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 

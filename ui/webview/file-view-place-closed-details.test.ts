@@ -34,8 +34,9 @@
 // stand-in's elements answer checkVisibility as Chromium does (false under a closed details, outside its summary); the
 // real thing is measured in file-view-place-closed-details-browser.test.ts. The round-3 and round-4 tests add the wrapper's
 // own picture (Place.pic) and the Raw row kept across a reflow (Place.row); the round-5 tests the picture found through a run
-// of blocks, the topmost picture of a line, a picture beside text, the Rendered row kept across a reflow (Place.lead) and a
-// commented-out tag, over a layout of any of the round's READMEs (layoutScene). Synthetic fixtures only.
+// of blocks, the picture AT the edge of a line of badges and a logo (the one the edge is inside whose top is nearest it, else
+// the topmost below it, not the first in the DOM), a picture beside text, the Rendered row kept across a reflow (Place.lead)
+// and a commented-out tag, over a layout of any of the round's READMEs (layoutScene). Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { marked } from "marked";
@@ -452,10 +453,15 @@ test("seatPlace: a Raw place inside a fold that carries the blocks after it (Pla
   const s2 = scene(false, 0); s2.body.scrollTop = 500;
   assert.equal(seatPlace(H(s2.body), doc, carried(b5, b7)), true, "two carried blocks, the first hidden: seated on the second");
   assert.equal(s2.body.scrollTop, 500 + (s2.p7.box!.top - EDGE) - 48, "paragraph 7's box under the cap, 48px below the edge (round 2: at ITS carried top, 136px)");
-  // nothing carried, or every carried block hidden: the refusal of the second test stands
+  // every carried block hidden (paragraph 5, inside the same shut fold), or none carried at all (an empty list: the fold ends the
+  // document): nothing carried stands, so the seat stands on the fold's summary at the edge, the cap's own limit (the review's round 6;
+  // before: the refusal of the second test, the body left where it stood, and a fold ending the document seated nothing from any row)
   const n = scene(false, 0); n.body.scrollTop = 500;
-  assert.equal(seatPlace(H(n.body), doc, carried(b5)), false, "only a hidden block carried: no seat");
-  assert.equal(n.body.scrollTop, 500, "the body stands");
+  assert.equal(seatPlace(H(n.body), doc, carried(b5)), true, "only a hidden block carried: the summary at the edge (round 5: no seat)");
+  assert.equal(n.body.scrollTop, 500 + (n.summary.box!.top - EDGE), "the summary at the edge");
+  const e = scene(false, 0); e.body.scrollTop = 500;
+  assert.equal(seatPlace(H(e.body), doc, carried()), true, "an empty list carried (a fold ending the document): the summary at the edge (round 5: no seat)");
+  assert.equal(e.body.scrollTop, 500 + (e.summary.box!.top - EDGE), "the summary at the edge");
 });
 
 // ── round 3: a wrapper's own picture (reader-place.ts Place.pic), over the same stand-in ──────────────────────
@@ -631,7 +637,7 @@ test("round 4. readPlace / seatPlace: a Raw place whose block starts at or below
   assert.equal(r2.body.scrollTop, 500 + (r2.rows[lineOf(docM, PARA(4))].box!.top - EDGE) - qc.top, "other text: the block after the row at its distance, the row unused");
 });
 
-// ── round 5: the picture through the run, the topmost picture, a picture beside text, the row at the edge in Rendered, a commented tag ──
+// ── round 5: the picture through the run, the picture AT the edge of a line, a picture beside text, the row at the edge in Rendered, a commented tag ──
 const noWs = (s: string) => s.replace(/\s+/g, "");
 /** `-x` as a number deepEqual reads as 0 when x is 0 (the literal -0 is another value to it). */
 const neg = (x: number): number => (x === 0 ? 0 : -x);
@@ -758,9 +764,10 @@ test("round 5. readPlace in Rendered / seatPlace: with pictures of different hei
   assert.equal(seatPlace(H(rb.body), doc, qb), true);
   assert.equal(rb.body.scrollTop, 500 + (rb.rows[kBadges].box!.top - EDGE) - (-10 * 20 / 24), "10px into the badges: the badges' row at their fraction, the logo's row below it");
   const qbr = readPlace(H(rawRowDown(doc, kBadges, 10 * 20 / 24).body), doc)!;
-  const cb = layoutScene(doc); cb.body.scrollTop = 500;   // the stand-in's stacked layout: the badges' row seats its first badge at the row's fraction
+  const cb = layoutScene(doc); cb.body.scrollTop = 500;   // the stand-in stacks the three badges; the line's pictures are ONE box to the seat, their union (round 6)
+  const cbBadges = ["b1", "b2", "b3"].map((n) => imgOf(cb.md, n));
   assert.equal(seatPlace(H(cb.body), doc, qbr), true);
-  assert.equal(cb.body.scrollTop, 500 + (imgOf(cb.md, "b1").box!.top - EDGE) + 10 * (imgOf(cb.md, "b1").box!.bottom - imgOf(cb.md, "b1").box!.top) / 24, "the way back from the badges' row: the first badge at the row's fraction of its height");
+  assert.equal(cb.body.scrollTop, 500 + (cbBadges[0].box!.top - EDGE) - qbr.pic!.top * (cbBadges[2].box!.bottom - cbBadges[0].box!.top) / qbr.pic!.height, "the way back from the badges' row: the line's pictures together at the row's fraction of their union's height (round 5: the first badge alone, at the fraction of its own height)");
   toEdge(c.md, elOf(div, "H2"), 10);
   assert.deepEqual([textOf(doc, readPlace(H(c.body), doc)), readPlace(H(c.body), doc)!.pic], ["## Centred title", undefined], "10px into the heading: nothing carried");
 });

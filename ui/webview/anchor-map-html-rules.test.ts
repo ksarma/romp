@@ -126,3 +126,52 @@ test("the tokens inside an inline `<textarea>` render as the viewer rendered THI
   // the round-4 shape stands (a control)
   assert.equal(quote("Fish &amp; <textarea>a <b>b</b> *c*</textarea> end\n", "a <b>b</b> *c*"), "a <b>b</b> <em>c</em>");
 });
+
+// ── the Slice 5 review, round 6 ──────────────────────────────────────────────────────────────────
+
+test("the blank between two adjacent table parts stands past whatever leaves the DOM's parts adjacent (nextIsTablePart): a `<style>` or a `<script>` with its content, which the parser keeps in the row and the sanitizer removes whole; an empty `<form>`, inserted empty and unwrapped; a hidden `<input>`, kept in the row and removed; and a `<br>`, an `<img>`, an empty `<span>`, an empty `<b>` or an `<a name>` anchor, which the parser's in-table rules foster-parent before the table, between two cells and between two rows, so a quote across them reads the blank the hay has (before: round 5 looked past whitespace and comments alone, so `s1</td><style>td{}</style><td>s2` read `s1s2` against a hay `s1 s2` and the quote painted nothing where 701728eae painted it); a `<template>` is kept in the row as an element, so no blank there; text between two cells is moved before the table, an order no blank mirrors, so none there either; two tables stay two", () => {
+  const cells = (between: string): string => `Intro.\n\n<div><table><tr><td>s1</td>${between}<td>s2</td></tr></table></div>\n\npara\n`;
+  const BETWEEN: Array<[string, string]> = [
+    ["a style", "<style>td{}</style>"], ["a script", "<script>var q = 1;</script>"], ["a style holding a `<td>` in its text", "<style>td > b {}</style>"],
+    ["an empty form", "<form></form>"], ["a hidden input", '<input type="hidden" name="row">'],
+    ["a br", "<br>"], ["a self-closing br", "<br/>"], ["an img", '<img src="x.png" alt="x">'], ["an empty span", "<span></span>"], ["an empty b", "<b></b>"],
+    ["an a name anchor", '<a name="row"></a>'], ["a quoted `>` in an attribute", '<a title="a>b" name="row"></a>'], ["two of them", '<br><a name="row"></a>'],
+    ["a style after a comment and whitespace", " <!-- c --> <style>td{}</style> "],
+  ];
+  for (const [what, between] of BETWEEN) {
+    const src = cells(between);
+    assert.equal(quote(src, `s1</td>${between}<td>s2`), "s1 s2", what);
+    assert.equal(shown(src), "Intro. s1 s2 para", what + ": the whole");
+  }
+  const ROWS = "<table><tr><td>a1</td></tr><br><tr><td>a2</td></tr></table>\n";
+  assert.equal(quote(ROWS, "a1</td></tr><br><tr><td>a2"), "a1 a2", "a br between two rows");
+  assert.equal(quote("<table><tbody><tr><td>b1</td></tr></tbody><script>x()</script><tbody><tr><td>b2</td></tr></tbody></table>\n", "b1</td></tr></tbody><script>x()</script><tbody><tr><td>b2"), "b1 b2", "a script between two bodies");
+  // the exceptions and the controls
+  assert.equal(quote("<table><tr><td>m1</td><template>t</template><td>m2</td></tr></table>\n", "m1</td><template>t</template><td>m2"), "m1m2", "a template stands between the cells as an element: no blank (a control)");
+  assert.equal(quote("<table><tr><td>g1</td><form>kept</form><td>g2</td></tr></table>\n", "g1</td><form>kept</form><td>g2"), "g1keptg2", "text between the cells, foster-parented before the table: no blank (recorded)");
+  assert.equal(quote("<table><tr><td>p</td></tr></table><table><tr><td>q</td></tr></table>\n", "p</td></tr></table><table><tr><td>q"), "pq", "two tables (round 5's control stands)");
+  assert.equal(quote("<div><table><tr><td>b cell</td></tr></table>tail text</div>\n", "b cell</td></tr></table>tail text"), "b celltail text", "the tail after the last part (round 5's control stands)");
+  assert.equal(quote("<table><tr><td>k1</td><!-- c --><td>k2</td></tr></table>\n", "k1</td><!-- c --><td>k2"), "k1 k2", "a comment (round 5's control stands)");
+  assert.equal(quote("<table><tr><td>u1</td><style>td{}<td>u2</td></tr></table>\n", "u1</td><style>td{}<td>u2"), "u1", "a style never closed: its text is the block's rest to the parser, no blank and no cell");
+});
+
+test("an HTML element left open inside a `<foreignObject>` when `</svg>` comes: the parser ignores that end tag (its walk up from the open element stops at the foreignObject, a special element), so the rest of the block stays inside the dropped foreignObject and shows nothing, in a paragraph and in an html block, and a `</foreignObject>` met the same way is ignored too; the element's own end tag lets the root close, a void element opens nothing, and the closed forms round 5 pinned still show the text after the svg (the review's round 6, the round-5 recheck's residual: the root's end tag cut the drop stack whatever stood open, so `Intro <svg><foreignObject><b>x</svg> y` read `Intro y` against a DOM showing `Intro`, and a quote across the passage painted nothing)", () => {
+  const OPEN = "Intro <svg><foreignObject><b>x</svg> y\n";
+  assert.equal(shown(OPEN), "Intro");
+  assert.equal(quote(OPEN, "Intro <svg><foreignObject><b>x</svg> y"), "Intro", "the quote across the passage reads what the DOM shows");
+  assert.equal(quote(OPEN, "y"), "", "the text after the ignored end tag: nothing");
+  assert.equal(shown("Intro <svg><foreignObject><p>x</svg> y\n"), "Intro", "a special element open: ignored the same");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</i></svg> y\n"), "Intro", "an end tag naming no open element closes nothing");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</foreignObject></svg> y\n"), "Intro", "the foreignObject's own end tag is ignored too");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</svg> w\n"), "Intro", "a second element left open after the first closed");
+  assert.equal(shown("Intro.\n\n<div><svg><foreignObject><b>x</svg> y</div>\n\npara\n"), "Intro. para", "an html block: the block's rest is the foreignObject's (the parser swallows the blocks after it too; recorded)");
+  assert.equal(shown("- Intro <svg><foreignObject><b>x</svg> y\n"), "Intro", "a list item");
+  // the closed forms (controls): round 5's pins stand
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b></svg> y\n"), "Intro y", "the element closed: the root closes");
+  assert.equal(shown("Intro <svg><foreignObject>fo</svg> beside\n"), "Intro beside");
+  assert.equal(shown("Intro <svg><foreignObject><br></svg> y\n"), "Intro y", "a void element opens nothing");
+  assert.equal(shown("Intro <svg><foreignObject><b>x</b><i>z</i></svg> w\n"), "Intro w");
+  assert.equal(shown("Intro <svg><foreignObject><b><svg><title>t</title></svg>x</b></svg> y\n"), "Intro y", "a nested svg inside the open element closes on its own end tag, and the outer on its");
+  assert.equal(shown("Intro <svg><g>x</svg> y\n"), "Intro x y", "an svg element open, not an HTML one: the root's end tag pops to it, and the drawing's text is kept (a control)");
+  assert.equal(shown("<div><svg><foreignObject><b>x</b></svg> z</div>\n"), "z", "an html block, the element closed (a control)");
+});
