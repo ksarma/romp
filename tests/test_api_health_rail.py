@@ -444,7 +444,8 @@ class Wiring(unittest.TestCase):
         # the writing rule for new prose covers the comments this feature added. _api_error_pass and _api_error_read
         # are not in the list: the em dashes in their source are the base text's punctuation on lines this feature
         # kept (the record's identity comments, the tail-first note), not prose it wrote.
-        for fn in (km._api_error_scan, km._api_error, km._api_last_failed, km._api_last_output_t, km._bills_login,
+        # _api_error is not in the list either: upstream's own copy of its docstring carries an em dash by design.
+        for fn in (km._api_error_scan, km._api_last_failed, km._api_last_output_t, km._bills_login,
                    km._apih_status, km._apih_class, km._api_health_frame, km._api_health_push, km._apih_resend):
             self.assertNotIn("\u2014", inspect.getsource(fn), fn.__name__)
         src = Path(BIN, "romp-kernel").read_text()

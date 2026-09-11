@@ -17723,12 +17723,13 @@ def _unpicked_default():
     one rule (SdkBackend.new_session_auth: the remembered gear pick a spawn would seed, a pick this box cannot
     bill set aside (pick_unavailable, upstream #1147's both-ways fall), else
     sdk_backend.unpicked_auth: the API key when the box's apiKeyHelper is configured, else the box
-    declaration when no pick has made it inert, else the login). The kernel's two readers of a row that
-    reports nothing take it (_bills_login's
-    fallback, _auth_avail's picker default), so the kernel cannot order the tests differently from the
-    backend again (review round 1, 2026-09-09: the two read the declaration before the key, the backend
-    after it, and a keyed box declaring login seeded the picker on Login for sessions that launched
-    keyed). A direct call, not a getattr guard: a backend without the method is a bug to surface (the
+    declaration when no pick has made it inert, else the login). The kernel's one reader of a row that
+    reports nothing takes it (_auth_avail's picker default), so the kernel cannot order the tests
+    differently from the backend again (review round 1, 2026-09-09: the kernel read the declaration before
+    the key, the backend after it, and a keyed box declaring login seeded the picker on Login for sessions
+    that launched keyed). _bills_login, the spend pause's reader of such a row, does not take it: a row
+    that reports nothing bills the login only when this machine holds no key (not _auth_key_present()).
+    A direct call, not a getattr guard: a backend without the method is a bug to surface (the
     kernel-to-backend binding is pinned by an executed test), not a login box. No backend at all (the
     module failed to load, a boot problem said aloud elsewhere) reads the login: nothing of romp's is
     injected then."""
@@ -29867,7 +29868,7 @@ def _api_error_pass(path, start):
     with open(path, errors="replace") as f:
         if start > 0:
             f.seek(start)
-            f.readline()                          # the window cut this line in half: drop it
+            f.readline()                          # the window cut this line in half — drop it
         for line in f:
             if '"type"' not in line:
                 continue
@@ -29884,7 +29885,7 @@ def _api_error_pass(path, start):
                                      if isinstance(b, dict) and b.get("type") == "text").strip()
                             if isinstance(c, list) else (c.strip() if isinstance(c, str) else ""))
                     # "prompt is too long" is NOT a transient API error (the user 2026-06-29): it means the
-                    # context needs compacting, so it's on YOU. Flag it so it (and only it) blocks; other API
+                    # context needs compacting → it's on YOU. Flag it so it (and only it) blocks; other API
                     # errors are transient (auto-retry recovers them) and stay in Working.
                     decided = decided_latched = True
                     out_t = 0                             # the newest assistant record is a failure again
@@ -29930,13 +29931,13 @@ def _api_error_pass(path, start):
                     err = None
             elif t == "system" and o.get("subtype") in ("model_refusal_no_fallback",
                                                         "model_refusal_fallback"):
-                # The CLI's structured refusal record, the EXACT event behind _is_refusal_text's
+                # The CLI's structured refusal record — the EXACT event behind _is_refusal_text's
                 # wording check (so a future CLI rephrase still classifies). It lands a few records
                 # AFTER the assistant error it explains (queue-operation / file-history-snapshot
                 # lines sit between; none of those clears err), linked by parentUuid: the refusal
                 # record and the error BOTH carry the refused user message's uuid as parentUuid.
-                # Deliberately NOT refusedUserMessageUuid (observed diverging from the episode's
-                # parent in 2 of 13 refusal records of one storm) and deliberately not
+                # Deliberately NOT refusedUserMessageUuid — observed diverging from the episode's
+                # parent in 2 of 13 refusal records of one storm — and deliberately not
                 # record-alone: the CLI also omits this record for some refusal errors, which is
                 # why the text signature above stays co-equal rather than a legacy fallback.
                 for d in (err, latched):                  # the same dict when both still hold the episode
@@ -30000,7 +30001,7 @@ def _api_error_read(path, key, latch):
 def _api_error(path):
     """If the session is sitting BLOCKED on an API error right now, the error; else None. Claude Code
     writes every API failure to the transcript as an assistant record with top-level
-    isApiErrorMessage:true; the human text varies (500 server_error, 'Request timed out', 404
+    isApiErrorMessage:true — the human text varies (500 server_error, 'Request timed out', 404
     model_not_found) but that flag is the invariant, so detection is exact, not a text heuristic (the
     user 2026-06-16). The session is blocked iff such a record is the LAST productive thing in the
     transcript: a later genuine user prompt (a retry) or fresh assistant output (an internal retry that

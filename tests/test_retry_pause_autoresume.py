@@ -133,6 +133,7 @@ class RetryPauseAutoResume(unittest.TestCase):
     def test_a_re_arm_marks_the_views_dirty(self):
         # the ONE write on this path the feed shows: a given-up card's summary sentinel goes back to None
         self._recovered()
+        km._pusher_wake.clear()                         # the setup write's own wake (ruling K1, Q1 = A): the wake asserted below is the lift's, not the setup's
         km.jd.rearm_failed_summaries = lambda now, **k: 2
         floor = km._views_dirty[0]
         km._auto_resume_retry(int(time.time()), {})
