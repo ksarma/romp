@@ -217,7 +217,7 @@ const store = new Map<string, string>();
 
 
 
-// ── fixtures: the notes-api world — a report whose paragraph recurs, and one whose sentence does ───
+// ── fixtures: the notes-api world, a report whose paragraph recurs, and one whose sentence does ───
 const SID = "11111111-2222-3333-4444-555555555555";
 const ABS = "/repo/notes-api/docs/report.md";
 const ROOT = "/repo/notes-api";

@@ -160,7 +160,7 @@ test('the painting paragraph and the note state the confirmed paint and the word
   assert.ok(placedAt.includes('if (!p || typeof p !== "object" || p.confirmed !== true || typeof p.at !== "number" || !Number.isFinite(p.at)) return undefined;'), 'a confirmed verdict of the right shape alone');
   assert.ok(placedAt.includes('return this.status!.bom ? p.at - 1 : p.at;'), 'mapped past a BOM like anchorAt');
   assert.ok(fn(panel, 'copyUnsureWords').includes('", not a confirmed one. Reveal it and save again from the right copy to confirm."'), 'the words end with the sentence');
-  assert.ok(!panel.includes(' — not a confirmed one.'), 'the em dash ending is gone');
+  assert.ok(!/\u2014 not a confirmed one\./.test(panel), 'the em dash ending is gone');
   assert.ok(model.includes('anchorAt?: number; ordinal?: number; copies?: number; section?: string;'), 'the store comment carries the fields');
   assert.ok(model.includes('export type Placed = { at: number; confirmed: boolean; by: "ordinal" | "section" | "nearest" };'), 'the verdict type');
   assert.ok(model.includes('placed?: Record<string, Placed> | null;'), 'on the status');
