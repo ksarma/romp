@@ -3,7 +3,7 @@ title: Timeline: a bars frame expands on its first read, not on arrival, and reu
 status: candidate
 where: ui/romp-timeline-view.js (_bindBars, expandBarsMemo, expandJudgingMemo, reuseLane, sameWire), ui/timeline-bars-hidden-expand.test.ts, tools/ui-bench.mjs (--hidden)
 added: 2026-09-11
-pr:
+pr: 746
 tier: fix
 offered:
 closed:
