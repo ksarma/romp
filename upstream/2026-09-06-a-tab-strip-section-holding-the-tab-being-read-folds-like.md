@@ -11,3 +11,5 @@ closed: 2026-09-10
 Follows their tab-groups line (our 2026-09-04/06 offers); the header click now also swaps the pane, which they may want as a separate glyph — ask before offering. Phone layout unchanged (flat strip, no sections).
 
 Status detail (migrated from the table): candidate
+
+2026-09-11: their #1301 (merge 05c8d21fb) carried note and needs home, appended after fork in upstream's _CHAT_SIG_LABELS; todos and pins are the fork-only components left.
