@@ -261,8 +261,16 @@ test('withStoreLock: the lock holds "pid ts" while fn runs and is gone after, on
   let seen = null;
   const out = withStoreLock(storePath, () => { seen = fs.readFileSync(lockPath, 'utf8'); return 42; });
   assert.equal(out, 42);
-  const m = /^(\d+) (\d+)\n$/.exec(seen);
-  assert.ok(m, `the stamp is "pid ts": ${JSON.stringify(seen)}`);
+  // "pid ts", then, from a pid namespace other than the initial one (a container's, a sandbox's), the line naming it
+  // (review round 4, 2026-09-11): the second line is there exactly when this process is outside the initial namespace,
+  // so the case holds in a container too
+  const m = /^(\d+) (\d+)\n(?:ns (\d+)\n)?$/.exec(seen);
+  assert.ok(m, `the stamp is "pid ts", with the namespace line from a child namespace only: ${JSON.stringify(seen)}`);
+  let ownNs = null;
+  try { ownNs = /^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid')); } catch { /* no /proc: the initial namespace */ }
+  const initial = !ownNs || Number(ownNs[1]) === 0xEFFFFFFC;
+  assert.equal(m[3] === undefined, initial, 'the namespace line is written from a child pid namespace, and only there');
+  if (!initial) assert.equal(Number(m[3]), Number(ownNs[1]), 'naming this process\'s own namespace');
   assert.equal(Number(m[1]), process.pid);
   assert.ok(Math.abs(Number(m[2]) - Date.now()) < 5000);
   assert.equal(fs.existsSync(lockPath), false);

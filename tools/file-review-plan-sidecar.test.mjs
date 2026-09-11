@@ -75,7 +75,10 @@ test('decision 49 records the measurement and the fix, and its bounds are store-
   assert.ok(d49.includes('(the kernel kills a host at 10 s)'));
   assert.match(read('kernel', 'kernel.py'), /^_FILE_COMMENTS_TIMEOUT = 10\b/m, 'the kernel\'s deadline the bound is set against');
   assert.ok(d49.includes('holding `pid ts`'));
-  assert.match(fn(storeIo, 'withStoreLock'), /fs\.writeFileSync\(fd, `\$\{process\.pid\} \$\{Date\.now\(\)\}\\n`\)/, 'the stamp is pid then ts');
+  // lockStamp() since review round 4 (2026-09-11): the same `pid ts` line first, and from a pid namespace other than the
+  // initial one a second line naming it (tools/file-review-plan-sidecar-lock-modules.test.mjs holds the body)
+  assert.match(fn(storeIo, 'withStoreLock'), /fs\.writeFileSync\(fd, lockStamp\(\)\);/, 'the stamp is lockStamp\'s');
+  assert.match(fn(storeIo, 'lockStamp'), /return `\$\{process\.pid\} \$\{Date\.now\(\)\}\\n/, 'which begins pid then ts');
   // 'ax+' since review round 2 (2026-09-11): still O_EXCL; O_APPEND so a maker's `made-dir` line put on the lock between
   // its create and its stamp keeps its place, and readable so the holder reads the line back through its own descriptor
   assert.match(fn(storeIo, 'withStoreLock'), /fs\.openSync\(lockPath, 'ax\+'\)/, 'O_EXCL');

@@ -2,59 +2,64 @@
 # Offered back: no (not yet: written as offerable to the engine's author, held back by the standing word of 2026-09-11 to open nothing new upstream)
 # Files: store-io.mjs, cli/track-comment.mjs, cli/track-edit.mjs, cli/track-reply.mjs
 #
-# Reason: every writer of a sidecar loads it, changes the object and renames a temp over it, and
-# two writers interleaved between load and rename each save a store that lacks the other's change,
-# so the second rename erases the first's write (a reply lost under an editor host's comment, an
-# edit's op lost under a reply). Measured against the real CLIs and an editor host, one write in
-# five was lost at a stagger of 4 to 20 ms (2026-09-09); a stat before the rename narrows that
-# window and cannot close it. store-io gains withStoreLock(storePath, fn): an O_EXCL create of
-# `<sidecar>.lock` holding "pid ts", a few milliseconds' sleep and retry for up to
-# STORE_LOCK_WAIT_MS (2 s) when held, a StoreLockError past that (held: true) or when the name is
-# taken by a non-lock or the lock cannot be created, written, read or removed (held: false, the OS
-# error as its cause), and a break of a lock whose writer is dead or whose stamp is older than
-# STORE_LOCK_STALE_MS (15 s). Breaking has one winner: the breakers serialize on a second O_EXCL
-# name beside the lock, `<sidecar>.lock.break`, and the one holding that claim judges the lock
-# again before unlinking it, so two waiters that read one dead lock together cannot both remove it
-# and the second take away the first's fresh lock (judged and removed by name alone, two of three
-# writers arriving on a dead lock both wrote in 54 rounds of 100, 2026-09-11). The judged lock,
-# and a dead claim, stay open on a descriptor from the judgment through the unlink: an inode with
-# a descriptor open is not freed, so the filesystem cannot give its number to a fresh lock at the
-# name in between, and the breaker cannot remove that fresh lock in the dead one's place (compared
-# by number alone, a breaker suspended past the bound between its claim check and its look did
-# just that, 2026-09-11, the review). Release, in finally, unlinks the lock only while the entry
-# at its name is still the inode this holder created (the fd stays open for the hold), so a live
-# writer broken as stale does not remove the breaker's lock on its way out; a stamp that cannot be
-# written after the create closes the fd, unlinks the empty lock and fails, rather than leaving a
-# lock judged by its age alone.
+# Reason: every writer of a sidecar loads it, changes the object and renames a temp over it, and two
+# writers interleaved between load and rename each save a store that lacks the other's change, so
+# the second rename erases the first's write (a reply lost under an editor host's comment, an edit's
+# op lost under a reply). Measured against the real CLIs and an editor host, one write in five was
+# lost at a stagger of 4 to 20 ms (2026-09-09); a stat before the rename narrows that window and
+# cannot close it. store-io gains withStoreLock(storePath, fn): an O_EXCL create of `<sidecar>.lock`
+# holding "pid ts", a few milliseconds' sleep and retry for up to STORE_LOCK_WAIT_MS (2 s) when
+# held, a StoreLockError past that (held: true) or when the name is taken by a non-lock or the lock
+# cannot be created, written, read or removed (held: false, the OS error as its cause), and a break
+# of a lock whose writer is dead or whose stamp is more than STORE_LOCK_STALE_MS (15 s) from the
+# reader's clock, behind or ahead (judged by age behind alone, a lock committed or planted with a
+# stamp in the future held every writer of its file to a refusal for as long as it stayed there).
+# Breaking has one winner: the breakers serialize on a second O_EXCL name beside the lock,
+# `<sidecar>.lock.break`, and the one holding that claim judges the lock again before unlinking it,
+# so two waiters that read one dead lock together cannot both remove it and the second take away the
+# first's fresh lock (judged and removed by name alone, two of three writers arriving on a dead lock
+# both wrote in 54 rounds of 100, 2026-09-11). The judged lock, and a dead claim, stay open on a
+# descriptor from the judgment through the unlink: an inode with a descriptor open is not freed, so
+# the filesystem cannot give its number to a fresh lock at the name in between, and the breaker
+# cannot remove that fresh lock in the dead one's place (compared by number alone, a breaker
+# suspended past the bound between its claim check and its look did just that, 2026-09-11, the
+# review). Release, in finally, unlinks the lock only while the entry at its name is still the inode
+# this holder created (the fd stays open for the hold), so a live writer broken as stale does not
+# remove the breaker's lock on its way out; a stamp that cannot be written after the create closes
+# the fd, unlinks the empty lock and fails, rather than leaving a lock judged by its age alone.
 #
-# The `.trackchanges/` folder is made for the lock when missing (a first write in a fresh vault)
-# and removed again by the writer that made it when nothing else landed in it, so a refused write
-# leaves no trace; when another writer's lock is in the folder at that moment, the removal passes
-# to that lock's holder by a "made-dir" line appended to it (or to a breaker's claim), honored at
-# release and inherited by a breaker when the holder dies. An entry at the folder's name that is
-# not a directory (a dangling link, a link to a file, a plain file) is a lock that cannot be
-# created: refused at once, held false, with an error naming the entry, instead of retried until
-# the wait runs out and reported as a live writer.
+# The `.trackchanges/` folder is made for the lock when missing (a first write in a fresh vault) and
+# removed again by the writer that made it when nothing else landed in it, so a refused write leaves
+# no trace; when another writer's lock is in the folder at that moment, the removal passes to that
+# lock's holder by a "made-dir" line appended to it (or to a breaker's claim), honored at release
+# and inherited by a breaker when the holder dies. An entry at the folder's name that is not a
+# directory (a dangling link, a link to a file, a plain file) is a lock that cannot be created:
+# refused at once, held false, with an error naming the entry, instead of retried until the wait
+# runs out and reported as a live writer.
 #
-# A stamped pid is judged by kill(pid, 0) only from the initial pid namespace (/proc/self/ns/pid
-# compared with the initial namespace's inode; every pid is judged where that link cannot be
-# read). Inside a child pid namespace (a sandboxed tool shell) every process outside reads as
-# gone, alive or not, so there a lock is judged by its stamp's age alone; judged by pid, a CLI in
-# such a sandbox read an editor host's live lock as a dead writer's and broke it at once
-# (2026-09-11, the review).
+# A stamped pid is judged by kill(pid, 0) only by a reader in the pid namespace that stamped it.
+# Pids are per namespace: from a child pid namespace (a sandboxed tool shell) every process outside
+# is ESRCH, alive or not, and a pid stamped inside one names, outside it, whatever process has that
+# number there; judged by pid regardless, a CLI in such a sandbox read an editor host's live lock as
+# a dead writer's and broke it at once, and the host broke the sandboxed CLI's live lock whenever
+# its pid was a free number outside (2026-09-11, the review). So a writer outside the initial
+# namespace (the inode of /proc/self/ns/pid, compared with the initial namespace's; a process that
+# cannot read the link is taken to be in it) names its own on a second stamp line, `ns <inode>`, and
+# a reader judges the pid only when the lock names the reader's own namespace; any other lock is
+# judged by its stamp's age alone.
 #
-# Not reentrant. The three CLIs take the lock around their load-to-rename (track-edit: the file
-# read through the file write and the thread turn; track-comment and track-reply: the note read
-# through the save), printing "another editor is writing this file; retry" and exiting 1 when it
-# is not obtained. Their fail() now throws a CliFailure the entry point prints and exits 1 on,
-# instead of exiting on the spot, so a lock held at that moment is released (process.exit skips
-# every finally); the exit status and the message are unchanged. The exported pure functions keep
-# their signatures.
+# Not reentrant. The three CLIs take the lock around their load-to-rename (track-edit: the file read
+# through the file write and the thread turn; track-comment and track-reply: the note read through
+# the save), printing "another editor is writing this file; retry" and exiting 1 when it is not
+# obtained. Their fail() now throws a CliFailure the entry point prints and exits 1 on, instead of
+# exiting on the spot, so a lock held at that moment is released (process.exit skips every finally);
+# the exit status and the message are unchanged. The exported pure functions keep their signatures.
 #
 # Tests: tools/store-io-lock.test.mjs (the lock's rules, with real-process races),
 # tools/store-io-lock-inode-reuse.test.mjs (the judged inode kept open through the unlink),
 # tools/store-io-lock-folder-name.test.mjs (a non-directory at the folder's name),
-# tools/store-io-lock-pid-namespace.test.mjs (the pid judged from the initial namespace only),
+# tools/store-io-lock-pid-namespace.test.mjs (the pid judged only by a reader in the namespace that
+# stamped it), tools/store-io-lock-clock.test.mjs (a stamp ahead of the reader's clock),
 # tools/vendor-patches.test.mjs (P8 cases) and tools/file-comments-host-store-lock.test.mjs (the
 # CLIs waiting for a held lock).
 diff --git a/cli/track-comment.mjs b/cli/track-comment.mjs
@@ -285,10 +290,10 @@ index 64ba1c9c1..1a13e7db8 100755
 +  }
 +}
 diff --git a/store-io.mjs b/store-io.mjs
-index ff537d40e..1f7928b7f 100644
+index ff537d40e..32923208a 100644
 --- a/store-io.mjs
 +++ b/store-io.mjs
-@@ -373,6 +373,451 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
+@@ -373,6 +373,485 @@ export function saveStore(vaultRoot, storePath, obj, currentText) {
    fs.renameSync(tmp, storePath);
  }
  
@@ -351,21 +356,39 @@ index ff537d40e..1f7928b7f 100644
 +// entry at the folder's name that is not a directory (a link to nothing) is a lock that cannot be
 +// created: refused at once, held false, naming the entry.
 +//
-+// A pid is judged on this machine, and from its own pid namespace, only. A lock written from
-+// another machine over a shared filesystem names a pid this machine does not know, so it reads
-+// as a dead writer's and is broken at once: the lock serializes the writers of one machine. A
-+// writer inside a child pid namespace (a sandboxed tool shell: bubblewrap's --unshare-pid) sees
-+// no process outside it, alive or dead, so there a lock is judged by its stamp's age alone
-+// (judged by pid, 2026-09-11, the review, a CLI in such a sandbox read an editor host's live lock
-+// as a dead writer's and broke it at once). The stamp does not name the namespace that wrote it,
-+// so a lock stamped inside such a sandbox names a pid its readers outside cannot tell from one
-+// of their own: known to none of them, it reads there as a dead writer's.
++// A pid is judged on this machine, and in the pid namespace that stamped it, only. Pids are per
++// namespace: from a child pid namespace (a sandboxed tool shell: bubblewrap's --unshare-pid)
++// every process outside is ESRCH, alive or not, and a pid stamped inside one names, outside it,
++// whatever process has that number there. Judged by pid regardless (2026-09-11, the review), a
++// CLI in such a sandbox read an editor host's live lock as a dead writer's and broke it at once;
++// and the host read the sandboxed CLI's live lock so whenever its in-namespace pid was a free
++// number outside, broke it and wrote inside the CLI's load-to-rename: the lost update this lock
++// exists to close, back for every such session. So a writer outside the initial namespace names
++// its own on a second line of the stamp, `ns <inode>` (the inode of /proc/self/ns/pid; the
++// initial namespace has one inode number on every Linux and is named by the line's absence), and
++// a reader judges the pid only when the lock names the reader's own namespace; any other lock is
++// judged by its stamp's age alone. Where /proc cannot be read (no /proc; another OS, which has no
++// pid namespaces) a process is taken to be in the initial namespace. A lock written from another
++// machine over a shared filesystem names a pid of that machine, which this one judges as its own:
++// dead when no process here has the number, else by the stamp's age alone; the lock serializes
++// the writers of one machine. A stamp more than STORE_LOCK_STALE_MS from this clock in either
++// direction is a dead writer's: no live writer stamps a time that far ahead of a reader on its
++// own clock, and judged by age behind alone (2026-09-11, the review), a `.lock` committed from a
++// machine whose clock ran ahead, or planted, with a pid alive here (1 always is) held every
++// writer of that file to `busy` for as long as its stamp stayed in the future; a clock stepped
++// back that far mid-write breaks a live lock, as a step forward already did.
 +export const STORE_LOCK_WAIT_MS = 2000;
 +export const STORE_LOCK_STALE_MS = 15000;
 +const STORE_LOCK_SUFFIX = '.lock';
-+const STORE_LOCK_BREAK_SUFFIX = '.break';   // the breakers' claim on a lock: `<sidecar>.lock.break`
-+const STORE_LOCK_HANDOVER = 'made-dir';     // a line appended to a lock whose holder removes the folder at release
-+// Every name this lock leaves in a `.trackchanges/` folder while it works; nothing else of its is ever there.
++// The breakers' claim on a lock: `<sidecar>.lock.break`.
++const STORE_LOCK_BREAK_SUFFIX = '.break';
++// A line appended to a lock whose holder removes the folder at release.
++const STORE_LOCK_HANDOVER = 'made-dir';
++// The stamp, "pid ts", wherever it is in the file; the line naming the writer's pid namespace.
++const STORE_LOCK_STAMP_RE = /^(\d+) (\d+)$/m;
++const STORE_LOCK_NS_RE = /^ns (\d+)$/m;
++// Every name this lock leaves in a `.trackchanges/` folder while it works; nothing else of its is
++// ever there.
 +const STORE_LOCK_NAME_RE = /\.lock(\.break)?$/;
 +
 +export class StoreLockError extends Error {
@@ -379,7 +402,8 @@ index ff537d40e..1f7928b7f 100644
 +    this.lockPath = lockPath;
 +    // true: held by a live writer past the wait; false: the lock could not be created, written,
 +    // read or removed at all (the OS error is `cause`; `failed` names the step), or the name is
-+    // taken by something that is not a lock (a link, a directory), never followed and never removed.
++    // taken by something that is not a lock (a link, a directory), never followed and never
++    // removed.
 +    this.held = held;
 +    if (cause) this.cause = cause;
 +  }
@@ -398,20 +422,30 @@ index ff537d40e..1f7928b7f 100644
 +  try { process.kill(pid, 0); return true; } catch (e) { return !!(e && e.code === 'EPERM'); }
 +}
 +
-+// Whether a stamp's pid is one this process can judge at all: pids are per namespace, and from a
-+// child pid namespace (a sandboxed tool shell) every process outside is ESRCH, alive or not (the
-+// header says so). Read once, from /proc/self/ns/pid: the initial namespace has one inode number
-+// on every Linux (PROC_PID_INIT_INO); where the link cannot be read (no /proc; another OS, which
-+// has no pid namespaces) every pid is judged.
++// The pid namespace this process is in, as the inode number of /proc/self/ns/pid, read once. Pids
++// are per namespace, so a stamp's pid is judged only by a reader in the namespace that stamped it
++// (the header says why). The initial namespace has one inode number on every Linux
++// (PROC_PID_INIT_INO); where the link cannot be read (no /proc; another OS, which has no pid
++// namespaces) this process is taken to be in it.
 +const PROC_PID_INIT_INO = 0xEFFFFFFC;
-+let pidsJudgeable;
-+function canJudgePids() {
-+  if (pidsJudgeable === undefined) {
-+    let ns = null;
-+    try { ns = /^pid:\[(\d+)\]$/.exec(fs.readlinkSync('/proc/self/ns/pid')); } catch { /* no /proc */ }
-+    pidsJudgeable = !ns || Number(ns[1]) === PROC_PID_INIT_INO;
++let ownNs;
++function ownPidNamespace() {
++  if (ownNs === undefined) {
++    let m = null;
++    let link = null;
++    try { link = fs.readlinkSync('/proc/self/ns/pid'); } catch { /* no /proc */ }
++    if (link) m = /^pid:\[(\d+)\]$/.exec(link);
++    ownNs = m ? Number(m[1]) : PROC_PID_INIT_INO;
 +  }
-+  return pidsJudgeable;
++  return ownNs;
++}
++
++// What this process writes into a lock or a claim it created: the stamp, "pid ts", and, from a
++// pid namespace other than the initial one, the line naming it (the initial one is named by the
++// line's absence). One write, so under O_APPEND the two lines land together.
++function lockStamp() {
++  const ns = ownPidNamespace();
++  return `${process.pid} ${Date.now()}\n${ns === PROC_PID_INIT_INO ? '' : `ns ${ns}\n`}`;
 +}
 +
 +// What is at `p`: its stat (bigint fields) and content, read from one open of the name without
@@ -457,15 +491,18 @@ index ff537d40e..1f7928b7f 100644
 +  return entry;
 +}
 +
-+// Whether a held lock is a dead writer's: its pid gone (where a pid can be judged; canJudgePids),
-+// or its stamp (its mtime, when the stamp is not written yet) older than staleMs. The stamp is the
++// Whether a held lock is a dead writer's: its pid gone, judged only when the lock names this
++// reader's own pid namespace (lockStamp, ownPidNamespace), or its stamp (its mtime, when the
++// stamp is not written yet) more than staleMs from now, behind or ahead. The stamp is the
 +// "pid ts" line wherever it is in the file: a handover line appended before it (handOverDir)
 +// comes first.
 +function lockIsStale(entry, staleMs, now) {
-+  const m = /^(\d+) (\d+)$/m.exec(entry.raw);
-+  if (!m) return now - Number(entry.st.mtimeMs) > staleMs;
-+  if (canJudgePids() && !pidAlive(Number(m[1]))) return true;
-+  return now - Number(m[2]) > staleMs;
++  const m = STORE_LOCK_STAMP_RE.exec(entry.raw);
++  if (!m) return Math.abs(now - Number(entry.st.mtimeMs)) > staleMs;
++  const ns = STORE_LOCK_NS_RE.exec(entry.raw);
++  const writerNs = ns ? Number(ns[1]) : PROC_PID_INIT_INO;
++  if (writerNs === ownPidNamespace() && !pidAlive(Number(m[1]))) return true;
++  return Math.abs(now - Number(m[2])) > staleMs;
 +}
 +
 +const sameInode = (a, b) => a.ino === b.ino && a.dev === b.dev;
@@ -556,16 +593,17 @@ index ff537d40e..1f7928b7f 100644
 +  try {
 +    try {
 +      mine = fs.fstatSync(cfd, { bigint: true });
-+      fs.writeFileSync(cfd, `${process.pid} ${Date.now()}\n`);
++      fs.writeFileSync(cfd, lockStamp());
 +    } catch (e) {
 +      throw new StoreLockError(claim, false, e, 'write');
 +    }
 +    const entry = inspectLock(lockPath);
 +    if (entry && lockIsStale(entry, staleMs, Date.now())) {
 +      try {
-+        // Still under the claim: a waiter that judged it dead (this breaker suspended past the bound)
-+        // has removed it, and the break is another's by now. `entry` stays open until the lock is
-+        // removed, so a fresh lock at the name cannot get the judged inode's number in between.
++        // Still under the claim: a waiter that judged it dead (this breaker suspended past the
++        // bound) has removed it, and the break is another's by now. `entry` stays open until the
++        // lock is removed, so a fresh lock at the name cannot get the judged inode's number in
++        // between.
 +        const cur = peekLock(claim);
 +        if (cur && sameInode(cur.st, mine)) {
 +          const held = unlinkJudged(lockPath, entry.st);
@@ -675,13 +713,14 @@ index ff537d40e..1f7928b7f 100644
 +        if (e && e.code === 'ENOENT') {
 +          // No folder for the lock: none yet (a first write in a fresh vault), the last writer took
 +          // it away, or another writer made it since this create (mkdir says EEXIST). Made here, it
-+          // is this writer's to take away; made by another, that writer's, which hands the duty over
-+          // when it leaves first. Either way the create is tried again: judged by a look at the folder
-+          // instead (2026-09-11), a create that lost to a peer's mkdir by microseconds was refused
-+          // with the OS error, with nothing contended. An entry at the folder's name that is not a
-+          // directory (a link to nothing: the create says ENOENT through it, mkdir says EEXIST at it)
-+          // is what no retry changes, and is refused at once, naming it: retried until the wait ran
-+          // out (2026-09-11, the review), it was reported as a writer where there was none.
++          // is this writer's to take away; made by another, that writer's, which hands the duty
++          // over when it leaves first. Either way the create is tried again: judged by a look at
++          // the folder instead (2026-09-11), a create that lost to a peer's mkdir by microseconds
++          // was refused with the OS error, with nothing contended. An entry at the folder's name
++          // that is not a directory (a link to nothing: the create says ENOENT through it, mkdir
++          // says EEXIST at it) is what no retry changes, and is refused at once, naming it: retried
++          // until the wait ran out (2026-09-11, the review), it was reported as a writer where
++          // there was none.
 +          if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
 +          try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) {
 +            if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2);
@@ -714,7 +753,7 @@ index ff537d40e..1f7928b7f 100644
 +  let mine;
 +  try {
 +    mine = fs.fstatSync(fd, { bigint: true });
-+    fs.writeFileSync(fd, `${process.pid} ${Date.now()}\n`);
++    fs.writeFileSync(fd, lockStamp());
 +  } catch (e) {
 +    // A stamp that could not be written (the disk full) leaves no empty lock behind to be judged
 +    // by its age alone, nor the folder made for it.

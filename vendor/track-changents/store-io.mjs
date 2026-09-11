@@ -676,9 +676,10 @@ function breakStaleLock(lockPath, staleMs) {
     const entry = inspectLock(lockPath);
     if (entry && lockIsStale(entry, staleMs, Date.now())) {
       try {
-        // Still under the claim: a waiter that judged it dead (this breaker suspended past the bound)
-        // has removed it, and the break is another's by now. `entry` stays open until the lock is
-        // removed, so a fresh lock at the name cannot get the judged inode's number in between.
+        // Still under the claim: a waiter that judged it dead (this breaker suspended past the
+        // bound) has removed it, and the break is another's by now. `entry` stays open until the
+        // lock is removed, so a fresh lock at the name cannot get the judged inode's number in
+        // between.
         const cur = peekLock(claim);
         if (cur && sameInode(cur.st, mine)) {
           const held = unlinkJudged(lockPath, entry.st);
@@ -788,13 +789,14 @@ export function withStoreLock(storePath, fn, opts) {
         if (e && e.code === 'ENOENT') {
           // No folder for the lock: none yet (a first write in a fresh vault), the last writer took
           // it away, or another writer made it since this create (mkdir says EEXIST). Made here, it
-          // is this writer's to take away; made by another, that writer's, which hands the duty over
-          // when it leaves first. Either way the create is tried again: judged by a look at the folder
-          // instead (2026-09-11), a create that lost to a peer's mkdir by microseconds was refused
-          // with the OS error, with nothing contended. An entry at the folder's name that is not a
-          // directory (a link to nothing: the create says ENOENT through it, mkdir says EEXIST at it)
-          // is what no retry changes, and is refused at once, naming it: retried until the wait ran
-          // out (2026-09-11, the review), it was reported as a writer where there was none.
+          // is this writer's to take away; made by another, that writer's, which hands the duty
+          // over when it leaves first. Either way the create is tried again: judged by a look at
+          // the folder instead (2026-09-11), a create that lost to a peer's mkdir by microseconds
+          // was refused with the OS error, with nothing contended. An entry at the folder's name
+          // that is not a directory (a link to nothing: the create says ENOENT through it, mkdir
+          // says EEXIST at it) is what no retry changes, and is refused at once, naming it: retried
+          // until the wait ran out (2026-09-11, the review), it was reported as a writer where
+          // there was none.
           if (Date.now() - start >= waitMs) throw new StoreLockError(lockPath, true);
           try { fs.mkdirSync(dir); ownsDir = true; } catch (e2) {
             if (!e2 || e2.code !== 'EEXIST') throw new StoreLockError(lockPath, false, e2);

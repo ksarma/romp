@@ -134,7 +134,9 @@ test('the Security posture names the two names the lock leaves and the one line,
 test('decision 49 records the one-winner break, the conditional release and the handover, and store-io keeps them', () => {
   assert.ok(d49.includes('The break has one winner'));
   assert.ok(d49.includes(`\`<sidecar>${LOCK}${BREAK}\`, created with O_EXCL like the lock and holding the same \`pid ts\``));
-  assert.match(storeIo, /function breakStaleLock\(lockPath, staleMs\) \{[\s\S]*?fs\.writeFileSync\(cfd, `\$\{process\.pid\} \$\{Date\.now\(\)\}\\n`\);/, 'the claim holds pid then ts');
+  // lockStamp() since review round 4 (2026-09-11): the claim is stamped as the lock is, `pid ts` first
+  assert.match(storeIo, /function breakStaleLock\(lockPath, staleMs\) \{[\s\S]*?fs\.writeFileSync\(cfd, lockStamp\(\)\);/, 'the claim holds the stamp the lock holds');
+  assert.match(storeIo, /function lockStamp\(\) \{[\s\S]*?return `\$\{process\.pid\} \$\{Date\.now\(\)\}\\n/, 'which begins pid then ts');
   assert.ok(d49.includes('unlinks it only while it is still stale'));
   // since review round 2 (2026-09-11) the unlink is unlinkJudged: the lock goes only while the entry at the name is still
   // the inode judged stale, and only while the claim at its name is still this breaker's own
