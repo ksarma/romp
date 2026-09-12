@@ -2895,7 +2895,7 @@ class Panel {
    *  text under user-select none, so a selection over it alone holds no text of the file (the mapping refuses or maps an
    *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim.
    *  Nor is a selection that HOLDS text of the file (its string, which generated text never enters): the mapping refused
-   *  it for a reason of its own — it reaches outside the file text, it touches a table in Rendered — and that refusal,
+   *  it for a reason of its own (it reaches outside the file text, it spans two cells of a table in Rendered), and that refusal,
    *  with its Switch to Raw, is the answer; a deletion mark under such a selection is not what the person selected, and
    *  a comment about it in the refusal's place answered a selected passage with a change (the review, 2026-09-10).
    *  The mark the range crosses, or the one it ends against (deletionMarksIn, touching): a drag from the text before the

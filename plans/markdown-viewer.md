@@ -3785,55 +3785,59 @@ Where the code as built departs from the text above, why, and which test holds e
    the table's first character sitting after the text before the table. A mark's `padding: 0 2px` inside a cell (open
    question 15, the default: accept and measure): the table's width read before and after a cell's mark was 173.4 px
    both times at pane 900, at pane 380 and in the chat modal at 1000, on the probe fixture's two-column table; the
-   layout-neutral mark stays the owner's standing call about the comments feature. anchor-map-cells.test.ts (13, new,
+   layout-neutral mark stays the owner's standing call about the comments feature. anchor-map-cells.test.ts (14, new,
    over the new synthetic fixture anchor-map-fixtures/cells.md: a header and a body cell, the second of two identical
    cells, aligned columns, `\|` in a code span and alone, markup in a cell, a formula and a footnote reference in a
    cell, padded and truncated rows, tables in a list item, a quote and a `<div>` wrapper, the entity cell's fallback,
    the one-cell rule's shapes, one cell into prose, the boundary whitespace, the paint and the deletion points by
-   position, the shapes marked accepts) and anchor-map-cells-browser.test.ts (2 legs, new, over the real viewer and
-   panel: a real drag over `cell one` at pane 900 and 380 and in the chat modal, the composer's quote and Save, the
-   posted anchor the exact slice at the cell's offset, the mark in the `<td>` and on the Raw row, a fresh open
-   painting both views; the two-cell drag refused with item 3's sentence and Switch to Raw preselecting the row's
-   span; the width read) hold it.
+   position, the shapes marked accepts, the 1,000-row table timed) and anchor-map-cells-browser.test.ts (3 legs, new,
+   over the real viewer and panel: a real drag over `cell one` at pane 900 and 380 and in the chat modal, the
+   composer's quote and Save, the posted anchor the exact slice at the cell's offset, the mark in the `<td>` and on
+   the Raw row, a fresh open painting both views; the two-cell drag refused with item 3's sentence and Switch to Raw
+   preselecting the row's span; the width read; the table timed in Chromium) hold it.
 2. *Item 2, a code line maps from Rendered.* A code block was one hole over its raw the same way: a selection in a
    line refused as "touches a code block" (an indented block as "an indented code block") and a change inside a fence
-   painted through the fallback's ordinal. Now `walkCode` reads the raw line by line as marked lays it out: the opener
-   line, then the content lines, each the text line after the whitespace prefix the compensation took (a backtick
-   opener's indent) or an indented block's one to four spaces, then the closer or the line feed the lexer moved onto
-   the raw (`codeLineStarts` verifies that relation for every line and the tail), and emits each text line's
-   characters at the raw line's own positions, so the block's `chars` are what `putHole` gave and the `<pre>` pairs as
-   before. The placement lives in anchor-map.ts over the view it has, not in fence-source.ts, so Copy's module and its
-   tests are untouched (open question 8, the default). The lexer's tab expansion carries the tab's source index, so a
-   two-line quote holds the TAB byte where the rows show four spaces; a selection begun in an indent snaps to the
-   first glyph and an indent alone is only whitespace (the standing rule); the Copy button is a control a selection
-   run into it stops before. A selection across two lines, or from the paragraph before a fence into its first line or
-   out of its last line, maps to the span a Raw selection over the same characters mints, the line feeds, a quoted
-   fence's `> ` markers and the fence line inside the quote (open question 2, the default: a one-line restriction
-   would be a rule the Raw view does not have). The fence lines are zero-text holes of their own (`FENCE_LINE`, over
-   the opener with its info string and the closer with the line feed that ends the last code line, or one over the
-   whole raw of an empty fence): no character carries them, so no selection touches them and no refusal reads the
-   sentence; `renderedSpot` alone reads them (item 4). A token whose lines the reading cannot place keeps the hole it
-   was, one over the whole raw with the code's reason, so its refusal, Raw offer and fallback paint stand; marked's
-   tokenizer produces no such shape, so no fixture reaches it, as for `tableHole`. The row-aware reading the Slice 3
-   map asked this slice to choose once is not needed: the rows drop only the newlines, which the walk never emits, so
-   `descend` and `nthNonWs` see through them and the character count under the `<pre>` is the walk's. `codeLineAt` and
-   `codeLineStart`, which the Slice 3 note's item 9 kept exported for this mapping with no caller in production, are
-   deleted with their docstrings and their cases (open question 6, the default); `codeRuns`, `codeText` and `hayRuns`
-   stay for the fallback's hay, and anchor-map-wrapped-code.test.ts (4) pins that no module under ui/webview defines
-   or calls the two and that anchor-map.ts's header names the Slice 8 mapping and carries neither the Slice 2 boundary
-   sentence nor the Slice 3 sentence about the helpers. Cost (open question 13): over a 5,000-line fence the index
-   build plus one map takes 76 ms and forty marks 580 ms on the stand-in, 122 ms and about 1,600 ms in Chromium at
-   pane 900, about 40 ms a mark, since the exact path scans the block's positions and walks the pre's text nodes for
-   every mark. Against the Slice 5 note's prose numbers (7.1 ms for forty marks over a 1,000-paragraph note) that is
-   far more than twice a prose block's cost per mark, so the per-row scoping of `unitsUnder` the brief named is a
-   follow-up of this slice, not built here (the question said a worse number makes it a follow-up, not a blocker); a
-   mark in a fence of ordinary length pays nothing a paragraph's does not. anchor-map-code-lines.test.ts (14, new,
-   over cells.md's code section and fenced.md, the stand-in dressing every fence as mdBlock does: the pairing and
-   dress control, a highlighted line and its parts, the second copy of a repeated line, two-line selections carrying
-   the tab byte, a quote's marker and a CRLF inside the quote, the whole fence and the prose either side, an indent
-   alone and a selection begun in it, the Copy label, the container shapes and a linkified URL's line, the empty fence
-   and the fence lines' fallback, the paint and the change points by position, the fence lines' deletion points, the
-   shapes marked accepts, tab-opened lines, the obstacle order, the 5,000-line fence timed) and
+   painted through the fallback's ordinal. Now `walkCode` reads the raw line by line as marked lays it out: the
+   opener line, then the content lines, each the text line after the whitespace prefix the compensation took (a
+   backtick opener's indent) or an indented block's one to four spaces, then the closer or the line feed the lexer
+   moved onto the raw (`codeLineStarts` verifies that relation for every line and the tail), and emits each text
+   line's characters at the raw line's own positions, so the block's `chars` are what `putHole` gave and the `<pre>`
+   pairs as before. The placement lives in anchor-map.ts over the view it has, not in fence-source.ts, so Copy's
+   module and its tests are untouched (open question 8, the default). The lexer's tab expansion carries the tab's
+   source index, so a two-line quote holds the TAB byte where the rows show four spaces; a selection begun in an
+   indent snaps to the first glyph and an indent alone is only whitespace (the standing rule); the Copy button is a
+   control a selection run into it stops before. A selection across two lines, or from the paragraph before a fence
+   into its first line or out of its last line, maps to the span a Raw selection over the same characters mints, the
+   line feeds, a quoted fence's `> ` markers and the fence line inside the quote (open question 2, the default: a
+   one-line restriction would be a rule the Raw view does not have). The fence lines are zero-text holes of their own
+   (`FENCE_LINE`, over the opener with its info string and the closer with the line feed that ends the last code
+   line, or one over the whole raw of an empty fence): no character carries them, so no selection touches them and no
+   refusal reads the sentence; `renderedSpot` alone reads them (item 4). A token whose lines the reading cannot place
+   keeps the hole it was, one over the whole raw with the code's reason, so its refusal, Raw offer and fallback paint
+   stand; marked's tokenizer produces no such shape, so no fixture reaches it, as for `tableHole`. The row-aware
+   reading the Slice 3 map asked this slice to choose once is not needed: the rows drop only the newlines, which the
+   walk never emits, so `descend` and `nthNonWs` see through them and the character count under the `<pre>` is the
+   walk's. `codeLineAt` and `codeLineStart`, which the Slice 3 note's item 9 kept exported for this mapping with no
+   caller in production, are deleted with their docstrings and their cases (open question 6, the default);
+   `codeRuns`, `codeText` and `hayRuns` stay for the fallback's hay, and anchor-map-wrapped-code.test.ts (4) pins
+   that no module under ui/webview defines or calls the two and that anchor-map.ts's header names the Slice 8 mapping
+   and carries neither the Slice 2 boundary sentence nor the Slice 3 sentence about the helpers. Cost (open question
+   13): over a 5,000-line fence the index build plus one map takes 76 ms and forty marks 580 ms on the stand-in, 122
+   ms and about 1,600 ms in Chromium at pane 900, about 40 ms a mark, since the exact path scans the block's
+   positions and walks the pre's text nodes for every mark; over a 1,000-row table (measured by the consolidation
+   pass, in anchor-map-cells.test.ts and its browser leg) the index build plus one map takes 31 ms and forty marks
+   106 ms on the stand-in, 43 ms and about 350 ms in Chromium at pane 900, about 9 ms a mark, less than the fence's
+   since the walk under a `<table>` meets a cell's few text nodes where the `<pre>`'s hold every line. Against the
+   Slice 5 note's prose numbers (7.1 ms for forty marks over a 1,000-paragraph note) both are far more than twice a
+   prose block's cost per mark, so the per-row scoping of `unitsUnder` the brief named is a follow-up of this slice,
+   not built here (the question said a worse number makes it a follow-up, not a blocker); a mark in a fence of
+   ordinary length pays nothing a paragraph's does not. anchor-map-code-lines.test.ts (14, new, over cells.md's code
+   section and fenced.md, the stand-in dressing every fence as mdBlock does: the pairing and dress control, a
+   highlighted line and its parts, the second copy of a repeated line, two-line selections carrying the tab byte, a
+   quote's marker and a CRLF inside the quote, the whole fence and the prose either side, an indent alone and a
+   selection begun in it, the Copy label, the container shapes and a linkified URL's line, the empty fence and the
+   fence lines' fallback, the paint and the change points by position, the fence lines' deletion points, the shapes
+   marked accepts, tab-opened lines, the obstacle order, the 5,000-line fence timed) and
    anchor-map-code-lines-browser.test.ts (4 legs, new: a real drag over `total = a * b * 2` inside its hljs spans at
    pane 900 and 380 and in the chat modal, the posted anchor at the line's offset, the marks in row 0 and on the Raw
    row, a two-line drag posting the line feed and painting both rows; a fresh open; a drag into a tab-indented line
@@ -3944,13 +3948,15 @@ Where the code as built departs from the text above, why, and which test holds e
    deleted), `blockLexView`'s docstring, the formula-obstacle example and the fallback's ordinal motivation; a grep
    over ui/webview finds no comment saying a cell or a code line refuses from Rendered outside history notes;
    code-block.ts's "Slice 8's mapping" sentence was already reworded by Slice 5's review, so nothing changed there;
-   one comment clause in reader-place.ts that named `codeLineAt` says "(one row per line)". CONTEXT.md is unchanged:
-   the build coined no term. The store guards, green before by design and titled so:
-   tools/file-comments-host-anchors.test.mjs (15, one new: a cell holding `\|` located byte for byte by `uniqueAnchor`
-   and `locateExact`, the comment verb storing the slice with both escapes and `anchorAt`, the two-line tab quote
-   beside it) and tests/test_file_comments_e2e.py (27, two new, through the real dispatcher and the real host: the
-   `\|` cell with and without a position and its inner code span alone; the two-line quote with `\n\t` inside it as
-   bytes, and the snapped one-line quote starting after the tab). The ledger entry is
+   one comment clause in reader-place.ts that named `codeLineAt` says "(one row per line)". The consolidation pass
+   also made the docstring example in file-comments.ts of a refusal the mapping gives for a reason of its own
+   (deletionUnder's) name a selection spanning two cells of a table, the everyday reason since this slice, where
+   it named a table. CONTEXT.md is unchanged: the build coined no term. The store guards, green before by design and
+   titled so: tools/file-comments-host-anchors.test.mjs (15, one new: a cell holding `\|` located byte for byte by
+   `uniqueAnchor` and `locateExact`, the comment verb storing the slice with both escapes and `anchorAt`, the two-line
+   tab quote beside it) and tests/test_file_comments_e2e.py (27, two new, through the real dispatcher and the real
+   host: the `\|` cell with and without a position and its inner code span alone; the two-line quote with `\n\t`
+   inside it as bytes, and the snapped one-line quote starting after the tab). The ledger entry is
    upstream/2026-09-12-markdown-viewer-slice8.md (tier feature). Routed here and decided: the Slice 2 record's
    "paragraph half of the line rule waits on Slice 8's inline map" (slice2-build.md) is corrected, not built: the
    plan's Slice 8 text names tables and code only, and the caret-to-offset mapping the record wanted exists already as
@@ -3959,16 +3965,16 @@ Where the code as built departs from the text above, why, and which test holds e
    note's not-modelled list); the formatting element a paragraph leaves open (`<b>`, `<i>`, `<a>`, `<code>`, `<em>`
    with no closer), routed here by the Slice 5 review's round 4 with its `Block.leaves` fix shape, is NOT built in
    this slice and stays open with that shape (the pairing was not touched by the build, whose items are the walk and
-   the paint); the 1,000-row table's numbers the brief asked for were not taken, only the fence's (item 2), the
-   table's emission running once per source on the Walked row as before and the one-cell rule's check being one scan
-   of the table's cells per selection. Two sentences in earlier notes are history since this build: the Slice 5 note's
-   guarantees paragraph (above) says "PRE and TD stay refused, so the fallback's ordinal keeps marking the changed
-   cell or line under the raw needle and the pipe rule" and "Slice 8's boundary stands", which items 1, 2 and 4
-   replace with the exact path, the fallback's ordinal serving the unpositioned alone; and the Slice 3 note's item 9
-   says `codeLineAt` and `codeLineStart` "stay, exported for Slice 8's exact code-line mapping", where item 2 deleted
-   them (the sentence there now says so). Tests, by file (every new node test on the shim's stand-ins with
-   `hideEdges`; every browser leg over headless Chromium and the real bundles, 0 skipped, counted on every run):
-   anchor-map-cells (13, new), anchor-map-cells-browser (2 legs, new), anchor-map-code-lines (14, new),
+   the paint); the 1,000-row table's numbers the brief asked for were taken by the consolidation pass beside the
+   fence's (item 2), the table's emission running once per source on the Walked row as before and the one-cell rule's
+   check being one scan of the table's cells per selection. Two sentences in earlier notes are history since this
+   build: the Slice 5 note's guarantees paragraph (above) says "PRE and TD stay refused, so the fallback's ordinal
+   keeps marking the changed cell or line under the raw needle and the pipe rule" and "Slice 8's boundary stands",
+   which items 1, 2 and 4 replace with the exact path, the fallback's ordinal serving the unpositioned alone; and the
+   Slice 3 note's item 9 says `codeLineAt` and `codeLineStart` "stay, exported for Slice 8's exact code-line mapping",
+   where item 2 deleted them (the sentence there now says so). Tests, by file (every new node test on the shim's
+   stand-ins with `hideEdges`; every browser leg over headless Chromium and the real bundles, 0 skipped, counted on
+   every run): anchor-map-cells (14, new), anchor-map-cells-browser (3 legs, new), anchor-map-code-lines (14, new),
    anchor-map-code-lines-browser (4 legs, new), anchor-map (38, six re-pinned and one re-titled), anchor-map-obsidian
    (29, four re-pinned and one new), anchor-map-wrappers (38, six re-pinned), anchor-map-fallback-markup (25, one
    re-pinned and the code cases re-titled), anchor-map-rendered-points (5, one re-pinned and one new),

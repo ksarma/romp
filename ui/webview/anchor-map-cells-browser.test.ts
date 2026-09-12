@@ -11,13 +11,14 @@
 // row with the composer quoting it and Save offered. Before this slice the probe (the Slice 5 report's section (j)) recorded
 // the cell drag refused as "touches a table" with the Raw view preselecting the cell after the switch, and the two-cell drag
 // refused with no preselect. The table's width is read before and after the cell's mark paints, for the build note (the
-// brief's open question 15). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
-// Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// brief's open question 15). A last leg times the index, one map and forty marks over a 1,000-row table for the build note
+// (the brief's open question 13; diagnostics, not a bound). Skips LOUDLY without a playwright browser (CI installs none), as
+// the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openPanel, frames, pageHtml, ORIGIN, REPORT, SID, MT, STATUS, UI, type Mode } from "./real-viewer-leg";
+import { inBrowser, openPanel, openViewer, frames, pageHtml, requireCjs, ORIGIN, REPORT, SID, MT, STATUS, UI, EXT, type Mode } from "./real-viewer-leg";
 import { makeAnchor } from "./anchor-map";
 
 const PLAIN = fs.readFileSync(path.join(UI, "anchor-map-fixtures", "wrappers-plain.md"), "utf8");
@@ -240,5 +241,56 @@ test("in a browser, the real viewer and panel: the cell comment served before a 
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
+  });
+});
+
+/** anchor-map's mapping and paint, bundled from this tree, as window.AM (the code-lines leg's probe). */
+function anchorMapBundle(): string {
+  const esbuild = requireCjs("esbuild");
+  const r = esbuild.buildSync({
+    stdin: { contents: 'import { mapRenderedSelection, paintRendered } from "./anchor-map"; (window as any).AM = { mapRenderedSelection, paintRendered };', resolveDir: UI, loader: "ts", sourcefile: "am-probe.ts" },
+    bundle: true, write: false, format: "iife", platform: "browser", target: "es2020", nodePaths: [path.join(EXT, "node_modules")], logLevel: "silent",
+  });
+  return r.outputFiles[0].text as string;
+}
+
+test("in a browser, the real viewer: a 1,000-row table, the index build plus one map and forty marks timed for the build note (the brief's open question 13: diagnostics, not a bound); the map lands on the selected cell and every mark in its own cell (before this slice the cell refused as a table)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const rows = Array.from({ length: 1000 }, (_, i) => "| route_" + i + " | budget_" + i + " ms |");
+    const big = "# Big\n\nIntro paragraph.\n\n| Route | Budget |\n|-------|--------|\n" + rows.join("\n") + "\n\nAfter paragraph.\n";
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: big } });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md table tbody tr").length === 1000, null, { timeout: 20000 });
+    await page.addScriptTag({ content: anchorMapBundle() });
+    const out = await page.evaluate((src: string) => {
+      const AM = (window as any).AM;
+      const root = document.querySelector(".fileview-md")!;
+      const table = root.querySelector("table")!;
+      const needle = "route_500";
+      const walker = document.createTreeWalker(table, NodeFilter.SHOW_TEXT);
+      let tn: Text | null = null;
+      for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) { if (n.data === needle) { tn = n; break; } }
+      const t0 = performance.now();
+      const mapped = AM.mapRenderedSelection({ anchorNode: tn, anchorOffset: 0, focusNode: tn, focusOffset: needle.length, isCollapsed: false }, root, src);
+      const tMap = performance.now() - t0;
+      const t1 = performance.now();
+      let painted = 0;
+      const cells = new Set<Element>();
+      for (let k = 0; k < 40; k++) {
+        const q = "budget_" + (k * 25) + " ms";
+        const start = src.indexOf(q);
+        const marks = AM.paintRendered(root, src, { start, end: start + q.length }, "fc-probe", { act: "fcopen", id: "p" + k });
+        for (const m of marks || []) { if ((m.textContent || "").trim()) { painted++; const td = m.closest("td"); if (td) cells.add(td); } }
+      }
+      const tPaint = performance.now() - t1;
+      return { rows: table.querySelectorAll("tbody tr").length, mapped, tMap, painted, cells: cells.size, tPaint };
+    }, big);
+    assert.equal(out.rows, 1000, "a thousand body rows");
+    assert.equal(out.mapped.ok, true, "the deep cell maps: " + JSON.stringify(out.mapped));
+    assert.equal(out.mapped.quote, "route_500");
+    assert.equal(out.mapped.range.start, big.indexOf("route_500"));
+    assert.ok(out.painted === 40 && out.cells === 40, "forty marks in forty cells: " + JSON.stringify([out.painted, out.cells]));
+    t.diagnostic("1,000-row table in Chromium: index build plus one map " + out.tMap.toFixed(1) + " ms, forty marks " + out.tPaint.toFixed(1) + " ms");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
   });
 });

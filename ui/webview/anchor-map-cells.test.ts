@@ -15,7 +15,9 @@
 // configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag as a browser does,
 // KaTeX's fill stood in for; the idiom of anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
 // anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps or names the one-cell rule
-// refuses "touches a table" over the tree before this slice. Synthetic values only: an invented note, no real session text.
+// refuses "touches a table" over the tree before this slice. A last case times the index, one map and forty marks over a
+// 1,000-row table for the build note (the brief's open question 13; diagnostics, not a bound). Synthetic values only: an
+// invented note, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -478,4 +480,25 @@ test("shapes marked accepts map cell by cell: a table with no leading or trailin
   const interrupt = "Intro\n| a | b |\n|---|---|\n| c | d |\n";
   box = buildRendered(interrupt);
   for (const t of ["Intro", "a", "c"]) mapsWhole(box, interrupt, t);
+});
+
+// ── the cost, for the build note (the brief's open question 13; the fence's twin is in anchor-map-code-lines.test.ts) ──
+
+test("a 1,000-row table: the index builds, one selection maps and forty marks paint, one per cell (the numbers are diagnostics for the build note, not a bound; before this slice the cell refused as a table)", (t) => {
+  const rows = Array.from({ length: 1000 }, (_, i) => "| route_" + i + " | budget_" + i + " ms |");
+  const src = "# Big\n\nIntro paragraph.\n\n| Route | Budget |\n|-------|--------|\n" + rows.join("\n") + "\n\nAfter paragraph.\n";
+  const box = buildRendered(src);
+  assert.equal(allOf(box, "TR").length, 1001, "the header row and a thousand body rows");
+  let t0 = process.hrtime.bigint();
+  const r = ok(mapText(box, src, "route_500"), "a cell deep in the table");
+  const tMap = Number(process.hrtime.bigint() - t0) / 1e6;
+  assert.deepEqual(r.range, rangeOf(src, "route_500"));
+  t0 = process.hrtime.bigint();
+  const painted: FakeElement[] = [];
+  for (let k = 0; k < 40; k++) painted.push(...marksOf(box, src, rangeOf(src, "budget_" + (k * 25) + " ms"), "fc-hl"));
+  const tPaint = Number(process.hrtime.bigint() - t0) / 1e6;
+  const marks = textMarks(painted);
+  assert.equal(marks.length, 40, "forty marks, one per cell");
+  assert.equal(new Set(marks.map((m) => cellOf(m, "TD").el)).size, 40, "in forty different cells");
+  t.diagnostic("1,000-row table on the stand-in: index build plus one map " + tMap.toFixed(1) + " ms, forty marks " + tPaint.toFixed(1) + " ms");
 });
