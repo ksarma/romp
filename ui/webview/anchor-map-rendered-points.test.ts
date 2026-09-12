@@ -256,6 +256,46 @@ test("Rendered deletion points and a table nested in a list item: inside a cell 
   unpaintChanges(El(tb));
 });
 
+test("Rendered deletion points at a table's END where its raw ends with the last row's last character and not with the row's line feed (the Slice 8 review, round 3): a table that ends its blockquote, one that ends its list item, and one that ends the note with no final line feed: the point at the row's end, the row's line feed or the end of the file, keeps its card like a point on any row's line feed (before: the table's end was exclusive of that offset, so the table was not found there and the point sat after the last rendered cell's text, in a cell the change is not in; with a truncated row `| b | c d |` a deletion at the unrendered tail's end landed after `b`); the tail's inside keeps its card as before and the position right after `b` is the cell's; a table followed by a blank line keeps the row's line feed card-only as before; the end of the file after a table's final line feed sits after the last cell's character, the block's end, as after a paragraph's", () => {
+  const scenes: Array<[string, string, string]> = [
+    ["a quote-ending truncated table, the note continuing", "# T\n\nPara before.\n\n> Quote lead.\n>\n> | a |\n> |---|\n> | b | c d |\n\nAfter.\n", "| b | c d |"],
+    ["a quote-ending truncated table, end of file with no line feed", "# T\n\n> | a |\n> |---|\n> | b | c d |", "| b | c d |"],
+    ["a list-item-ending truncated table, the note continuing", "- Item\n\n  | a |\n  |---|\n  | b | c d |\n\nAfter.\n", "| b | c d |"],
+    ["a top-level truncated table, end of file with no line feed", "Para.\n\n| a |\n|---|\n| b | c d |", "| b | c d |"],
+    ["a top-level well-formed table, end of file with no line feed", "Para.\n\n| a |\n|---|\n| b |", "| b |"],
+    ["a quote-ending well-formed table, the note continuing", "> Lead.\n>\n> | a |\n> |---|\n> | b |\n\nAfter.\n", "| b |"],
+  ];
+  for (const [label, source, row] of scenes) {
+    const box = buildRendered(source);
+    assert.equal(withTag(box, "TABLE").length, 1, label + ": marked lexes the table");
+    assert.equal(withTag(box, "TD").length, 1, label + ": one body cell rendered (a truncated row's tail is not)");
+    const rowEnd = at(source, row) + row.length;
+    assert.ok(rowEnd === source.length || source[rowEnd] === "\n", label + ": the row's end is the row's line feed or the end of the file");
+    const truncated = row.length > 5;
+    const pts = [del("end", rowEnd), del("after-b", at(source, "| b") + 3)];
+    if (truncated) pts.push(del("tail", rowEnd - 3));   // inside the unrendered tail `c d |`
+    const r = paintChangesRendered(El(box), source, pts, stylesFor);
+    assert.deepEqual(r, { painted: ["after-b"], unpainted: truncated ? ["end", "tail"] : ["end"] }, label + ": the row's end keeps its card (before: after `b`), the tail's inside too, the position after `b` places");
+    const pt = point(box, "after-b");
+    assert.ok(inside(pt, "TD"), label + ": right after `b`, inside the cell");
+    assert.ok(around(withTag(box, "TABLE")[0], pt)[0].replace(/\s+/g, "").endsWith("ab"), label + ": after the cell's character");
+    unpaintChanges(El(box));
+  }
+  // a blank line after the table: the raw ends with the row's line feed, which keeps its card as before, and the prose after places
+  const blankAfter = "Para.\n\n| a |\n|---|\n| b | c d |\n\nAfter.\n";
+  const cb = buildRendered(blankAfter);
+  const rowEnd = at(blankAfter, "| b | c d |") + "| b | c d |".length;
+  assert.deepEqual(paintChangesRendered(El(cb), blankAfter, [del("lf", rowEnd), del("tail", rowEnd - 3), del("after", at(blankAfter, "After."))], stylesFor), { painted: ["after"], unpainted: ["lf", "tail"] }, "a blank line after: the row's line feed and the tail keep their cards, the prose after places");
+  unpaintChanges(El(cb));
+  // the end of the file after the table's final line feed: the block's end (ownRows), after the last cell's character, as after a
+  // paragraph's or a fence's last character; the row's line feed before it keeps its card
+  const lfEof = "Para.\n\n| a |\n|---|\n| b |\n";
+  const eb = buildRendered(lfEof);
+  assert.deepEqual(paintChangesRendered(El(eb), lfEof, [del("row-lf", lfEof.length - 1), del("eof", lfEof.length)], stylesFor), { painted: ["eof"], unpainted: ["row-lf"] }, "the row's line feed card-only, the end of the file after it placed");
+  assert.ok(inside(point(eb, "eof"), "TD") && around(withTag(eb, "TABLE")[0], point(eb, "eof"))[0].replace(/\s+/g, "").endsWith("ab"), "...after `b`, the block's last character");
+  unpaintChanges(El(eb));
+});
+
 // ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
 
 test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character (this pre has no rows; with the viewer's rows the point goes into the blank line's own row, anchor-map-code-lines.test.ts); at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {

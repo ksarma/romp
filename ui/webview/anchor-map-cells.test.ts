@@ -463,6 +463,45 @@ test("one cell and the prose after the table maps, the row's closing pipe and li
   assert.equal(FIX.slice(intoNext.rawRange!.start, intoNext.rawRange!.end), "GET /notes | 1");
 });
 
+test("the one-cell rule counts a cell holding a formula alone, and a formula that begins the next cell's text (the review's round 3): a selection from `a1` to the end of the next cell's `$x$` glyphs, or released on the <td> past them, refuses with the one-cell sentence and the Raw view offered on `a1 | $x$` (before: it mapped, the quote carrying the pipe the person did not select as text, since a formula emits no character, the cell holding one alone has no record and the count saw one cell); the mirror, from the glyphs of a first cell's `$yz$` into `b1`, or from the <td> before them, refuses on `$yz$ | b1`; from `a1` into the `$x$` that begins the next cell's text `$x$ here` refuses on `a1 | $x$`; within one cell the words and the formula still map (`count $xy$`), `a1` alone maps, a boundary at the glyphs' start covers none of the formula, a boundary strictly inside the glyphs names the formula, and a last cell holding a formula alone runs into the prose after the table as the last-cell-into-prose rule maps it", () => {
+  const SRC = "Intro paragraph.\n\n| A | B | C |\n|---|---|---|\n| count $xy$ here | a1 | $x$ |\n\nMiddle paragraph.\n\n| D | E |\n|---|---|\n| $yz$ | b1 |\n\n| F | G |\n|---|---|\n| e1 | $w$ |\n\nAfter.\n";
+  const box = buildRendered(SRC);
+  const tds = allOf(box, "TD");
+  assert.deepEqual(tds.map((t) => t.textContent), ["count xy here", "a1", "x", "yz", "b1", "e1", "w"], "the three tables' body cells, the formulas' glyphs stood in for");
+  const glyphsOf = (td: FakeElement, tex: string): FakeText => { const k = find(td, "SPAN", tex); assert.equal(k.getAttribute("class"), "katex", tex + ": the formula's root"); return k.childNodes[0] as FakeText; };
+  const expectOneCell = (r: MapResult, src: string, span: string, label: string): void => {
+    const b = bad(r, label);
+    assert.match(b.reason, ONE_CELL, label + ": " + b.reason);
+    assert.equal(b.rawHasQuote, true, label + ": the Raw view is offered on the span");
+    assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), span, label + ": the exact span, the formula with its delimiters");
+    assert.equal(b.blockStartOffset, b.rawRange!.start, label + ": the search begins at the span's start");
+    assert.equal(b.blockStartLine, src.slice(0, b.rawRange!.start).split("\n").length - 1, label);
+  };
+  const gx = glyphsOf(tds[2], "x");
+  assert.deepEqual(shape(tds[2]), ["SPAN.katex"], "the third cell holds the formula alone");
+  expectOneCell(mapRenderedSelection(sel(point(box, "a1"), { node: gx, offset: gx.data.length }), El(box), SRC), SRC, "a1 | $x$", "a1 to the end of the next cell's glyphs (before: mapped `a1 | $x$`)");
+  expectOneCell(mapRenderedSelection(sel(point(box, "a1"), { node: tds[2], offset: tds[2].childNodes.length }), El(box), SRC), SRC, "a1 | $x$", "a1 to the <td> past its glyphs");
+  const gyz = glyphsOf(tds[3], "yz");
+  expectOneCell(mapRenderedSelection(sel({ node: gyz, offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$ | b1", "the first cell's glyphs into b1");
+  expectOneCell(mapRenderedSelection(sel({ node: tds[3], offset: 0 }, point(box, "b1", true)), El(box), SRC), SRC, "$yz$ | b1", "the <td> before the glyphs into b1");
+  // the formula begins the next cell's text: the cell has a record, and the formula stands before its first positioned character
+  const SRC2 = "| A | B |\n|---|---|\n| a1 | $x$ here |\n";
+  const box2 = buildRendered(SRC2);
+  const gx2 = glyphsOf(allOf(box2, "TD")[1], "x");
+  expectOneCell(mapRenderedSelection(sel(point(box2, "a1"), { node: gx2, offset: gx2.data.length }), El(box2), SRC2), SRC2, "a1 | $x$", "a1 through the formula that begins the next cell (before: mapped)");
+  assert.equal(ok(mapRenderedSelection(sel(point(box2, "here"), point(box2, "here", true)), El(box2), SRC2), "the word after the formula").quote, "here");
+  // controls
+  const gxy = glyphsOf(tds[0], "xy");
+  assert.equal(ok(mapRenderedSelection(sel(point(box, "count"), { node: gxy, offset: gxy.data.length }), El(box), SRC), "within one cell: the word and the formula after it").quote, "count $xy$");
+  mapsWhole(box, SRC, "a1");
+  assert.equal(ok(mapRenderedSelection(sel(point(box, "a1"), { node: gx, offset: 0 }), El(box), SRC), "at the glyphs' start: none of the formula").quote, "a1");
+  const inF = bad(mapRenderedSelection(sel({ node: gyz, offset: 1 }, point(box, "b1", true)), El(box), SRC), "strictly inside the glyphs");
+  assert.equal(inF.reason, "This selection touches a formula; comment on it from the Raw view.");
+  assert.equal(SRC.slice(inF.rawRange!.start, inF.rawRange!.end), "$yz$");
+  const gw = glyphsOf(tds[6], "w");
+  assert.equal(ok(mapRenderedSelection(sel({ node: gw, offset: 0 }, point(box, "After.", true)), El(box), SRC), "a last cell's formula into the prose after the table").quote, "$w$ |\n\nAfter.", "the last-cell-into-prose rule: the row's closing pipe and line feeds inside the quote");
+});
+
 // ── the paint and the change points inside a table go by position ──
 
 test("a Raw-made comment paints by position: one cell one mark in its <td>, two cells one mark each and none over the pipe (the same marks the fallback painted, now through the exact path), and a deletion point inside a cell places in the cell while one on the delimiter row or on the row's closing pipe stays unpainted", () => {

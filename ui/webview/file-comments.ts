@@ -1273,8 +1273,48 @@ class Panel {
    *  macOS, a long press on a touch screen, no click following), and the window's blur that a release in another frame never
    *  reaches this one. A touch press has no button and is held as before. */
   pointerHeld = false;
-  pressBegan = (ev: Event): void => { if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return; this.pointerHeld = true; };
-  pressEnded = (): void => { this.pointerHeld = false; };
+  /** The marks of ours a primary-button press began on (the pressed mark and every mark of ours around it, since two comments
+   *  over one passage nest their marks), each with the tabindex the paint gave it, taken off for the press (pressBegan) and put
+   *  back at its end (pressEnded). A highlight is a control with a tabindex, so a press on one moved the browser's focus onto it
+   *  before the press placed its caret, and Chromium then never extends a selection anchored outside the element the press
+   *  focused: a press on the leading half of a mark's first glyph anchors the caret at the end of the text node BEFORE the mark
+   *  (the same caret, another node), so a drag begun there, the natural place to re-select a highlighted passage, selected
+   *  nothing, offered no Comment, and its release opened the card instead, while a drag begun one glyph in, or in the text
+   *  before the mark, selected as usual (the Slice 8 review's round 3, measured in headless Chromium over the real panel, in a
+   *  paragraph and in a code row alike; the same on main, so the slice's code lines only widened where it showed). With no
+   *  tabindex the mark is no focus target, the press leaves the focus where a press on plain text would, and the drag selects
+   *  the words under it. The attribute goes back at the press's end, so the mark stays a Tab stop, and the mark takes the focus
+   *  then (the innermost pressed one, or its successor when a repaint replaced it mid-press, found as refocusMark finds it), as
+   *  the press would have given it: a click leaves the keyboard on the mark whose card it opened, as before. A press the browser
+   *  ended itself (a contextmenu) or a release in another window (blur) puts the attribute back and moves no focus. */
+  pressedMarks: Array<{ el: HTMLElement; tabindex: string; held: { act: string; id: string; k: number; at: Element } | null }> = [];
+  pressBegan = (ev: Event): void => {
+    if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return;
+    this.pointerHeld = true;
+    if (ev.type === "mousedown") this.unfocusForPress(ev.target as Element | null);
+  };
+  pressEnded = (ev?: Event): void => { this.pointerHeld = false; this.refocusPressed(!ev || (ev.type !== "blur" && ev.type !== "contextmenu")); };
+  /** A press began on `t`: every mark of ours from it up to the body wears no tabindex until the press ends (pressedMarks). */
+  private unfocusForPress(t: Element | null): void {
+    if (this.pressedMarks.length) this.refocusPressed(false);   // a press whose end was never heard: its attributes back first
+    for (let n: Element | null = t; n; n = n.parentElement) {
+      if (!this.marks.has(n) || typeof n.getAttribute !== "function") continue;
+      const tabindex = n.getAttribute("tabindex");
+      if (tabindex === null) continue;
+      this.pressedMarks.push({ el: n as HTMLElement, tabindex, held: this.markRecord(n as HTMLElement) });
+      n.removeAttribute("tabindex");
+    }
+  }
+  /** The press ended: the attributes back, and, for a release (`focus`), the keyboard onto the innermost pressed mark, or onto its
+   *  successor when a repaint replaced it during the press (refocusMark), without scrolling. */
+  private refocusPressed(focus: boolean): void {
+    const pressed = this.pressedMarks; this.pressedMarks = [];
+    for (const p of pressed) if (!p.el.hasAttribute("tabindex")) p.el.setAttribute("tabindex", p.tabindex);
+    const first = pressed[0];
+    if (!focus || !first) return;
+    if (this.ctx.body().contains(first.el)) first.el.focus({ preventScroll: true });
+    else if (first.held) this.refocusMark(first.held);
+  }
   /** The document's selection changed (plans/markdown-viewer.md Slice 5, item 9): a selection made or changed from the KEYBOARD
    *  (Shift+Arrow over a selection a drag began, caret browsing, assistive technology) reaches no mouseup, so the seam's onSelect
    *  never ran for it, the float stayed where a drag had left it while the selection shrank under it, and a keyboard selection
@@ -3588,7 +3628,8 @@ class Panel {
         painted = !!out && out.length > 0;
         if (rendered && out) { this.passMarks.push(...out); byCard.push({ id: card.id, marks: out }); }
         for (const m of out || []) if (!isMarkEl(m)) coverBox(m, card.id);   // a display formula's stamped box: the covering set on it (two comments on one formula share the box)
-        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
+        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), its tabindex off for
+        // the length of a press on it so a drag begun on its first glyph selects (pressedMarks), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
         const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";
@@ -3801,7 +3842,12 @@ class Panel {
    *  marks — and the element, so a repaint can tell whether it was unwrapped. Null when the focus is anywhere else. */
   private heldMark(): { act: string; id: string; k: number; at: Element } | null {
     const a = document.activeElement as HTMLElement | null;
-    if (!a || !this.marks.has(a) || !a.dataset || !a.dataset.act || !a.dataset.id) return null;
+    return a && this.marks.has(a) ? this.markRecord(a) : null;
+  }
+  /** A mark of ours by what it is: its action, the id of its subject, its place among the subject's marks, and the element
+   *  (heldMark: the one holding the keyboard; pressedMarks: the one a press began on). Null for an element with no action or id. */
+  private markRecord(a: HTMLElement): { act: string; id: string; k: number; at: Element } | null {
+    if (!a.dataset || !a.dataset.act || !a.dataset.id) return null;
     return { act: a.dataset.act, id: a.dataset.id, k: this.ownMarks(a.dataset.act, a.dataset.id).indexOf(a), at: a };
   }
   /** After a repaint: the held mark left the body, so its successor — our mark for the same subject at the same

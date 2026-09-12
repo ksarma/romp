@@ -8,7 +8,12 @@
 // anchor-map-code-lines.test.ts rebuilds it: marked's output parsed into the DOM stand-in, every fence cut into `.cl` rows by the
 // viewer's own wrapLinesHtml (no highlighter: these fences hold no glyph), the Copy button parked in the pre, the math fill stood
 // in for so the belt's `pre` can make a block's pre count disagree. Fails before over d8a55bb7e at the one-blank-line fence's point
-// (unpainted there). Synthetic values only: invented notes, no real session text.
+// (unpainted there). The review's round 3 added two cases and re-pinned one: a fence the note ends inside right after its
+// opener's line feed (raw "```\n") has no content line and its point keeps its card (red over a git archive of 2136fa7d2, where
+// round 2's guard read the raw's split artifact as the one-blank-line fence's line and placed the note's end in the pre's row); a
+// fence's trailing blank line, whose row marked's renderer folds, goes to the END of the pre's last row (red over 2136fa7d2 with
+// the point after `x = 1`, two rows above the rows the blank and whitespace lines between show; the second test's trail scene,
+// card-only there, re-pinned to the same row's end). Synthetic values only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -206,7 +211,7 @@ test("a deletion point on the one blank line of a fence (```, a blank line, ```)
   assert.deepEqual(paintChangesRendered(El(eb), empty, [del("e-open", eo), del("e-lf", eo + 3), del("e-close", at(empty, "```", 1)), del("e-prose", at(empty, "After."))], () => ({})), { painted: ["e-prose"], unpainted: ["e-open", "e-lf", "e-close"] }, "the empty fence takes no point");
 });
 
-test("a deletion point on a whitespace-only line of a fence whose lines all show nothing places in the line's own row at its column among the spaces (before: the row was found from a line showing a character, and such a fence has none, so the point kept its card): one line of four spaces at columns 0, 2 and 4; two lines of whitespace each in their own row; a blank line then a whitespace line; a trailing blank line, whose row marked's renderer folds, keeps its card as in every fence; a pre no renderer cut into rows keeps it too", () => {
+test("a deletion point on a whitespace-only line of a fence whose lines all show nothing places in the line's own row at its column among the spaces (before: the row was found from a line showing a character, and such a fence has none, so the point kept its card): one line of four spaces at columns 0, 2 and 4; two lines of whitespace each in their own row; a blank line then a whitespace line; a trailing blank line, whose row marked's renderer folds, goes to the end of the pre's last row, after the whitespace row's spaces (the review's round 3; before, the fence showing no character to place it against, it kept its card); a pre no renderer cut into rows keeps its card", () => {
   const ws = "Intro.\n\n```\n    \n```\n\nAfter.\n";
   const wb = buildRendered(ws);
   assert.deepEqual(rowTexts(allOf(wb, "PRE")[0]), ["    "], "one row of four spaces");
@@ -234,21 +239,24 @@ test("a deletion point on a whitespace-only line of a fence whose lines all show
   assert.deepEqual(paintChangesRendered(El(mb), mixed, [del("m-blank", m0), del("m-ws", m0 + 1 + 4)], () => ({})), { painted: ["m-blank", "m-ws"], unpainted: [] });
   assert.deepEqual([placeOf(mb, pointOf(mb, "m-blank")), placeOf(mb, pointOf(mb, "m-ws")), around(pointOf(mb, "m-ws"))], [{ pre: 0, row: 0 }, { pre: 0, row: 1 }, ["    ", ""]]);
   unpaintChanges(El(mb));
-  // a whitespace line then a trailing blank line: the renderer folds the trailing line's row, so its point has no row and, the
-  // fence showing no character to place it against, keeps its card
+  // a whitespace line then a trailing blank line: the renderer folds the trailing line's row, so its point goes to the END of the
+  // pre's last row, the row nearest the line, after the shown spaces (the review's round 3; before, the fence showing no character
+  // to place it against, the point kept its card)
   const trail = "Intro.\n\n```\n    \n\n```\n\nAfter.\n";
   const rb = buildRendered(trail);
   assert.deepEqual(rowTexts(allOf(rb, "PRE")[0]), ["    "], "the trailing blank line's row folded");
   const r0 = at(trail, "```") + 4;
-  assert.deepEqual(paintChangesRendered(El(rb), trail, [del("r-ws", r0 + 2), del("r-trail", r0 + 5)], () => ({})), { painted: ["r-ws"], unpainted: ["r-trail"] });
-  assert.deepEqual([placeOf(rb, pointOf(rb, "r-ws")), around(pointOf(rb, "r-ws"))], [{ pre: 0, row: 0 }, ["  ", "  "]]);
+  assert.equal(trail.slice(r0 + 4, r0 + 9), "\n\n```", "r0 + 5 is the trailing blank line, its line feed");
+  assert.deepEqual(paintChangesRendered(El(rb), trail, [del("r-ws", r0 + 2), del("r-trail", r0 + 5)], () => ({})), { painted: ["r-ws", "r-trail"], unpainted: [] }, "the trailing line's point places (before: unpainted)");
+  assert.deepEqual([placeOf(rb, pointOf(rb, "r-ws")), around(pointOf(rb, "r-ws")), placeOf(rb, pointOf(rb, "r-trail")), around(pointOf(rb, "r-trail"))], [{ pre: 0, row: 0 }, ["  ", "  "], { pre: 0, row: 0 }, ["    ", ""]], "the whitespace line's point at its column, the trailing line's at the end of the same row, the pre's last");
+  unpaintChanges(El(rb));
   // undressed: no row to hold the point, no character to place it against
   const ub = undressed(ws);
   assert.equal(rowsOf(allOf(ub, "PRE")[0]).length, 0, "no rows");
   assert.deepEqual(paintChangesRendered(El(ub), ws, [del("u", w0 + 2)], () => ({})), { painted: [], unpainted: ["u"] }, "undressed: the point keeps its card");
 });
 
-test("a fence whose lines all show nothing finds its pre by ORDER among the block's (the k-th <pre> under the block's nodes for its k-th code block): in a list item holding such a fence before a fence with text the point goes into the FIRST pre, and after one into the SECOND, each in the right row; a `<pre>` no code token emitted (the fill's belt for a display formula past its bound) makes the count disagree and the point keeps its card rather than land in the wrong pre", () => {
+test("a fence whose lines all show nothing finds its pre by ORDER among the block's (the k-th <pre> under the block's nodes for its k-th code block): in a list item holding such a fence before a fence with text the point goes into the FIRST pre, and after one into the SECOND, each in the right row; a `<pre>` no code token emitted (the fill's belt for a display formula past its bound) makes the count disagree and the point stays out of the belt's pre: the caller's rules place it against the nearest character, after the item's text, as main 696229f84 did for this fence (its hole put no character in the way)", () => {
   const before = "- Item:\n\n  ```\n  \n  ```\n\n  between\n\n  ```\n  a = 1\n  b = 2\n  ```\n\n  after\n";
   const bb = buildRendered(before);
   assert.deepEqual(allOf(bb, "PRE").map(rowTexts), [[""], ["a = 1", "b = 2"]], "the item's two pres: the blank fence's one row, the text fence's two");
@@ -269,7 +277,9 @@ test("a fence whose lines all show nothing finds its pre by ORDER among the bloc
   assert.deepEqual(paintChangesRendered(El(ab), after, [del("second", aWs + 3), del("text", at(after, "a = 1") + 2)], () => ({})), { painted: ["second", "text"], unpainted: [] });
   assert.deepEqual([placeOf(ab, pointOf(ab, "second")), around(pointOf(ab, "second")), placeOf(ab, pointOf(ab, "text"))], [{ pre: 1, row: 0 }, [" ", " "], { pre: 0, row: 0 }], "the whitespace fence's point in the second pre at its column among the shown spaces");
   unpaintChanges(El(ab));
-  // the belt's pre beside the blank fence: two pres, one code block; the count disagrees and the point keeps its card
+  // the belt's pre beside the blank fence: two pres, one code block; the count disagrees, so the point is not placed by order (the
+  // wrong pre would be the belt's) and falls to the caller's nearest-character rule, after the item's text, where main put it too
+  // (the review's round 3 corrected this comment and the title, which had said the point keeps its card; the pins below never did)
   const belt = "- Item:\n\n  ```\n  \n  ```\n\n  $$\n  \\HUGE x\n  $$\n";
   const kb = buildRendered(belt);
   const pres = allOf(kb, "PRE");
@@ -281,4 +291,56 @@ test("a fence whose lines all show nothing finds its pre by ORDER among the bloc
   const gp = pointOf(kb, "guard");
   assert.equal(placeOf(kb, gp), null, "the count guard: in no pre's row (the wrong pre would be the belt's)");
   assert.equal((gp.parentNode as FakeElement).textContent, "Item:", "...the caller's rules place it against the nearest character, after the item's text");
+});
+
+test("a fence the note ends inside right after its opener's line feed (```, end of file) has no content line: the point at the note's end keeps its card as the fence lines' do, although the pre shows marked's one empty row for empty text (the review's round 3; before, round 2's guard read the raw's split artifact after the opener as the one-blank-line fence's line and placed that point in the row); the same with an info string; and the unclosed fence whose one content line is blank (```, a blank line, end of file) keeps the line's point and the end's card-only too, the line being one of the raw's trailing line feeds that ownRows treats as blank lines between blocks (pre-existing on main 696229f84, recorded in the plan's Slice 8 note and routed to a follow-up), so the two unclosed shapes agree while the closed one-blank-line fence places (the first test)", () => {
+  for (const [label, src] of [["bare", "Intro.\n\n```\n"], ["info string", "Intro.\n\n```js\n"]] as const) {
+    const box = buildRendered(src);
+    assert.deepEqual(rowTexts(allOf(box, "PRE")[0]), [""], label + ": marked's floor, one empty row for empty text");
+    const open = at(src, "```"), eof = src.length;
+    assert.equal(src[eof - 1], "\n", label + ": the opener's line feed ends the note");
+    assert.deepEqual(paintChangesRendered(El(box), src, [del("eof", eof), del("in-open", open + 1), del("open-lf", eof - 1), del("prose", at(src, "Intro."))], () => ({})), { painted: ["prose"], unpainted: ["eof", "in-open", "open-lf"] }, label + ": no point in the fence (before: the note's end in the pre's row)");
+    unpaintChanges(El(box));
+  }
+  // the unclosed fence with one blank content line: the pre shows the row and the Raw view puts the point on the line, but the
+  // line is one of the raw's trailing line feeds, which Placed strips off the block's text end and ownRows reads as blank lines
+  // between blocks, so no block's rows hold the offset and the point keeps its card (the routed edge; pinned as today's behaviour)
+  const blank = "Intro.\n\n```\n\n";
+  const bb = buildRendered(blank);
+  assert.deepEqual(rowTexts(allOf(bb, "PRE")[0]), [""], "one row for the blank line");
+  const lf = at(blank, "```") + 4;
+  assert.equal(blank.slice(lf - 1), "\n\n", "the blank line's line feed ends the note");
+  assert.deepEqual(paintChangesRendered(El(bb), blank, [del("blank", lf), del("eof", blank.length), del("in-open", lf - 3)], () => ({})), { painted: [], unpainted: ["blank", "eof", "in-open"] }, "card-only, the two unclosed shapes agreeing");
+});
+
+test("a deletion point on a fence's trailing blank line, whose row marked's renderer folds, goes to the END of the pre's last row when blank or whitespace-only rows stand between the last line that shows a character and it (the review's round 3; before: after the nearest positioned character, two rows above, which read as the first line changed): after the whitespace row's spaces, beside the whitespace line's own point at its column; two trailing blank lines fold to one row and the second's point goes into that empty row with the first's; a fence whose last shown line has text places the trailing line's point after that text, the same row either way; the closer's backtick keeps its card", () => {
+  const src = "Intro.\n\n```\nx = 1\n\n    \n\n```\n\nAfter.\n";
+  const box = buildRendered(src);
+  const pre = allOf(box, "PRE")[0];
+  assert.deepEqual(rowTexts(pre), ["x = 1", "", "    "], "three rows: the trailing blank line's folded");
+  const o = at(src, "x = 1");
+  assert.equal(src.slice(o + 5, o + 14), "\n\n    \n\n`", "the blank line at o + 6, the whitespace line at o + 7 to o + 10, the trailing blank line at o + 12, the closer at o + 13");
+  const res = paintChangesRendered(El(box), src, [del("blank", o + 6), del("ws", o + 9), del("trail", o + 12), del("closer", o + 13), del("text", o + 2)], () => ({}));
+  assert.deepEqual(res, { painted: ["blank", "ws", "trail", "text"], unpainted: ["closer"] });
+  assert.deepEqual(["blank", "ws", "trail", "text"].map((id) => placeOf(box, pointOf(box, id))), [{ pre: 0, row: 1 }, { pre: 0, row: 2 }, { pre: 0, row: 2 }, { pre: 0, row: 0 }], "the trailing line's point in the last row (before: row 0, after `x = 1`)");
+  assert.deepEqual([around(pointOf(box, "ws")), around(pointOf(box, "trail"))], [["  ", "  "], ["    ", ""]], "the whitespace line's point at its column, the trailing line's after the row's spaces");
+  assert.deepEqual(rowTexts(pre), ["x = 1", "", "    "], "the rows' text is untouched");
+  unpaintChanges(El(box));
+  // two trailing blank lines: the renderer folds the second's row, so its point goes into the first's, the empty last row
+  const two = "Intro.\n\n```\ny = 2\n\n\n```\n";
+  const tb = buildRendered(two);
+  assert.deepEqual(rowTexts(allOf(tb, "PRE")[0]), ["y = 2", ""], "two rows: the second trailing blank line's folded");
+  const y = at(two, "y = 2");
+  assert.equal(two.slice(y + 5, y + 9), "\n\n\n`");
+  assert.deepEqual(paintChangesRendered(El(tb), two, [del("first", y + 6), del("second", y + 7)], () => ({})), { painted: ["first", "second"], unpainted: [] });
+  assert.deepEqual([placeOf(tb, pointOf(tb, "first")), placeOf(tb, pointOf(tb, "second"))], [{ pre: 0, row: 1 }, { pre: 0, row: 1 }], "both in the empty last row");
+  assert.ok(hasClass(pointOf(tb, "second").parentNode!, "ct"), "the second's in the row's cell");
+  unpaintChanges(El(tb));
+  // the last shown line has text: the trailing line's point after it, the last row, as before
+  const text = "Intro.\n\n```\nz = 3\n\n```\n";
+  const xb = buildRendered(text);
+  assert.deepEqual(rowTexts(allOf(xb, "PRE")[0]), ["z = 3"]);
+  const z = at(text, "z = 3");
+  assert.deepEqual(paintChangesRendered(El(xb), text, [del("t", z + 6)], () => ({})), { painted: ["t"], unpainted: [] });
+  assert.deepEqual([placeOf(xb, pointOf(xb, "t")), around(pointOf(xb, "t"))], [{ pre: 0, row: 0 }, ["z = 3", ""]], "after the last character, as before");
 });

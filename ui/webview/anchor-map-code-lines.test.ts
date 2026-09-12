@@ -584,6 +584,26 @@ test("a deletion point on a code line that shows no character places in the line
   assert.ok(before.endsWith("first = 1\n\n") && after.startsWith("third = 3"), "undressed: before the next line's first character: " + JSON.stringify([before.slice(-4), after.slice(0, 5)]));
 });
 
+test("a CRLF note's code line endings: the point at the CR byte and the point at the LF byte of an inner line's ending both sit after the line's last character in its own row (the review's round 3; before: the LF byte's fell before the next line's first character, one row down, so the point read as that line changed, while the Raw view puts both bytes' points on the line they end), and both bytes of the LAST code line's ending sit after its last character (before: the LF byte's kept its card, strictly inside the closer's hole, whose first position is the CR's); a point inside a line is the control", () => {
+  const src = "Intro.\r\n\r\n```\r\nc_one = 1\r\nc_two = 22\r\n```\r\n\r\nAfter.\r\n";
+  const box = buildRendered(src);
+  const pre = find(box, "PRE", "c_one = 1");
+  assert.deepEqual(rowTexts(pre), ["c_one = 1", "c_two = 22"]);
+  const del = (id: string, curFrom: number): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText: "gone", author: "web" });
+  const one = at(src, "c_one = 1") + "c_one = 1".length, two = at(src, "c_two = 22") + "c_two = 22".length;
+  assert.deepEqual([src.slice(one, one + 2), src.slice(two, two + 2)], ["\r\n", "\r\n"], "each line's ending is the two bytes");
+  const res = paintChangesRendered(El(box), src, [del("one-cr", one), del("one-lf", one + 1), del("two-cr", two), del("two-lf", two + 1), del("in-two", two - 2)], () => ({}));
+  assert.deepEqual(res, { painted: ["one-cr", "one-lf", "two-cr", "two-lf", "in-two"], unpainted: [] }, "every point places (before: two-lf kept its card)");
+  assert.deepEqual(["one-cr", "one-lf", "two-cr", "two-lf", "in-two"].map((id) => rowIndexOf(pointOf(box, id))), [0, 0, 1, 1, 1], "each ending's two bytes in the line's own row (before: one-lf in row 1)");
+  const rows = rowsOf(pre);
+  for (const id of ["one-cr", "one-lf"]) assert.deepEqual(around(rows[0], pointOf(box, id)), ["c_one = 1", ""], id + ": after the line's last character");
+  for (const id of ["two-cr", "two-lf"]) assert.deepEqual(around(rows[1], pointOf(box, id)), ["c_two = 22", ""], id + ": after the line's last character");
+  assert.deepEqual(around(rows[1], pointOf(box, "in-two")), ["c_two = ", "22"], "the control: inside the line");
+  assert.deepEqual(rowTexts(pre), ["c_one = 1", "c_two = 22"], "the rows' text is untouched");
+  unpaintChanges(El(box));
+  assert.equal(allOf(box, "SPAN").filter((e) => hasClass(e, "fc-del")).length, 0, "unpainted");
+});
+
 // ── the shapes marked accepts ──
 
 test("shapes marked accepts map line by line: a fence with an info string and a padded closer, a four-backtick fence holding a ``` line, a tilde fence holding one, a fence closed by a longer run, a three-space opener whose lines carry less indent than it, a quoted fence with a bare `>` line inside it, an indented block under a list item, a note that opens on a fence and one that ends right after a closer with no line feed, a line of escaped characters, a fence inside a fence inside a quote, and a note ending inside a quoted fence", () => {

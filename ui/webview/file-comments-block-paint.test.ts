@@ -391,7 +391,7 @@ const HL_HEAD = ".fileview-md .katex-display.fc-hl-block {";
 const CTX_HEAD = ".fileview-md .katex-display.fc-hl-block.fc-hl-context {";
 const PRESEL_HEAD = ".fileview-md .katex-display.fc-presel-block {";
 
-test("the sheets: the block rules stand once in the panel block of BOTH sheets byte-equal, the highlight's wash and ring and the pending target's accent through tokens alone, no padding (the box is the layout's), the context cue's ring drop, the arrivals dot and the print strip naming the block class; the parity list holds the heads", () => {
+test("the sheets: the block rules stand once in the panel block of BOTH sheets byte-equal, the highlight's wash and ring and the pending target's accent through tokens alone, no padding (the box is the layout's), the context cue's ring drop, the arrivals dot naming the block class and the print strip naming it and its [data-new] form; the parity list holds the heads", () => {
   const block = (css: string) => css.slice(css.indexOf("/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts)"), css.indexOf("/* ── end file comments panel ── */"));
   for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
     const panel = block(css);
@@ -409,9 +409,13 @@ test("the sheets: the block rules stand once in the panel block of BOTH sheets b
     for (const r of [hl, presel]) { assert.doesNotMatch(r, /#[0-9a-fA-F]{3,8}\b/, name + ": no bare hex"); assert.doesNotMatch(r, /rgba?\(/, name + ": no bare rgba"); }
     // the arrivals dot: its rule's own selector list names the block class (the block rule's background shorthand outranks a plain .fc-hl[data-new])
     assert.match(css, /\n\.fc-hl\[data-new\], \.fc-ins\[data-new\], \.fc-del\[data-new\]::before, \.fileview-md \.katex-display\.fc-hl-block\[data-new\] \{ background-image: radial-gradient/, name + ": the arrivals dot rides the stamped box");
-    // print: the wash and ring come off the box as they come off a mark, at the rule's own weight (the block rules outrank the .fileview-body strip)
+    // print: the wash and ring come off the box as they come off a mark, at the rule's own weight (the block rules outrank the .fileview-body strip),
+    // and the dot with them: the strip names the [data-new] form too, since the dot's rule, four selectors deep, outranks the bare block class and a
+    // `background: none` at three cannot reset the background-image it sets (the review's round 3: a box whose comment arrived unseen printed its dot
+    // while every mark printed bare; md-config-math-block-paint-browser.test.ts reads the computed image under print media)
     const print = css.slice(css.indexOf("\n@media print {"));
-    assert.match(print, /\n {2}\.fileview-md \.katex-display\.fc-hl-block, \.fileview-md \.katex-display\.fc-presel-block \{ background: none; box-shadow: none; outline: none; \}\n/, name + ": the print block strips the block classes");
+    assert.match(print, /\n {2}\.fileview-md \.katex-display\.fc-hl-block, \.fileview-md \.katex-display\.fc-hl-block\[data-new\], \.fileview-md \.katex-display\.fc-presel-block \{ background: none; box-shadow: none; outline: none; \}\n/, name + ": the print block strips the block classes and the arrived box's dot");
+    assert.equal((print.match(/fc-hl-block\[data-new\]/g) || []).length, 1, name + ": the print block names the [data-new] form once, in the strip");
   }
   for (const head of [HL_HEAD, CTX_HEAD, PRESEL_HEAD]) assert.deepEqual(rulesOf(CHAT, head), rulesOf(FEED, head), head + " mirrors exactly");
   assert.equal(block(CHAT), block(FEED), "the whole panel block still mirrors");

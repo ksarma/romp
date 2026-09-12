@@ -27,8 +27,12 @@
 // display formula inside a blockquote with a quote line after its closer, whose natural Raw quote (the opener through the
 // closing `$$`) never covered it, since the formula's hole ran past the next quote line's `> ` marker (anchor-map.ts, the
 // mathBlock hole's end); a served comment on it now stamps the quote's box and a Raw drag over its rows carries the pending
-// target onto it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
-// only: an invented note, /repo/notes-api paths, the placeholder sid.
+// target onto it. One leg from round 3: a comment of the session's on the formula ARRIVING after the open (an author other than
+// the person, delivered as the reply to the panel's status ask) puts the arrivals dot on the stamped box (data-new, markNew) as it
+// puts it on a mark, and under print media the dot comes off the box as it comes off the mark (before: the dot's rule, four
+// selectors deep, outranked the print strip's bare block class, so a `background: none` at three left its background-image, and
+// the box printed a 6 px accent dot while every mark printed bare). Skips LOUDLY without a playwright browser (CI installs
+// none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -396,6 +400,69 @@ test("a display formula inside a blockquote with a blank `>` line and a quote li
       const after = await readBox(page, QBOX);
       assert.deepEqual([after.cls, after.act, after.id, after.presel], ["katex-display", null, null, 0], "Cancel leaves the box bare and no target anywhere");
       assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    }
+  });
+});
+
+/** A comment of the session's on the note's passage `quote`, in the host's shape: an author other than the person (the panel reads
+ *  `you` as their own writes; any other author is a session's), with the session's id as the kernel writes it. */
+function sessionComment(quote: string, k: number): Record<string, unknown> { return { ...comment(quote, k), author: "api", authorId: SID }; }
+const ARRIVED_FORMULA = sessionComment(FORMULA_Q, 10);
+const ARRIVED_PARA = sessionComment("Para after the formula.", 11);
+/** Deliver `status` as the reply to the panel's LAST status ask (a fileCommentsResult, as the harness's poster answers one; the
+ *  panel reads a status it has not seen as arrivals), then wait for every comment of `ids` to be painted. */
+async function deliver(page: any, status: Record<string, unknown>, ids: string[]): Promise<void> {
+  await page.evaluate((st: Record<string, unknown>) => {
+    const w = window as any;
+    w.__status = st;
+    const last = (w.__posted as { type?: string; reqId?: unknown }[]).filter((m) => m && m.type === "fileComments").pop();
+    window.dispatchEvent(new MessageEvent("message", { data: Object.assign({ type: "fileCommentsResult", reqId: last ? last.reqId : undefined, fileMtimeNs: w.__mtime }, st) }));
+  }, status);
+  for (const c of ids) await markPainted(page, c);
+  await frames(page, 2);
+}
+type DotRead = { box: { cls: string; isNew: string | null; bgImage: string; bg: string; shadow: string }; mark: { found: boolean; isNew: string | null; bgImage: string } };
+/** The arrivals dot as the page shows it: the display formula's box and the arrived prose comment's mark (`mid`), each with its
+ *  data-new and its computed background-image (the dot is a radial-gradient on the background layer; `none` is no dot). */
+const readDot = (page: any, mid: string): Promise<DotRead> => page.evaluate((m: string) => {
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const d = md.querySelector(":scope > .katex-display") as HTMLElement;
+  const k = md.querySelector('mark.fc-hl[data-id="' + m + '"]') as HTMLElement | null;
+  const cd = getComputedStyle(d);
+  return { box: { cls: d.className, isNew: d.getAttribute("data-new"), bgImage: cd.backgroundImage, bg: cd.backgroundColor, shadow: cd.boxShadow },
+    mark: { found: !!k, isNew: k ? k.getAttribute("data-new") : null, bgImage: k ? getComputedStyle(k).backgroundImage : "" } };
+}, mid);
+const DOT = /radial-gradient\(/;
+
+test("a comment of the session's on `$$ ... $$` arriving after the open, beside one on the paragraph after it, on the Files pane at 900 px and in the chat modal (the Slice 8 review, round 3): the stamped box wears data-new and the arrivals dot (a radial-gradient background-image) as the paragraph's mark does; under print media the dot comes off the box as it comes off the mark, the wash and ring with it, and back on screen the dot stands (before: the box printed its dot, the one ink left on a printed page whose marks all printed bare)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      const what = mode + " " + width + "px";
+      const { page, errors } = await openWith(browser, mode, width, false, withComments([FINAL], 1));
+      assert.equal((await readBox(page)).cls, "katex-display", what + ": the box bare before the arrival (no comment on the formula yet)");
+      await deliver(page, withComments([FINAL, ARRIVED_FORMULA, ARRIVED_PARA], 2), [id(ARRIVED_FORMULA), id(ARRIVED_PARA)]);
+      // the render after the pass marks the arrivals' elements (markNew): wait for the attribute itself
+      await page.waitForFunction((c: string) => { const d = document.querySelector(".fileview-md > .katex-display"); return !!d && d.getAttribute("data-id") === c && d.hasAttribute("data-new"); }, id(ARRIVED_FORMULA), { timeout: 10000 });
+      const screen = await readDot(page, id(ARRIVED_PARA));
+      assert.equal(stampedOnce(screen.box.cls, "fc-hl-block"), true, what + ": the arrived comment's paint stamped the box once: " + JSON.stringify(screen.box.cls));
+      assert.deepEqual([screen.box.isNew, screen.mark.found, screen.mark.isNew], ["1", true, "1"], what + ": the box and the paragraph's mark both wear data-new (the arrivals the person has not seen)");
+      assert.match(screen.box.bgImage, DOT, what + ": the dot on the box on screen: " + screen.box.bgImage);
+      assert.match(screen.mark.bgImage, DOT, what + ": ...and on the mark");
+      assert.notEqual(screen.box.bg, TRANSPARENT, what + ": the wash under the dot");
+      await page.emulateMedia({ media: "print" });
+      await frames(page, 2);
+      const print = await readDot(page, id(ARRIVED_PARA));
+      assert.equal(print.mark.bgImage, "none", what + ": under print media the mark's dot is off (the control: the strip on .fc-hl ties the dot's rule and stands later)");
+      assert.deepEqual([print.box.bg, print.box.shadow], [TRANSPARENT, "none"], what + ": the box's wash and ring off in print");
+      assert.equal(print.box.bgImage, "none", what + ": ...and its dot off with them (before: the radial-gradient stood, the dot's rule outranking the strip): " + print.box.bgImage);
+      assert.deepEqual([print.box.isNew, print.mark.isNew], ["1", "1"], what + ": the attribute stands (print media is no gesture of the person's)");
+      await page.emulateMedia({ media: "screen" });
+      await frames(page, 2);
+      const back = await readDot(page, id(ARRIVED_PARA));
+      assert.match(back.box.bgImage, DOT, what + ": back on screen the dot stands on the box");
+      assert.match(back.mark.bgImage, DOT, what + ": ...and on the mark");
+      assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
     }
   });

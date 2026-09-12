@@ -127,12 +127,18 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertIn("walkCode(t as Tokens.Code, view.sub(p, p + raw.length), em);", self.am)
 
     def test_a_selection_across_two_cells_is_refused_with_the_raw_view_offered_on_the_span(self):
-        m = re.search(r'refuse\(' + re.escape('"' + ONE_CELL + '"') + r",\s*\{(.*?)\}\s*\);", self.am, re.S)
-        self.assertIsNotNone(m, "the one-cell rule's sentence, on a refuse with an offer")
-        offer = m.group(1)
-        self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
-        self.assertIn("rawRange: { start: s, end: e }", offer)
-        self.assertIn("blockStartOffset: s", offer, "the panel's search for the span begins at the span, not at the table")
+        # one constant since the Slice 8 review's round 3, when the rule gained a second refusal: the pass's, over the cells the
+        # selection's positioned characters lie in, and the one over a covered formula's widened span (a cell holding a formula
+        # alone emits no character); both offer the Raw view on the exact span
+        self.assertIn('const ONE_CELL = "%s";' % ONE_CELL, self.am, "the one-cell rule's sentence, the constant its refusals share")
+        offers = re.findall(r"refuse\(ONE_CELL,\s*\{(.*?)\}\s*\);", self.am, re.S)
+        self.assertEqual(len(offers), 2, "the pass's refusal and the covered formula's, each with an offer")
+        for offer in offers:
+            self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
+        self.assertIn("rawRange: { start: s, end: e }", offers[0])
+        self.assertIn("blockStartOffset: s", offers[0], "the panel's search for the span begins at the span, not at the table")
+        self.assertIn("rawRange: { start, end }", offers[1], "the covered formula's: the widened span, the formula with its delimiters")
+        self.assertIn("blockStartOffset: start", offers[1])
 
     def test_a_formula_touched_from_rendered_is_refused_in_the_same_shape(self):
         self.assertIn('const FORMULA_TOUCHED = "%s";' % FORMULA_TOUCHED, self.am)
