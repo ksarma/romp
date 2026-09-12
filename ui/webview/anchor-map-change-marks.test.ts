@@ -7,7 +7,10 @@
 //      session's color" (the `▍web` beside the marked text). The chip is generated content, like the
 //      deletion's struck label: the LAST element painted for a change carries `data-fc-chip="<label>"`,
 //      one per change, after its text, and no text node or extra element enters a row.
-//   2. The Rendered fallback's occurrence. Inside a refused block (a table, a code fence, an HTML block)
+//   2. The Rendered paint's occurrence. Since Slice 8 of plans/markdown-viewer.md a change inside a table
+//      cell or a code line paints by its own source position (the anchor map positions the cells and the
+//      lines), so a repeated token marks the changed cell or line with no count. Inside a block the map
+//      does not position (an HTML block, a paragraph the walk refuses, a cell the per-cell fallback holds)
 //      a change is re-found by its text; a change's text is short and such blocks repeat tokens, so the
 //      first occurrence is not the changed one. The painter takes the range's ordinal among the source's
 //      own occurrences, when the rendering shows the text as many times as the source holds it, and
@@ -147,6 +150,7 @@ function serialize(n: FakeNode): string {
 const docOrder = (root: FakeNode): FakeNode[] => { const out: FakeNode[] = []; const visit = (n: FakeNode) => { out.push(n); n.childNodes.forEach(visit); }; visit(root); return out; };
 const elements = (root: FakeNode): FakeElement[] => docOrder(root).filter((n) => n.nodeType === 1) as FakeElement[];
 const withClass = (root: FakeNode, cls: string): FakeElement[] => elements(root).filter((e) => (e.getAttribute("class") || "").split(" ").includes(cls));
+const withTag = (root: FakeNode, tag: string): FakeElement[] => elements(root).filter((e) => e.tagName === tag);
 const withAttr = (root: FakeNode, name: string): FakeElement[] => elements(root).filter((e) => e.attrs.has(name));
 const isRow = (el: FakeElement) => (el.getAttribute("class") || "").split(" ").includes("fv-cl");
 const rowOf = (n: FakeNode): FakeElement | null => { let p: FakeNode | null = n; while (p) { if (p.nodeType === 1 && isRow(p as FakeElement)) return p as FakeElement; p = p.parentNode; } return null; };
@@ -280,11 +284,11 @@ test("Rendered marks carry no chip: the plan gives the author chip to the Raw vi
   assert.equal(withAttr(box, "data-fc-chip").length, 0);
 });
 
-// ── 2. the Rendered fallback's occurrence ──────────────────────────────────────────────────────────
+// ── 2. the Rendered paint's occurrence: by position inside a table or a fence (Slice 8), by ordinal where nothing is positioned ──
 
 const TABLE = "# Latency\n\n| before | after |\n|---|---|\n| 10% | 10% |\n";
 
-test("Rendered fallback: a repeated token in a table marks the changed cell — the second when the change is there, the first when it is there — for an insertion and a substitution; the reported paint is the right cell", () => {
+test("Rendered change marks by position (Slice 8, item 4): a repeated token in a table marks the changed cell, the second when the change is there, the first when it is there, for an insertion and a substitution, and the reported paint is the right cell; the paint is the change's own position and no count: a body whose other cell shows the token split, the count guard's scene, still paints the changed cell; a substitution covering the header row and the delimiter row paints the header cells (before Slice 8: the fallback's ordinal under the count guard, nothing in the guard's scene, and nothing over the delimiter row, whose dashes render no text)", () => {
   const second = TABLE.lastIndexOf("10%"), first = TABLE.indexOf("10%");
   assert.equal(second, 48); assert.equal(first, 42);
   for (const [label, change, want] of [
@@ -305,9 +309,32 @@ test("Rendered fallback: a repeated token in a table marks the changed cell — 
     unpaintChanges(El(box));
     assert.equal(serialize(box), before);
   }
+  // by position, not by count: a body whose FIRST cell shows the token split (`1 0%`), the same characters once the whitespace is
+  // stripped, so the table still pairs to its block, while the rendering shows one contiguous `10%` where the source, rendered,
+  // holds two: the count guard's scene, which the fallback refuses (test 3 below). The change on the second cell paints in the
+  // second cell by its position (before Slice 8: unpainted, the counts disagreeing)
+  const split = buildRendered(TABLE.replace("| 10% |", "| 1 0% |"));
+  assert.equal(withTag(split, "TD").map((c) => c.textContent).join("|"), "1 0%|10%", "the scene: the first cell's token split");
+  const rs = paintChangesRendered(El(split), TABLE, [ins("s", "web", TABLE, second, "10%")], stylesFor);
+  assert.deepEqual(rs, { painted: ["s"], unpainted: [] }, "painted by position where the count guard would have refused");
+  const sm = withClass(split, "fc-ins");
+  assert.equal(sm.length, 1);
+  assert.deepEqual([cellOf(sm[0], "TD").index, sm[0].textContent], [1, "10%"], "the second cell, whole");
+  // a substitution covering the header row and the delimiter row: the header cells paint by position, the point before the first,
+  // and nothing stands for the delimiter row, which renders no text (before Slice 8: unpainted, the row's dashes in the needle)
+  const boxH = buildRendered(TABLE);
+  const hs = at(TABLE, "| before"), he = at(TABLE, "|---|---|") + "|---|---|".length;
+  const rh = paintChangesRendered(El(boxH), TABLE, [{ id: "h", kind: "sub", curFrom: hs, curTo: he, oldText: "| old | new |\n|---|---|", author: "web", newText: TABLE.slice(hs, he) }], stylesFor);
+  assert.deepEqual(rh, { painted: ["h"], unpainted: [] }, "the header row's cells paint (before: nothing, the delimiter row in the range)");
+  const hm = withClass(boxH, "fc-ins");
+  assert.deepEqual(hm.map((m) => [cellOf(m, "TH").index, m.textContent]), [[0, "before"], [1, "after"]], "one mark per header cell, whole");
+  const pts = withClass(boxH, "fc-del");
+  assert.equal(pts.length, 1, "the substitution's one point");
+  assert.equal(textBefore(boxH, pts[0]), textBefore(boxH, hm[0]), "right before its tint");
+  assert.equal(withTag(boxH, "TD").every((c) => withClass(c, "fc-ins").length === 0 && withClass(c, "fc-del").length === 0), true, "nothing in the body row");
 });
 
-test("Rendered fallback: a repeated token in a code fence marks the changed line, for a change and for a comment highlight; a leading blank in the changed text does not shift the count", () => {
+test("Rendered change marks by position (Slice 8, item 4): a repeated token in a code fence marks the changed line, for a change and for a comment highlight, by the change's own position and no count (a body whose first line shows the token joined, the count guard's scene, still paints the changed line); a leading blank in the changed text is no positioned character, so the mark begins at the glyph (before Slice 8: the fallback's ordinal under the count guard, nothing in the guard's scene, the blank dropped by the match)", () => {
   const source = "```\nretries = 3\ntimeout = 3\n```\n";
   const second = source.lastIndexOf("3"), first = source.indexOf("3");
   const box = buildRendered(source);
@@ -321,8 +348,19 @@ test("Rendered fallback: a repeated token in a code fence marks the changed line
   const hl = paintRendered(El(box), source, { start: first, end: first + 1 }, "fc-hl", { id: "k1" }) as unknown as FakeElement[] | null;
   assert.ok(hl && hl.length === 1);
   assert.equal(textBefore(box, hl![0]), "retries = ");
-  // the raw text of a change may begin with a blank (an insertion of " y" after "x"): the match starts at its
-  // first non-blank, and the ordinal is still the range's
+  unpaintChanges(El(box));
+  // by position, not by count: a body whose first line shows `= 3` joined (`retries =3`), the same characters once the whitespace
+  // is stripped, so the pre still pairs to its block, while the rendering shows `= 3` once where the source, rendered, holds it
+  // twice: the count guard's scene, which the fallback refuses. The change on the second line paints on the second line
+  const joined = buildRendered(source.replace("retries = 3", "retries =3"));
+  const eq = source.lastIndexOf("= 3");
+  const rj = paintChangesRendered(El(joined), source, [ins("j", "web", source, eq, "= 3")], stylesFor);
+  assert.deepEqual(rj, { painted: ["j"], unpainted: [] }, "painted by position where the count guard would have refused");
+  const jm = withClass(joined, "fc-ins");
+  assert.equal(jm.length, 1);
+  assert.deepEqual([textBefore(joined, jm[0]), jm[0].textContent], ["retries =3\ntimeout ", "= 3"], "the second line's `= 3`, whole");
+  // the raw text of a change may begin with a blank (an insertion of " y" after "x"): a blank is no positioned character, so the
+  // mark begins at the glyph, on the cell the change is in
   const tbl = "| a | b |\n|---|---|\n| x y | x y |\n";
   const at2 = tbl.lastIndexOf(" y");
   const box2 = buildRendered(tbl);
@@ -365,10 +403,17 @@ test("Rendered fallback: when the rendering shows the text a different number of
   const marks = withClass(div, "fc-ins");
   assert.equal(marks.length, 1);
   assert.equal(textBefore(div, marks[0]), "Notes\nnote ", "its mark sits on the second shown `note`, the range's own");
-  // and the unique case still paints through the fallback (the existing behaviour, a token the block holds once)
+  // and the unique case paints (a token the block holds once; through the exact path since Slice 8 positioned the cells)
   const one = buildRendered(TABLE);
   assert.deepEqual(paintChangesRendered(El(one), TABLE, [ins("u", "web", TABLE, at(TABLE, "after"), "after")], stylesFor), { painted: ["u"], unpainted: [] });
   assert.equal(cellOf(withClass(one, "fc-ins")[0], "TH").index, 1);
+  // a cell the per-cell fallback holds (an entity's: Slice 8's open question 9) is still the fallback's, the ordinal among the
+  // rendered occurrences: the entity cell's `x` paints in that cell, the first occurrence being the range's own, while the plain
+  // cell's `x` beside it paints by position
+  const ent = "| a | b |\n|---|---|\n| x &amp; y | x y |\n";
+  const eb = buildRendered(ent);
+  assert.deepEqual(paintChangesRendered(El(eb), ent, [ins("e1", "web", ent, at(ent, "x &amp;"), "x"), ins("e2", "web", ent, at(ent, "x y"), "x")], stylesFor), { painted: ["e1", "e2"], unpainted: [] });
+  assert.deepEqual(withClass(eb, "fc-ins").map((m) => [m.getAttribute("data-id"), cellOf(m, "TD").index, m.textContent]), [["e1", 0, "x"], ["e2", 1, "x"]], "each x in its own cell: the entity cell's by ordinal, the plain cell's by position");
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

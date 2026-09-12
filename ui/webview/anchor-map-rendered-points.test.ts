@@ -23,6 +23,15 @@
 //      the rows' white-space when its label has no visible character; a label with one keeps the block's, which
 //      folds a multi-line label onto its line. anchor-map-whitespace-point-browser.test.ts measures the result.
 //
+// And Slice 8's item 4 (the change points inside a fence), pinned with the table's rule above: the code's lines
+// are positioned, so a point inside a line places in its row, before or after the nearest character of the line,
+// and a point on a fence's opener or closer line, which renders nothing, keeps its card (renderedSpot's FENCE_LINE
+// rule), except at the lines' edges, where it sits beside the text it borders: a top-level opener's first
+// character places before the code's first character (no text before it in the block), and the line feed that
+// ends the last code line places after that line's last character. A blank code line has no rule of its own: a
+// point on it places before the next line's first character, the nearest positioned one (the empty row holds no
+// text node to sit in). An empty fence is nothing's; an indented block has no fence lines.
+//
 // Fixtures are synthetic (the notes-api world).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -218,6 +227,62 @@ test("Rendered deletion points and a table nested in a list item: inside a cell 
   assert.deepEqual(withClass(afterPara, "fc-del").map((m) => m.getAttribute("data-id")), ["t-after"]);
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
+});
+
+// ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
+
+test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character; at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {
+  const source = "Intro.\n\n```python\nfirst = 1\n\nthird = 3\n```\n\nAfter.\n";
+  const box = buildRendered(source);
+  assert.equal(withTag(box, "PRE").length, 1, "marked lexes the fence");
+  const before = serialize(box);
+  const open = at(source, "```python"), lastLine = at(source, "third = 3"), closer = at(source, "```\n\nAfter");
+  const r = paintChangesRendered(El(box), source, [
+    del("f-open", open),                                    // the opener's first backtick: the block's edge
+    del("f-info", at(source, "python")),                    // inside the opener line: renders nothing
+    del("f-line-end", at(source, "first = 1") + "first = 1".length),   // the line feed ending the first line
+    del("f-blank", at(source, "first = 1") + "first = 1".length + 1),  // the blank code line
+    del("f-mid", lastLine + "third ".length),               // inside the last line
+    del("f-closer-lf", lastLine + "third = 3".length),      // the line feed before the closer
+    del("f-closer", closer),                                // the closer's first backtick
+    del("f-after", closer + 4),                             // the blank line after the block
+    del("f-prose", at(source, "After.")),                   // the control
+  ], stylesFor);
+  assert.deepEqual(r, { painted: ["f-open", "f-line-end", "f-blank", "f-mid", "f-closer-lf", "f-prose"], unpainted: ["f-info", "f-closer", "f-after"] });
+  const pre = withTag(box, "PRE")[0];
+  for (const id of ["f-open", "f-line-end", "f-blank", "f-mid", "f-closer-lf"]) assert.ok(inside(point(box, id), "PRE"), id + ": inside the code");
+  const aroundIn = (id: string) => around(pre, point(box, id));
+  assert.deepEqual(aroundIn("f-open"), ["", "first = 1\n\nthird = 3\n"], "the opener's first character: before the code's first character (no text before it in the block)");
+  let [a, b] = aroundIn("f-line-end");
+  assert.ok(a.endsWith("first = 1") && b.startsWith("\n\nthird"), "the line's end: after its last character: " + JSON.stringify([a, b.slice(0, 8)]));
+  [a, b] = aroundIn("f-blank");
+  assert.ok(a.endsWith("first = 1\n\n") && b.startsWith("third = 3"), "the blank code line: before the next line's first character: " + JSON.stringify([a.slice(-6), b.slice(0, 8)]));
+  [a, b] = aroundIn("f-mid");
+  assert.ok(a.endsWith("third ") && b.startsWith("= 3"), "inside a line: on its row: " + JSON.stringify([a.slice(-6), b.slice(0, 4)]));
+  [a, b] = aroundIn("f-closer-lf");
+  assert.ok(a.endsWith("third = 3") && b === "\n", "the line feed before the closer: after the last code character: " + JSON.stringify([a.slice(-9), b]));
+  assert.deepEqual(withClass(box, "fc-del").filter((m) => !inside(m, "PRE")).map((m) => m.getAttribute("data-id")), ["f-prose"], "one point outside the code: the control's");
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  // an empty fence: no line to place, one hole over the whole block; a point anywhere in it keeps its card
+  const empty = "Intro.\n\n```\n```\n\nAfter.\n";
+  const eb = buildRendered(empty);
+  const re = paintChangesRendered(El(eb), empty, [del("e-open", at(empty, "```")), del("e-in", at(empty, "```") + 1), del("e-close", at(empty, "```\n\nAfter")), del("e-prose", at(empty, "After."))], stylesFor);
+  assert.deepEqual(re, { painted: ["e-prose"], unpainted: ["e-open", "e-in", "e-close"] });
+  unpaintChanges(El(eb));
+  // an indented code block: no fence lines; a point at a line's indent places before the line's first character
+  const ind = "Intro.\n\n    alpha = 1\n    beta = 2\n\nAfter.\n";
+  const ib = buildRendered(ind);
+  assert.equal(withTag(ib, "PRE").length, 1, "marked lexes the indented block");
+  const ri = paintChangesRendered(El(ib), ind, [del("i-first", at(ind, "    alpha")), del("i-second", at(ind, "    beta")), del("i-in", at(ind, "beta = ") + "beta = ".length)], stylesFor);
+  assert.deepEqual(ri, { painted: ["i-first", "i-second", "i-in"], unpainted: [] });
+  const ipre = withTag(ib, "PRE")[0];
+  assert.deepEqual(around(ipre, point(ib, "i-first")), ["", "alpha = 1\nbeta = 2\n"], "the first line's indent: before its first character");
+  [a, b] = around(ipre, point(ib, "i-second"));
+  assert.ok(a.endsWith("alpha = 1\n") && b.startsWith("beta"), "the second line's indent: before its first character: " + JSON.stringify([a, b.slice(0, 4)]));
+  [a, b] = around(ipre, point(ib, "i-in"));
+  assert.ok(a.endsWith("beta = ") && b.startsWith("2"), JSON.stringify([a.slice(-7), b.slice(0, 1)]));
+  unpaintChanges(El(ib));
 });
 
 // ── 2. the block that begins at the offset wins the tie ────────────────────────────────────────────

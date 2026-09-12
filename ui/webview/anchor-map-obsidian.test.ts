@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Lexer, marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
-import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
+import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, trimCollapsedMarks, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
 applyMdConfig();
@@ -517,7 +517,7 @@ test("a range holding a formula alone reads the top-level block the formula sits
   assert.deepEqual(touched, [p], "only the formula's block was read; read: " + touched.length + " of " + blocks.length);
 });
 
-test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and no mark stands at the top level", () => {
+test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and STAMPS the .katex-display box with fc-hl-block and the paint's data (Slice 8, item 5; before: the box bare), the box returned between the marks in document order, its .katex child in place and no mark at the top level", () => {
   const box = buildRendered(FIX);
   const p = topEl(box, 15);
   const before = paintRendered(El(box), FIX, rangeOf(FIX, "Inline"), "fc-hl") as unknown as FakeElement[];
@@ -528,15 +528,90 @@ test("a formula the range does not hold stays outside the highlight, and a displ
   assert.deepEqual(after.map((m) => shape(m)), [["#text(math and)"]]);
   assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( )", "MARK.fc-hl", "#text( display:)"]);
   unpaintAll(box);
-  // across the display formula: prose to prose, the .katex-display block untouched (a block of its own line needs a block-level treatment, not an inline mark)
+  // across the display formula: prose to prose, and the .katex-display block STAMPED, never wrapped (a block of its own line takes
+  // no inline mark: a mark around a block box paints nothing over it, and one between .katex-display and its .katex breaks KaTeX's
+  // layout; the block-level paint of Slice 8, item 5, puts the block class on the box itself and returns it among the marks)
   const s = FIX.indexOf("and display:"), e = FIX.indexOf("Para after display math.") + "Para after display math.".length;
-  const across = paintRendered(El(box), FIX, { start: s, end: e }, "fc-hl") as unknown as FakeElement[];
-  assert.deepEqual(across.map((m) => m.textContent), ["and display:", "Para after display math."]);
+  const across = paintRendered(El(box), FIX, { start: s, end: e }, "fc-hl", { act: "fcopen", id: "c7" }) as unknown as FakeElement[];
   const display = topEl(box, 16);
-  assert.equal(display.getAttribute("class"), "katex-display");
+  assert.deepEqual(across.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["MARK.fc-hl", "SPAN.katex-display fc-hl-block", "MARK.fc-hl"], "the two marks and the stamped box, in document order (before Slice 8: the two marks alone)");
+  assert.equal(across[1], display, "the returned element is the formula's own box");
+  assert.deepEqual([across[0].textContent, across[2].textContent], ["and display:", "Para after display math."]);
+  assert.deepEqual([display.getAttribute("data-act"), display.getAttribute("data-id")], ["fcopen", "c7"], "the paint's data on the box, as on a mark");
   assert.deepEqual(shape(display), ["SPAN.katex"], "the display formula's root keeps its .katex child, no mark between them");
   for (const m of marksUnder(box)) assert.notEqual(m.parentNode, box, "no mark is a top-level node (the block pairing reads the top-level children)");
   assert.deepEqual(box.childNodes.filter((n) => n.nodeType === 1).map((n) => (n as FakeElement).tagName).slice(15, 18), ["P", "SPAN", "P"]);
+});
+
+/** Strip a stamped box as the panel's unwrapMarks does (file-comments.ts stripBlockPaint): the block class and the paint's data. */
+function stripBox(d: FakeElement): void {
+  d.setAttribute("class", (d.getAttribute("class") || "").split(" ").filter((c) => c && !/-block$/.test(c) && c !== "fc-hl-context").join(" "));
+  for (const a of ["data-act", "data-id"]) d.attrs.delete(a);
+}
+const attrsOf = (d: FakeElement): Record<string, string | null> => ({ cls: d.getAttribute("class"), act: d.getAttribute("data-act"), id: d.getAttribute("data-id") });
+
+test("the block-level paint on a display formula (Slice 8, item 5; the Slice 8 contract line): a range holding the formula alone, exactly `$$ ... $$` or with the raw's line feeds, returns the .katex-display box stamped fc-hl-block with the paint's data and no mark (before: null, the card offering Reveal); the pending target's class stamps fc-presel-block and a two-token class its first token's block class alone; a second paint stamps once; the trim leaves the box; a change's tint (fc-ins) stamps nothing and paints nothing for the formula alone; an inline formula alone still goes under a mark; the fill's other display shapes (the flag at the top level, the belt's code in a pre) stay bare", () => {
+  const box = buildRendered(FIX);
+  const display = topEl(box, 16);
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "bare before any paint");
+  const formula = "$$\n\\sum_i i\n$$";
+  assert.ok(FIX.includes(formula), "the fixture's display formula");
+  const exact = rangeOf(FIX, formula);
+  // the formula alone: the trimmed span (formulaSpan) is the coverage test, so a comment whose quote is exactly the `$$` block is covered
+  // although the mathBlock hole's end lies past the raw's trailing line feeds
+  const alone = paintRendered(El(box), FIX, exact, "fc-hl", { act: "fcopen", id: "f1" }) as unknown as FakeElement[] | null;
+  assert.ok(alone, "the formula alone paints (before: null)");
+  assert.deepEqual(alone!.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block"], "the box alone, stamped, no mark");
+  assert.equal(alone![0], display);
+  assert.deepEqual(attrsOf(display), { cls: "katex-display fc-hl-block", act: "fcopen", id: "f1" });
+  assert.deepEqual(shape(display), ["SPAN.katex"], "the .katex child in place");
+  assert.equal(marksUnder(box).filter((m) => /\bfc-/.test(m.getAttribute("class") || "")).length, 0, "no paint mark anywhere (the fixture's own ==mark== is the one MARK)");
+  // the same paint again over the same body stamps once and rewrites the data (the panel unpaints before a repaint; a caller that does not gets no second class)
+  const again = paintRendered(El(box), FIX, exact, "fc-hl", { act: "fcopen", id: "f2" }) as unknown as FakeElement[];
+  assert.deepEqual(again.map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "stamped once");
+  assert.equal(display.getAttribute("data-id"), "f2");
+  // the trim never measures or unwraps the box: isBlankMark requires a MARK
+  assert.deepEqual(trimCollapsedMarks([El(display)]), [El(display)], "the trim keeps a stamped box");
+  stripBox(display);
+  // with the raw's trailing line feeds inside the range (a Raw selection over the three rows and the blank line after them)
+  const withFeeds = paintRendered(El(box), FIX, { start: exact.start, end: exact.end + 2 }, "fc-hl", { act: "fcopen", id: "f3" }) as unknown as FakeElement[] | null;
+  assert.deepEqual((withFeeds || []).map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "covered with the line feeds too");
+  stripBox(display);
+  // the pending target: fc-presel-block; a class of two tokens (the guessed copy's `fc-hl fc-hl-context`): the first token's block class alone, the pass adds the cue itself
+  const presel = paintRendered(El(box), FIX, exact, "fc-presel") as unknown as FakeElement[];
+  assert.deepEqual(presel.map((m) => m.getAttribute("class")), ["katex-display fc-presel-block"], "the pending target's block class");
+  assert.deepEqual([display.getAttribute("data-act"), display.getAttribute("data-id")], [null, null], "no data given, none set");
+  stripBox(display);
+  const context = paintRendered(El(box), FIX, exact, "fc-hl fc-hl-context", { act: "fcopen", id: "f4" }) as unknown as FakeElement[];
+  assert.deepEqual(context.map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "the first token's block class alone (file-comments.ts adds fc-hl-context to a stamped box itself)");
+  stripBox(display);
+  // a change's tint is not a block paint: unpaintChanges strips marks by class and no sheet dresses a tinted formula, so a change over the
+  // formula alone paints nothing (the change keeps its card) and one across it marks the prose either side with the box bare, as before
+  assert.equal(paintRendered(El(box), FIX, exact, "fc-ins", { act: "fcchange", id: "g1" }), null, "fc-ins over the formula alone: nothing");
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "the box bare");
+  const s = FIX.indexOf("and display:"), e = FIX.indexOf("Para after display math.") + "Para after display math.".length;
+  const tint = paintRendered(El(box), FIX, { start: s, end: e }, "fc-ins", { act: "fcchange", id: "g2" }) as unknown as FakeElement[];
+  assert.deepEqual(tint.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["MARK.fc-ins", "MARK.fc-ins"], "prose either side, no box among them");
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "the box bare");
+  unpaintAll(box);
+  // an inline formula alone: under a mark, as before (wrapRuns)
+  const inline = paintRendered(El(box), FIX, rangeOf(FIX, "$x^2$"), "fc-hl", { act: "fcopen", id: "i1" }) as unknown as FakeElement[];
+  assert.deepEqual(inline.map((m) => shape(m)), [["SPAN.katex"]], "the inline formula is the highlight's one mark");
+  assert.equal(inline[0].tagName, "MARK");
+  unpaintAll(box);
+  // the fill's other display shapes: KaTeX's flag on TeX it could not parse stands at the top level with no .katex-display around it, and the
+  // belt's `code.md-math-src` sits in a `pre`; neither has a sheet rule, so a paint over the formula alone leaves them bare and paints nothing
+  for (const [tex, tag] of [["\\BROKEN x", "SPAN"], ["\\HUGE x", "PRE"]] as [string, string][]) {
+    const src = "Before.\n\n$$\n" + tex + "\n$$\n\nAfter.\n";
+    const b2 = buildRendered(src);
+    const el = topEl(b2, 1);
+    assert.equal(el.tagName, tag, tex + ": the shape the fill leaves");
+    const cls = el.getAttribute("class");
+    assert.equal(paintRendered(El(b2), src, rangeOf(src, "$$\n" + tex + "\n$$"), "fc-hl", { act: "fcopen", id: "o1" }), null, tex + ": nothing painted");
+    assert.deepEqual([el.getAttribute("class"), el.getAttribute("data-act")], [cls, null], tex + ": the element bare");
+    const acrossB = paintRendered(El(b2), src, { start: 0, end: src.length }, "fc-hl", { act: "fcopen", id: "o2" }) as unknown as FakeElement[];
+    assert.deepEqual(acrossB.map((m) => m.tagName), ["MARK", "MARK"], tex + ": across it, the prose either side alone");
+  }
 });
 
 test("a highlight across two blocks inside a folded callout, or from a fold's body into the block after it, paints the blocks' text and never the whitespace between them: no whitespace-only mark, none directly under the details, the fold's children as rendered", () => {

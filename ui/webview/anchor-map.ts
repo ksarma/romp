@@ -17,7 +17,8 @@
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
 //     inline formula whose TeX the range holds goes under the mark with the words beside it (wrapBetween), so a passage
-//     with a formula in it is one highlight and not two with the formula bare between them.
+//     with a formula in it is one highlight and not two with the formula bare between them, and a display formula the
+//     range covers takes the block class on its own `.katex-display` box, returned among the marks (stampBlock).
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
@@ -3096,7 +3097,8 @@ const skipBlockWs = (t: DText, root: DNode): boolean => {
  *  its own line: KaTeX's `.katex` inside its `.katex-display` wrapper (whose `>` selectors lay the formula out), the belt's
  *  `code` inside a `pre`, or KaTeX's flag standing as a top-level node (under `root`). An inline mark around a block-level box
  *  paints nothing over it, and a mark between `.katex-display` and its `.katex` breaks the layout, so a display formula is
- *  never wrapped: a highlight over one needs a block-level treatment of its own, which nothing paints today. */
+ *  never wrapped: a highlight over one stamps its `.katex-display` box with the block class instead (stampBlock, Slice 8 of
+ *  plans/markdown-viewer.md, item 5), and the fill's two other display shapes stay bare. */
 function isInlineFormula(n: DNode, root: DNode): boolean {
   if (!isFormula(n)) return false;
   const p = n.parentNode;
@@ -3256,14 +3258,46 @@ function wrapBetween(idx: RenderedIndex, root: DNode, s: { t: DText; off: number
 }
 /** The formulas of `blk` whose TeX lies inside `range`, as elements: the k-th formula hole of the block stands for the k-th
  *  formula element under its nodes (formulaExtra's pairing, the walk's source order being the renderer's document order);
- *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). */
+ *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). The span
+ *  tested is the hole's as the Raw view preselects it (formulaSpan): a display formula's hole runs to its raw's end, past
+ *  the line feeds after the closing `$$`, so a comment whose quote is exactly the `$$` block, made in the Raw view or through
+ *  the formula's Raw offer, covers the formula (Slice 8, item 5; an inline hole has no whitespace at its edges to trim). */
 function coveredFormulas(idx: RenderedIndex, blk: Block, range: SourceRange, out: DNode[]): void {
   const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
   if (!holes.length) return;
   const els: DNode[] = [];
   for (const n of blk.dom) formulaElements(n, els);
   if (els.length !== holes.length) return;
-  holes.forEach((h, k) => { if (nOf(idx, h.startN) >= range.start && nOf(idx, h.endN) <= range.end) out.push(els[k]); });
+  holes.forEach((h, k) => { const sp = formulaSpan(idx, h); if (sp.start >= range.start && sp.end <= range.end) out.push(els[k]); });
+}
+/** The block-level paint (plans/markdown-viewer.md Slice 8, item 5; the Slice 8 contract line). A display formula is a block of
+ *  its own line, which no inline mark can wrap: a mark around a block box paints nothing over it, and a mark between
+ *  `.katex-display` and its `.katex` breaks KaTeX's layout (isInlineFormula), and a mark at the top level would be a child the
+ *  block pairing meets. So a display formula the range covers takes a CLASS on its own `.katex-display` box instead: the
+ *  block class of the paint's class, `fc-hl-block` for a highlight (the first token of `fc-hl fc-hl-context` too: the panel
+ *  adds the context cue to a stamped box itself) and `fc-presel-block` for the composer's pending target, plus the paint's
+ *  data attributes as makeMark sets them on a mark, and the box is returned among the marks in document order, so the panel
+ *  records it as one of its marks (a control that opens the card, the margin layout's box) and strips it in place where a mark
+ *  is unwrapped (file-comments.ts unwrapMarks, BLOCK_PAINT_CLASSES); both sheets dress the two classes on the box. The paint
+ *  serves the two comment classes alone (BLOCK_PAINT_FOR): a change's tint (`fc-ins`) has no block rule in the sheets and
+ *  unpaintChanges strips marks by class, so a change covering a display formula keeps its shape from before, the prose either
+ *  side marked and the box bare. The trim never measures a stamped box (isBlankMark requires a MARK), and the pairing's
+ *  blank-mark read is MARK-only too, so the class on the box disturbs nothing about the block table. */
+const BLOCK_PAINT_FOR = new Set(["fc-hl", "fc-presel"]);
+/** The display formula's box a covered formula element stands in: its parent `.katex-display` (KaTeX's display-mode wrapper,
+ *  the mathBlock block's one element, at the top level or spliced inside a wrapper), else null: an inline formula, or one of the
+ *  fill's other display shapes (KaTeX's flag standing at the top level, the belt's `code.md-math-src` in a `pre`), which no
+ *  sheet rule dresses and which stay bare as before. */
+function displayBoxOf(f: DNode): DElement | null {
+  const p = f.parentNode;
+  return p && isElement(p) && hasClass(p, "katex-display") ? p : null;
+}
+/** Stamp a display formula's box: the block class of `className`'s first token appended once to the box's class, and every key
+ *  of `data` set as `data-<key>` (rewritten on a repeat). */
+function stampBlock(el: DElement, className: string, data?: Record<string, string>): void {
+  const cls = className.split(/\s+/).filter(Boolean)[0] + "-block";
+  if (!hasClass(el, cls)) el.setAttribute("class", ((el.getAttribute("class") || "") + " " + cls).trim());
+  if (data) for (const k of Object.keys(data)) el.setAttribute("data-" + k, data[k]);
 }
 
 /** A string and, for each of its characters, the source index it was derived from: `text[i]` is what the rendering shows for
@@ -4249,10 +4283,13 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     return out.length ? out : null;
   };
   const idx = renderedIndex(root, source);
-  // ── the exact path: emitted characters whose source offset lies in the range, and the inline formulas whose TeX does
-  //    (a formula emits no character: its hole names its span, and coveredFormulas pairs the hole with its element)
+  // ── the exact path: emitted characters whose source offset lies in the range, and the formulas whose TeX does (a formula
+  //    emits no character: its hole names its span, and coveredFormulas pairs the hole with its element): an inline formula
+  //    goes under the marks with the words beside it (wrapBetween), a display formula's box is stamped with the block class
+  //    and returned among the marks (stampBlock; Slice 8, item 5), for the classes the block paint serves (BLOCK_PAINT_FOR)
   let first: { b: number; k: number } | null = null, last: { b: number; k: number } | null = null;
-  const formulas: DNode[] = [];
+  const formulas: DNode[] = [], boxes: DElement[] = [];
+  const blockPaint = BLOCK_PAINT_FOR.has(className.split(/\s+/).filter(Boolean)[0]);
   for (let b = 0; b < idx.blocks.length; b++) {
     const blk = idx.blocks[b];
     if (blk.refused !== null || !blk.dom.length) continue;
@@ -4264,28 +4301,41 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       const s = nOf(idx, p);   // one source character: emitted text is never a tab expansion or a line ending
       if (s >= range.start && s < range.end) { if (!first) first = { b, k }; last = { b, k }; }
     }
-    coveredFormulas(idx, blk, range, formulas);
+    const covered: DNode[] = [];
+    coveredFormulas(idx, blk, range, covered);
+    for (const f of covered) { const box = blockPaint ? displayBoxOf(f) : null; if (box) boxes.push(box); else formulas.push(f); }
   }
+  // the marks of one paint with the covered display formulas' boxes stamped and merged in document order (precedes); the trim
+  // (done) measures the marks alone and keeps every box
+  const withBoxes = (marks: DElement[]): DElement[] => {
+    if (!boxes.length) return marks;
+    for (const box of boxes) stampBlock(box, className, data);
+    return marks.concat(boxes).sort((a, b) => a === b ? 0 : precedes(root, a, b) ? -1 : 1);
+  };
   if (first && last) {
     const s = nthNonWs(idx.blocks[first.b].dom[0], first.k);
     const e = nthNonWs(idx.blocks[last.b].dom[0], last.k);
     if (s && e) {
-      const out = done(wrapBetween(idx, root, s, { t: e.t, off: e.off + 1 }, className, data, formulas));
+      const out = done(withBoxes(wrapBetween(idx, root, s, { t: e.t, off: e.off + 1 }, className, data, formulas)));
       if (out) return out;
     }
-  } else if (formulas.length) {
-    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight,
-    // read from the blocks' nodes they sit under (blockTopOf, unitsUnder), as wrapBetween reads its units. A walk of the whole
-    // root here cost marks x nodes for such marks after main's M1 had scoped the text path: 40 formula-only marks over a
-    // 26k-node document were 142 ms a pass against 6.9 ms for 40 text marks on the same paragraphs (the Slice 4 review, round 7).
-    const tops = new Set<DNode>();
-    for (const f of formulas) { const tf = blockTopOf(idx, root, f); if (tf) tops.add(tf); }
-    const all = unitsUnder(root, tops);
-    const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
-    if (at.length) {
-      const out = done(wrapRuns(root, all.slice(Math.min(...at), Math.max(...at) + 1), className, data));
-      if (out) return out;
+  } else if (formulas.length || boxes.length) {
+    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone, or on a `$$` block alone): the
+    // inline formulas are the highlight, read from the blocks' nodes they sit under (blockTopOf, unitsUnder), as wrapBetween
+    // reads its units, and a display formula's box is stamped (withBoxes; before Slice 8 a `$$` block alone painted nothing
+    // and its card offered Reveal). A walk of the whole root here cost marks x nodes for such marks after main's M1 had scoped
+    // the text path: 40 formula-only marks over a 26k-node document were 142 ms a pass against 6.9 ms for 40 text marks on the
+    // same paragraphs (the Slice 4 review, round 7).
+    const marks: DElement[] = [];
+    if (formulas.length) {
+      const tops = new Set<DNode>();
+      for (const f of formulas) { const tf = blockTopOf(idx, root, f); if (tf) tops.add(tf); }
+      const all = unitsUnder(root, tops);
+      const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
+      if (at.length) for (const m of wrapRuns(root, all.slice(Math.min(...at), Math.max(...at) + 1), className, data)) marks.push(m);
     }
+    const out = done(withBoxes(marks));
+    if (out) return out;
   }
   // ── the fallback: a whitespace-tolerant match of the quote read as the rendering shows it (renderedBlocks: the rendered
   //    text of the blocks the range overlaps, marked's tokens written out with a source position per character, cut to the

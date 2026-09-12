@@ -14,12 +14,14 @@
 //      text lines, the last one's line ending, and the end of the file when it comes right after that ending), so
 //      the outcome no longer depends on the kind of block above the blank line, and Raw's placement — the empty
 //      row — has no counterpart in Rendered, which is why the change keeps its card there.
-//   2. A deletion at the first character of a nested hole (a fenced code block or a table inside a list item)
-//      sits after the item text before the hole. The rule held (`offset <= first.startN`) but no test placed a
-//      deletion exactly there: with the comparison narrowed to `<` every suite stayed green while the change went
-//      card-only. The nested-block tests probe the text before the hole, its inside and the text after it; this
-//      one probes the boundary itself, on both kinds of hole, with the offset one before (the indentation) and one
-//      after (inside) as the controls.
+//   2. A deletion at the first character of a nested code fence or table inside a list item sits after the item
+//      text before the block. Until Slice 8 of plans/markdown-viewer.md both blocks were holes and the rule was the
+//      hole's (`offset <= first.startN`), which held while no test placed a deletion exactly there: with the
+//      comparison narrowed to `<` every suite stayed green while the change went card-only. Since Slice 8 the
+//      code's lines and the table's cells are positioned, and the same boundary is kept by the fence line's
+//      zero-text hole and the table rule (renderedSpot). The nested-block tests probe the text before the block,
+//      its inside and the text after it; this one probes the boundary itself, on both kinds of block, with the
+//      offset one before (the indentation) and one after (inside) as the controls.
 //   3. The design block that introduces the change painters (the "change marks" section of anchor-map.ts) says what
 //      paintChangesRendered does with a deletion. It kept Slice 2's sentence — Rendered leaves a deletion to its
 //      card — after the follow-on made the painter place it, so the module said two things about one branch; the
@@ -319,9 +321,9 @@ test("Rendered deletion points at the first character of a nested code fence or 
       assert.ok(!inside(pt, "PRE") && !inside(pt, "TABLE"), id + ": not inside the block's element");
       const para = pt.parentNode as FakeElement;
       assert.equal(para.tagName, "P", id + ": in the item's paragraph");
-      assert.equal(para.textContent, text, id + ": the paragraph before the hole");
+      assert.equal(para.textContent, text, id + ": the paragraph before the block");
       const [pre, post] = around(para, pt);
-      assert.equal(pre, text, id + ": after the text before the hole");
+      assert.equal(pre, text, id + ": after the text before the block");
       assert.equal(post, "", id + ": nothing of the paragraph after it");
     }
     assert.deepEqual(withClass(box, "fc-del").map((m) => m.getAttribute("data-id")), ["h-at", "h-indent"], "two offsets, one position: the point painted second sits after the first (the boundary rule)");

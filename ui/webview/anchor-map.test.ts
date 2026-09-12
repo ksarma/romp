@@ -1535,13 +1535,13 @@ test("Rendered deletion points that cannot be placed stay unpainted, never besid
   assert.equal(serialize(nb), nbefore);
 });
 
-test("Rendered change marks: an insertion inside a code fence paints through the text-match fallback; one whose text is not on the page does not", () => {
+test("Rendered change marks: an insertion inside a code fence paints by position, on its line (Slice 8; before: through the text-match fallback); a substitution over the table's delimiter row, whose text is not on the page, does not", () => {
   const source = fixture("refusals.md");
   const { box } = buildRendered(source);
   const before = serialize(box);
   const q = "respond(request)";
   const i = source.indexOf(q);
-  // the table's separator row is in the file but renders no text: nothing on the page to paint
+  // the table's delimiter row is in the file but renders no text and no cell's characters lie in it: nothing on the page to paint
   const sep = "|-------|-----|";
   const j = source.indexOf(sep);
   assert.ok(j >= 0);
