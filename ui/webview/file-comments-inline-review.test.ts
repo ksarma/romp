@@ -8,7 +8,8 @@
 //     the author's own span wearing data-act=fcchange inside a link is neither cancelled nor acted on;
 //   • Show changes inline is withheld while the editor holds the body (the editor draws every change itself) and
 //     offered again when the read view is back — the header's row, not a source pin, says so;
-//   • a Rendered deletion the map cannot place (inside a code fence) is card-only, its "not shown" tag wearing the
+//   • a Rendered deletion the map cannot place (on a code fence's opener line; inside a code line it places since
+//     Slice 8 of plans/markdown-viewer.md) is card-only, its "not shown" tag wearing the
 //     generic title (this view does not show the change; Reveal opens it in Raw) — the same deletion IS struck in
 //     Raw, so a title that said Rendered cannot show deletions would be false since the follow-on.
 // The source pins that close the file hold fcchange's cancel beside fcopen's, and the module header's account of the
@@ -529,13 +530,18 @@ test("Show changes inline is withheld while the editor holds the body — the he
 
 const NOT_SHOWN_TITLE = "This view does not show the change; Reveal opens it in Raw";
 
-test("a Rendered deletion inside a code fence is card-only: its 'not shown' tag wears the generic title and the card keeps Reveal to Raw, while a deletion in prose is struck beside it; off, the tag goes; in Raw the same deletion is struck, so the title's 'this view' is the truth", async (t: TestContext) => {
+test("a Rendered deletion on a code fence's opener line is card-only: its 'not shown' tag wears the generic title and the card keeps Reveal to Raw, while a deletion in prose is struck beside it and one inside a code line is struck in its row (since Slice 8 of plans/markdown-viewer.md positioned code lines; before, the whole fence was a hole and that deletion was card-only too); off, the tag goes; in Raw the same deletions are struck, so the title's 'this view' is the truth", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world({ mode: "rendered", src: DOC_FENCE, intro: () => el("pre", el("code", "respond(request)\n")) }); t.after(() => w.close());
-  const fenced = H("hc", "del", at("respond", DOC_FENCE), at("respond", DOC_FENCE), "await ", "", T0 - 65000);
+  // the opener line renders nothing (an info string removed from it here), so the point has no row to sit in and the change
+  // keeps its card; the deletion inside the code line places before `respond` in the pre's text since Slice 8 (anchor-map.ts
+  // walkCode, renderedSpot's FENCE_LINE rule)
+  const fenced = H("hc", "del", at("```", DOC_FENCE) + 3, at("```", DOC_FENCE) + 3, "js", "", T0 - 65000);
+  const inLine = H("hl", "del", at("respond", DOC_FENCE), at("respond", DOC_FENCE), "await ", "", T0 - 60000);
   const prose = shifted(h3, FENCE.length);
-  const { aside } = await openPanel(w, status({ hunks: [fenced, prose] }));
-  assert.equal(marksOf(w, "hc").length, 0, "the fence is a hole the mapping does not place: no point beside the wrong words");
+  const { aside } = await openPanel(w, status({ hunks: [fenced, inLine, prose] }));
+  assert.equal(marksOf(w, "hc").length, 0, "the fence line is a hole the mapping does not place: no point beside the wrong words");
+  assert.equal(marksOf(w, "hl").length, 1, "the deletion inside the code line is struck in the pre (Slice 8; before: card-only with the fence)");
   assert.equal(marksOf(w, "h3").length, 1, "the control: the prose deletion is struck at its point");
   const c = card(aside, "chg:hc")!;
   assert.deepEqual(texts(tags(c)), ["not shown"]);
@@ -545,6 +551,9 @@ test("a Rendered deletion inside a code fence is card-only: its 'not shown' tag 
   const p = card(aside, "chg:h3")!;
   assert.deepEqual(texts(tags(p)), [], "the struck one wears no tag");
   assert.ok(isLink(p));
+  const l = card(aside, "chg:hl")!;
+  assert.deepEqual(texts(tags(l)), [], "the code line's deletion is shown: no tag");
+  assert.ok(isLink(l), "its card links to the struck point in the pre");
   act(c, "fcreveal", "chg:hc")!.click();
   assert.deepEqual(w.modes, ["raw"]); assert.deepEqual(w.scrolls, [fenced.curFrom], "Reveal goes to the deletion's place in Raw");
   // off: nothing is shown by choice, so the tag would claim a failing that is none
@@ -552,12 +561,15 @@ test("a Rendered deletion inside a code fence is card-only: its 'not shown' tag 
   assert.deepEqual(texts(tags(card(asideOf(w), "chg:hc")!)), [], "off: no tag");
   store.delete(SETTINGS_KEY);
   w.close();
-  // Raw is exact: the same deletion is struck inside the fence
+  // Raw is exact: the same deletions are struck on the opener's row and inside the fence
   const w2 = world({ src: DOC_FENCE }); t.after(() => w2.close());
-  const { aside: a2 } = await openPanel(w2, status({ hunks: [fenced] }));
+  const { aside: a2 } = await openPanel(w2, status({ hunks: [fenced, inLine] }));
   const raw = marksOf(w2, "hc");
-  assert.equal(raw.length, 1); assert.equal(raw[0].dataset.fcText, "await ");
+  assert.equal(raw.length, 1); assert.equal(raw[0].dataset.fcText, "js");
+  const rawLine = marksOf(w2, "hl");
+  assert.equal(rawLine.length, 1); assert.equal(rawLine[0].dataset.fcText, "await ");
   assert.deepEqual(texts(tags(card(a2, "chg:hc")!)), [], "Raw shows it: no tag");
+  assert.deepEqual(texts(tags(card(a2, "chg:hl")!)), [], "and the line's too");
 });
 
 // ── source pins ────────────────────────────────────────────────────────────────────────────────────
