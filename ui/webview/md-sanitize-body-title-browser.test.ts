@@ -3,17 +3,20 @@
 // `_sanitizeElements`: the variable itself, no copy), so a hook that sets a tag off there sets it off for every later element
 // of the same call, and, under `setConfig`, for every later call until `clearConfig`. The first cut of dropBodyTitle
 // (md-sanitize.ts) did exactly that for a body `<title>`, and a hook reading the set after it saw `title` false on the
-// paragraphs after one (the PR's review, round 1). The hook now removes the element itself and writes nothing in the set. Two
-// tests, each a recorder hook registered after the sanitizer's own, logging `allowedTags.title` and the set's identity at
-// every node: the first sanitizes through sanitizeMd, as the chat and the viewer do, and reads the set unchanged behind a
-// body title, the svg's title kept, the body titles gone with their text, and a title whose text reads as markup dropped
-// without a throw (DOMPurify goes on to judge the detached node, and its `_forceRemove` throws on a parentless one; neither
-// of its two branches after the hook reaches it for a title); the second makes two consecutive calls with ONE config, the way
-// the finding framed the hazard, and pins that the second call inherits nothing from the first: under a config argument,
-// because DOMPurify rebuilds the set per call (the two calls' sets are different objects), and under `setConfig`, the one
-// mode that keeps a set across calls (romp uses it nowhere; md-sanitize.test.ts pins the single sanitize call), because the
-// hook no longer writes there. Skips with a stated reason when no playwright browser is installed (CI installs none).
-// Synthetic markup only.
+// paragraphs after one (the PR's review, round 1). The hook now moves the element into a fresh fragment of its document and
+// writes nothing in the set. Three tests, the first two with a recorder hook registered after the sanitizer's own, logging
+// `allowedTags.title` and the set's identity at every node: the first sanitizes through sanitizeMd, as the chat and the viewer
+// do, and reads the set unchanged behind a body title, the svg's title kept, the body titles gone with their text, and a title
+// whose text reads as markup dropped without a throw (DOMPurify goes on to judge the moved node, and its `_forceRemove` throws
+// on a parentless one: under the fragment the title has a parent for every branch after the hook); the second makes two
+// consecutive calls with ONE config, the way the finding framed the hazard, and pins that the second call inherits nothing
+// from the first: under a config argument, because DOMPurify rebuilds the set per call (the two calls' sets are different
+// objects), and under `setConfig`, the one mode that keeps a set across calls (romp uses it nowhere; md-sanitize.test.ts pins
+// the single sanitize call), because the hook no longer writes there. The third sanitizes under the html profile alone and
+// under FORBID_TAGS with `title`, the two configs whose disallowed-tag branch force-removes the title after the hook, and
+// reads no throw and the title gone with its text (the PR's review, round 2: the node's own remove(), the hook's second cut,
+// had left the title parentless there, and 3.4.10's `_forceRemove` threw a TypeError over it). Skips with a stated reason when
+// no playwright browser is installed (CI installs none). Synthetic markup only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -116,7 +119,7 @@ test("sanitizeMd: a body <title> goes with its text and the svg's stays, the set
     assert.deepEqual(elements(mixed).map((e) => e.tag), ["p", "title", "p", "svg", "title", "p", "title", "p"], "the hook chain ran for every element, the removed titles included (the recorder runs after the drop)");
     assert.deepEqual(elements(mixed).filter((e) => e.title !== true).map((e) => e.tag), [], "`title` reads true in the set at every element: the hook wrote nothing there (before: false at the first body title and on every element after it, until the svg's title set it back on, then false again from the second)");
     assert.deepEqual(new Set(mixed.log.map((e) => e.set)).size, 1, "one call, one set object");
-    assert.equal(markup.out, '<p>x</p><p>z</p>', "a title whose text reads as markup goes with its text, and DOMPurify's later branches over the detached node reach no force-remove (which would throw)");
+    assert.equal(markup.out, '<p>x</p><p>z</p>', "a title whose text reads as markup goes with its text: the markup guard reads the escaped innerHTML and fires no force-remove, and one would detach from the fragment anyway");
     assert.equal(nested.out, '<div><p>k</p></div><table><tbody><tr><td>a  b</td></tr></tbody></table>', "a title inside a div and one inline in a cell go the same way, the text beside them kept");
     assert.equal(leading.out, '<p>a</p>', "a title at the very start of the string: gone too, by the parser (it lands in the head, which never comes back)");
     assert.deepEqual(elements(leading).map((e) => e.tag), ["p"], "and the walk never met it: no hook saw a title");
@@ -156,6 +159,30 @@ test("two consecutive sanitize calls with ONE config: the second inherits nothin
     assert.equal(r.pinnedOne.log[0].set, r.pinnedTwo.log[0].set, "under setConfig the two calls share one set object");
     assert.deepEqual(elements(r.pinnedTwo).filter((e) => e.title !== true).map((e) => e.tag), [], "and the second call reads `title` true at every element: nothing inherited (before: false at its first element, the first call's write standing in the shared set)");
     assert.equal(r.after.out, kept, "clearConfig: a config argument is read again");
+    assert.deepEqual(errors, [], "no page error");
+  });
+});
+
+test("under a profile where `title` is NOT allowed (html alone: `title` is in DOMPurify's svg list, not its html list) and under FORBID_TAGS with `title` added, the body title goes with its text and nothing throws: DOMPurify's own disallowed-tag branch force-removes the title the hook moved into a fragment (before: the hook's remove() left it parentless, and 3.4.10's _forceRemove threw a TypeError over it, so the hook was safe only while `title` stayed allowed)", { timeout: 60000 }, async (t) => {
+  await inPage(t, async (page, errors) => {
+    const r = await page.evaluate(([svg]: [string]) => {
+      const w = window as any, D = w.__romp.DOMPurify, P = w.__romp.MD_PURIFY;
+      const input = '<p>a</p><title>T</title><p>b</p>' + svg + '<p>c</p>';
+      const run = (cfg: unknown): Run | { error: string } => { try { return w.__run(() => D.sanitize(input, cfg)) as Run; } catch (e) { return { error: String(e) }; } };
+      return {
+        htmlOnly: run({ ...P, USE_PROFILES: { html: true } }),
+        forbidden: run({ ...P, FORBID_TAGS: [...P.FORBID_TAGS, "title"] }),
+        markup: run({ ...P, USE_PROFILES: { html: true }, RETURN_DOM: false }),   // the same config over the same input: the string path
+      };
+    }, [SVG]);
+    for (const [name, res] of Object.entries(r) as Array<[string, { error?: string }]>) assert.equal(res.error, undefined, name + ": the sanitize threw: " + res.error);
+    const { htmlOnly, forbidden } = r as { htmlOnly: Run; forbidden: Run };
+    assert.equal(htmlOnly.out, '<p>a</p><p>b</p><p>c</p>', "html alone: the body title is gone with its text (DOMPurify's own removal, from the fragment), and the svg goes whole with the profile");
+    assert.deepEqual(elements(htmlOnly).map((e) => e.tag), ["p", "title", "p", "svg", "p"], "the walk went on past the moved title to every later element (the svg's own title went with the svg, unvisited)");
+    assert.deepEqual(elements(htmlOnly).filter((e) => e.title).map((e) => e.tag), [], "`title` is off the allowed set at every element of the call: the config, not the hook, decides");
+    assert.equal(forbidden.out, '<p>a</p><p>b</p><svg></svg><p>c</p>', "title forbidden: the body title is gone with its text, and the svg's title too, by FORBID_TAGS (title is in DOMPurify's FORBID_CONTENTS, so its text goes with it), the svg itself kept");
+    assert.deepEqual(elements(forbidden).map((e) => e.tag), ["p", "title", "p", "svg", "title", "p"], "the walk met both titles and went on");
+    assert.deepEqual(elements(forbidden).filter((e) => e.title !== true).map((e) => e.tag), [], "and `title` reads true in the allowed set throughout: FORBID_TAGS is a set the hook is never handed, which is why the hook cannot decide by allowedTags alone");
     assert.deepEqual(errors, [], "no page error");
   });
 });

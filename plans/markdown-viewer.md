@@ -3524,26 +3524,32 @@ re-verifies. Where the code as built departs from the text above, why, and which
    new) over the viewer and the chat's sanitizeMd call, md-sanitize.test.ts (15: the hook count, the hook body over a
    fake node, the guide sentence) and docs/guide.md's HTML paragraph gains one sentence, an HTML comment is dropped
    and the text around it is kept. From its round 5 a second change in the sanitizer, on the same hook: a body
-   `<title>` is dropped WITH its content (`dropBodyTitle`, md-sanitize.ts: the hook removes an HTML-namespace `title`
-   itself, by the node's own `remove()`, right before DOMPurify judges it, its one text node going with it, and leaves
-   an svg's `title` alone; the first cut set `allowedTags.title` false for the element and back on for an svg's, and
-   the PR review's round 1 found that set to be DOMPurify's LIVE per-call ALLOWED_TAGS, `_sanitizeElements` passing
-   the variable itself, so the write stood on every later element of the call, and under `setConfig`, the one mode
-   that keeps a set across calls, would have reached the next call; the hook now writes nothing there; the browser
-   shows a title nowhere outside the page's head, and DOMPurify's svg profile had kept a body one as an element the UA
-   sheet hides, so its text stood in the DOM, in the paint's hay and in the reader's text, and a comment on it painted
-   a mark with no box whose card offered Scroll to nothing), viewer and chat alike; item 4's reader drops it on its
-   side (`TITLE` in `DROPPED_CONTENT`, an svg's kept); md-sanitize.test.ts (16: the unit test over fake nodes in both
-   namespaces, the hook test reading both bodies, the header; 17 since the PR review's round 1: the two bodies read
-   the removal and the set untouched, and the fakes go through the shim's hideEdges, the hook's stubs with them, with
-   a projection test), md-sanitize-body-title-browser.test.ts (2, the PR review's round 1, over the vendored DOMPurify
-   in Chromium: `title` true in the set at every element of a call behind a body title, the drop without a throw of a
-   title whose text reads as markup, and two calls with one config, as an argument and under `setConfig`, the second
-   inheriting nothing), anchor-map-dom-rules-browser.test.ts (1 leg, new, item 4) and docs/guide.md's HTML paragraph
-   gains a second sentence, an HTML `<title>` is dropped with its text, since a browser shows one nowhere outside the
-   page's head, and the `<title>` of an inline `svg`, the drawing's tooltip, stays (the svg clause from the review's
-   round 6, which found the sentence had said every `<title>` is dropped while the same paragraph says an inline `svg`
-   is kept), with its pin in md-sanitize.test.ts over both halves. From its round 6 one change outside the slice's
+   `<title>` is dropped WITH its content (`dropBodyTitle`, md-sanitize.ts: the hook moves an HTML-namespace `title` out
+   of the tree itself, into a fresh fragment of its document, right before DOMPurify judges it, its one text node going
+   with it, so that DOMPurify's own removal of the title under a profile that disallows it detaches from a parent that
+   has it (3.4.10's `_forceRemove` throws for a parentless node, which the node's own `remove()`, the round 1 cut, had
+   left it as; the PR review's round 2), and leaves an svg's `title` alone; the first cut set `allowedTags.title` false
+   for the element and back on for an svg's, and the PR review's round 1 found that set to be DOMPurify's LIVE per-call
+   ALLOWED_TAGS, `_sanitizeElements` passing the variable itself, so the write stood on every later element of the
+   call, and under `setConfig`, the one mode that keeps a set across calls, would have reached the next call; the hook
+   now writes nothing there; the browser shows a title nowhere outside the page's head, and DOMPurify's svg profile had
+   kept a body one as an element the UA sheet hides, so its text stood in the DOM, in the paint's hay and in the
+   reader's text, and a comment on it painted a mark with no box whose card offered Scroll to nothing), viewer and chat
+   alike; item 4's reader drops it on its side (`TITLE` in `DROPPED_CONTENT`, an svg's kept); md-sanitize.test.ts (16:
+   the unit test over fake nodes in both namespaces, the hook test reading both bodies, the header; 17 since the PR
+   review's round 1: the two bodies read the removal and the set untouched, and the fakes go through the shim's
+   hideEdges, the hook's stubs with them, with a projection test; 18 since its round 2: the every-profile test,
+   3.4.10's `_forceRemove` transcribed over a title the hook moved, under the html profile alone and under FORBID_TAGS
+   with `title`, no throw and the title gone with its text), md-sanitize-body-title-browser.test.ts (2, the PR review's
+   round 1, over the vendored DOMPurify in Chromium: `title` true in the set at every element of a call behind a body
+   title, the drop without a throw of a title whose text reads as markup, and two calls with one config, as an argument
+   and under `setConfig`, the second inheriting nothing; 3 since its round 2: the html profile alone and FORBID_TAGS
+   with `title` over the real DOMPurify, no throw, the title gone with its text), anchor-map-dom-rules-browser.test.ts
+   (1 leg, new, item 4) and docs/guide.md's HTML paragraph gains a second sentence, an HTML `<title>` is dropped with
+   its text, since a browser shows one nowhere outside the page's head, and the `<title>` of an inline `svg`, the
+   drawing's tooltip, stays (the svg clause from the review's round 6, which found the sentence had said every
+   `<title>` is dropped while the same paragraph says an inline `svg` is kept), with its pin in md-sanitize.test.ts
+   over both halves. From its round 6 one change outside the slice's
    units, in the shared Copy button, pre-existing on main: the execCommand fallback of a fence's Copy (code-block.ts
    `fallbackCopy`, the path an insecure origin, a denied permission or a refused Clipboard write takes) moved the
    document's selection into its textarea and left it collapsed outside the passage, and the focus on the body, with

@@ -41,8 +41,8 @@
 //     other output is unchanged, since no comment ever survived (Slice 5 review, round 4).
 //   • an HTML `<title>` in the body is dropped with its text: the browser shows a title nowhere outside the page's head,
 //     and DOMPurify's svg profile kept one as a hidden element whose text stood in the DOM. dropBodyTitle below, on the
-//     same hook, removes the element before DOMPurify judges it; an inline svg's own `<title>` stays (Slice 5 review,
-//     round 5).
+//     same hook, moves the element out of the tree before DOMPurify judges it, into a fragment DOMPurify can still detach
+//     it from under any profile; an inline svg's own `<title>` stays (Slice 5 review, round 5; the PR's review, round 2).
 //   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser
 //     fetch the URL the moment the note renders, a tracking pixel with no click and no gate; DOMPurify's html
 //     list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
@@ -188,27 +188,37 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
  *  element: a `<title>` block in a note, one inside a `<div>`, inline in a paragraph or in a table cell rendered nothing while
  *  its text stood in the DOM, in the comment painter's hay and in the fallback reader's text (which read it as shown), so a
  *  comment on that text painted a mark with no box and its card offered Scroll to nothing (the Slice 5 review, round 5). An
- *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. The hook removes the element itself, by
- *  the node's own `remove()`, right before DOMPurify judges it: the content goes with it (a title's content is one text node,
- *  the parser reading it as RCDATA), so no unwrapped text is left behind, and nothing shared is written. The first cut used
- *  the lever DOMPurify hands a hook, `allowedTags`, setting `title` off for a body title and on for an svg's; that set is
- *  DOMPurify's LIVE per-call ALLOWED_TAGS (`_sanitizeElements` passes the variable itself, no copy), so the write stood on every
- *  later element of the same call, and a hook reading the set after this one saw `title` false on the paragraphs after a body
- *  title. It reached no later `sanitize` call only because a call with a config rebuilds the set (`_parseConfig` clones the
- *  config and rebuilds ALLOWED_TAGS under USE_PROFILES), and under `setConfig`, which keeps one set across calls, it would
- *  have (the PR's review, round 1; md-sanitize-body-title-browser.test.ts pins both over the real DOMPurify). DOMPurify takes
- *  the removal as it takes its own: its walk's NodeIterator steps over a removed reference node (the DOM's pre-removing steps,
- *  the path `_forceRemove` relies on), and it goes on to judge the detached title as it goes on with every node it removes
- *  itself (3.4.10 reads no return value from `_sanitizeElements`), harmlessly: a title's innerHTML is escaped text, so the
- *  markup guard cannot match it, and an HTML title passes the namespace check under the stand-in parent DOMPurify uses for a
- *  parentless node, so neither branch reaches `_forceRemove`, which in 3.4.10 THROWS on a node it cannot detach (the browser
- *  leg sanitizes a title whose text reads as markup for this). `DOMPurify.removed` does not list the title; nothing here reads
- *  that list. The node's own `remove()` and not the parent's `removeChild`: only a form can be clobbered by a named control,
- *  so a title's method is the prototype's whatever its parent is. Reads `nodeType`, the hook's lower-cased tagName and
- *  `namespaceURI`. */
+ *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. The hook moves the element out of the tree
+ *  itself, into a fresh DocumentFragment of the node's own document, right before DOMPurify judges it: the content goes with it
+ *  (a title's content is one text node, the parser reading it as RCDATA), so no unwrapped text is left behind, and nothing
+ *  shared is written. The first cut used the lever DOMPurify hands a hook, `allowedTags`, setting `title` off for a body title
+ *  and on for an svg's; that set is DOMPurify's LIVE per-call ALLOWED_TAGS (`_sanitizeElements` passes the variable itself, no
+ *  copy), so the write stood on every later element of the same call, and a hook reading the set after this one saw `title`
+ *  false on the paragraphs after a body title. It reached no later `sanitize` call only because a call with a config rebuilds
+ *  the set (`_parseConfig` clones the config and rebuilds ALLOWED_TAGS under USE_PROFILES), and under `setConfig`, which keeps
+ *  one set across calls, it would have (the PR's review, round 1; md-sanitize-body-title-browser.test.ts pins both over the
+ *  real DOMPurify). DOMPurify takes the move as it takes its own removals: its walk's NodeIterator steps over a reference node
+ *  that leaves the root's tree (the DOM's pre-removing steps run for a node appended elsewhere as for one removed, the path
+ *  `_forceRemove` relies on), and it goes on to judge the title, the fragment's child now, as it goes on with every node it
+ *  removes itself (3.4.10 reads no return value from `_sanitizeElements`). Three of its branches after the hook end in
+ *  `_forceRemove`, which in 3.4.10 detaches through the parent (`getParentNode(node).removeChild(node)`) and THROWS when that
+ *  fails and the node is still parentless: the markup guard (a title's innerHTML is escaped text, so it cannot match), the
+ *  namespace check (an HTML title passes it under the stand-in parent DOMPurify uses when the parent has no tagName, a
+ *  fragment's case), and the disallowed-tag branch, `_sanitizeDisallowedNode`, taken whenever `title` is off the allowed set
+ *  (a profile without svg) or in FORBID_TAGS, which hoists nothing for a title (`title` is in DOMPurify's default
+ *  FORBID_CONTENTS) and force-removes it. The second cut removed the title by the node's own `remove()` and left it parentless,
+ *  so that third branch threw, and the hook was safe only while `title` stayed allowed, the svg profile's case (the PR's
+ *  review, round 2). Under the fragment every branch detaches the title from a parent that has it, and a KEEP_CONTENT hoist,
+ *  were `title` ever off FORBID_CONTENTS, would land its text in the fragment, never in the body (the browser leg sanitizes a
+ *  title whose text reads as markup, and a body title under the html profile alone and under FORBID_TAGS with `title`, for the
+ *  three). `DOMPurify.removed` lists the title only when DOMPurify drops it from the fragment; nothing here reads that list.
+ *  The node's document and a fresh fragment's `appendChild`, not the parent's `removeChild`: only a form can be clobbered by a
+ *  named control, so a title's `ownerDocument` and the fragment's method are the prototypes' whatever the title's parent is.
+ *  Reads `nodeType`, the hook's lower-cased tagName, `namespaceURI` and `ownerDocument`. */
 export function dropBodyTitle(node: Node, data: Pick<UponSanitizeElementHookEvent, "tagName">): void {
   if (data.tagName !== "title" || node.nodeType !== 1 /* Node.ELEMENT_NODE */ || (node as Element).namespaceURI !== HTML_NS) return;
-  (node as Element).remove();
+  // an element always has a document; the fragment is a parent DOMPurify's own removal can detach the title from
+  (node.ownerDocument as Document).createDocumentFragment().appendChild(node);
 }
 
 let hooksInstalled = false;
