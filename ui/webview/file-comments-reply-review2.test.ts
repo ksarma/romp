@@ -658,7 +658,7 @@ test("source: every kind change over a reply renders the cards (renderFrom); the
   assert.match(SRC, /private renderFrom\(was: Composer \| null\): void \{\n\s*if \(was && was\.kind === "reply"\) this\.render\(\); else this\.renderComposer\(\);/, "the cards after a reply, the composer alone otherwise");
   assert.match(SRC, /if \(k\.card\) picks\.push\(head\(cards\.querySelector\('\.fc-card\[data-id="' \+ cssId\(k\.card\) \+ '"\]'\)\)\);/, "focusNear's selector takes the id escaped");
   assert.match(SRC, /'\[data-act="' \+ act \+ '"\]\[data-id="' \+ cssId\(id\) \+ '"\]'/, "ownMarks' too");
-  assert.match(SRC, /'\[data-act="fcchange"\]\[data-id="' \+ cssId\(key\.slice\(4\)\) \+ '"\]' : '\.fc-hl\[data-id="' \+ cssId\(key\) \+ '"\], \.fc-region\[data-id="' \+ cssId\(key\) \+ '"\]'/, "goTo's");
+  assert.match(SRC, /'\[data-act="fcchange"\]\[data-id="' \+ cssId\(key\.slice\(4\)\) \+ '"\]' : '\.fc-hl\[data-id="' \+ cssId\(key\) \+ '"\], \.fc-hl-block\[data-id="' \+ cssId\(key\) \+ '"\], \.fc-region\[data-id="' \+ cssId\(key\) \+ '"\]'/, "goTo's (the display formula's stamped box beside the mark and the region, plans/markdown-viewer.md Slice 8, item 5)");
   assert.match(SRC, /this\.root\?\.querySelector\('\.fc-card\[data-id="' \+ cssId\(id\) \+ '"\]'\)\?\.scrollIntoView/, "scrollCard's");
   // every selector built from an id: placeComposer's `id` is cssId(r) already; the rest wrap the id where they build the string
   const raw = SRC.match(/\[data-id="' \+ (?!cssId\()[\w.()]+ \+ '"\]/g) || [];

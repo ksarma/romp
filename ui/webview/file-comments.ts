@@ -3565,8 +3565,10 @@ class Panel {
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
         const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";
         // ...a display formula's stamped box takes the block class alone from the paint (the first class token), so the context
-        // cue the class string carried goes on it here, as the guessed copy's does on every mark (the sheet drops its ring for the dashed outline)
-        for (const m of out || []) { if (unsure || (loc.state === "context" && !isMarkEl(m))) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
+        // state's cue the class string carried goes on it here (the sheet drops its ring for the dashed outline); the guessed
+        // copy's cue goes on every element in the loop below
+        if (loc.state === "context") for (const m of out || []) if (!isMarkEl(m)) m.classList.add("fc-hl-context");
+        for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
           if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }

@@ -416,7 +416,8 @@ test("the sheets: the block rules stand once in the panel block of BOTH sheets b
 test("the panel's readers select the block class beside the mark's: paintAll's unpaint and the pending target's three, the repaint's box read and lineBoxOf's own-box answer, goTo's fallback, the pass's context cue on a stamped box, and unwrapMarks' strip", () => {
   const paint = SRC.split("  paintAll(): void {")[1].split("\n  }\n")[0];
   assert.ok(paint.includes('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "paintAll unpaints both block classes with the marks");
-  assert.match(paint, /if \(unsure \|\| \(loc\.state === "context" && !isMarkEl\(m\)\)\) m\.classList\.add\("fc-hl-context"\);/, "the context cue goes on a stamped box by hand (the paint stamps the first class token alone)");
+  assert.match(paint, /if \(loc\.state === "context"\) for \(const m of out \|\| \[\]\) if \(!isMarkEl\(m\)\) m\.classList\.add\("fc-hl-context"\);/, "the context state's cue goes on a stamped box by hand (the paint stamps the first class token alone)");
+  assert.ok(paint.includes('if (unsure) m.classList.add("fc-hl-context");'), "the guessed copy's cue on every element, the line the plan's states test pins");
   const repaint = SRC.split("  private repaintPreselPass(): void {")[1].split("\n  }\n")[0];
   assert.equal((repaint.match(/this\.unpaint\("\.fc-presel, \.fc-presel-block"\);/g) || []).length, 3, "the Raw branch, the standing target and the repaint proper");
   assert.doesNotMatch(repaint, /unpaint\("\.fc-presel"\)/, "no unpaint left that misses the block class");
