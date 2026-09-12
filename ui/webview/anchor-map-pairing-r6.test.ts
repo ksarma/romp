@@ -675,7 +675,7 @@ test("a formatting element's end tag met with a special element open above it in
 
 // ── the Slice 5 review's closing pass 2 (each case red over a git archive of f4d803b56's module unless its comment says it is a control) ──
 
-test("in a run to the content's end an html block's element at k confirms nothing by itself until two blocks whose text is UNIQUE in the document have confirmed the run (runFits' `unique` over `repeated`; a count met by repeated paragraphs confirmed nothing): with TWO paragraphs repeated inside and after a `<button>` opener's swallowed run, [F, G, `</details>`, F, G, an html `<p align=\"center\"><img>`, two paragraphs], and with THREE, the `</details>` resume takes the candidate at the SECOND rendered copies, from which the tail lines up through to the end: each second copy maps to its own offsets from its own `<p>`, a comment stored on a second copy paints on it, the first rendered copies are the button's and refused at the button's offset, the html block owns its own picture `<p>` and the paragraphs after map (the review's closing pass 2, HIGH, seed 1330's class one copy wider: the closing pass's count of two was met by the two repeated paragraphs, the candidate at the FIRST rendered copies passed on the second copies' blocks and the html block's tag, the second copies' blocks owned the first rendered copies, and a selection in either first copy mapped to the second copy's offsets, so a comment made there was stored on the wrong passage; main refused every copy); seed 1330's one-repeat shape (test 10) and the two-repeat shape with a plain paragraph in the html block's place, or with the html block followed by two shortened paragraphs, map the second copies and refuse the first as before, and two UNIQUE paragraphs before the html block still confirm at its tag (controls)", () => {
+test("in a run to the content's end an html block's element at k confirms nothing by itself until two blocks whose text is UNIQUE among the blocks after the swallower (the document's at the closing pass 2; test 18) have confirmed the run (runFits' `unique` over `toEnd.repeated`; a count met by repeated paragraphs confirmed nothing): with TWO paragraphs repeated inside and after a `<button>` opener's swallowed run, [F, G, `</details>`, F, G, an html `<p align=\"center\"><img>`, two paragraphs], and with THREE, the `</details>` resume takes the candidate at the SECOND rendered copies, from which the tail lines up through to the end: each second copy maps to its own offsets from its own `<p>`, a comment stored on a second copy paints on it, the first rendered copies are the button's and refused at the button's offset, the html block owns its own picture `<p>` and the paragraphs after map (the review's closing pass 2, HIGH, seed 1330's class one copy wider: the closing pass's count of two was met by the two repeated paragraphs, the candidate at the FIRST rendered copies passed on the second copies' blocks and the html block's tag, the second copies' blocks owned the first rendered copies, and a selection in either first copy mapped to the second copy's offsets, so a comment made there was stored on the wrong passage; main refused every copy); seed 1330's one-repeat shape (test 10) and the two-repeat shape with a plain paragraph in the html block's place, or with the html block followed by two shortened paragraphs, map the second copies and refuse the first as before, and two UNIQUE paragraphs before the html block still confirm at its tag (controls)", () => {
   const F = "Foxtrot papa place alpha echo edge bravo sierra delta.", G = "Golf hotel india juliet kilo lima mike november.", H = "Hotel oscar quebec romeo sierra uniform victor.";
   const INTRO = "Intro alpha bravo charlie.", TANGO = "Tango india place kilo oscar tango bravo whiskey golf.", A = "Alpha text para.", AFTER = "After all done.";
   const WEIRD = "Weird <style>x{}</style> line.", ZULU = "Zulu zulu lima <script>y()</script> sierra foxtrot mike.";
@@ -836,4 +836,126 @@ test("in a run to the content's end an html block whose element stands behind th
   mapsWhole(box2, QS2, TANGO);
   assert.match(bad(mapText(box2, QS2, A), "QS2: the paragraph before the tables").reason, /an HTML block/, "recorded: the paragraph before the tables is the button's (main and d831e7a28 map it; the foster-parenting model is routed to Slice 8)");
   assert.deepEqual(elems(box2, QS2, blockAt(QS2, T1)), ['TABLE:"AaBb"', 'BR:""'], "QS2: the first table's block owns its table and the br");
+});
+
+test("the texts a repeated paragraph is checked against are the blocks' AFTER the swallower, the ones whose nodes can be candidates, not the whole document's (nextAnchor's `repeatedFrom`, carried on the ToEnd record as `repeated`; runFits' `unique` reads it): with a paragraph F at the top of the document and again in the tail after a `<button>` opener's swallowed run, [F, INTRO, `<button>`, `Alpha <button>probe</button>`, NOV, LAST, `</details>`, F, TANGO, an html `<p align=\"center\"><img>`, then a tail that does not line up to the content's end (A, a removed `<input type=\"text\">`, C, a kept checkbox, B, test 16's recorded R1b class; or the two raw tables with the foster-parented `<br>` and a paragraph, test 17's class)], the second rendered F, TANGO and A map to their own offsets from their own `<p>`, the html block owns its own picture `<p>` and the button's block owns the run alone, and a heading at the top with the tail paragraph's text the same (the review's closing pass 3, a regression the closing pass 2 introduced against f4d803b56, d831e7a28 and 99e7e2d0c, in the safe direction: the set was built once over every block, so the top copy, whose node stands before the resume index and is never a candidate, withheld the html-element confirmation, the removed input then failed every candidate at the kept checkbox forward of it, or the second table at the foster-parented `<br>`, the resume fell to the first `<p>` from k, a swallowed paragraph's, and F, TANGO and A were refused as an HTML block at the text input's or the html block's offset, their Raw offers landing there; main refuses the tail another way); the same documents with the top copy removed map as before, and a copy at the top AND inside the run AND in the tail (three copies) still refuses the run's copy at the button's offset and maps the tail's, since the run's copy is after the swallower (controls)", () => {
+  const F = "Foxtrot papa place alpha echo edge bravo sierra delta.", G = "Golf hotel india juliet kilo lima mike november.";
+  const NOV = "November tango sierra.", LAST = "Last kilo lima.", A = "Alpha text para.", C = "Charlie text para.", B = "Bravo text para.", AFTER = "After all done.";
+  const INTRO = "Intro alpha bravo charlie.", TANGO = "Tango india place kilo oscar tango bravo whiskey golf.";
+  const IMGP = '<p align="center"><img src="b.png" alt="b"></p>';
+  const T1 = "<table><tr><td>Aa<td>Bb</table>", T2 = "<table><tr><td>Cc</td><br><td>Dd</td></tr></table>";
+  const J = (...b: string[]): string => b.join("\n\n") + "\n";
+  const P = (t: string): string => `<p>${t}</p>\n`;
+  const HEAD_DOM = "<p>Alpha </p>probe<p></p>\n";   // test 14's: the buttons unwrapped, the paragraph's `<p>` closed by its own `<button>`, an empty `<p>` minted for its `</p>`
+  const TABLES_DOM = `<table><tbody><tr><td>Aa</td><td>Bb</td></tr></tbody></table>\n<br><table><tbody><tr><td>Cc</td><td>Dd</td></tr></tbody></table>\n`;
+  const RUN = ["<button>", "Alpha <button>probe</button>", NOV, LAST, "</details>"];
+  const RUN_DOM = HEAD_DOM + P(NOV) + P(LAST);
+  const R1B = [A, '<input type="text">', C, '<input type="checkbox">', B], R1B_DOM = P(A) + P(C) + '<input type="checkbox">\n' + P(B);
+  const swallow = (what: string, src: string, box: FakeElement): void => {
+    assert.deepEqual(elems(box, src, blockAt(src, "<button>")), ['P:"Alpha"', 'P:""', `P:"${NOV}"`, `P:"${LAST}"`], what + ": the button's block owns the run alone");
+    assert.deepEqual(elems(box, src, blockAt(src, "<p align")), ['P:""'], what + ": the html block owns its own picture <p>");
+    for (const t of [NOV, LAST]) {
+      const r = bad(mapText(box, src, t), what + ": " + t);
+      assert.match(r.reason, /an HTML block/);
+      assert.equal(r.blockStartOffset, at(src, "<button>"), what + ": refused at the button's offset");
+    }
+  };
+  // X3: the top copy of F, the html block, then the R1b tail: F's second copy, TANGO and A map (before: refused as an HTML block at the
+  // text input's offset, that block owning the run, F, TANGO, the picture <p> and A's <p>)
+  const X3 = J(F, INTRO, ...RUN, F, TANGO, IMGP, ...R1B);
+  const box3 = domOf(P(F) + P(INTRO) + RUN_DOM + P(F) + P(TANGO) + IMGP + "\n" + R1B_DOM);
+  mapsWhole(box3, X3, F, 1);
+  for (const t of [TANGO, A, C, B, INTRO]) mapsWhole(box3, X3, t);
+  mapsWhole(box3, X3, F, 0);
+  swallow("X3", X3, box3);
+  assert.deepEqual(elems(box3, X3, blockAt(X3, TANGO) - 1), ['P:"Foxtrot papa place"'], "X3: the tail copy of F owns its own <p>");
+  assert.deepEqual(elems(box3, X3, blockAt(X3, A)), [`P:"${A}"`], "X3: A owns its own <p> (before: the text input's)");
+  assert.deepEqual(elems(box3, X3, blockAt(X3, '<input type="text"')), [], "X3: the removed input's block owns nothing (before: the run and the tail to A)");
+  assert.deepEqual(elems(box3, X3, blockAt(X3, '<input type="checkbox"')), ['INPUT:""'], "X3: the checkbox block owns its input");
+  // X4: the top copy of F, the html block, then the two tables and a paragraph
+  const X4 = J(F, INTRO, ...RUN, F, TANGO, IMGP, T1, T2, AFTER);
+  const box4 = domOf(P(F) + P(INTRO) + RUN_DOM + P(F) + P(TANGO) + IMGP + "\n" + TABLES_DOM + P(AFTER));
+  mapsWhole(box4, X4, F, 1);
+  for (const t of [TANGO, AFTER, INTRO]) mapsWhole(box4, X4, t);
+  mapsWhole(box4, X4, F, 0);
+  swallow("X4", X4, box4);
+  assert.deepEqual(elems(box4, X4, blockAt(X4, T1)), ['TABLE:"AaBb"', 'BR:""'], "X4: the first table's block owns its table and the br");
+  assert.deepEqual(elems(box4, X4, blockAt(X4, T2)), ['TABLE:"CcDd"'], "X4: the second table's block owns its own table");
+  // X10: a heading at the top with the tail paragraph's text (the set keys on text alone, and the heading is before the swallower)
+  const X10 = J("# " + INTRO, ...RUN, INTRO, TANGO, IMGP, ...R1B);
+  const box10 = domOf(`<h1>${INTRO}</h1>\n` + RUN_DOM + P(INTRO) + P(TANGO) + IMGP + "\n" + R1B_DOM);
+  mapsWhole(box10, X10, INTRO, 1);
+  for (const t of [TANGO, A, C, B]) mapsWhole(box10, X10, t);
+  mapsWhole(box10, X10, INTRO, 0);
+  swallow("X10", X10, box10);
+  assert.deepEqual(elems(box10, X10, blockAt(X10, INTRO)), [`P:"Intro alpha bravo"`], "X10: the tail copy of INTRO owns its own <p>");
+  // controls: the top copy removed (F unique in the document) maps as before
+  const X3c = J(INTRO, ...RUN, F, TANGO, IMGP, ...R1B);
+  const box3c = domOf(P(INTRO) + RUN_DOM + P(F) + P(TANGO) + IMGP + "\n" + R1B_DOM);
+  for (const t of [F, TANGO, A, C, B, INTRO]) mapsWhole(box3c, X3c, t);
+  swallow("X3c", X3c, box3c);
+  const X4c = J(INTRO, ...RUN, F, TANGO, IMGP, T1, T2, AFTER);
+  const box4c = domOf(P(INTRO) + RUN_DOM + P(F) + P(TANGO) + IMGP + "\n" + TABLES_DOM + P(AFTER));
+  for (const t of [F, TANGO, AFTER, INTRO]) mapsWhole(box4c, X4c, t);
+  swallow("X4c", X4c, box4c);
+  // a control: three copies of F, at the top, inside the run and in the tail, and G inside the run and in the tail (test 14's W2 with a
+  // top copy): the run's copies are repeated among the blocks after the swallower, so they confirm nothing, the candidate at the
+  // tail copies is taken, the run's copies are the button's and the top and tail copies map, as at the closing pass 2
+  const XR = J(F, "<button>", "Alpha <button>probe</button>", F, G, "</details>", F, G, IMGP, INTRO, TANGO);
+  const boxR = domOf(P(F) + HEAD_DOM + P(F) + P(G) + P(F) + P(G) + IMGP + "\n" + P(INTRO) + P(TANGO));
+  mapsWhole(boxR, XR, F, 0);
+  mapsWhole(boxR, XR, F, 2);
+  mapsWhole(boxR, XR, G, 1);
+  for (const t of [INTRO, TANGO]) mapsWhole(boxR, XR, t);
+  for (const [t, k] of [[F, 1], [G, 0]] as [string, number][]) {
+    const r = bad(mapText(boxR, XR, t, k), "XR: the run's copy of " + t.split(" ")[0]);
+    assert.match(r.reason, /an HTML block/);
+    assert.equal(r.blockStartOffset, at(XR, "<button>"), "XR: the run's copy is the button's, refused at its offset");
+  }
+  assert.deepEqual(elems(boxR, XR, blockAt(XR, "<button>")), ['P:"Alpha"', 'P:""', 'P:"Foxtrot papa place"', 'P:"Golf hotel india"'], "XR: the button's block owns the run up to the tail copies");
+  assert.deepEqual(elems(boxR, XR, blockAt(XR, "<p align")), ['P:""'], "XR: the html block owns its own picture <p>");
+});
+
+test("nextAnchor's ToEnd record starts `taken` with the candidate's own nodes (bounds: the nodes the resuming block's scan takes from the candidate), so a later same-tag html block whose element is nowhere forward does not fail the right candidate at that element: a kept `<input type=\"checkbox\">` block as the resume of a `<button>` opener's swallowed run with no closer, [INTRO, `<button>`, `<button>probe xray</button>`, NOV, `<form><input type=\"checkbox\"></form>`, LAST, `<input type=\"checkbox\">`, C, `<input type=\"text\">`, B], resumes at its OWN input: the checkbox block owns its input alone, the button's block owns the run with the form's input the unwrap left and LAST's `<p>`, C and B map to their own offsets, and LAST, inside the swallow, is refused at the BUTTON's offset, so its Raw offer lands on the swallower; the checkbox as the opener's own kid the same (the review's closing pass 3, a wrong ownership inside a refused region on every Slice 5 tree since round 8: the candidate's own INPUT at `from` was not in `taken`, the removed input's behind scan met it and failed the right candidate, `hit` then took the first INPUT from k, the form's or the kid, inside the swallowed run, so the checkbox block owned that input, LAST's `<p>` and its own input, and LAST was refused at the checkbox block's offset, past the passage, its Raw offer landing there; main maps LAST through its per-block resync); the same document with a `</center>` closer before the tail as before (a control)", () => {
+  const NOV = "November tango sierra.", LAST = "Last kilo lima.", C = "Charlie text para.", B = "Bravo text para.", INTRO = "Intro alpha bravo charlie.";
+  const J = (...b: string[]): string => b.join("\n\n") + "\n";
+  const P = (t: string): string => `<p>${t}</p>\n`;
+  const TAIL = ['<input type="checkbox">', C, '<input type="text">', B], TAIL_DOM = '<input type="checkbox">\n' + P(C) + P(B);
+  const check = (what: string, src: string, box: FakeElement, run: string[]): void => {
+    for (const t of [C, B, INTRO]) mapsWhole(box, src, t);
+    assert.deepEqual(elems(box, src, blockAt(src, '<input type="checkbox"')), ['INPUT:""'], what + ": the checkbox block owns its own input alone (before: the run's input, LAST's <p> and its own)");
+    assert.deepEqual(elems(box, src, blockAt(src, "<button>")), run, what + ": the button's block owns the run, the input inside it included");
+    assert.deepEqual(elems(box, src, blockAt(src, '<input type="text"')), [], what + ": the removed input's block owns nothing");
+    for (const t of [NOV, LAST]) {
+      const r = bad(mapText(box, src, t), what + ": " + t);
+      assert.match(r.reason, /an HTML block/);
+      assert.equal(r.blockStartOffset, at(src, "<button>"), what + ": " + t + " is refused at the button's offset (before: LAST at the checkbox block's, past the passage)");
+    }
+  };
+  // X1: an unwrapped form's checkbox inside the run
+  const X1 = J(INTRO, "<button>", "<button>probe xray</button>", NOV, '<form><input type="checkbox"></form>', LAST, ...TAIL);
+  check("a form's checkbox inside the run", X1, domOf(P(INTRO) + "<p></p>probe xray<p></p>\n" + P(NOV) + '<input type="checkbox">\n' + P(LAST) + TAIL_DOM), ['P:""', 'P:""', `P:"${NOV}"`, 'INPUT:""', `P:"${LAST}"`]);
+  // X2: the checkbox as the opener's own kid (test 11's RK shape, with no closer)
+  const X2 = J(INTRO, '<button>\n<input type="checkbox">', "<button>probe xray</button>", NOV, LAST, ...TAIL);
+  check("the opener's kid", X2, domOf(P(INTRO) + '<input type="checkbox"><p></p>probe xray<p></p>\n' + P(NOV) + P(LAST) + TAIL_DOM), ['INPUT:""', 'P:""', 'P:""', `P:"${NOV}"`, `P:"${LAST}"`]);
+  // a control: a `</center>` closer before the tail resumes the run at the closer, as before
+  const X1b = J(INTRO, "<button>", "<button>probe xray</button>", NOV, '<form><input type="checkbox"></form>', LAST, "</center>", ...TAIL);
+  check("a closer before the tail (a control)", X1b, domOf(P(INTRO) + "<p></p>probe xray<p></p>\n" + P(NOV) + '<input type="checkbox">\n' + P(LAST) + TAIL_DOM), ['P:""', 'P:""', `P:"${NOV}"`, 'INPUT:""', `P:"${LAST}"`]);
+});
+
+test("recorded, not fixed, and pinned so a change shows: two blocks of closing tags with text in a row after a `<button>` opener's swallowed run (`</center> one text`, `</div> two text`) refuse the tail to the document's end on every Slice 5 tree, where main maps it: the browser appends consecutive character tokens to ONE Text node, so the two blocks' texts stand in one top-level text node, neither block's candidate reads its own text at the candidate (scanTake through pastText wants the node run's text EQUAL to the block's), no later html block resumes, and the tail paragraphs A and AFTER are refused as an HTML block at the button's offset, the button's block owning them (the review's closing pass 3; the fix shape, a closer-with-text block reading a text node whose text STARTS with its own when the next block's text follows, or the read split by prefix, is routed to Slice 8); one such block alone resumes the run (test 15)", () => {
+  const NOV = "November tango sierra.", LAST = "Last kilo lima.", A = "Alpha text para.", AFTER = "After all done.", INTRO = "Intro alpha bravo charlie.";
+  const J = (...b: string[]): string => b.join("\n\n") + "\n";
+  const P = (t: string): string => `<p>${t}</p>\n`;
+  const X8 = J(INTRO, "<button>", "<button>probe xray</button>", NOV, LAST, "</center> one text", "</div> two text", A, AFTER);
+  // the DOM: the stray end tags dropped, the two texts one node
+  const box = domOf(P(INTRO) + "<p></p>probe xray<p></p>\n" + P(NOV) + P(LAST) + " one text\n\n two text\n\n" + P(A) + P(AFTER));
+  assert.equal(box.childNodes.filter((n) => n.nodeType === 3 && (n as FakeText).data.includes("two text")).length, 1, "the two texts stand in one text node");
+  mapsWhole(box, X8, INTRO);
+  for (const t of [A, AFTER, NOV, LAST]) {
+    const r = bad(mapText(box, X8, t), "X8: " + t);
+    assert.match(r.reason, /an HTML block/, "recorded: the tail after two closer-with-text blocks is swallowed (main maps A and AFTER; routed to Slice 8)");
+    assert.equal(r.blockStartOffset, at(X8, "<button>"), "X8: at the button's offset");
+  }
+  assert.deepEqual(elems(box, X8, blockAt(X8, "<button>")), ['P:""', 'P:""', `P:"${NOV}"`, `P:"${LAST}"`, `P:"${A}"`, `P:"${AFTER}"`], "recorded: the button's block owns the run and the tail");
 });

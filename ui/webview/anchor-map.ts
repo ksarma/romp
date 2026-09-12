@@ -2048,8 +2048,12 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  last copy's offsets and a comment on the last copy painted on the first, where round 3's swallow to the end had refused
    *  the selection and painted the right copy through the fallback); content.length and blocks.length when neither is found. The
    *  next html block's element is the first node from k of its first tag from which the blocks AFTER it line up through to the
-   *  content's end, or to an html block's own element once two blocks with text unique in the document have confirmed the run (the
-   *  closing pass, then its pass 2; the tag alone had confirmed it, then a count two repeated paragraphs met), past the nodes its
+   *  content's end, or to an html block's own element once two blocks with text unique among the blocks after b, the ones whose
+   *  nodes can be candidates, have confirmed the run (the closing pass, then its pass 2, then its pass 3; the tag alone had
+   *  confirmed it, then a count two repeated paragraphs met, then a set built once over the whole document, so a copy BEFORE the
+   *  swallower, whose node stands before k and is never a candidate, withheld the confirmation, and with a tail that did not line
+   *  up to the end the resume fell to the first node of the tag, a swallowed paragraph's `<p>`, and the tail's paragraphs before
+   *  the html block were refused as an HTML block where f4d803b56 had mapped them: `repeatedFrom`, ToEnd.repeated), past the nodes its
    *  own scan would take (scanTake, runFits with `toEnd`, from the candidate), when
    *  the block leaves no tag open (a wrapper's nested blocks pair against its spliced children, which the run check cannot see:
    *  for such a block, and when no candidate lines up, the first node of the tag stands, as before); the review's round 6: the
@@ -2063,11 +2067,19 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  a tail with one such block lines up since the review's round 7 */
   const nextAnchor = (b: number, k: number): { at: number; block: number } => {
     const named = new Set<string>();   // ToEnd.named: the element names the swallower's and the passed-over html blocks' raws put among the nodes from k
+    const repeated = repeatedFrom(b + 1);   // ToEnd.repeated: the texts repeated among the blocks after the swallower, the ones whose nodes can be candidates (the closing pass 3)
     for (let x = b + 1; x < blocks.length; x++) {
       for (const tt of blocks[x - 1].tags || []) { named.add(tt.tag); for (const kd of tt.kids || []) named.add(kd.name); }   // the block before x: the swallower, or one passed over
       const nb = blocks[x];
       if (!nb.isHtml || nb.nested) continue;
-      const bounds = (i: number): ToEnd => ({ from: i, region: k, named, taken: new Set() });
+      /** the ToEnd record for the candidate at i whose own nodes reach `past` (scanTake): `taken` starts with those nodes, the
+       *  resuming block's own, so a later same-tag html block whose element is nowhere forward does not fail the right candidate
+       *  at that element (the closing pass 3: with a kept `<input type="checkbox">` block as the resume and a removed
+       *  `<input type="text">` block after it in the tail, the removed input's behind scan met the candidate's own INPUT at `from`,
+       *  every candidate failed and `hit` took the first INPUT from k, an unwrapped `<form>`'s or the opener's kid inside the
+       *  swallowed run, so the checkbox block owned that input, the swallowed paragraph after it and its own input, and the
+       *  paragraph was refused at the checkbox block's offset, past the passage, its Raw offer landing there, not on the swallower) */
+      const bounds = (i: number, past: number): ToEnd => { const taken = new Set<number>(); for (let x = i; x < past; x++) taken.add(x); return { from: i, region: k, named, taken, repeated }; };
       const first = firstTag(nb);
       if (!first) {
         // a block of closing tags alone (blank), or of closing tags and the text the raw puts after one of them (`</center> trailing
@@ -2076,7 +2088,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         // keyed on `blank`, so a closer block with text after it was skipped, no later block resumed and the tail was swallowed to
         // the document's end where main mapped it; a comment block, or text with no stray tag, is passed over as before)
         if (nb.tags && nb.tags.some((tt) => tt.stray) && x + 1 < blocks.length) {
-          for (let i = k; i < content.length; i++) { const past = scanTake(nb, i); if ((nb.blank || past > i) && runFits(x + 1, past, bounds(i))) return { at: i, block: x }; }
+          for (let i = k; i < content.length; i++) { const past = scanTake(nb, i); if ((nb.blank || past > i) && runFits(x + 1, past, bounds(i, past))) return { at: i, block: x }; }
         }
         continue;
       }
@@ -2085,7 +2097,8 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         if (!tagIs(content[i], first.tag) || (first.empty && !emptyP(content[i]))) continue;
         if (wraps(nb)) return { at: i, block: x };
         if (hit < 0) hit = i;
-        if (runFits(x + 1, scanTake(nb, i), bounds(i))) return { at: i, block: x };   // the run's own nodes begin at the candidate: its element among them
+        const past = scanTake(nb, i);
+        if (runFits(x + 1, past, bounds(i, past))) return { at: i, block: x };   // the run's own nodes begin at the candidate: its element among them
       }
       if (hit >= 0) return { at: hit, block: x };
     }
@@ -2114,13 +2127,20 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   /** what a run to the content's end (runFits with `toEnd`) scans behind k by: `from`, the candidate's index, where the run's own
    *  nodes begin; `region`, the resume index (nextAnchor's k), where the swallowed run's nodes begin; `named`, the element names the
    *  swallower's and the passed-over html blocks' raws put among the swallowed nodes (their tags and kids: an opener's own checkbox
-   *  `<input>`, an unwrapped `<form>`'s); `taken`, the indices the scans of the run's own html blocks consumed (scanTake) */
-  type ToEnd = { from: number; region: number; named: Set<string>; taken: Set<number> };
-  /** the texts of the mapped blocks with text that more than one such block carries (a paragraph repeated in the document): such a
-   *  block fits the wrong copy's node as well as its own, so in a run to the end it confirms nothing at an html block's element
-   *  (runFits, `unique`; the closing pass 2) */
-  const repeated = new Set<string>();
-  { const seen = new Set<string>(); for (const blk of blocks) if (!blk.isHtml && blk.refused === null && blk.chars.length > 0) { if (seen.has(blk.chars)) repeated.add(blk.chars); else seen.add(blk.chars); } }
+   *  `<input>`, an unwrapped `<form>`'s); `taken`, the indices the scans of the run's own html blocks consumed (scanTake), the
+   *  candidate's own among them from the start (nextAnchor's bounds); `repeated`, the texts more than one of the blocks after the
+   *  swallower carries (repeatedFrom) */
+  type ToEnd = { from: number; region: number; named: Set<string>; taken: Set<number>; repeated: Set<string> };
+  /** the texts of the mapped blocks with text from block b on that more than one such block carries (a paragraph repeated among
+   *  the blocks whose nodes can be candidates): such a block fits the wrong copy's node as well as its own, so in a run to the end
+   *  it confirms nothing at an html block's element (runFits, `unique`; the closing pass 2). Built per nextAnchor call over the
+   *  blocks after the swallower, not once over the document (the closing pass 3): a copy before the swallower has its node before
+   *  the resume index, never a candidate, so it can be confused with nothing, and counting it withheld the confirmation */
+  const repeatedFrom = (b: number): Set<string> => {
+    const repeated = new Set<string>(), seen = new Set<string>();
+    for (let y = b; y < blocks.length; y++) { const blk = blocks[y]; if (!blk.isHtml && blk.refused === null && blk.chars.length > 0) { if (seen.has(blk.chars)) repeated.add(blk.chars); else seen.add(blk.chars); } }
+    return repeated;
+  };
   /** whether the blocks from b line up with the content from k: by text and tag for a mapped block, by tag for a refused one, up to
    *  the second mapped block with text (two confirm the run) or the next html block's own element (whose node count that block's
    *  scan decides); with `toEnd`, through every block and to the content's end instead, for the resume after a block of closing
@@ -2135,8 +2155,9 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  first or second in the tail does not end the run either (the review's round 7: main mapped the other three where the swallow
    *  refused all four; the same lookahead confirms nextAnchor's candidate after an html block when the tail's first block is such a
    *  paragraph, where the first node of the tag was taken and owned a swallowed paragraph's `<p>`). In a run to the end an html
-   *  block's element at k confirms nothing by itself until two blocks whose text is UNIQUE among the document's blocks with text
-   *  (`repeated`) have confirmed the run: the run goes on past the nodes its scan takes, the text after them included (scanTake,
+   *  block's element at k confirms nothing by itself until two blocks whose text is UNIQUE among the blocks after the swallower,
+   *  the ones whose nodes can be candidates (`toEnd.repeated`, repeatedFrom), have confirmed the run: the run goes on past the
+   *  nodes its scan takes, the text after them included (scanTake,
    *  TopTag.after), and the blocks after must line up too, unless the block leaves a tag open, whose nested blocks pair against
    *  spliced children the run cannot see (the review's round 8: the tag match had confirmed the lookahead's run one node early;
    *  its closing pass: outside the lookahead the tag still confirmed the run after ONE text confirmation, so with a paragraph
@@ -2148,11 +2169,18 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  the first rendered copies passed on the second copies' blocks and the tag, and a selection in either first copy mapped to
    *  the second copy's offsets, where main refused every copy; a repeated paragraph fits the wrong copy's node as well as its own,
    *  so it confirms nothing at a tag, and the candidate at the second copies, from which the tail lines up through to the end, is
-   *  the one taken now; where no candidate lines up the mapping refuses, as main does). And in a run to the end an html block
+   *  the one taken now; where no candidate lines up the mapping refuses, as main does; its closing pass 3: the set had been built
+   *  once over the whole document, so a copy BEFORE the swallower, [F, INTRO, a `<button>` opener, ..., `</details>`, F, TANGO, an
+   *  html `<p>`, A, a removed `<input type="text">`, C, a kept checkbox, B], withheld the confirmation at the html block, the
+   *  removed input then failed every candidate at the kept checkbox forward of it, the resume fell to the first `<p>` from k, a
+   *  swallowed paragraph's, and F, TANGO and A were refused as an HTML block where f4d803b56 mapped them; the copy's node stands
+   *  before k and is never a candidate, so the set is the blocks' after the swallower now). And in a run to the end an html block
    *  whose element stands BEHIND k is a misaligned run, not a dropped element (round 8): among the run's own nodes from `from`
    *  (the candidate's index) unless a scan inside the run took it for its own block (`taken`: a kept `<input type="checkbox">`
    *  block in the tail before a removed `<input type="text">` block, the sanitizer's one conditional drop; the closing pass 2: the
-   *  taken checkbox failed the run at the removed input and the tail was swallowed where 99e7e2d0c and main mapped it), and among
+   *  taken checkbox failed the run at the removed input and the tail was swallowed where 99e7e2d0c and main mapped it; the
+   *  candidate's own nodes are in the set from the start, the closing pass 3: the resuming checkbox block's own INPUT at `from`
+   *  failed the right candidate at a removed input after it, and `hit` took an earlier INPUT inside the swallowed run), and among
    *  the swallowed nodes before them, from `region` (the resume index), unless the swallower's or a swallowed html block's raw
    *  names the element's tag among its tags or their kids (`named`: an opener's own checkbox kid, an unwrapped `<form>`'s), since
    *  the nodes there are otherwise the swallowed paragraphs' (the closing pass had bounded the scan at `from`, so a candidate past
@@ -2163,7 +2191,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  the swallow, or as the opener's own kid inside it). */
   const runFits = (b: number, k: number, toEnd: ToEnd | null = null, spent = false): boolean => {
     let confirmed = 0;   // the mapped blocks with text that fit so far
-    let unique = 0;      // those among them whose text no other block carries (repeated): the ones that confirm the run at an html block's element
+    let unique = 0;      // those among them whose text no other block after the swallower carries (toEnd.repeated): the ones that confirm the run at an html block's element
     for (; b < blocks.length; b++) {
       const blk = blocks[b];
       if (blk.isHtml) {
@@ -2228,7 +2256,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       k = pastMinted(b, k + 1);   // the empty `<p>` the parser minted after a block closing a wrapper inline is no block's node
       if (blk.refused === null && blk.chars.length > 0) {
         confirmed++;
-        if (!repeated.has(blk.chars)) unique++;
+        if (!toEnd || !toEnd.repeated.has(blk.chars)) unique++;   // the count is read in a run to the end alone
         if (confirmed === 2 && !toEnd) return true;   // two mapped blocks with text confirm the run
       }
     }
