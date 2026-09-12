@@ -437,3 +437,90 @@ test("the run check through to the content's end reads ONE block that does not f
   mapsWhole(boxV, V1, NOVP, 1);
   assert.deepEqual(elems(boxV, V1, blockAt(V1, "<p>")), [`P:"${FINAL3}"`]);
 });
+
+// ── the Slice 5 review, round 8 (each case red over a git archive of 99e7e2d0c's module unless its comment says it is a control) ──
+
+test("a wrapper whose nested blocks are [P1, a paragraph the sanitizer shortened, P1 again] with nothing after (a README ending in a centred footer): each copy maps to its own offsets, the wrapper's block owns the wrapper alone (with its summary) and the shortened paragraph is refused as a mismatch with its own `<p>`, for a `<div>` open to the end, a `<div align=\"center\">` closed after the copy, a `<details><summary>`, a `<div>` closed right after the copy and a `<span/>` (runFits: a run whose content runs out while a block still needs a node is no run, main's rule; the review's round 8, HIGH: since 552f2bc20 one confirmed block had passed it, so the candidate end at the FIRST copy failed at the shortened paragraph and the one at the LAST copy passed, the wrapper's block took the first copy and the shortened paragraph, the first copy's block paired with the last copy, a selection in the last copy mapped to the first copy's offsets, so a comment made there was stored on the wrong passage, and the first copy was refused as an HTML block; main refused both copies, and 78c0806ce both under the `<span/>`, which round 7 opened); a paragraph after the copy, and no shortened paragraph between the copies, map as before (controls)", () => {
+  const HT = "Hotel tango place note probe.", W = "Weird <style>x{}</style> line.", P1 = "Intro line here.";
+  const J = (...b: string[]): string => b.join("\n\n") + "\n";
+  const tags = (box: FakeElement, src: string, b: number): string[] => elems(box, src, b).map((e) => e.split(":")[0]);
+  const check = (what: string, box: FakeElement, src: string, t: string, own: string[]): void => {
+    for (const k of [0, 1]) mapsWhole(box, src, t, k);
+    assert.deepEqual(tags(box, src, 0), own, what + ": the wrapper's block owns the wrapper alone (before: the first copy and the shortened paragraph too)");
+    assert.equal(owner(box, src, find(box, "P", t)), blockAt(src, t), what + ": the first rendered copy is the first copy's block's");
+    const shortened = sourceBlockSpans(src).findIndex((sp) => src.slice(sp.start, sp.end).startsWith("Weird"));
+    assert.deepEqual(elems(box, src, shortened), ['P:"Weird line."'], what + ": the shortened paragraph is a mismatch with its own <p>");
+    assert.match(bad(mapText(box, src, "Weird"), what).reason, /does not match the file/, what + ": refused as a mismatch, not as an HTML block");
+  };
+  const SHAPES: Array<[string, string, string, string[]]> = [
+    ["a div open to the end", J("<div>", HT, W, HT), HT, ["DIV"]],
+    ["a centred div closed after the copy (the README footer)", J('<div align="center">', P1, "Weird <script>x()</script> line.", P1, "</div>"), P1, ["DIV"]],
+    ["a details with a summary", J("<details><summary>S</summary>", HT, W, HT), HT, ["DETAILS", "SUMMARY"]],
+    ["a div closed right after the copy", J("<div>", HT, W, HT, "</div>"), HT, ["DIV"]],
+  ];
+  for (const [what, src, t, own] of SHAPES) check(what, buildRendered(src), src, t, own);
+  // a `<span/>` block, which round 7 opens as the parser does (the stand-in's parser closes a `/>` at once, so the DOM is written by hand)
+  const SPAN = J("<span/>", HT, W, HT);
+  check("a self-closing span block", domOf(`<span><p>${HT}</p>\n<p>Weird  line.</p>\n<p>${HT}</p>\n</span>`), SPAN, HT, ["SPAN"]);
+  // controls: a paragraph after the copy, and no shortened paragraph between the copies
+  for (const [what, src] of [["a paragraph after the copy", J('<div align="center">', P1, "Weird <script>x()</script> line.", P1, "</div>", "After para here.")], ["no shortened paragraph between the copies", J('<div align="center">', P1, "Plain middle line.", P1, "</div>")]]) {
+    const box = buildRendered(src);
+    for (const k of [0, 1]) mapsWhole(box, src, P1, k);
+    assert.deepEqual(tags(box, src, 0), ["DIV"], what);
+  }
+});
+
+test("the run check's lookahead confirms nothing by an html block's TAG alone: inside it (runFits with `spent`) the block's element at k is read past with the nodes its scan takes and the blocks after must line up too, as nextAnchor's candidate check reads them; so after a `<button>` opener's run and a `</center>` alone a tail [paragraph, html `<p>`, paragraph] resumes at the paragraph's own `<p>`: the paragraph and the one after map to their own offsets, the html block owns its own `<p>`, the button's block the run's four and the run's refusals carry the button's offset, with a README's `<p align=\"center\"><img>` in the html block's place too; and nextAnchor's html `<p>` candidate before such a tail is confirmed at the html block's own `<p>` (the review's round 8, round 7's recheck residual, a regression against 78c0806ce and main: the tag match returned true, so the candidate one node before the paragraph's passed, the paragraph mismatched that node as the tolerated one, its own `<p>` stood for the html block's, the html block owned the run and the paragraph was refused as an HTML block at the html block's offset, the run's refusals carrying that offset too); a `<div>` block in the tail as before (a control)", () => {
+  const NOV = "November tango sierra.", LAST = "Last kilo lima.", A = "Alpha text para.", H = "Html para here.", AFTER = "After all done.";
+  const HEAD = `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\n${NOV}\n\n${LAST}\n\n</center>\n\n`;
+  const HEAD_DOM = `<p>Intro alpha bravo charlie.</p>\n<p></p>probe xray<p></p>\n<p>${NOV}</p>\n<p>${LAST}</p>\n`;
+  const P = (t: string): string => `<p>${t}</p>\n`;
+  const IMGP = '<p align="center"><img src="b.png" alt="badge"></p>';
+  const TAILS: Array<[string, string, string, string, string[]]> = [
+    ["an html <p> block in the tail", `${A}\n\n<p>${H}</p>\n\n${AFTER}\n`, P(A) + P(H) + P(AFTER), "<p>Html", [`P:"${H}"`]],
+    ["a README's centred picture <p> in the tail", `${A}\n\n${IMGP}\n\n${AFTER}\n`, P(A) + IMGP + "\n" + P(AFTER), "<p align", ['P:""']],
+    ["a <div> block in the tail (a control)", `${A}\n\n<div>${H}</div>\n\n${AFTER}\n`, P(A) + `<div>${H}</div>\n` + P(AFTER), "<div>", [`DIV:"${H}"`]],
+  ];
+  for (const [what, tail, tailDom, head, own] of TAILS) {
+    const src = HEAD + tail;
+    const box = domOf(HEAD_DOM + tailDom);
+    for (const t of [A, AFTER]) mapsWhole(box, src, t);
+    assert.deepEqual(elems(box, src, blockAt(src, head)), own, what + ": the html block owns its own element (before: the run's minted <p>, the run's two paragraphs, the paragraph's <p> and its own)");
+    assert.deepEqual(elems(box, src, blockAt(src, A)), [`P:"${A}"`], what + ": the paragraph's block owns its own <p>");
+    assert.deepEqual(elems(box, src, blockAt(src, "<button>")), ['P:""', 'P:""', `P:"${NOV}"`, `P:"${LAST}"`], what + ": the button's block owns the run's four");
+    for (const t of [NOV, LAST]) assert.equal(bad(mapText(box, src, t), t).blockStartOffset, at(src, "<button>"), what + ": " + t + " is refused at the button's offset (before: at the html block's, past the passage)");
+  }
+  // nextAnchor's html `<p>` candidate before such a tail (round 6's candidate check, the lookahead recursing into the html block after the shortened paragraph)
+  const MD = "Md para words.", OTHER = "Other html words.", FINAL3 = "Final para three.", NOVP = "Nov para one.";
+  const R2 = `<button>\n\nAlpha <button>x</button>\n\n${NOVP}\n\n<p>${FINAL3}</p>\n\n${MD}\n\n<p>${OTHER}</p>\n\n${AFTER}\n`;
+  const box2 = domOf(`<p>Alpha </p>x<p></p>\n<p>${NOVP}</p>\n<p>${FINAL3}</p>\n<p>${MD}</p>\n<p>${OTHER}</p>\n<p>${AFTER}</p>\n`);
+  for (const t of [MD, AFTER]) mapsWhole(box2, R2, t);
+  assert.deepEqual(elems(box2, R2, blockAt(R2, `<p>${FINAL3}`)), [`P:"${FINAL3}"`], "the html block owns its own <p> (before: Alpha's, the minted one, Nov's and its own)");
+  assert.deepEqual(elems(box2, R2, blockAt(R2, `<p>${OTHER}`)), [`P:"${OTHER}"`]);
+  assert.deepEqual(elems(box2, R2, blockAt(R2, "<button>")), ['P:"Alpha"', 'P:""', `P:"${NOVP}"`], "the button's block owns the run");
+  assert.equal(bad(mapText(box2, R2, NOVP), NOVP).blockStartOffset, 0, "the run's refusal carries the button's offset (before: the html block's)");
+});
+
+test("in a run to the content's end (runFits with toEnd) an html block whose element stands BEHIND k is a misaligned run, not a dropped element: after a swallowed run, two raw `<table>` blocks with a foster-parented `<br>` between their elements, then a paragraph the sanitizer shortened and a last paragraph: the first table's block owns its own table and the `<br>`, the second its own table, and the last paragraph maps to its own offsets (the review's round 8, a regression against 78c0806ce: the second table's own element passed as the first table's candidate, from which the second table was read past as an element nowhere forward of k, the shortened paragraph was the lookahead's tolerated mismatch and the last paragraph lined up, so the first table's block took the second's element, the second's block owned the two paragraphs and the last paragraph was refused as an HTML block at the second table's offset); the paragraphs before the tables stay the leading stray `</p>` block's, for which the parser mints nothing before the body opens, on every Slice 5 tree (recorded), and with a `<p>Lead.</p>` block first every paragraph maps (a control)", () => {
+  const ROM = "Romeo foxtrot bravo <iframe>if</iframe> kilo pairing echo.", UNI = "Uniform place sierra <noscript>ns</noscript> mike oscar fence.", QUE = "Quebec place edge mike delta juliet tango note.";
+  const FOLD = "Fold echo edge <template>tp</template> place formula zulu.", TANGO = "Tango delta alpha india yankee romeo pairing place zulu place victor delta.";
+  const T1 = "<table><tr><td>Aa<td>Bb</table>", T2 = "<table><tr><td>Cc</td><br><td>Dd</td></tr></table>";
+  const J = (...b: string[]): string => b.join("\n\n") + "\n";
+  // the DOM as the parser and the sanitizer leave it: no `<p>` minted for the leading `</p>`, the inline iframe, noscript and template
+  // removed with their text, the second table's `<br>` foster-parented before it
+  const DOM = (lead: string): string => `${lead}<p>Romeo foxtrot bravo  kilo pairing echo.</p>\n<p>Uniform place sierra  mike oscar fence.</p>\n<p>${QUE}</p>\n<table><tbody><tr><td>Aa</td><td>Bb</td></tr></tbody></table>\n<br><table><tbody><tr><td>Cc</td><td>Dd</td></tr></tbody></table>\n<p>Fold echo edge  place formula zulu.</p>\n<p>${TANGO}</p>\n`;
+  const QJ = J("</p>", ROM, UNI, QUE, T1, T2, FOLD, TANGO);
+  const box = domOf(DOM(""));
+  mapsWhole(box, QJ, TANGO);
+  mapsWhole(box, QJ, "yankee");
+  assert.deepEqual(elems(box, QJ, blockAt(QJ, T1)), ['TABLE:"AaBb"', 'BR:""'], "the first table's block owns its table and the foster-parented br (before: the second table)");
+  assert.deepEqual(elems(box, QJ, blockAt(QJ, T2)), ['TABLE:"CcDd"'], "the second table's block owns its own table (before: the two paragraphs after it)");
+  assert.deepEqual(elems(box, QJ, blockAt(QJ, TANGO)), ['P:"Tango delta alpha"'], "the last paragraph's block owns its own <p>");
+  assert.match(bad(mapText(box, QJ, "Fold echo"), "the shortened paragraph").reason, /does not match the file/);
+  assert.match(bad(mapText(box, QJ, QUE), "before the tables").reason, /an HTML block/, "recorded: the leading `</p>` block, minting nothing, swallows the paragraphs before the tables on every Slice 5 tree");
+  // a control: with a `<p>Lead.</p>` block first every paragraph maps
+  const QK = J("<p>Lead.</p>", ROM, UNI, QUE, T1, T2, FOLD, TANGO);
+  const boxK = domOf(DOM("<p>Lead.</p>\n"));
+  for (const t of [TANGO, QUE]) mapsWhole(boxK, QK, t);
+  assert.deepEqual(elems(boxK, QK, blockAt(QK, T1)), ['TABLE:"AaBb"', 'BR:""']);
+});

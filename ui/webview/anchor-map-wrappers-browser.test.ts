@@ -285,9 +285,10 @@ test("in a browser, the real viewer and panel: the same passages in the chat mod
 
 // ── the Slice 5 review, round 3: the pairing shapes the round found, over the real viewer ──────────
 const P003 = "Para 003 delta echo.", P004 = "Para 004 foxtrot golf.", A005 = "After 005 hotel india.", A006 = "After 006 juliet kilo.";
-type R3Note = { name: string; src: string; passages: string[]; refused?: string[]; blocks?: Array<[string, string[]]> };
-/** The notes: each passage must map to its own offsets; a `refused` passage must be refused as an HTML block; `blocks` are html blocks
- *  with the tag names of the elements they must own (the regions layer's span reads as IMG with the panel open; these legs keep it closed). */
+type R3Note = { name: string; src: string; passages: string[]; last?: string[]; refused?: string[]; blocks?: Array<[string, string[]]> };
+/** The notes: each passage must map to its own offsets (its first occurrence, from its first rendered copy; a `last` passage its LAST
+ *  occurrence, from its last rendered copy); a `refused` passage must be refused as an HTML block; `blocks` are html blocks with the tag
+ *  names of the elements they must own (the regions layer's span reads as IMG with the panel open; these legs keep it closed). */
 const R3_NOTES: R3Note[] = [
   { name: "an open <p> then <br>, <img> and <span class=w> blocks, which nest in it, and a later top-level <img>", src: `<p>Lead 002 charlie.\n\n<br>\n\n<img src="a.png">\n\n<span class="w">\n\n${P003}\n\n${P004}\n\n<img src="b.png">\n\n${A005}\n\n${A006}\n`, passages: [P003, P004, A005, A006], blocks: [["<p>Lead", ["P"]], ["<br>", []], ["<img src=\"a.png\">", []], ["<span class", []], ["<img src=\"b.png\">", ["IMG"]]] },
   { name: "an open <p> then a markdown table, which nests in it in DOMPurify's quirks-mode document", src: `<p>Lead 002 charlie.\n\n| a | b |\n|---|---|\n| c | d |\n\n${A005}\n\n${A006}\n`, passages: [A005, A006], blocks: [["<p>Lead", ["P"]]] },
@@ -322,21 +323,51 @@ const R3_NOTES: R3Note[] = [
   // paragraphs map to their own offsets and the button's block owns the run's four (before the round the swallow ran to the document's
   // end and every tail paragraph was refused as an HTML block at the button's offset; main mapped the three)
   { name: "a <button> opener's run, a </center> alone, then a tail whose second paragraph the sanitizer shortened", src: `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\nNovember tango sierra.\n\nLast kilo lima.\n\n</center>\n\nNote tango sierra.\n\nWeird <style>x{}</style> line.\n\nFinal para after tail.\n\nAfter all done.\n`, passages: ["Note tango sierra.", "Final para after tail.", "After all done."], refused: ["November tango sierra.", "Last kilo lima."], blocks: [["<button>", ["P", "P", "P", "P"]]] },
+  // the review's round 8, HIGH: a wrapper's nested blocks [P1, a paragraph the sanitizer shortened, P1 again] with nothing after (a README
+  // ending in a centred footer): the run check accepted the candidate end at the LAST copy once one block had confirmed, so the wrapper's
+  // block took the first copy and the shortened paragraph, the first copy's block paired with the last copy, a selection in the last copy
+  // mapped to the first copy's offsets (a comment made there stored on the wrong passage) and the first copy was refused as an HTML block;
+  // main refused both copies. Now each copy maps to its own offsets and the wrapper's block owns the wrapper alone
+  { name: "a centred div closed after a repeated footer line, a shortened paragraph between the copies", src: `Intro para zero.\n\n<div align="center">\n\nIntro line here.\n\nWeird <script>x()</script> line.\n\nIntro line here.\n\n</div>\n`, passages: ["Intro para zero.", "Intro line here."], last: ["Intro line here."], blocks: [["<div align", ["DIV"]]] },
+  { name: "a details open to the document's end with a repeated last paragraph", src: `Intro para zero.\n\n<details><summary>S</summary>\n\nHotel tango place note probe.\n\nWeird <style>x{}</style> line.\n\nHotel tango place note probe.\n`, passages: ["Intro para zero.", "Hotel tango place note probe."], last: ["Hotel tango place note probe."], blocks: [["<details>", ["DETAILS", "SUMMARY"]]] },
+  { name: "a self-closing span block, which opens a wrapper, with a repeated last paragraph", src: `Intro para zero.\n\n<span/>\n\nHotel tango place note probe.\n\nWeird <style>x{}</style> line.\n\nHotel tango place note probe.\n`, passages: ["Intro para zero.", "Hotel tango place note probe."], last: ["Hotel tango place note probe."], blocks: [["<span/>", ["SPAN"]]] },
+  // the review's round 8: the `/>`-opens-a-wrapper face of round 7's leaf rule (topTags: a `/>` on an HTML element is ignored by the parser,
+  // so the element opens and every later block nests in it), pinned over the real parser for the shapes READMEs write: an `<a name="top"/>`
+  // anchor on its own line, a `<div align="center"/>`, a `<span/>` (78c0806ce read them as leaves and refused every paragraph after as an
+  // HTML block; the node stand-in's parser closes a `/>` element at once, so the pin is this leg's)
+  { name: "a self-closing <a name> anchor block (the README shape), which the parser leaves open around every later block", src: `Intro para zero.\n\n<a name="top"/>\n\nAlpha para one.\n\nAfter para two.\n`, passages: ["Intro para zero.", "Alpha para one.", "After para two."], blocks: [["<a name", ["A"]]] },
+  { name: "a self-closing centred div block", src: `Intro para zero.\n\n<div align="center"/>\n\nAlpha para one.\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div align", ["DIV"]]] },
+  { name: "a self-closing span block", src: `Intro para zero.\n\n<span/>\n\nAlpha para one.\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<span/>", ["SPAN"]]] },
+  // the review's round 8: after a `<button>` opener's run and a `</center>` alone, a tail [paragraph, html `<p>`, paragraph]: the run check's
+  // lookahead confirmed the candidate by the html block's TAG alone one node early, so the tail's paragraph mismatched the node before its
+  // own, its `<p>` stood for the html block's, the html block owned the run and the paragraph was refused as an HTML block at the html
+  // block's offset (78c0806ce and main mapped it); the README's `<p align="center"><img>` in the html block's place the same
+  { name: "a <button> opener's run, a </center> alone, then a paragraph, an html <p> block and a paragraph", src: `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\nNovember tango sierra.\n\nLast kilo lima.\n\n</center>\n\nAlpha text para.\n\n<p>Html para here.</p>\n\nAfter all done.\n`, passages: ["Alpha text para.", "After all done."], refused: ["November tango sierra.", "Last kilo lima.", "Html para here."], blocks: [["<button>", ["P", "P", "P", "P"]], ["<p>Html", ["P"]]] },
+  { name: "the same with a README's centred picture <p> in the html block's place", src: `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\nNovember tango sierra.\n\nLast kilo lima.\n\n</center>\n\nAlpha text para.\n\n<p align="center"><img src="b.png" alt="badge"></p>\n\nAfter all done.\n`, passages: ["Alpha text para.", "After all done."], refused: ["November tango sierra.", "Last kilo lima."], blocks: [["<button>", ["P", "P", "P", "P"]], ["<p align", ["P"]]] },
+  // the review's round 8: a stray `</p>` first block (the parser mints nothing before the body opens), two paragraphs the sanitizer
+  // shortened, a paragraph, two raw tables with a foster-parented `<br>` between their elements, a shortened paragraph and a last paragraph:
+  // the second table's own element passed as the first table's candidate (from it the second table was read past as an element nowhere
+  // forward, the shortened paragraph was the lookahead's tolerated mismatch and the last paragraph lined up), so the first table's block
+  // took the second's element and the last paragraph was refused as an HTML block (78c0806ce mapped it); the paragraphs before the tables
+  // stay the `</p>` block's, a residual on every Slice 5 tree (recorded)
+  { name: "two raw tables with a foster-parented br between them after a swallowed run, then a shortened paragraph and a last paragraph", src: `</p>\n\nRomeo foxtrot bravo <iframe>if</iframe> kilo pairing echo.\n\nUniform place sierra <noscript>ns</noscript> mike oscar fence.\n\nQuebec place edge mike delta juliet tango note.\n\n<table><tr><td>Aa<td>Bb</table>\n\n<table><tr><td>Cc</td><br><td>Dd</td></tr></table>\n\nFold echo edge <template>tp</template> place formula zulu.\n\nTango delta alpha india yankee romeo pairing place zulu place victor delta.\n`, passages: ["Tango delta alpha india yankee romeo pairing place zulu place victor delta."], refused: ["Quebec place edge mike delta juliet tango note."], blocks: [["<table><tr><td>Aa", ["TABLE", "BR"]], ["<table><tr><td>Cc", ["TABLE"]]] },
 ];
-type R3Read = { maps: any[]; refusedMaps: any[]; blocks: string[][]; painted: Painted[]; tops: string[] };
+type R3Read = { maps: any[]; lastMaps: any[]; refusedMaps: any[]; blocks: string[][]; painted: Painted[]; tops: string[] };
 /** In the page: each passage mapped through the probe from a Selection-like over the text nodes holding its head and its tail (a paint
- *  may have split it), the named blocks' elements, the comments' marks and cards, and the top-level tags. */
-function readR3(args: { src: string; passages: string[]; refused: string[]; ids: string[]; blocks: string[] }): R3Read {
+ *  may have split it; a `last` passage from its LAST rendered copy), the named blocks' elements, the comments' marks and cards, and the
+ *  top-level tags. */
+function readR3(args: { src: string; passages: string[]; last: string[]; refused: string[]; ids: string[]; blocks: string[] }): R3Read {
   const am = (window as any).__am;
   const md = document.querySelector(".fileview-md") as HTMLElement;
   const texts: Text[] = [];
   const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
   for (let t = w.nextNode(); t; t = w.nextNode()) texts.push(t as Text);
-  const mapP = (p: string) => {
+  const mapP = (p: string, fromEnd = false) => {
     // the text node holding the passage whole, else (a paint split it) the first holding the longest head some node holds, the tail
-    // found from there
+    // found from there; the LAST such node for a passage read from its last rendered copy
     let head = p, si = -1;
-    for (const len of [p.length, 12, 8]) { head = p.slice(0, Math.min(len, p.length)); si = texts.findIndex((t) => t.data.includes(head)); if (si >= 0) break; }
+    const holding = (h: string): number => fromEnd ? texts.map((t) => t.data.includes(h)).lastIndexOf(true) : texts.findIndex((t) => t.data.includes(h));
+    for (const len of [p.length, 12, 8]) { head = p.slice(0, Math.min(len, p.length)); si = holding(head); if (si >= 0) break; }
     const tail = p.slice(-Math.min(8, p.length));
     if (si < 0) return { ok: false, reason: "not in the rendered text: " + p };
     const s = texts[si], sOff = s.data.indexOf(head);
@@ -353,7 +384,7 @@ function readR3(args: { src: string; passages: string[]; refused: string[]; ids:
     const card = document.querySelector('.fileview-aside .fc-card[data-id="' + id + '"]');
     return { marks: marks.length, text: marks.map((m) => m.textContent).join("").replace(/\s+/g, " ").trim(), card: !!card, goto: !!card && !!card.querySelector('[data-act="fcgoto"]') };
   });
-  return { maps: args.passages.map(mapP), refusedMaps: args.refused.map(mapP), blocks, painted, tops: Array.from(md.children).map((k) => k.tagName) };
+  return { maps: args.passages.map((p) => mapP(p)), lastMaps: args.last.map((p) => mapP(p, true)), refusedMaps: args.refused.map((p) => mapP(p)), blocks, painted, tops: Array.from(md.children).map((k) => k.tagName) };
 }
 
 test("in a browser, the real viewer: the pairing shapes the review's round 3 found, each a regression from main or from round 1, map over the real DOM: an open html <p> that <br>, <img> and <span> blocks nest in (and a table, in DOMPurify's quirks-mode document), a stray </p> that closes such a p, a wrapper's own same-tag child before the next html block, a <label>'s ignored inline closer before an html <p></p>, and a <button> opener whose paragraph's own <button> closes it, then a <div> block, or after a dropped <tr><td> note then an html <p></p> block (every passage after the next html block maps, the ones inside its run refused as an HTML block at the note's block, the <p></p> block owning its own element alone), and the review's round 6's centred div holding a <button> around a badge picture before its inner wrapper (the nested paragraph and the one after map, the opener's block owning the outer div, the badge and the inner div)", { timeout: 240000 }, async (t) => {
@@ -362,10 +393,14 @@ test("in a browser, the real viewer: the pairing shapes the review's round 3 fou
     for (const note of R3_NOTES) {
       const { page, errors } = await openViewer(browser, "pane", 900, 800, { docs: { [REPORT]: note.src } });
       await page.addScriptTag({ content: probe });
-      const r: R3Read = await page.evaluate(readR3, { src: note.src, passages: note.passages, refused: note.refused || [], ids: [], blocks: (note.blocks || []).map(([h]) => h) });
+      const r: R3Read = await page.evaluate(readR3, { src: note.src, passages: note.passages, last: note.last || [], refused: note.refused || [], ids: [], blocks: (note.blocks || []).map(([h]) => h) });
       note.passages.forEach((p, i) => {
         assert.equal(r.maps[i].ok, true, note.name + ": " + JSON.stringify(p) + " maps: " + JSON.stringify(r.maps[i]) + " (tops " + JSON.stringify(r.tops) + ")");
         assert.deepEqual(r.maps[i].range, { start: note.src.indexOf(p), end: note.src.indexOf(p) + p.length }, note.name + ": " + JSON.stringify(p) + " to its own offsets");
+      });
+      (note.last || []).forEach((p, i) => {
+        assert.equal(r.lastMaps[i].ok, true, note.name + ": the last rendered copy of " + JSON.stringify(p) + " maps: " + JSON.stringify(r.lastMaps[i]));
+        assert.deepEqual(r.lastMaps[i].range, { start: note.src.lastIndexOf(p), end: note.src.lastIndexOf(p) + p.length }, note.name + ": the last rendered copy of " + JSON.stringify(p) + " to the LAST occurrence's offsets (before: the first copy's)");
       });
       (note.refused || []).forEach((p, i) => { assert.equal(r.refusedMaps[i].ok, false, note.name + ": " + JSON.stringify(p) + " is refused"); assert.match(r.refusedMaps[i].reason, /an HTML block/, note.name + ": " + JSON.stringify(p)); });
       (note.blocks || []).forEach(([head, tags], i) => assert.deepEqual(r.blocks[i], tags, note.name + ": the block " + JSON.stringify(head) + " owns " + JSON.stringify(tags)));
@@ -401,7 +436,7 @@ test("in a browser, the real viewer and panel: a comment on a wrapper's own left
       const last = comments[comments.length - 1].id as string;
       await page.waitForFunction((c: string) => !!document.querySelector('.fileview-body [data-act="fcopen"][data-id="' + c + '"]'), last, { timeout: 10000 });
       await frames(page, 3);
-      const r: R3Read = await page.evaluate(readR3, { src: scene.src, passages: scene.passages, refused: [], ids: comments.map((c) => c.id as string), blocks: [] });
+      const r: R3Read = await page.evaluate(readR3, { src: scene.src, passages: scene.passages, last: [], refused: [], ids: comments.map((c) => c.id as string), blocks: [] });
       scene.quotes.forEach(({ q, text }, i) => {
         assert.ok(r.painted[i].marks >= 1, scene.name + ": the comment on " + JSON.stringify(q) + " paints (before: 0 marks): " + JSON.stringify(r.painted[i]));
         assert.equal(r.painted[i].text.replace(/\s+/g, ""), text.replace(/\s+/g, ""), scene.name + ": the marks read the passage");

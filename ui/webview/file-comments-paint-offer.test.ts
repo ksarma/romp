@@ -38,6 +38,18 @@
 //     remnant by the seam's own test of a selection its paint left standing (the same text between two ends in the body, read against
 //     the record as the last paint left it; not the ends by node identity, which the wrap's split of the text node renames) and offers
 //     the float again beside the selection's box now, re-recording the place the scroll's test measures from; a remnant goes as (6) has it.
+// (8) A float HIDDEN with its place record kept (the review's round 8): the picture overlay's press hid the float by its hidden bit alone
+//     and left floatAt standing, which (7)'s re-seat read as a showing float, so a peer's mark landing through the poll on the
+//     still-selected line while the person pressed on a picture, or after a click on a region's rectangle had opened its card, showed
+//     the passage's Comment button again beside a selection the press had dismissed. Now the press goes through hideFloat (its record
+//     cleared with it; file-comments-regions.test.ts pins the line) and afterPaint guards on the hidden bit, as hideFloatOnScroll does:
+//     hidden, it stays hidden, whatever hid it.
+// (9) A selection the writes moved WHOLE past the BODY'S BOX (the same round): the body clips what it scrolls and showFloat clamps to the
+//     window alone, so a paint that pushed a last-visible-line selection below the body's bottom edge (Show changes inline toggled from
+//     the keyboard, the struck label above the line growing the text) seated the button 30 px above a passage nobody can see, over the
+//     body's last visible line and the other text it holds, and a click on it commented on text out of view. Now the re-seat takes a box
+//     at least partly inside the body's (inBodyBox) and hides otherwise, as (6) has a remnant that moved; the stand-in's body wears a box
+//     for that read (BODY_BOX), every offer's rect inside it.
 // Driven over the behavior suite's DOM stand-in with the selection faked per case (window.getSelection is what the panel reads and
 // what afterPaint records), the document's listeners run as the browser runs them, and the seam's paint fired through its hook.
 // file-comments-paint-offer-browser.test.ts runs (1) over the real viewer in Chromium, where the paint moves the selection itself.
@@ -287,7 +299,7 @@ function rows(code: El, src: string): void {
 }
 function world(): World {
   const main = new El("div"); main.className = "fileview-main";
-  const body = new El("div"); body.className = "fileview-body";
+  const body = new El("div"); body.className = "fileview-body"; body.rect = BODY_BOX;   // the pane's clip, read by afterPaint's re-seat (9)
   const actions = new El("div"); actions.className = "fileview-actions"; actions.appendChild(new Txt("Rendered · Raw"));   // a node OUTSIDE the body
   const wrap = new El("div"); wrap.className = "fileview-code";
   const pre = new El("pre"); pre.className = "fileview-pre fileview-wrap";
@@ -349,6 +361,10 @@ const RECT_NONE: Rect = { left: 0, top: 0, right: 0, bottom: 0, width: 0, height
 const RECT_BELOW: Rect = { left: 100, top: 274, right: 245, bottom: 314, width: 145, height: 40 };   // a remnant a line or more below the offer's box: the next paragraph's first half (the review's 500 px measurement: top 74 px down, the right edge 55 px in)
 const RECT_PADDED: Rect = { left: 100, top: 200, right: 304, bottom: 220, width: 204, height: 20 };   // the whole passage 4 px wider to the right: a peer's mark landed on it or inside it, and the mark's 2 px side padding stands inside the selection (the round-7 probes: dRight 4, dTop 0; a mark landing BEFORE the selection on its line moves both edges 4 px)
 const RECT_LINE_DOWN: Rect = { left: 100, top: 220, right: 300, bottom: 240, width: 200, height: 20 };   // the whole passage one line down, its edges otherwise the offer's
+const BODY_BOX: Rect = { left: 0, top: 100, right: 1000, bottom: 600, width: 1000, height: 500 };   // the body's box in the stand-in, the pane's clip (world): every offer's rect above sits inside it; afterPaint's re-seat reads it (the review's round 8)
+const RECT_BELOW_CLIP: Rect = { left: 100, top: 601, right: 300, bottom: 621, width: 200, height: 20 };   // the whole passage moved just past the body's bottom edge, out of view (the round-8 probe at 500 px: a last-visible-line selection at 241.7 to 259.7 pushed to 264.1 to 282.1 under a body bottom of 262.75)
+const RECT_ABOVE_CLIP: Rect = { left: 100, top: 70, right: 300, bottom: 90, width: 200, height: 20 };   // ...and past its top edge
+const RECT_EDGE: Rect = { left: 100, top: 590, right: 300, bottom: 610, width: 200, height: 20 };   // the whole passage straddling the body's bottom edge: partly in view
 /** A selection as the panel reads it: the passage's text node from `at` for `length` characters, its rect `rect` (a fake
  *  selection's; the stand-in lays nothing out). */
 function selectionOn(root: El, passage: string, length: number, rect: Rect): any {
@@ -659,6 +675,86 @@ test("a paint whose writes move the selection WHOLE, not a character cut (a peer
   externalFilterPick();
   assert.equal(String(live), QUOTE.slice(0, 7), "the paint moved the selection whole");
   assert.equal(float.hidden, true, "hidden it stays: a float the scroll hid is offered again by the person's next change alone");
+  live.length = 4; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");
+});
+
+test("a float HIDDEN with its place record kept (what the picture overlay's press did until this round: the hidden bit set, floatAt standing), and a paint whose writes move the still-selected passage whole: the float stays hidden (before: shown again beside the moved passage, a selection the press had dismissed, while the person drew a region or a rectangle's card stood open); the paint's own event re-offers nothing; a scroll leaves it hidden; the person's next change offers", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
+  // the press's hide as the overlay made it until this round: the hidden bit alone, the offer's place record kept (the panel's own
+  // hideFloat clears it, and the press goes through hideFloat now; this is the shape afterPaint must read as a hidden float all the same)
+  float.hidden = true;
+  // a paint with no gesture (a settings pick from another pane: paintAll with no hideFloat, the poll's shape) moves the still-selected
+  // passage whole, the mark's padding: the fake is told, and the browser's selectionchange for the split follows the paint
+  live.rect = RECT_PADDED;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE, "the paint left the passage whole");
+  assert.equal(float.hidden, true, "hidden it stays: afterPaint re-seats a SHOWING float alone (before: shown again beside the moved passage, the record read as a showing float)");
+  assert.deepEqual([float.style.left, float.style.top], [placeOf(RECT_A).left, placeOf(RECT_A).top], "...and keeps the place it was hidden at, not showFloat's for the moved box");
+  documentEvent("selectionchange");   // the event the split fires, a task later
+  assert.equal(float.hidden, true, "the paint's own selectionchange is no offer: hidden it stays");
+  // a scroll that moves the passage leaves a hidden float hidden (hideFloatOnScroll's own guard)
+  live.rect = RECT_LINE_DOWN; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "a scroll leaves it hidden");
+  // a second paint that moves the passage whole again: still no re-seat
+  live.rect = { ...RECT_LINE_DOWN, right: RECT_LINE_DOWN.right + 4 };
+  externalFilterPick();
+  assert.equal(float.hidden, true, "a second whole move re-seats nothing");
+  // the person's next change offers, beside the selection as it stands
+  live.length = 9; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next change offers the float");
+});
+
+test("a paint whose writes move the selection WHOLE past the BODY'S BOX (the Show changes inline toggle pressed from the keyboard: the struck label above a last-visible-line selection pushes it below the body's bottom edge, the text the same): the float goes with the paint (before: seated 30 px above a passage nobody can see, over the body's last visible line and the other text it holds, and a click on it commented on text out of view); the paint's own event re-offers nothing; the next change offers; the same past the body's top edge; a box straddling the edge, partly in view, re-seats; hidden, it stays hidden", async (t) => {
+  const w = world(); t.after(() => w.close()); t.after(() => { selection = null; });
+  await openPanel(w);
+  const box = w.body.getBoundingClientRect();
+  assert.deepEqual([box.top, box.bottom], [BODY_BOX.top, BODY_BOX.bottom], "the stand-in's body wears the pane's box");
+  const live = liveSelectionOn(w.body, QUOTE, QUOTE.length, RECT_A);
+  const float = dragOffer(w, live);
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) });
+  assert.ok(RECT_A.top >= box.top && RECT_A.bottom <= box.bottom, "the offer's passage sits inside the body's box");
+  // a paint with no gesture (a settings pick from another pane: paintAll with no hideFloat, the toggle's own shape, saveSettings then
+  // paintAll) grows the text above the selected line and pushes the still-selected passage whole below the body's bottom edge: the
+  // fake is told (in the body, not collapsed, the same text, a box out of the body's), and the browser's selectionchange, where the
+  // paint fires one, follows
+  live.rect = RECT_BELOW_CLIP;
+  externalFilterPick();
+  assert.equal(String(live), QUOTE, "the paint left the passage whole");
+  assert.deepEqual([live.isCollapsed, w.body.contains(live.anchorNode)], [false, true], "...in the body, not collapsed");
+  assert.ok(live.rect.top >= box.bottom, "...below the body's bottom edge, out of view");
+  assert.equal(float.hidden, true, "the float goes with the paint: a passage moved out of the body's box is no re-seat (before: shown at top " + placeOf(RECT_BELOW_CLIP).top + ", 30 px above a passage nobody can see, over the body's last visible line)");
+  documentEvent("selectionchange");
+  assert.equal(float.hidden, true, "the paint's own selectionchange is no offer: hidden it stays");
+  // the person's next change offers (the passage scrolled back into view, its box inside the body's)
+  live.length = 9; live.rect = RECT_B;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the keyboard's next change offers the float");
+  // past the body's top edge: the same, where the window clamp would have seated the button over the pane's header
+  live.rect = RECT_ABOVE_CLIP;
+  externalFilterPick();
+  assert.ok(live.rect.bottom <= box.top, "the paint moved the passage above the body's top edge");
+  assert.equal(float.hidden, true, "above the body's top edge: the float goes too");
+  live.length = 12; live.rect = RECT_A;
+  documentEvent("selectionchange");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_A) }, "the next change offers");
+  // a whole move to a box straddling the bottom edge, partly in view: re-seated beside it, as (7) has a whole move
+  live.rect = RECT_EDGE;
+  externalFilterPick();
+  assert.ok(RECT_EDGE.top < box.bottom && RECT_EDGE.bottom > box.bottom, "the box straddles the body's bottom edge");
+  assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_EDGE) }, "partly in view: the float follows the passage to its box now");
+  // hidden by a scroll that moved the passage, a paint that moves it whole out of the box leaves it hidden, and the next change offers
+  live.rect = RECT_MOVED; dispatch(w.body, new Ev("scroll"));
+  assert.equal(float.hidden, true, "hidden by the scroll");
+  live.rect = RECT_BELOW_CLIP;
+  externalFilterPick();
+  assert.equal(float.hidden, true, "hidden it stays");
   live.length = 4; live.rect = RECT_B;
   documentEvent("selectionchange");
   assert.deepEqual(shown(float), { hidden: false, ...placeOf(RECT_B) }, "the next selection offers");

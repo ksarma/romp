@@ -285,3 +285,39 @@ test("every HTML integration point of a foreign root is read as the `<foreignObj
   assert.equal(shown("Intro <svg><title>icon</svg> beside end\n"), "Intro icon beside end", "round 5's pin stands");
   assert.equal(shown("Intro <svg><foreignObject><b>x</svg> y\n"), "Intro", "round 6's pin stands");
 });
+
+// ── the Slice 5 review, round 8 ──────────────────────────────────────────────────────────────────
+
+test("a raw table marked splits into html blocks at a blank line is one table to the parser, so a block continuing it reads the implied end's blank against the parts the earlier block left open (lenientHtml's table frames, seeded from the wrapper chain the blocks before leave open, renderedBlocks): a quote across `<td>b1<td>b2` in the second block reads `b1 b2`, in a third block too, and a `<tbody>` block after a `<thead>` block the same; a `<tr><td>` block with no table open, or after the table's end tag, is the parser's stray and its cells run together, as the DOM shows (the review's round 8, round 7's residual: the frames were the block's own, pushed at a `<table>` start tag met in that block alone, so the second block read `b1b2` against a hay `b1 b2` and a comment across its cells painted nothing, where the first block's cells and a table with `</td>` written painted)", () => {
+  const TB = "Intro.\n\n<table>\n<tr><td>a1<td>a2\n\n<tr><td>b1<td>b2\n</table>\n\npara.\n";
+  assert.equal(shown(TB), "Intro. a1 a2 b1 b2 para.");
+  assert.equal(quote(TB, "b1<td>b2"), "b1 b2", "across the second block's cells");
+  assert.equal(quote(TB, "a1<td>a2"), "a1 a2", "across the first block's cells (round 7's rule stands, a control)");
+  assert.equal(quote(TB, "a2\n\n<tr><td>b1"), "a2 b1", "across the two blocks");
+  const TB3 = "Intro.\n\n<table>\n<tr><td>a1<td>a2\n\n<tr><td>b1<td>b2\n\n<tr><td>c1<td>c2\n</table>\n\npara.\n";
+  assert.equal(shown(TB3), "Intro. a1 a2 b1 b2 c1 c2 para.");
+  assert.equal(quote(TB3, "c1<td>c2"), "c1 c2", "the third block's cells");
+  const HEADS = "<table><thead><tr><th>H1<th>H2\n\n<tbody><tr><td>x1<td>x2\n</table>\n";
+  assert.equal(shown(HEADS), "H1 H2 x1 x2");
+  assert.equal(quote(HEADS, "x1<td>x2"), "x1 x2", "the body's cells in the second block");
+  assert.equal(quote("Intro.\n\n<table>\n<tr><td>a1</td><td>a2</td></tr>\n\n<tr><td>b1</td><td>b2</td></tr>\n</table>\n\npara.\n", "b1</td><td>b2"), "b1 b2", "the end tags written: the end-tag rule's blank alone, once (a control)");
+  // no table open: the parser drops a top-level `<tr>` and `<td>` and their text runs together (topTags reads the block's own
+  // strays; recorded as the top-level `<td>`/`<tr>` class)
+  assert.equal(shown("Intro.\n\n<tr><td>s1<td>s2\n\npara.\n"), "Intro. s1s2 para.", "a stray row: no frame, no blank");
+  assert.equal(shown("Intro.\n\n<table><tr><td>a1<td>a2</table>\n\n<tr><td>b1<td>b2\n\npara.\n"), "Intro. a1 a2 b1b2 para.", "the table closed in the block before: the second block's parts are strays");
+});
+
+test("`<mglyph>` and `<malignmark>` met inside a MathML text integration point (`<mi>`, `<mtext>`) stay foreign content, as the parser's dispatcher keeps them, so they open no HTML element and `</mi>`, `</mtext>` and `</math>` close as usual: `ma9 <math><mi><mglyph/></mi></math> y9` reads `ma9 y9` as the DOM shows, self-closed, as a start tag alone or between text, inline and in an html block; and an `<annotation-xml>`'s encoding is an exact match of the value, so a blank inside the quotes makes it no integration point and the reader reads on past the math as 78c0806ce did (the DOM's `<b>` breaks out of the math there, the recorded class) (the review's round 8, round 7's recheck residuals: the two were sent to openInIntegrationPoint and recorded as HTML elements left open, so the root's end tag was ignored and the block's rest dropped; and `encoding=\"text/html \"` was read as an integration point through a `\\s*` in the pattern)", () => {
+  for (const [what, src] of [["an mglyph self-closed inside an mi", "ma9 <math><mi><mglyph/></mi></math> y9\n"], ["a malignmark start tag inside an mtext", "ma9 <math><mtext><malignmark></mtext></math> y9\n"],
+                             ["a malignmark between text inside an mi", "ma9 <math><mi>x<malignmark>z</mi></math> y9\n"], ["an mglyph with its own end tag (a control)", "ma9 <math><mi><mglyph></mglyph></mi></math> y9\n"]]) {
+    assert.equal(shown(src), "ma9 y9", what);
+    assert.equal(quote(src, "ma9", "y9"), "ma9 y9", what + ": the quote across the passage");
+  }
+  assert.equal(shown("Intro.\n\n<div>ma9 <math><mi><mglyph/></mi></math> y9</div>\n\npara.\n"), "Intro. ma9 y9 para.", "an html block");
+  assert.equal(shown("ma9 <math><annotation-xml encoding=\"text/html\"><mglyph/></math> y9\n"), "ma9", "inside an HTML integration point an mglyph is an HTML element left open (round 7's rule stands, a control)");
+  for (const [what, src] of [["a trailing blank", "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n"], ["a leading blank", "ma8 <math><annotation-xml encoding=\" text/html\"><b>x</math> y8\n"],
+                             ["blanks around the xhtml encoding, single-quoted", "ma8 <math><annotation-xml encoding=' application/xhtml+xml '><b>x</math> y8\n"]]) {
+    assert.equal(shown(src), "ma8 y8", what + ": no integration point, the math closes at its end tag and the reader reads on (the DOM shows `ma8 x y8`, the breakout class, recorded)");
+  }
+  for (const src of ["ma8 <math><annotation-xml encoding=\"text/html\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=\"TEXT/HTML\"><b>x</math> y8\n", "ma8 <math><annotation-xml encoding=text/html><b>x</math> y8\n"]) assert.equal(shown(src), "ma8", "the exact forms read as before (a control): " + JSON.stringify(src));
+});

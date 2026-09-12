@@ -198,6 +198,15 @@ const SHAPES: Shape[] = [
   { name: "an HTML element closed inside an annotation-xml with the html encoding (a control)", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", quotes: [{ from: "y6", shown: "y6" }] },
   { name: "an HTML element left open inside an svg title keeps the svg's end tag ignored", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", shown: "Intro" }] },
   { name: "an HTML element closed inside an svg title is the sanitizer's to remove with its text; the svg closes", src: "Intro <svg><title>t<b>x</b>u</title></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
+  // round 8 (anchor-map-html-rules.test.ts tests 14 and 15, red over a git archive of 99e7e2d0c): a raw table marked splits into two html
+  // blocks at a blank line, one table to the parser, whose second block continues the first's row and cells (the reader's table frames
+  // were the block's own, so the second block's cells read run together and a quote across them painted nothing); and `<mglyph>` and
+  // `<malignmark>` inside a MathML text element, which the parser keeps foreign, so the math closes (the reader recorded them as HTML
+  // elements left open and dropped the block's rest)
+  { name: "a raw table whose rows marked splits into two html blocks at a blank line", whole: "blanks", src: "Intro.\n\n<table>\n<tr><td>a1<td>a2\n\n<tr><td>b1<td>b2\n</table>\n\npara.\n",
+    quotes: [{ from: "b1<td>b2", shown: "b1 b2", cells: ["TD0", "TD1"] }, { from: "a1<td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
+  { name: "an mglyph self-closed inside an mi: foreign content, so the math closes and the text after it shows", src: "ma9 <math><mi><mglyph/></mi></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
+  { name: "a malignmark start tag inside an mtext", src: "ma9 <math><mtext><malignmark></mtext></math> y9\n", quotes: [{ from: "ma9", to: "y9", shown: "ma9 y9" }] },
 ];
 
 /** The plan's recorded divergence (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. */
@@ -209,6 +218,11 @@ const RECORDED: Divergence[] = [
     why: "the parser's title runs to the document's end and the sanitizer drops it whole; the reader drops the block's rest alone" },
   { name: "a textarea written `/>` in a paragraph shows the block's rest as marked's HTML, and the parser every later block's too", src: "Para se1 <textarea/> after *em* se2.\n\nPara se3.\n", dom: "Para se1 after <em>em</em> se2.</p> <p>Para se3.</p>", reader: "Para se1 after <em>em</em> se2. Para se3.",
     why: "the parser's textarea runs to the document's end, which the DOM then shows as text; the reader reads the block's rest so" },
+  // round 8: an annotation-xml whose encoding value carries a blank is no integration point (an exact match, as the parser compares it), so
+  // the `<b>` inside it breaks out of the math, the recorded breakout class; the reader closes the math at its end tag and reads on (at
+  // 99e7e2d0c it read the annotation as an integration point and dropped the block's rest, `ma8`)
+  { name: "an annotation-xml whose encoding has a trailing blank inside the quotes: no integration point, the b breaks out", src: "ma8 <math><annotation-xml encoding=\"text/html \"><b>x</math> y8\n", dom: "ma8 x y8", reader: "ma8 y8",
+    why: "the parser breaks out of foreign content at the `<b>` and shows its text; the reader drops the math whole and reads on, the recorded class" },
 ];
 
 /** marked with the viewer's configuration, the real md-sanitize.ts and the real anchor-map.ts, bundled for a page: __probe

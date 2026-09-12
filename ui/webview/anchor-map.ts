@@ -1281,8 +1281,10 @@ const isTagNameChar = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A
  *  (no regex): a comment is skipped to its `-->`, a doctype or processing instruction to its `>`, a tag's attributes to the
  *  `>` outside their quotes, and a script's, style's or textarea's content to its own end tag. An element opened at depth 0
  *  is a top-level tag: closed when its end tag comes (the stack pops to it, and every element still open inside it closes with
- *  it, each listed under the one below; a `</form>` removes the form alone, the parser's rule) or, for a void element or a `/>`
- *  in foreign content, at once (a `/>` on an HTML element is ignored by the parser and the element opens). The parser's implied
+ *  it, each listed under the one below) or, for a void element or a `/>` in foreign content, at once (a `/>` on an HTML element
+ *  is ignored by the parser and the element opens). A `</form>` naming a form NESTED inside an open element removes the form
+ *  alone, the parser's rule, and the elements still open inside it stay open one depth up; a top-level form's end tag closes it
+ *  with everything open inside it, like any other top-level tag's (`if (at >= 1 ...)` below). The parser's implied
  *  ends at a start tag are read, because they decide what the block's nodes are (startTagCloses): a `<p>` in button scope
  *  closes when a block-level start tag (CLOSES_P, less `<table>` in the sanitizer's quirks-mode document) follows it, an
  *  `<li>` at the next `<li>`, a `<dt>` or `<dd>` at the next, an `<option>` at the next `<option>` or `<optgroup>`, a heading
@@ -1886,8 +1888,15 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   //    blocks line up again, by text AND element tag for a block the walk mapped (a kept `<div>Go</div>` or a `Go` the
   //    sanitizer hoisted out of a dropped `<form>` carries the next paragraph's text and is not its `<p>`), by element
   //    tag alone for one it refused, up to the second mapped block with text where two exist before the end or the
-  //    next html block (an html `<p>Go</p>` before the paragraph `Go` fits the first and not the second; a note whose
-  //    final paragraph follows a text-alike node keeps the one-block rule). So a wrapper's own child in the raw (a
+  //    next html block (an html `<p>Go</p>` before the paragraph `Go` fits the first and not the second); and a run
+  //    whose content runs out while a block still needs a node is no run, main's rule (the Slice 5 review, round 8,
+  //    HIGH: since 552f2bc20 one confirmed block had passed it, so with a wrapper's nested blocks [P1, a paragraph the
+  //    sanitizer shortened, P1 again] and nothing after, the candidate end at the FIRST copy failed at the shortened
+  //    paragraph and the one at the LAST copy passed, the wrapper's block took the first copy and the shortened
+  //    paragraph, the first copy's block paired with the last copy, a selection in the last copy mapped to the first
+  //    copy's offsets and a comment made there was stored on the wrong passage, where main refused both copies; a
+  //    `<div>`, a `<div align="center">` closed after the copy, a `<details>` and, since round 7 opened them, a `<span/>`
+  //    or a `<div/>`). So a wrapper's own child in the raw (a
   //    summary) goes to the html block through the resync, and where the scan and the DOM disagree (a dropped or
   //    unwrapped element, a hoisted text) the resync decides as it always did.
   const nodeBlock = new Map<DNode, number>();
@@ -1915,6 +1924,8 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     return acc === blk.htext ? kk : k;
   };
   const firstTag = (blk: Block): TopTag | undefined => blk.tags ? blk.tags.find((tt) => tt.depth === 0 && !tt.stray) : undefined;
+  /** whether html block `blk` leaves a tag open, so the blocks after it nest in its element (spliced children the run check cannot see) */
+  const wraps = (blk: Block): boolean => (blk.tags || []).some((tt) => !tt.stray && tt.open);
   /** the index past the nodes at k that are the open tag's own children in the raw (TopTag.kids: a summary, a lead text, a banner's
    *  picture, heading and tagline), read in order while the DOM holds each where the raw puts it: an element by its tag (the regions
    *  layer's span for a picture, tagNameOf), a text run by a text node; a child the sanitizer drops with its text (DROPPED_CONTENT, a
@@ -1989,11 +2000,10 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       }
       const first = firstTag(nb);
       if (!first) continue;
-      const wraps = (nb.tags as TopTag[]).some((tt) => !tt.stray && tt.open);
       let hit = -1;   // the first node of the tag, the answer when no candidate is confirmed by the blocks after
       for (let i = k; i < content.length; i++) {
         if (!tagIs(content[i], first.tag) || (first.empty && !emptyP(content[i]))) continue;
-        if (wraps) return { at: i, block: x };
+        if (wraps(nb)) return { at: i, block: x };
         if (hit < 0) hit = i;
         if (runFits(x + 1, scanTake(nb, i), true)) return { at: i, block: x };
       }
@@ -2031,7 +2041,10 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  is read: with two, any index whose node count matched would pass, round 5's wrong-copy resume), so the shortened paragraph
    *  first or second in the tail does not end the run either (the review's round 7: main mapped the other three where the swallow
    *  refused all four; the same lookahead confirms nextAnchor's candidate after an html block when the tail's first block is such a
-   *  paragraph, where the first node of the tag was taken and owned a swallowed paragraph's `<p>`) */
+   *  paragraph, where the first node of the tag was taken and owned a swallowed paragraph's `<p>`). Inside that lookahead an
+  *  html block's element at k confirms nothing by itself: the run goes on past the nodes its scan takes (the review's round 8: it
+  *  had confirmed by tag alone, one node early), and in any run to the end an html block whose element stands BEHIND k is a
+  *  misaligned run, not a dropped element (round 8 as well). */
   const runFits = (b: number, k: number, toEnd = false, spent = false): boolean => {
     let confirmed = 0;
     for (; b < blocks.length; b++) {
@@ -2049,13 +2062,31 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         const first = firstTag(blk);
         if (blk.blank || blk.nested || !first) continue;
         const isFirst = (x: number): boolean => tagIs(content[x], first.tag) && (!first.empty || emptyP(content[x]));
-        if (k < content.length && isFirst(k)) return true;
+        if (k < content.length && isFirst(k)) {
+          // inside the lookahead (spent) the element at k confirms nothing by itself: the run goes on past the nodes the block's
+          // scan takes, so the blocks after it must line up too, as nextAnchor's candidate check reads them, unless the block
+          // leaves a tag open, whose nested blocks pair against spliced children the run cannot see (the review's round 8: the tag
+          // match returned true here, so after a `</center>` closer a tail [paragraph, html `<p>`, paragraph] confirmed the
+          // candidate at the node BEFORE the paragraph's: the paragraph mismatched it as the tolerated one, its own `<p>` stood for
+          // the html block's, the html block owned the run and the paragraph was refused as an HTML block at the html block's
+          // offset, where 78c0806ce and main mapped it; likewise nextAnchor's html `<p>` candidate before such a tail)
+          if (!spent || wraps(blk)) return true;
+          k = scanTake(blk, k); continue;
+        }
         for (let x = k + 1; x < content.length; x++) if (isFirst(x)) return false;
+        // an element nowhere forward of k is read past, dropped or unwrapped; in a run to the end one BEHIND k means the run is
+        // misaligned, not the element dropped: a dropped or unwrapped element is nowhere in the content at all, and the candidate
+        // such a run confirms may be this block's own element (round 8: two raw `<table>` blocks with a foster-parented `<br>`
+        // between their elements, then a paragraph the sanitizer shortened, then a paragraph; the second table's element passed
+        // as the first table's candidate, from which the second table was read past as nowhere, the shortened paragraph was the
+        // tolerated mismatch and the last paragraph lined up, so the first table's block took the second's element and the last
+        // paragraph was refused as an HTML block, where 78c0806ce kept the first node of the tag)
+        if (toEnd) for (let x = 0; x < k; x++) if (isFirst(x)) return false;
         k = pastHoisted(blk, k);
         continue;
       }
       if (blk.nested) continue;   // its element is inside the open `<p>` before it: no top-level node
-      if (k >= content.length) return confirmed > 0 || (blk.refused !== null && blk.chars.length === 0);
+      if (k >= content.length) return blk.refused !== null && blk.chars.length === 0;   // the content ran out with a block left that needs a node: no run (main's rule; the review's round 8, below)
       if (!fits(blk, content[k])) {
         if (!toEnd) return false;
         if (confirmed < 2) return !spent && runFits(b + 1, pastMinted(b, k + 1), true, true);   // one unconfirmed mismatch, when the rest lines up from the node after it
@@ -2931,10 +2962,12 @@ type ForeignRoot = { name: string; mark: number; ip: string | null; open: { name
 const MATHML_TEXT = new Set(["MI", "MO", "MN", "MS", "MTEXT"]);
 /** Whether the start tag `name`, met in the foreign content of the root `root` (its raw `tag`, for the encoding attribute), opens an
  *  integration point of it (ForeignRoot.ip): svg's foreignObject, title and desc; MathML's text elements, and an annotation-xml
- *  whose encoding is `text/html` or `application/xhtml+xml` (case-insensitive, quoted or bare). */
+ *  whose encoding is `text/html` or `application/xhtml+xml` (case-insensitive, quoted or bare; an exact match of the value, as the
+ *  parser compares it: a blank inside the quotes makes it no integration point, and a `<b>` inside it breaks out of the math, the
+ *  recorded class; the review's round 8: blanks were allowed, so the reader dropped the block's rest where 78c0806ce read on). */
 function integrationPoint(root: string, name: string, tag: string): boolean {
   if (root === "SVG") return name === "FOREIGNOBJECT" || name === "TITLE" || name === "DESC";
-  if (name === "ANNOTATION-XML") return /\sencoding\s*=\s*(?:"\s*(?:text\/html|application\/xhtml\+xml)\s*"|'\s*(?:text\/html|application\/xhtml\+xml)\s*'|(?:text\/html|application\/xhtml\+xml)(?=[\s/>]))/i.test(tag);
+  if (name === "ANNOTATION-XML") return /\sencoding\s*=\s*(?:"(?:text\/html|application\/xhtml\+xml)"|'(?:text\/html|application\/xhtml\+xml)'|(?:text\/html|application\/xhtml\+xml)(?=[\s/>]))/i.test(tag);
   return MATHML_TEXT.has(name);
 }
 /** Whether the innermost root's integration point stands open (ForeignRoot.ip): a start tag met there opens an HTML element. */
@@ -2986,7 +3019,11 @@ function closeInForeign(name: string, roots: ForeignRoot[], drop: string[]): voi
  *  element when the sanitizer removes it with its content (a `<foreignObject>`, MathML's elements; an svg's `<title>` stays). */
 function openInsideForeign(name: string, tag: string, roots: ForeignRoot[], drop: string[]): void {
   const root = roots[roots.length - 1];
-  if (root.ip !== null) { openInIntegrationPoint(name, root, drop); return; }
+  // `<mglyph>` and `<malignmark>` met inside a MathML text integration point stay foreign content (the parser's tree construction
+  // dispatcher keeps them so there), so they open no HTML element and `</mi>`, `</mtext>` and `</math>` close as usual (the review's
+  // round 8: they were recorded as HTML elements left open, the root's end tag was then ignored and the block's rest dropped, where
+  // 78c0806ce and the DOM show it)
+  if (root.ip !== null && !(MATHML_TEXT.has(root.ip) && (name === "MGLYPH" || name === "MALIGNMARK"))) { openInIntegrationPoint(name, root, drop); return; }
   if (integrationPoint(root.name, name, tag)) root.ip = name;
   if (dropsContent(name, true)) drop.push(name);
 }
@@ -3259,7 +3296,7 @@ const IMPLIED_TABLE_CLOSES: Record<string, Set<string>> = {
  *  foster-parented element between the parts; round 7: one past a dropped element's text as well, and one where a part's START
  *  tag closes an open part implicitly, `<td>a<td>b`, IMPLIED_TABLE_CLOSES). Positioned over `view` (htmlText, the pairing's stripped
  *  reading of the same, is not positioned, and strips every blank; the two scanners walk the raw the same way). */
-function lenientHtml(raw: string, view: View, em: TextEmitter): void {
+function lenientHtml(raw: string, view: View, em: TextEmitter, openTables: string[][] = []): void {
   const n = raw.length;
   const drop: string[] = [];
   const roots: ForeignRoot[] = [];   // the open foreign roots (FOREIGN), inside which RAW_TEXT does not apply and a `<title>` stays
@@ -3267,8 +3304,11 @@ function lenientHtml(raw: string, view: View, em: TextEmitter): void {
   // them implicitly (IMPLIED_TABLE_CLOSES: `<td>a<td>b`, `<td>b<tr><td>c`, legal HTML with the end tags omitted) leaves the two
   // parts adjacent in the DOM, so the hay's blank is put there too, unless the text already ends in whitespace (a blank the end-tag
   // rule below put, or the raw's own); the review's round 7: the blank was put at a part's END tag alone, so a raw table written
-  // without its `</td>`s read the cells run together and a quote across two of them painted nothing
-  const tables: string[][] = [];
+  // without its `</td>`s read the cells run together and a quote across two of them painted nothing. Seeded with the tables the
+  // html blocks before this one leave open (`openTables`, renderedBlocks: marked splits a raw table at a blank line into html
+  // blocks while the parser keeps the one table open, so a block starting `<tr><td>b1<td>b2` continues the table; round 8: the
+  // frames were the block's own, so that block read `b1b2` against a hay `b1 b2` and a quote across the cells painted nothing)
+  const tables: string[][] = openTables.map((parts) => parts.slice());
   const text = (from: number, to: number): void => {
     if (drop.length) return;
     for (let i = from; i < to; i++) {
@@ -3404,7 +3444,7 @@ function lenientRow(line: string, view: View, cells: Tokens.TableCell[], em: Tex
 /** The text one block token shows, over `tv` (the view its raw tiles), written into `em`: mirrors walkBlocks case by case, the
  *  exact walk's holes written out as the rendering shows them. Throws Refusal where the walk would (a container whose lines the
  *  suffix view cannot place), and the caller writes the raw as written instead. */
-function lenientBlock(t: Token, raw: string, tv: View, em: TextEmitter): void {
+function lenientBlock(t: Token, raw: string, tv: View, em: TextEmitter, openTables?: string[][]): void {
   switch (t.type) {
     case "space": em.blanks(tv); break;
     case "hr": case "mathBlock": break;   // a rule shows no text; a display formula's glyphs are a control the hay skips
@@ -3500,7 +3540,7 @@ function lenientBlock(t: Token, raw: string, tv: View, em: TextEmitter): void {
       lenientBlocks(tt.tokens, blockLexView(tvv.sub(bodyStart, tt.text.length)), em);
       break;
     }
-    case "html": lenientHtml(raw, tv, em); break;
+    case "html": lenientHtml(raw, tv, em, openTables); break;
     default: {
       const any = t as { text?: string };
       if (typeof any.text === "string") em.align(decodeBasicEntities(any.text), tv);
@@ -3511,7 +3551,7 @@ function lenientBlock(t: Token, raw: string, tv: View, em: TextEmitter): void {
 /** The shown text of block `tokens`, which tile `view.str` from `p` (walkBlocks' placement: a reference definition between two
  *  tokens is stepped over and shows nothing), a line feed between two blocks (TextEmitter.sep); a block the walk cannot place
  *  or read is written as its source holds it, and so is everything after a token whose raw is not found. */
-function lenientBlocks(tokens: Token[], view: View, em: TextEmitter, p = 0): void {
+function lenientBlocks(tokens: Token[], view: View, em: TextEmitter, p = 0, openTables?: string[][]): void {
   for (const t of tokens) {
     const raw = sourceRaw(t);
     if (!view.str.startsWith(raw, p)) {
@@ -3528,7 +3568,7 @@ function lenientBlocks(tokens: Token[], view: View, em: TextEmitter, p = 0): voi
     }
     const tv = view.sub(p, p + raw.length);
     const sub = new TextEmitter();
-    try { lenientBlock(t, raw, tv, sub); em.append(sub); }
+    try { lenientBlock(t, raw, tv, sub, openTables); em.append(sub); }
     catch (e) { if (e instanceof Refusal) em.verbatim(tv); else throw e; }
     p += raw.length;
     if (t.type !== "space") em.sep(view.n(Math.max(0, p - 1)));
@@ -3545,11 +3585,28 @@ function renderedBlocks(table: SourceTable, bFrom: number, bTo: number): Mapped 
   if (table.lexError !== null || !placed.length) em.verbatim(View.identity(N, 0));
   else {
     const view = View.identity(N, 0);
+    // the wrapper chain the blocks before each one leave open, read as walkedBlocks reads it off the tag scans (an html block's
+    // open tags push, its stray end tags pop to their element, a paragraph's own honoured closer the same), for the tables among
+    // them: a raw table marked split at a blank line is one table to the parser, so the html block continuing it reads its
+    // implied ends against the parts the earlier block left open (lenientHtml's frames, `openTables`; the review's round 8)
+    const walked = walkedBlocks(table);
+    const chain: string[] = [];
+    const advance = (w: Walked): void => {
+      if (w.isHtml) { for (const tt of w.tags || []) { if (tt.stray) { const at = chain.lastIndexOf(tt.tag); if (at >= 0) chain.length = at; } else if (tt.open) chain.push(tt.tag); } }
+      else for (const e of w.ends) { if (!P_CLOSERS.has(e.tag) && !FORMATTING.has(e.tag)) continue; const at = chain.lastIndexOf(e.tag); if (at >= 0) chain.length = at; }
+    };
+    const openTables = (): string[][] => {
+      const out: string[][] = [];
+      for (const e of chain) { if (e === "TABLE") out.push([]); else if (TABLE_PARTS.has(e) && out.length) out[out.length - 1].push(e); }
+      return out;
+    };
+    for (let b = 0; b < Math.max(0, bFrom) && b < walked.length; b++) advance(walked[b]);
     for (let b = Math.max(0, bFrom); b <= bTo && b < placed.length; b++) {
       const pl = placed[b];
       if (b > bFrom) em.blanks(view.sub(placed[b - 1].endN, Math.max(placed[b - 1].endN, pl.startN)));
       if (pl.broken !== null) em.verbatim(view.sub(pl.startN, pl.endN));
-      else lenientBlocks([pl.t], view, em, pl.startN);
+      else lenientBlocks([pl.t], view, em, pl.startN, openTables());
+      if (b < walked.length) advance(walked[b]);
     }
   }
   const idx = { nStart: table.nStart };

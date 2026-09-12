@@ -30,6 +30,20 @@
 //   - a tall picture's last few pixels at the edge: the picture's fraction asked for the tag row's bottom under a pixel below
 //     the edge, the browser's snap made it one, the read passed the row for the blank after it, and the banner came back 12
 //     to 20px higher, wholly above the edge; now a seat into Raw leaves the row two pixels below the edge at least (ROW_SHOWN).
+// The review's round 8 added three (tests 6 to 8), each measured against 99e7e2d0c (the round-7 tree), which lost all three:
+//   - the text-first `<p>` with the LOGO's top at the edge, landed by a whole-pixel scroll 0.3 to 0.9px below it (the name's
+//     last sub-pixel above): rowPartsTop classified the edge's part exactly, so the same reader took the row's fraction on one
+//     step and the picture's on the next, as the landing fell, and the logo drifted 2.6 to 3px per text-size step (78c0806ce
+//     held it within 0.5); now the picture's top within the snap pixel and a seat's half-pixel landing counts as inside
+//     (PIC_AT_EDGE);
+//   - an inline ICON beside a heading's text on one line (`<h1><img 24px> Project</h1>`): the parts model took the edge inside
+//     the icon for the picture's part, held the icon and let the heading's text rise by the line's growth, 4.5px per step at
+//     380, or took the row's rule as the sub-pixel landing fell; now a row whose pictures stand beside its text on one line
+//     keeps the row's rule (picInLine, by the row's line-height), which holds the text's cap tops at the edge;
+//   - the name under a linked logo across a pane DRAG that wraps the tagline under the name: the text under the picture kept
+//     its fraction of that part's height, and the wrapped lines counted as growth, so the name moved 3.6 to 4.6px and the
+//     tagline's line 9.6 to 12.6; now the distance from the picture's bottom scales by the row's line-height, unchanged on a
+//     drag, so both hold.
 // Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright browser, as the other legs do.
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
@@ -300,6 +314,109 @@ test("in a browser, the real module: a tall picture in an `<a>` (a 900x600 banne
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }
+    }
+  });
+});
+
+// ── round 8 ──────────────────────────────────────────────────────────────────────────────────────────
+const ICON = img("icon", 24, 24, "slateblue");
+/** round 8: a README's `<h1>` holding a 24px icon before its name on ONE line, a row of the wrapper's own */
+const H1_ICON_TEXT = readme(`<h1>${ICON} Project</h1>`);
+/** Scroll so the picture with that alt has its top landed by a WHOLE-PIXEL scrollTop, as a wheel scroll lands it: `floor` puts the
+ *  top in [0, 1) below the body's top edge, `ceil` in (-1, 0]. Answers the top the landing gave. */
+const landImgTop = (page: any, alt: string, how: "floor" | "ceil") => page.evaluate(([a, h]: [string, string]) => {
+  const body = document.querySelector(".fileview-body")!; const i = document.querySelector(`.fileview-md img[alt="${a}"]`)!;
+  const abs = body.scrollTop + i.getBoundingClientRect().top - body.getBoundingClientRect().top;
+  body.scrollTop = h === "floor" ? Math.floor(abs) : Math.ceil(abs);
+  return Math.round((i.getBoundingClientRect().top - body.getBoundingClientRect().top) * 100) / 100;
+}, [alt, how]);
+/** The heading with the icon: its box, the icon's box, the row's line-height, and the CAP TOP of its text, the tops of the letters
+ *  the reader has at the edge, from the body's top edge: the icon's bottom is the line's baseline (an `<img>` sits on it), and a
+ *  canvas measures the text's ascent above the baseline in the heading's own font. */
+const headingCaps = (page: any) => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect(); const r10 = (x: number) => Math.round(x * 10) / 10;
+  const h1 = document.querySelector(".fileview-md h1:has(img)")!; const icon = h1.querySelector("img")!;
+  const hr = h1.getBoundingClientRect(), ir = icon.getBoundingClientRect(); const cs = getComputedStyle(h1);
+  const ctx = document.createElement("canvas").getContext("2d")!; ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const asc = ctx.measureText((h1.textContent || "").trim()).actualBoundingBoxAscent;
+  return { top: r10(hr.top - br.top), height: r10(hr.height), icon: { top: r10(ir.top - br.top), height: r10(ir.height) }, lineHeight: r10(parseFloat(cs.lineHeight)), capTop: r10(ir.bottom - br.top - asc), text: (h1.textContent || "").trim() };
+});
+
+test("in a browser, the real module: the text-first `<p align=\"center\"><b>Project name here</b><br><img></p>` with the LOGO's top at the edge, landed by a whole-pixel scrollTop 0.3 to 0.9px below it (the name's last sub-pixel above the edge) or within a pixel above it, holds the logo within 1px across A+, a second A+ and the two A- back at 900 and 380px (the review's round 8: rowPartsTop classified the edge's part exactly, `imgs.top > 0` the text's, where every other inside-the-picture test allows the pixel the browser snaps scrollTop to, so the same reader took the row's fraction on one step and the picture's on the next as the landing fell, and the logo drifted 2.6 to 3px per step, 0.91 to 3.36 to 5.97 at 900 and 0.34 to 2.98 to 5.88 at 380, 2px off after the four steps from the landing above the edge; 78c0806ce held it within 0.5; now the picture's top within PIC_AT_EDGE below the edge counts as inside)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const width of [900, 380]) {
+      for (const how of ["floor", "ceil"] as const) {
+        const where = `pane ${width}, the logo's top landed by ${how} (${how === "floor" ? "in [0, 1) below" : "in (-1, 0] above"} the edge), text-size steps`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: P_TEXT_IMG } }); await imagesDone(page);
+        await imgToEdge(page, "logo", 0); await frames(page, 2);
+        const landed = await landImgTop(page, "logo", how); await frames(page, 2);
+        const before = await imgByAlt(page, "logo"), name0 = await elBox(page, "div[align] b");
+        assert.ok(how === "floor" ? before.top >= 0 && before.top < 1 : before.top > -1 && before.top <= 0, where + `: the scene starts with the logo's top within the snap pixel of the edge (landed ${landed}, read ${before.top})`);
+        assert.ok(before.row.tag === "P" && name0.top < before.top - 10, where + `: the fixture: the <p> holds the name over the logo (${JSON.stringify({ name: name0, logo: before })})`);
+        const steps: number[] = [];
+        for (const label of ["Larger text", "Larger text", "Smaller text", "Smaller text"]) {
+          await sizeStep(page, label);
+          steps.push(Math.round(((await imgByAlt(page, "logo")).top - before.top) * 100) / 100);
+        }
+        for (const [i, d] of steps.entries()) assert.ok(Math.abs(d) <= 1, where + `: after step ${i + 1} the logo is where it was (moved ${d}px; all steps ${JSON.stringify(steps)}; 99e7e2d0c: 2.45 to 2.64 per A+ at the floor landing, 0.45 then 2.61 at 900's ceil landing and -2.09 after the four)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: a README's `<h1>` holding a 24px ICON before its name on ONE line, inside `<div align=\"center\">`, with the edge 5 and 8px into the heading (inside the icon, whose top is 5px under the heading's) keeps the row's rule across A+, a second A+ and the two A- back at 900 and 380px: the CAP TOPS of the heading's text, what the reader has at the edge, hold within 2px while the icon falls with its baseline, and with the edge 5px in the heading's own top holds within 1.5 (the review's round 8: rowPartsTop's three parts, text over the picture, the picture and text under it, took the edge inside the icon for the picture's part and held the icon, so the text rose by the line's growth, 4.5px per step at 380 and 3.7 at 900, 8.7 over two, out of the pane, or took the row's rule as the sub-pixel landing fell, the icon's top 0.44px below the edge at 900 with the edge 5px in; 8924fa17e's row rule held the heading within 0.7; now a row whose pictures stand beside its text on one line keeps the row's rule, picInLine, told by the row's line-height)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const width of [900, 380]) {
+      for (const into of [5, 8]) {
+        const where = `pane ${width}, the edge ${into}px into the heading, text-size steps`;
+        const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: H1_ICON_TEXT } }); await imagesDone(page);
+        await elToEdge(page, "div[align] h1", into); await frames(page, 2);
+        const h0 = await headingCaps(page);
+        near(h0.top, -into, where + ": the scene starts with the heading at its depth", 1);
+        assert.ok(h0.text === "Project" && h0.icon.height === 24 && h0.height < 2 * h0.lineHeight && h0.icon.top > h0.top && h0.icon.top + h0.icon.height < h0.top + h0.height && h0.icon.top < 1, where + `: the fixture: a one-line heading holding the icon beside its text, the edge inside the icon (${JSON.stringify(h0)})`);
+        assert.ok(h0.capTop > -3 && h0.capTop < 6, where + `: the fixture: the text's cap tops are at the edge, within 3px (${h0.capTop})`);
+        const caps: number[] = [], tops: number[] = [], icons: number[] = [];
+        for (const label of ["Larger text", "Larger text", "Smaller text", "Smaller text"]) {
+          await sizeStep(page, label);
+          const h = await headingCaps(page);
+          caps.push(Math.round((h.capTop - h0.capTop) * 10) / 10); tops.push(Math.round((h.top - h0.top) * 10) / 10); icons.push(Math.round((h.icon.top - h0.icon.top) * 10) / 10);
+        }
+        for (const [i, d] of caps.entries()) assert.ok(Math.abs(d) <= 2, where + `: after step ${i + 1} the text's cap tops are where they were, within 2px (moved ${d}px; all steps ${JSON.stringify(caps)}, the heading's top ${JSON.stringify(tops)}, the icon ${JSON.stringify(icons)}; 99e7e2d0c: the caps rose 2.6 to 3.5px per step, 6.1 to 7.7 over two, the icon held)`);
+        // the row's rule's signature, which tells it from the picture's: the icon hangs from the line's baseline and falls with it as the text grows
+        assert.ok(icons[0] > 2 && icons[1] > icons[0] + 2 && Math.abs(icons[3]) <= 1, where + `: across A+, A+ the icon falls with its baseline, 3.3 to 3.5px per step, and A-, A- bring it back (moved ${JSON.stringify(icons)}; 99e7e2d0c held the icon within 0.5 and moved the text instead)`);
+        if (into === 5) for (const [i, d] of tops.entries()) assert.ok(Math.abs(d) <= 1.5, where + `: after step ${i + 1} the heading's top is within 1.5px of where it was (moved ${d}px; all steps ${JSON.stringify(tops)}; 99e7e2d0c: -4.5 and -8.7 at 380)`);
+        assert.deepEqual(errors, [], where + ": no script error");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, the real module: the name under a LINKED logo and over a tagline that wraps in a narrow pane (`<p align=\"center\"><a><img></a><br><b>Project</b><br>A tagline ...</p>`), the edge 2px into the name, holds within 1.5px across a pane drag from 900 to 380 and back, and from 380 to 900 and back; and with the edge 150px into the `<p>`, in the tagline's first line, the `<p>` holds across the drag from 900 to 380 (the review's round 8: the text under the picture kept its fraction of that part's height, so the tagline wrapping from two lines to three or four counted as growth and the name moved 4.6px up on the drag to 380 and 3.6 down on the drag to 900, the tagline's line 12.6 and 9.6; now the distance from the picture's bottom scales by the row's line-height, which a drag leaves as it was, so the line at the edge stands)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const SCENES: Array<[string, number, number, number]> = [
+      // the element at the edge, px of it above the edge, the width dragged from, the width dragged to
+      ["div[align] b", 2, 900, 380],
+      ["div[align] b", 2, 380, 900],
+      ["div[align] p", 150, 900, 380],
+    ];
+    for (const [sel, into, from, to] of SCENES) {
+      const where = `the edge ${into}px into ${sel.endsWith(" b") ? "the name" : "the <p>, in the tagline"}, pane ${from}, a drag to ${to} and back`;
+      const { page, errors } = await openViewer(browser, "pane", from, 600, { docs: { [REPORT]: P_LINKED_TEXT } }); await imagesDone(page);
+      await elToEdge(page, sel, into); await frames(page, 2);
+      const target0 = await elBox(page, sel), p0 = await elBox(page, "div[align] p"), logo0 = await imgByAlt(page, "logo");
+      near(target0.top, -into, where + ": the scene starts with the element at its depth", 1);
+      assert.ok(p0.tag === "P" && logo0.row.tag === "A" && p0.top <= logo0.top + 0.5 && p0.bottom > logo0.top + logo0.height + 30, where + `: the fixture: the <p> holds the linked logo, the name and the tagline under it (${JSON.stringify({ p: p0, logo: logo0 })})`);
+      await dragTo(page, to);
+      const p1 = await elBox(page, "div[align] p");
+      assert.ok(Math.abs((p1.height - logo0.height) - (p0.height - logo0.height)) > 10, where + `: the fixture: the tagline wraps differently at ${to} (the text under the logo ${p0.height - logo0.height}px at ${from}, ${p1.height - logo0.height} at ${to})`);
+      near((await elBox(page, sel)).top, target0.top, where + `: at ${to} the element is where it was (99e7e2d0c: ${sel.endsWith(" b") ? (to === 380 ? "-4.6" : "3.6") : "-12.6"}px, the part's fraction over the wrapped lines)`);
+      await dragTo(page, from);
+      near((await elBox(page, sel)).top, target0.top, where + `: back at ${from} the element is where it was`);
+      assert.deepEqual(errors, [], where + ": no script error");
+      await page.close();
     }
   });
 });

@@ -2668,7 +2668,7 @@ class Panel {
    *  selection is gone or has no box, or the picture has left the document); what subjectHeld compares with floatAt, on the body's
    *  scroll (hideFloatOnScroll) and after the panel's own writes (afterPaint: a remnant with no box is no subject, and the box of a
    *  selection the writes moved whole is where the float is offered again). */
-  private floatSubjectRect(): { top: number; right: number } | null {
+  private floatSubjectRect(): { top: number; right: number; bottom: number; left: number } | null {
     const at = this.floatAt;
     if (!at) return null;
     if (at.img) return at.img.isConnected ? at.img.getBoundingClientRect() : null;
@@ -2676,6 +2676,14 @@ class Panel {
     if (!sel || !sel.rangeCount) return null;
     const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     return r.width || r.height ? r : null;
+  }
+  /** Whether `rect` lies at least partly inside the body's box: a passage the panel's own writes moved whole is re-seated beside
+   *  only while some of it is in view (afterPaint). The body clips what it scrolls, and showFloat clamps to the window alone, so a
+   *  passage the writes pushed past the body's edge took a button over the body's last visible line, beside other text (the Slice 5
+   *  review, round 8). */
+  private inBodyBox(rect: { top: number; right: number; bottom: number; left: number }): boolean {
+    const b = this.ctx.body().getBoundingClientRect();
+    return rect.top < b.bottom && rect.bottom > b.top && rect.left < b.right && rect.right > b.left;
   }
   /** A click on a rendered picture (the plan's Images and PDFs): with the panel open, the float offers
    *  Comment beside it; the anchor will be the embed's source text. A picture the source holds no embed
@@ -3594,18 +3602,32 @@ class Panel {
    *  the mark lands in (anchor-map.ts wrapSlices, splitText), and a live range's boundary past the split moves into the new node,
    *  so an intact selection's ends name new nodes after every such paint (the round's probes: an anchor at 40 read 22 in a new
    *  tail node, the text unchanged) and an ends test reads it as cut. A remnant, the text changed, goes as round 6 rules once it
-   *  has no box or has moved. One more rect read, for a subject that moved and stayed whole alone. A picture's stands. */
+   *  has no box or has moved. One more rect read, for a subject that moved and stayed whole alone. A picture's stands. A float the
+   *  writes find HIDDEN is left so, whatever hid it (the same review, round 8): the picture overlay's press hid the float with the
+   *  hidden bit alone and kept floatAt, the record this read took for a showing float, so a peer's mark landing on the still-selected
+   *  line while the person pressed on a picture, or after a click on a region's rectangle had opened its card, showed the passage's
+   *  Comment button again beside a selection the press had dismissed; the press goes through hideFloat now (one mechanism for a
+   *  hidden float, its record cleared with it) and this read guards on the hidden bit, as the scroll's listener does. And a passage
+   *  the writes moved whole OUT OF THE BODY'S BOX is no re-seat (the same round): the body clips what it scrolls and showFloat clamps
+   *  to the window alone, so a paint that pushed a last-visible-line selection below the body's bottom edge (Show changes inline
+   *  toggled from the keyboard, the struck label above the line growing the text; a settings signal; a poll's mark a line above)
+   *  seated the button 30 px above a passage nobody can see, over the body's last visible line and the other text it holds, and a
+   *  click on it commented on text out of view (78c0806ce hid it, as for any move; the scroll's listener hides for the same
+   *  displacement). The re-seat takes a box at least partly inside the body's (inBodyBox) and hides otherwise, as for a remnant
+   *  that moved; the offer's own path (onSelection) keeps its guards, since a gesture's selection is in view by the browser's doing. */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const was = this.offeredFor;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
-    if (!sel || !this.floatAt || this.floatAt.img) return;           // no passage's float showing (a picture's stands)
+    // no passage's float SHOWING: a hidden float stays hidden whatever hid it, the scroll listener's own guard (a picture's stands)
+    if (!sel || this.float.hidden || !this.floatAt || this.floatAt.img) return;
     if (this.passageGone(sel)) { this.hideFloat(); return; }          // the writes left the float beside no selection
     if (this.subjectHeld()) return;                                    // the subject sits under the button, cut or whole
     // moved a pixel or more, or left with no box: a remnant the writes cut goes, as on a scroll; a selection the writes moved whole
-    // (the same text as the record's between two ends in the body) is offered again beside its box now
+    // (the same text as the record's between two ends in the body) is offered again beside its box now, when that box lies at least
+    // partly inside the body's (inBodyBox: the body clips what it scrolls, and showFloat clamps to the window alone)
     const now = was && this.offeredFor && this.offeredFor.text === was.text ? this.floatSubjectRect() : null;
-    if (now) this.showFloat(now); else this.hideFloat();
+    if (now && this.inBodyBox(now)) this.showFloat(now); else this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
@@ -4158,7 +4180,10 @@ class Panel {
     // they did before the overlay stood over it
     const layer = new RegionLayer(img, {
       onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
-      onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
+      // what hideFloatOnDown does for a mousedown the overlay cancels: the float goes WITH its record (floatAt), so the panel's next
+      // paint re-seats nothing the press hid (the hidden bit alone left the record, and afterPaint read it as a showing float; the
+      // Slice 5 review, round 8)
+      onPress: () => this.hideFloat(),
     }, isCanvas(img) ? img.parentElement : null);
     this.regionLayers.set(img, layer);
     this.mark(layer.overlay);                          // the browser's own click after a handed-on press lands here (panelMark)

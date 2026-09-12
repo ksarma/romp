@@ -911,7 +911,11 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   for (const ev of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) assert.ok(OVL.includes('o.addEventListener("' + ev + '"'), ev);
   assert.match(OVL, /o\.setPointerCapture\(ev\.pointerId\)/);
   assert.match(OVL, /this\.sizer = new ResizeObserver\(\(\) => this\.place\(\)\); this\.sizer\.observe\(img\);/, "the drawn size's own event re-measures the overlay");
-  assert.match(SRC, /onPress: \(\) => \{ this\.float\.hidden = true; this\.imageTarget = null; \}/);
+  // the press hides the float THROUGH hideFloat, so its record (floatAt) goes with it and the panel's next paint re-seats nothing the
+  // press hid (the Slice 5 review, round 8: the hidden bit alone kept the record, and a peer's mark landing on the still-selected line
+  // showed the passage's Comment button again beside a selection the press had dismissed)
+  assert.match(SRC, /onPress: \(\) => this\.hideFloat\(\),/);
+  assert.doesNotMatch(SRC, /onPress: \(\) => \{ this\.float\.hidden = true;/, "no press hides the float by its hidden bit alone");
   assert.match(OVL, /o\.addEventListener\("click", \(ev: Event\) => \{ if \(this\.drew\) \{ this\.drew = false; ev\.stopPropagation\(\); ev\.preventDefault\(\); \} \}\);/);
   // the panel: the Re-place act, retarget with the comment's src, the composer's target path with the embed anchor
   assert.match(SRC, /fcreplace: \(x, ev\) => \{ ev\.stopPropagation\(\); this\.startReplace\(x\.dataset\.id!\); \}/);
