@@ -441,18 +441,21 @@ const PAINTED = [
   'Final paragraph here.',
   '',
 ].join('\n');
-function paintedWorld() {
+// A world whose docs/note.md holds `text`.
+function noteWorld(text) {
   const w = world();
   w.note = path.join(w.root, 'docs', 'note.md');
-  fs.writeFileSync(w.note, PAINTED);
+  fs.writeFileSync(w.note, text);
   return w;
 }
-// The comment verb over one passage of the note: the stored comment, checked against the source slice.
-function commentOnPassage(w, quote, note) {
-  assert.equal(PAINTED.indexOf(quote), PAINTED.lastIndexOf(quote), `the fixture holds ${JSON.stringify(quote)} once`);
-  const at = PAINTED.indexOf(quote);
+function paintedWorld() { return noteWorld(PAINTED); }
+// The comment verb over one passage of the note (its content `text`, under its one `heading`): the stored comment,
+// checked against the source slice.
+function commentOnPassageIn(w, text, heading, quote, note) {
+  assert.equal(text.indexOf(quote), text.lastIndexOf(quote), `the fixture holds ${JSON.stringify(quote)} once`);
+  const at = text.indexOf(quote);
   assert.ok(at >= 0, `the fixture holds ${JSON.stringify(quote)}`);
-  const browser = engine.makeAnchor(PAINTED, at, at + quote.length);
+  const browser = engine.makeAnchor(text, at, at + quote.length);
   assert.equal(browser.quote, quote, 'the browser\'s anchor quotes the source slice as it is');
   const r = comment(w, w.note, { anchor: browser, note, hintOffset: at });
   const c = readSidecar(r.storePath).comments[readSidecar(r.storePath).comments.length - 1];
@@ -461,13 +464,14 @@ function commentOnPassage(w, quote, note) {
   assert.equal(c.anchorAt, at);
   assert.equal(c.id, `${c.ts}-${at}`);
   assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved'], 'the position, then the copy fields (the tie-break, 2026-09-11)');
-  assert.deepEqual([c.ordinal, c.copies, c.section], [1, 1, 'Painted'], 'the copy fields: 1 of 1 under the note\'s one heading (the fixture holds the quote once, asserted above; the fence\'s `# trailing comment` is code, not a heading)');
-  assert.equal(PAINTED.slice(c.anchorAt, c.anchorAt + c.anchor.quote.length), quote, 'the position names the slice');
-  assert.equal(engine.locateAnchor(PAINTED, c.anchor).from, at, 'a hintless reader lands on it too');
+  assert.deepEqual([c.ordinal, c.copies, c.section], [1, 1, heading], 'the copy fields: 1 of 1 under the note\'s one heading (the fixture holds the quote once, asserted above; a `#` inside a fence is code, not a heading)');
+  assert.equal(text.slice(c.anchorAt, c.anchorAt + c.anchor.quote.length), quote, 'the position names the slice');
+  assert.equal(engine.locateAnchor(text, c.anchor).from, at, 'a hintless reader lands on it too');
   assert.deepEqual(r.store.comments[r.store.comments.length - 1], c, 'the reply carries the stored comment as written');
-  assert.equal(fs.readFileSync(w.note, 'utf8'), PAINTED, 'the file is untouched');
+  assert.equal(fs.readFileSync(w.note, 'utf8'), text, 'the file is untouched');
   return { c, at };
 }
+function commentOnPassage(w, quote, note) { return commentOnPassageIn(w, PAINTED, 'Painted', quote, note); }
 
 test('regression guard, green before Slice 5: a code line holding `*` is located byte for byte by uniqueAnchor and locateExact, and the comment verb stores that slice, asterisks kept, with anchorAt', () => {
   const w = paintedWorld();
@@ -512,5 +516,60 @@ test('regression guard, green before Slice 5: a table quote across two cells is 
   const { c: c2, at: codeAt } = commentOnPassage(w, 'total = a * b * 2', 'Why times two?');
   assert.notEqual(c2.anchorAt, c.anchorAt);
   assert.equal(c2.anchorAt, codeAt);
+  assert.equal(readSidecar(path.join(w.root, '.trackchanges', 'docs%2Fnote.md.json')).comments.length, 2);
+});
+// Since Slice 8 of plans/markdown-viewer.md (items 1 and 2) a cell and a code line are commented from the Rendered
+// view too: the exact mapping takes the quote from the source's own positions, so a cell written `tag=a\|b`, which
+// renders as `tag=a|b`, quotes the backslash and the pipe, and a two-line selection over a tab-indented code line
+// quotes the TAB the rendered rows show as four spaces. The host has located a quote byte for byte since the anchors
+// follow-on, so the case below did not fail before the slice: it is a regression guard on the contract the exact
+// mapping relies on, and its title says so. Synthetic: the cell and the fence of the painter's own fixture
+// (ui/webview/anchor-map-fixtures/cells.md), each held once in a note of its own, so no hint settles anything.
+const CELLS = [
+  '# Cells',
+  '',
+  'The notes-api filters and one handler.',
+  '',
+  '| Filter | Example |',
+  '|--------|---------|',
+  '| by tag | `tag=a\\|b` and `\\|` alone |',
+  '| by owner | the web session |',
+  '',
+  '```python',
+  'def handler(request):',
+  '\treturn respond(request)',
+  '```',
+  '',
+  'Final paragraph here.',
+  '',
+].join('\n');
+
+test('regression guard, green before Slice 8: a cell holding an escaped pipe is located byte for byte by uniqueAnchor and locateExact, and the comment verb stores the slice, backslash and pipe kept, with anchorAt', () => {
+  const w = noteWorld(CELLS);
+  const quote = '`tag=a\\|b` and `\\|` alone';
+  const at = CELLS.indexOf(quote);
+  const rowStart = CELLS.lastIndexOf('\n', at) + 1, rowEnd = CELLS.indexOf('\n', at);
+  assert.equal(CELLS.slice(rowStart, rowEnd), '| by tag | `tag=a\\|b` and `\\|` alone |', 'the fixture: the quote is the cell\'s trimmed source text');
+  assert.ok(!quote.replace(/\\\|/g, '').includes('|'), 'the fixture: every pipe inside the cell is escaped');
+  const u = uniqueAnchor(CELLS, at, at + quote.length);
+  assert.equal(u.unique, true);
+  assert.equal(u.anchor.quote, quote, 'the backslash and the pipe are the stored quote\'s (the rendered cell shows `tag=a|b`; the exact mapping quotes the source)');
+  assert.deepEqual(ctxOf(u.anchor), [24, 24]);
+  assert.deepEqual(locateExact(CELLS, u.anchor, undefined), { from: at, to: at + quote.length });
+  assert.deepEqual(locateExact(CELLS, engine.makeAnchor(CELLS, at, at + quote.length), at), { from: at, to: at + quote.length });
+  // the second code span alone, a selection inside the cell's markup
+  const alone = '`\\|` alone';
+  const aloneAt = CELLS.indexOf(alone);
+  assert.equal(aloneAt, at + quote.indexOf(alone));
+  assert.deepEqual(locateExact(CELLS, engine.makeAnchor(CELLS, aloneAt, aloneAt + alone.length), undefined), { from: aloneAt, to: aloneAt + alone.length });
+  // through the comment verb, as the panel saves it
+  const { c } = commentOnPassageIn(w, CELLS, 'Cells', quote, 'Escape the pipe in the docs.');
+  assert.equal(c.anchor.quote.split('\\|').length - 1, 2, 'both escapes are stored as written');
+  // and, in the same sidecar, the two-line quote over the tab-indented line (item 2's byte), with its own position
+  const lines = 'def handler(request):\n\treturn respond(request)';
+  const { c: c2, at: linesAt } = commentOnPassageIn(w, CELLS, 'Cells', lines, 'Two lines, one comment.');
+  assert.ok(c2.anchor.quote.includes('\n\t'), 'the line feed and the tab are stored as bytes');
+  assert.equal(c2.anchorAt, linesAt);
+  assert.notEqual(c2.anchorAt, c.anchorAt);
   assert.equal(readSidecar(path.join(w.root, '.trackchanges', 'docs%2Fnote.md.json')).comments.length, 2);
 });
