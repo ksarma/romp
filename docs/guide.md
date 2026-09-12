@@ -492,9 +492,11 @@ keyboard); type the comment
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
 In the list under a narrow column, the line stands under the panel's header instead.
-**Comment on this file** leaves a comment on the file as a whole, which every file takes. When a passage cannot be mapped from the
-Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
-Raw view with the passage selected. Comments are stored beside the file, in the
+**Comment on this file** leaves a comment on the file as a whole, which every file takes. A table cell and a
+line of a code block can be commented from the Rendered view like any passage. When a passage cannot be mapped from the
+Rendered view (a selection across two cells of a table, a formula), the panel says so, keeps your comment, and offers the
+Raw view with the passage selected. A comment on a formula that stands on its own line (a `$$` block)
+highlights the whole formula. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
 folder that already holds one; a file with none gets the folder created beside it), in the
 format the session's own tools read. A comment made here and a reply the session writes are
