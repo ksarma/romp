@@ -15,7 +15,8 @@ session; the expiry term holds while a launch is inside its ceiling, and for a l
 however far the clock runs; the settle reads the wall clock when no pass clock is handed in; a write landing
 during the pass is seen next pass; three sessions with one moved leave placements and nodes byte-identical to
 the ungated passes (two fresh worlds); a parse the cache does not hold is never skipped, nor is an expiry view
-that cannot be computed; a pass that stood down is planned again, not recorded; a rebound root forgets; the counters.
+that cannot be computed; a pass that stood down is planned again, not recorded; a rebound root forgets; the counters,
+and three workers skipping at once count three skips (the free-threaded race: every bump under one lock).
 
 Synthetic sids and text; a temp state root, a temp Claude config root for the task store; the planner's model
 calls are stubs, deterministic, so two worlds agree byte for byte."""
@@ -23,6 +24,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
@@ -290,6 +292,63 @@ class PlannerSkip(_World):
         self.assertEqual(set(jd.planner_skip_stats()), {"skipped", "planned", "recorded"})
         s = jd.planner_skip_stats(); s["skipped"] = 99
         self.assertNotEqual(jd.planner_skip_stats()["skipped"], 99)
+
+    def test_three_workers_skipping_at_once_count_three_skips(self):
+        # THE FREE-THREADED RACE (CI's 3.14t cell, 2026-09-10 to -12; never under a GIL): a counter bump is a read,
+        # an add and a write, and a pass bumps `skipped` from every planner worker at once. Two workers that read
+        # the same value both write value + 1, and a settled pass counts one skip fewer than its sessions:
+        # (0, 2, 0) for three. Every bump holds _PLANNER_STATS_LOCK now (_planner_stat), so a worker inside its
+        # gap keeps the others out of it. Deterministic, no clock: the first worker to read `skipped` parks in its
+        # gap. Serialized, the other two queue behind it (the lock is held while it parks) and the pass counts
+        # three once it moves. Unserialized, they land in the gap, and the test lets both land (nothing else would
+        # stop them) before it moves the first: the pass counts one.
+        self.settle()
+        go, parked, two_landed, writes = threading.Event(), threading.Event(), threading.Event(), []
+
+        class Gap(dict):
+            def __getitem__(self, k):
+                v = dict.__getitem__(self, k)
+                if k == "skipped" and not parked.is_set():
+                    parked.set()
+                    go.wait()                                  # the first reader parks between its read and its write
+                return v
+
+            def __setitem__(self, k, v):
+                dict.__setitem__(self, k, v)
+                if k == "skipped":
+                    writes.append(v)
+                    if len(writes) >= 2:
+                        two_landed.set()
+        counts = []
+
+        def one_pass():
+            try:
+                counts.append(self.run_pass())
+            except BaseException as e:                         # surfaces in the assertion below, not on stderr alone
+                counts.append(e)
+        saved = jd._PLANNER_STATS
+        jd._PLANNER_STATS = Gap(saved)
+        t = threading.Thread(target=one_pass, name="planner-pass")
+        try:
+            t.start()
+            parked.wait()
+            lock = getattr(jd, "_PLANNER_STATS_LOCK", None)
+            if not (lock is not None and lock.locked()):      # nothing serializes the bump: the other two land in the gap
+                two_landed.wait()
+            go.set()
+            t.join()
+        finally:
+            go.set()
+            jd._PLANNER_STATS = saved
+        self.assertEqual(counts, [(0, 3, 0)], "three workers skipped at once: three skips counted")
+
+    def test_every_counter_bump_is_the_locked_helper(self):
+        # The lock is only as wide as the sites that take it: the three bumps in _plan_session go through
+        # _planner_stat, and no write to a counter by key remains anywhere else in the module.
+        src = Path(BIN, "romp-judge").read_text()
+        for name in ("skipped", "planned", "recorded"):
+            self.assertEqual(src.count('_planner_stat("%s")' % name), 1, "one %s bump, through the helper" % name)
+        self.assertNotRegex(src, r'_PLANNER_STATS\["', "a counter written by key outside _planner_stat")
 
     def test_a_task_store_change_under_the_forked_leaf_un_skips(self):
         # A is an SDK session that /cleared: its reg names LEAF as the current transcript, so discover hands the
