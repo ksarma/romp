@@ -127,9 +127,13 @@ class TheFollowOnNoteStatesTheBoundaryRule(unittest.TestCase):
         self.assertIn("Points at one offset keep their paint order", self.note)
 
     def test_the_note_records_the_substitution_inside_a_refused_block(self):
-        # the suite's fourth placement: the tint the text-match fallback found still gets its point
+        # the suite's fourth placement: the tint gets its point wherever it was found; the deletion at the same offset
+        # was card-only while the fence and the cell were refused blocks, and places since Slice 8 of the viewer plan
+        # positioned them (anchor-map-boundary-points.test.ts, the re-titled test)
         self.assertIn("wherever the tint was found: inside a code fence or a table cell too, where the tint came through the "
-                      "text-match fallback, so a substitution there is shown while a deletion at the same offset is card-only",
+                      "text-match fallback until Slice 8 of plans/markdown-viewer.md positioned the cells and the lines, so a "
+                      "substitution there is shown; a deletion at the same offset was card-only and places in the fence's line "
+                      "and in the cell since that slice",
                       self.note)
 
     def test_the_note_bounds_the_rule_to_the_painters_marks(self):
@@ -173,7 +177,8 @@ class TheTestsSectionNamesTheBoundarySuite(unittest.TestCase):
                 ("change mark and a highlight over the same word", "cover the same word"),
                 ("two points at one offset keep their paint order", "at one offset keep the order they were painted in"),
                 ("code fence or a table cell", "inside a code fence or a table cell"),
-                ("reported painted while a deletion at the same offset is card-only", "is reported painted; a deletion at the same offset is card-only")):
+                ("reported painted while a deletion at the same offset places in the fence's line and in the cell",
+                 "is reported painted; a deletion at the same offset places in the fence's line and in the cell")):
             self.assertIn(claim, account, "the bullet no longer credits the suite with %r" % claim)
             self.assertIn(title_marker, self.titles, "the suite has no test titled for %r; fix the bullet's account or the suite" % claim)
 

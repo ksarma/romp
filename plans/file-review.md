@@ -1229,8 +1229,10 @@ right after the last character before it when the offset follows that character 
 deletion at a word's end sits against the word. A refused block, a hole, or a blank line between
 blocks leaves the change unpainted, with its card's "not shown" tag and Reveal. A substitution's point
 sits immediately before its tint, wherever the tint was found: inside a code fence or a table cell
-too, where the tint came through the text-match fallback, so a substitution there is shown while a
-deletion at the same offset is card-only. A point at the edge of a painter's own mark (a change's
+too, where the tint came through the text-match fallback until Slice 8 of plans/markdown-viewer.md
+positioned the cells and the lines, so a substitution there is shown; a deletion at the same offset
+was card-only and places in the fence's line and in the cell since that slice. A point at the edge of
+a painter's own mark (a change's
 `fc-ins`, a comment's `fc-hl`, the composer's `fc-presel`) sits outside the mark, in both views and
 whichever change was painted first: a deletion right after an insertion follows the insertion's mark
 as its sibling, one right before it precedes the mark, and a substitution whose tint begins a comment
@@ -2628,8 +2630,9 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   substitution whose tint begins the highlight has its point before it and one whose tint is inside
   keeps its point inside, before the tint; a deletion at the edge of a change mark and a highlight
   over the same word sits outside both; two points at one offset keep their paint order; and a
-  substitution inside a code fence or a table cell gets its point before its fallback-placed tint
-  and is reported painted while a deletion at the same offset is card-only;
+  substitution inside a code fence or a table cell gets its point before its tint and is reported
+  painted while a deletion at the same offset places in the fence's line and in the cell (card-only
+  before Slice 8 of plans/markdown-viewer.md positioned them);
   `anchor-map-whitespace-point-browser.test.ts` and `file-comments-rendered-point-browser.test.ts`
   measure the points under the real sheets in headless Chromium and Firefox (skipped where
   playwright or an engine is missing): a removed space or tab has width and takes the pointer, a
