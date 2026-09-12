@@ -17,9 +17,10 @@
 // anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps or names the one-cell rule
 // refuses "touches a table" over the tree before this slice. One case is the Slice 8 review's (round 1): an astral character in
 // a cell the per-cell fallback holds, whose hole was counted by code point and shifted every later cell of the table; it fails
-// over the build's head cd3a06501 with the later cells' offsets shifted, and refuses whole over the base. A last case times the
-// index, one map and forty marks over a 1,000-row table for the build note (the brief's open question 13; diagnostics, not a
-// bound). Synthetic values only: an invented note, no real session text.
+// over the build's head (c68f52212 since the branch's rebase onto main, cd3a06501 before it) with the later cells' offsets
+// shifted, and refuses whole over the base. A last case times the index, one map and forty marks over a 1,000-row table for the
+// build note (the brief's open question 13; diagnostics, not a bound). Synthetic values only: an invented note, no real session
+// text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

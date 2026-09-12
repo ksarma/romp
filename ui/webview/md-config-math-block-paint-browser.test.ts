@@ -23,9 +23,12 @@
 // coverBox), a click opens both cards and each card's Scroll finds the box (before: the later paint's id overwrote the
 // earlier's, the click opened one card, the earlier card's Scroll fell to Reveal); and the pending target's unpaint strips its
 // own class alone, so Cancel over a highlighted formula leaves the highlight standing (before: it stripped both classes and
-// every attribute off the shared box, and the formula went bare and dead until the next full pass). Skips LOUDLY without a
-// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note,
-// /repo/notes-api paths, the placeholder sid.
+// every attribute off the shared box, and the formula went bare and dead until the next full pass). One leg from round 2: a
+// display formula inside a blockquote with a quote line after its closer, whose natural Raw quote (the opener through the
+// closing `$$`) never covered it, since the formula's hole ran past the next quote line's `> ` marker (anchor-map.ts, the
+// mathBlock hole's end); a served comment on it now stamps the quote's box and a Raw drag over its rows carries the pending
+// target onto it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
+// only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -42,14 +45,19 @@ const TRANSPARENT = "rgba(0, 0, 0, 0)";
 const OPEN_TITLE = "Open the comment on this passage";
 
 /** A comment in the host's shape on the note's passage `quote`: the exact source slice, its context, its position. */
-function comment(quote: string, k: number): Record<string, unknown> {
-  const at = NOTE.indexOf(quote);
+function comment(quote: string, k: number, note = NOTE): Record<string, unknown> {
+  const at = note.indexOf(quote);
   assert.ok(at >= 0, "the note holds " + JSON.stringify(quote));
-  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: BODY, anchor: makeAnchor(NOTE, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
+  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: BODY, anchor: makeAnchor(note, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
 }
 const FINAL = comment("Last para.", 1);       // the pass's sentinel: its mark is what the legs wait for (the paint is one pass over every card)
 const FORMULA = comment(FORMULA_Q, 2);
 const FORMULA_B = comment(FORMULA_Q, 3);      // a second comment on the same formula, later by time: the pass paints it after FORMULA, so it is the one in front
+// the round 2 leg's note: the display formula inside a blockquote, a blank `>` line and a quote line after its closer
+const NOTE_Q = "# Title\n\nPara before the quote.\n\n> Quote lead.\n>\n> $$\n> \\int_0^1 x\\,dx\n> $$\n>\n> Quote tail.\n\nLast para.\n";
+const QUOTED_Q = "$$\n> \\int_0^1 x\\,dx\n> $$";   // the natural Raw quote of the quoted block: the opener through the closing `$$`
+const FINAL_Q = comment("Last para.", 1, NOTE_Q);
+const QUOTED = comment(QUOTED_Q, 4, NOTE_Q);
 const id = (c: Record<string, unknown>): string => c.id as string;
 /** The kernel's status with `comments` in the store, `n` bumping the store's mtime so each reply reads as a new write. */
 const withComments = (comments: Record<string, unknown>[], n: number): Record<string, unknown> =>
@@ -57,11 +65,11 @@ const withComments = (comments: Record<string, unknown>[], n: number): Record<st
 
 /** The page: the note open in the view (Raw when `raw`), KaTeX's sheet added, `status` served before the open, the panel open, the
  *  sentinel's mark painted; in Rendered the math fill has run. */
-async function openWith(browser: any, mode: Mode, width: number, raw: boolean, status: Record<string, unknown>): Promise<{ page: any; errors: string[] }> {
+async function openWith(browser: any, mode: Mode, width: number, raw: boolean, status: Record<string, unknown>, note = NOTE, sentinel = FINAL): Promise<{ page: any; errors: string[] }> {
   const page = await browser.newPage({ viewport: { width, height: 700 } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
-  const html = pageHtml(mode, { [REPORT]: NOTE }, MT);
+  const html = pageHtml(mode, { [REPORT]: note }, MT);
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
   await page.goto(ORIGIN + "/");
   await page.addStyleTag({ content: KATEX_CSS });
@@ -71,7 +79,7 @@ async function openWith(browser: any, mode: Mode, width: number, raw: boolean, s
   if (!raw) await filled(page);
   await frames(page, 2);
   await openPanel(page);
-  await markPainted(page, id(FINAL));
+  await markPainted(page, id(sentinel));
   return { page, errors };
 }
 /** The math fill ran: no placeholder left, the display formula's box in the page. */
@@ -84,17 +92,18 @@ const markPainted = (page: any, cid: string): Promise<unknown> =>
 type Box = { found: boolean; cls: string; act: string | null; id: string | null; tab: string | null; role: string | null; title: string | null;
   bg: string; shadow: string; outline: string; cursor: string; width: number; height: number; katexChild: boolean; marksInside: number; topMarks: number; presel: number; preselMarks: number; hlMarks: number };
 /** The display formula's box as the page shows it: its class and the attributes the paint and the pass set, its computed dress,
- *  its size, whether KaTeX's root is still its one child, and the marks around it. */
-const readBox = (page: any): Promise<Box> => page.evaluate(() => {
+ *  its size, whether KaTeX's root is still its one child, and the marks around it. The top-level box by default; `sel` names
+ *  another (a quote's, `blockquote .katex-display`). */
+const readBox = (page: any, sel = ":scope > .katex-display"): Promise<Box> => page.evaluate((s: string) => {
   const md = document.querySelector(".fileview-md") as HTMLElement;
-  const d = md.querySelector(":scope > .katex-display") as HTMLElement | null;
+  const d = md.querySelector(s) as HTMLElement | null;
   const around = { topMarks: md.querySelectorAll(":scope > mark").length, presel: md.querySelectorAll(".fc-presel, .fc-presel-block").length, preselMarks: md.querySelectorAll("mark.fc-presel").length, hlMarks: md.querySelectorAll("mark.fc-hl").length };
   if (!d) return { found: false, cls: "", act: null, id: null, tab: null, role: null, title: null, bg: "", shadow: "", outline: "", cursor: "", width: 0, height: 0, katexChild: false, marksInside: 0, ...around };
   const cs = getComputedStyle(d), r = d.getBoundingClientRect();
   return { found: true, cls: d.className, act: d.getAttribute("data-act"), id: d.getAttribute("data-id"), tab: d.getAttribute("tabindex"), role: d.getAttribute("role"), title: d.getAttribute("title"),
     bg: cs.backgroundColor, shadow: cs.boxShadow, outline: cs.outlineStyle, cursor: cs.cursor, width: r.width, height: r.height,
     katexChild: d.children.length === 1 && d.firstElementChild!.classList.contains("katex"), marksInside: d.querySelectorAll("mark").length, ...around };
-});
+}, sel);
 type Card = { card: boolean; open: boolean; goto: boolean; reveal: boolean };
 /** The comment's card: there, open, offering Scroll (the reference link) or Reveal (readable on the OPEN card alone: a folded card renders no actions row). */
 const readCard = (page: any, cid: string): Promise<Card> => page.evaluate((c: string) => {
@@ -340,5 +349,54 @@ test("the composer's pending target on a formula a comment already highlights, m
     assert.deepEqual(await readCard(page, id(FORMULA)), { card: true, open: true, goto: true, reveal: false }, "a click on the formula opens its card, which offers Scroll (before: the click opened nothing)");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
+  });
+});
+
+test("a display formula inside a blockquote with a blank `>` line and a quote line after its closer, on the Files pane at 900 px (the Slice 8 review, round 2): a comment whose quote is the quoted block, the opener through the closing `$$` (the natural Raw quote), served before a fresh open stamps the quote's .katex-display with fc-hl-block, the paint's data and the pass's control attributes, the wash and ring, KaTeX's root its one child, and a click on the glyphs opens its card offering Scroll and no Reveal; the composer's pending target made by a real drag over the three quoted rows in Raw and carried into Rendered by the view switch stamps the same box with fc-presel-block, and Cancel leaves it bare (before: the formula's hole ran to the raw's end, past the `> ` marker of the quote line after it, where the span's trim stopped, so the exact quote never covered the formula: no class, no wash, the card offering Reveal, and no target on the box)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const QBOX = "blockquote .katex-display";
+    // the served comment
+    {
+      const { page, errors } = await openWith(browser, "pane", 900, false, withComments([FINAL_Q, QUOTED], 1), NOTE_Q, FINAL_Q);
+      const r = await readBox(page, QBOX);
+      assert.equal(r.found, true, "the quoted display formula's box");
+      assert.equal(stampedOnce(r.cls, "fc-hl-block"), true, "the quoted box wears fc-hl-block once (before: bare): " + JSON.stringify(r.cls));
+      assert.deepEqual([r.act, r.id], ["fcopen", id(QUOTED)], "the paint's data on the box");
+      assert.deepEqual([r.tab, r.role, r.title], ["0", "button", OPEN_TITLE], "the pass makes it a control");
+      assert.notEqual(r.bg, TRANSPARENT, "the highlight's wash on the box (before: transparent)");
+      assert.notEqual(r.shadow, "none", "...and its ring");
+      assert.deepEqual([r.katexChild, r.marksInside, r.topMarks], [true, 0, 0], "KaTeX's root the box's one child, no mark inside or at the top level");
+      await clickFormula(page, id(QUOTED));
+      assert.deepEqual(await readCard(page, id(QUOTED)), { card: true, open: true, goto: true, reveal: false }, "the open card offers Scroll and no Reveal (before: Reveal)");
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    }
+    // the pending target from a Raw drag over the quoted rows
+    {
+      const { page, errors } = await openWith(browser, "pane", 900, true, withComments([FINAL_Q], 1), NOTE_Q, FINAL_Q);
+      const selected = await dragRows(page, "> $$", "> $$");
+      assert.equal(squash(selected), squash("> " + QUOTED_Q), "the drag selected the quoted block over its three rows: " + JSON.stringify(selected));
+      await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+      await page.click(".fc-float");
+      await frames(page, 2);
+      const c = await composerQuote(page);
+      assert.deepEqual([c.open, c.refused, c.save], [true, null, true], "the composer quotes the quoted block with Save: " + JSON.stringify(c.quote));
+      assert.equal(squash(c.quote || ""), squash("> " + QUOTED_Q), "...the rows' text, markers included");
+      await page.evaluate(() => { (window as any).__seam.setMode("rendered"); });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+      await filled(page);
+      await markPainted(page, id(FINAL_Q));
+      await frames(page, 3);
+      const r = await readBox(page, QBOX);
+      assert.equal(stampedOnce(r.cls, "fc-presel-block"), true, "the quoted box wears fc-presel-block once (before: bare): " + JSON.stringify(r.cls));
+      assert.deepEqual([r.presel, r.preselMarks, r.marksInside, r.katexChild], [1, 0, 0, true], "the box is the target's one element");
+      assert.notEqual(r.bg, TRANSPARENT, "the pending target's wash");
+      await page.click('.fc-composer [data-act="fccancel"]');
+      await frames(page, 3);
+      const after = await readBox(page, QBOX);
+      assert.deepEqual([after.cls, after.act, after.id, after.presel], ["katex-display", null, null, 0], "Cancel leaves the box bare and no target anywhere");
+      assert.deepEqual(errors, [], "no script error");
+      await page.close();
+    }
   });
 });

@@ -1,15 +1,16 @@
 // A highlight mark inside a Rendered code row keeps the row's columns in line, over the REAL viewer and the REAL Comments panel in
 // headless Chromium (plans/markdown-viewer.md Slice 8, item 2; the review's round 1). A fence's rows are monospace columns, and the
-// sheets' `.fc-hl` and `.fc-presel` rules give a mark 2 px of side padding, which inside a `<pre>` row pushed the marked characters and
-// every character after them 2 px right (4 px past a mid-line mark): a commented line stood out of line with the rows above and below it
-// (measured at cd3a06501: column 7 at +2.02 px and columns 14 and 19 at +4.02 after a mark over `ghijkl`, every column +2.00 under a
-// whole-row mark). Both sheets now zero the horizontal padding inside `.fileview-md pre` (fileview-parity.test.ts pins the head
-// byte-equal). Here a synthetic note with a three-row fence is opened in the Rendered view through real-viewer-leg.ts, on the Files
-// pane at 900 px and in the chat modal, with two comments served: one on `ghijkl` in the first row, one on the whole third row. Once
-// the panel paints, every column's x is read per row through a Range over the character (the second row, unmarked, is the reference),
-// and the marks' computed padding, wash and ring are read; then a REAL drag over `mnopqr` in the second row opens the composer, whose
-// pending target paints a `.fc-presel` mark there, and the columns are read again. Skips LOUDLY without a playwright browser (CI
-// installs none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// sheets' `.fc-hl` and `.fc-presel` rules give a mark 2 px of side padding, which inside a `<pre>` row pushed the marked characters
+// and every character after them 2 px right (4 px past a mid-line mark): a commented line stood out of line with the rows above and
+// below it (measured at the build's head, c68f52212 since the branch's rebase onto main: column 7 at +2.02 px and columns 14 and 19
+// at +4.02 after a mark over `ghijkl`, every column +2.00 under a whole-row mark). Both sheets now zero the horizontal padding
+// inside `.fileview-md pre` (fileview-parity.test.ts pins the head byte-equal). Here a synthetic note with a three-row fence is
+// opened in the Rendered view through real-viewer-leg.ts, on the Files pane at 900 px and in the chat modal, with two comments
+// served: one on `ghijkl` in the first row, one on the whole third row. Once the panel paints, every column's x is read per row
+// through a Range over the character (the second row, unmarked, is the reference), and the marks' computed padding, wash and ring
+// are read; then a REAL drag over `mnopqr` in the second row opens the composer, whose pending target paints a `.fc-presel` mark
+// there, and the columns are read again. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openPanel, frames, pageHtml, ORIGIN, REPORT, SID, MT, STATUS, type Mode } from "./real-viewer-leg";

@@ -614,6 +614,52 @@ test("the block-level paint on a display formula (Slice 8, item 5; the Slice 8 c
   }
 });
 
+test("the block-level paint on a display formula inside a blockquote or a callout (the Slice 8 review, round 2): a range that is exactly the quoted `$$` block, the opener through the closing `$$` (the natural Raw quote, with or without the row's `> ` marker before the opener), stamps the formula's box when a quote line follows the closer, a blank `>` line then a tail or the tail directly (before: the hole ran to the raw's end, past the `> ` marker of the quote line after the formula, where formulaSpan's whitespace trim stopped, so the exact quote never covered the formula, the box stayed bare and the card offered Reveal); a range on into the tail returns the box then the tail's mark; the Raw offer for a boundary inside such a formula preselects the block through its closing `$$` and no marker after it (before: `$$ ... $$` then `>` and `>`); a formula last in its quote, at the top level and in a list item stamp as before", () => {
+  const TEX = "\\int_0^1 x\\,dx";
+  const scenes: [string, string, string][] = [
+    // the scene, its source, and the text after the formula a range runs on into
+    ["a blank `>` line then a tail", "Intro.\n\n> Quote lead.\n>\n> $$\n> " + TEX + "\n> $$\n>\n> Quote tail.\n\nAfter.\n", "Quote tail."],
+    ["the tail directly after the closer", "Intro.\n\n> $$\n> " + TEX + "\n> $$\n> Quote tail two.\n\nAfter.\n", "Quote tail two."],
+    ["a callout's body", "Intro.\n\n> [!note] Title\n> $$\n> " + TEX + "\n> $$\n>\n> Callout tail.\n\nAfter.\n", "Callout tail."],
+    ["the formula last in its quote", "Intro.\n\n> Quote lead three.\n>\n> $$\n> " + TEX + "\n> $$\n\nAfter.\n", "After."],
+    ["the top level", "Intro.\n\n$$\n" + TEX + "\n$$\n\nAfter.\n", "After."],
+    ["a list item", "Intro.\n\n- item one\n\n  $$\n  " + TEX + "\n  $$\n\n- item two\n", "item two"],
+  ];
+  for (const [name, src, tail] of scenes) {
+    const open = src.indexOf("$$"), close = src.indexOf("$$", open + 2) + 2;
+    const exact = { start: open, end: close };
+    assert.equal(src.slice(open, close).split("\n").length, 3, name + ": the block's three lines");
+    const box = buildRendered(src);
+    const display = byClass(box, "katex-display");
+    assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, name + ": bare before any paint");
+    // the exact quote: the box alone, stamped and returned
+    const alone = paintRendered(El(box), src, exact, "fc-hl", { act: "fcopen", id: "q1" }) as unknown as FakeElement[] | null;
+    assert.ok(alone, name + ": the exact quote covers the formula (before: null for a quoted block with a quote line after it)");
+    assert.deepEqual(alone!.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block"], name + ": the box alone, stamped, no mark");
+    assert.equal(alone![0], display, name);
+    assert.deepEqual(attrsOf(display), { cls: "katex-display fc-hl-block", act: "fcopen", id: "q1" }, name);
+    assert.equal(marksUnder(box).length, 0, name + ": no mark anywhere");
+    stripBox(display);
+    // from the row's start: the `> ` marker before the opener lies in the range and is positioned nowhere, so the same
+    const rowStart = src.lastIndexOf("\n", open) + 1;
+    const fromRow = paintRendered(El(box), src, { start: rowStart, end: close }, "fc-hl", { act: "fcopen", id: "q2" }) as unknown as FakeElement[] | null;
+    assert.deepEqual((fromRow || []).map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], name + ": from the row's start too");
+    stripBox(display);
+    // on into the text after the formula: the box, then that text's mark, in document order
+    const across = paintRendered(El(box), src, { start: open, end: src.indexOf(tail) + tail.length }, "fc-hl", { act: "fcopen", id: "q3" }) as unknown as FakeElement[];
+    assert.deepEqual(across.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block", "MARK.fc-hl"], name + ": into the text after: the box then its mark");
+    assert.equal(across[1].textContent, tail, name);
+    unpaintAll(box);
+    stripBox(display);
+    // the Raw offer for a boundary inside the glyphs: the block through its closing `$$`, no marker of a later line
+    const glyphs = allText(byClass(display, "katex"))[0];
+    const r = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), name + ": the glyphs alone");
+    assert.match(r.reason, /touches a formula/, name);
+    assert.deepEqual([r.rawHasQuote, r.rawRange], [true, exact], name + ": the preselection is the block through its closing `$$` (before: through the `>` markers of the lines after it)");
+    assert.equal(r.blockStartOffset, open, name + ": the Raw view opens at the formula");
+  }
+});
+
 test("a highlight across two blocks inside a folded callout, or from a fold's body into the block after it, paints the blocks' text and never the whitespace between them: no whitespace-only mark, none directly under the details, the fold's children as rendered", () => {
   // marked's block output leaves a "\n" text node after each block inside a folded callout's details (md-config.ts: `<details><summary>
   // ..</summary><p>..</p>\n<p>..</p>\n</details>`), the same node it leaves between blocks at the top level, in a list item or in a

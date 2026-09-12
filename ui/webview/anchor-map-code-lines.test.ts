@@ -17,8 +17,8 @@
 // anchor-map-cells.test.ts. The browser leg, anchor-map-code-lines-browser.test.ts, runs the real viewer and the real panel.
 // Every case that maps here refuses "touches a code block" or "an indented code block" over the tree before this slice; the
 // case of the Slice 8 review's round 1, a deletion point on a code line that shows no character placed in the line's own row,
-// fails over the build's head cd3a06501 with the point one row down. Synthetic values only: an invented note, no real session
-// text.
+// fails over the build's head (c68f52212 since the branch's rebase onto main, cd3a06501 before it) with the point one row down.
+// Synthetic values only: an invented note, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

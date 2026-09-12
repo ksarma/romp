@@ -194,7 +194,7 @@ const point = (root: FakeNode, id: string): FakeElement => { const x = withClass
 // cell places in that cell, and a point in the table's source outside every cell (the delimiter row, the bar after the last
 // cell) stays unpainted, as before: a point there would land in a cell the change is not in.
 
-test("Rendered deletion points and a table nested in a list item: inside a cell (a body cell, the header) the point places in that cell (Slice 8; before: unpainted, the table a hole); on the delimiter row and right after the last cell's bar the change stays unpainted; at the text before the table and at the text after it the point sits against that text, never beside the words after the table", () => {
+test("Rendered deletion points and a table nested in a list item: inside a cell (a body cell, the header) the point places in that cell (Slice 8; before: unpainted, the table a hole); on the delimiter row and right after the last cell's bar the change stays unpainted; at the text before the table and at the text after it the point sits against that text, never beside the words after the table; at the table's first character it sits after the item's text before the table, and at a TOP-LEVEL table's, whose block holds no text before it, before the first header cell's first character, the block's edge (the Slice 8 review, round 2, recorded)", () => {
   const source = "- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n\n  after table\n";
   const box = buildRendered(source);
   assert.equal(withTag(box, "TABLE").length, 1, "marked lexes the table inside the item");
@@ -228,6 +228,32 @@ test("Rendered deletion points and a table nested in a list item: inside a cell 
   assert.deepEqual(withClass(afterPara, "fc-del").map((m) => m.getAttribute("data-id")), ["t-after"]);
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
+  // the table's first character (its leading pipe), the boundary: after the text before the table when the block holds such text
+  // (the item's), and, for a TOP-LEVEL table, whose block holds nothing before it, before the first header cell's first character,
+  // the block's edge, as a top-level fence's opener sits before the code's first character (test 1b); the blank line before a
+  // top-level table is nothing's, and a point one character into its leading pipe's row, between the pipe and the cell, is the
+  // table's source outside every cell (the Slice 8 review, round 2, recorded; before Slice 8 both tables' first characters were
+  // unpainted, the table a hole)
+  const r2 = paintChangesRendered(El(box), source, [del("t-first", at(source, "| a |"))], stylesFor);
+  assert.deepEqual(r2, { painted: ["t-first"], unpainted: [] });
+  assert.ok(!inside(point(box, "t-first"), "TABLE"), "the nested table's first character: not inside the table");
+  [pre, post] = around(blockOf(box, point(box, "t-first")), point(box, "t-first"));
+  assert.ok(pre.endsWith("Item one"), "...after the text before the table: " + JSON.stringify(pre.slice(-12)));
+  assert.ok(post.replace(/\s+/g, "").startsWith("ab12"), JSON.stringify(post.slice(0, 12)));
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  const top = "Para before.\n\n| Route | p95 |\n|-------|-----|\n| GET /notes | 120 ms |\n\nAfter.\n";
+  const tb = buildRendered(top);
+  assert.equal(withTag(tb, "TABLE").length, 1, "marked lexes the top-level table");
+  const tFirst = at(top, "| Route");
+  const rt = paintChangesRendered(El(tb), top, [del("tt-first", tFirst), del("tt-blank", tFirst - 1), del("tt-in", tFirst + 1), del("tt-cell", tFirst + 2)], stylesFor);
+  assert.deepEqual(rt, { painted: ["tt-first", "tt-cell"], unpainted: ["tt-blank", "tt-in"] }, "the table's first character and a cell's place; the blank line before and the pipe's row outside the cell do not");
+  const first = point(tb, "tt-first");
+  assert.ok(inside(first, "TH"), "a top-level table's first character: inside the first header cell (no text before it in the block)");
+  assert.equal(around(withTag(tb, "TABLE")[0], first)[0].trim(), "", "...before the table's first character (marked's whitespace between the table's tags aside)");
+  assert.ok(around(withTag(tb, "TABLE")[0], first)[1].startsWith("Route"), "...the header cell's first character right after it");
+  assert.equal(withClass(tb, "fc-del").filter((m) => !inside(m, "TABLE")).length, 0, "no point outside the table: the paragraph before it holds none");
+  unpaintChanges(El(tb));
 });
 
 // ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
