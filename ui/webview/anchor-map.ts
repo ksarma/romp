@@ -10,9 +10,15 @@
 //     renders with, recording the source index of every character it emits and verifying every token's
 //     raw text at the position the walk assigns it. Marks the renderer consumes (heading hashes, list
 //     bullets, emphasis delimiters, backticks, link brackets and destinations, escapes, hard breaks,
-//     task checkboxes) are dropped; a block whose text with all whitespace removed does not equal the
-//     rendered element's is refused, never mis-anchored. Code, tables, HTML, entity-bearing prose, and
-//     escaped link labels refuse by design (the plan's list).
+//     task checkboxes, a table's pipes and delimiter row, a fence's opener and closer) are dropped; a
+//     block whose text with all whitespace removed does not equal the rendered element's is refused,
+//     never mis-anchored. A table's cells and a code block's lines are positioned as prose is (Slice 8 of
+//     plans/markdown-viewer.md: walkTable re-cuts each row as marked's splitCells does, walkCode finds
+//     each text line in its raw line), so a selection inside a cell or a code line maps to the source; a
+//     selection spanning two cells of a table is refused with the reason named and the Raw view offered
+//     on the exact span, and a table or a code block whose raw the reading cannot lay out keeps a hole
+//     with the Raw offer (the fallback the plan keeps). HTML, entity-bearing prose, and escaped link
+//     labels refuse by design (the plan's list).
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
@@ -178,12 +184,13 @@ const tagNameOf = (n: DElement): string => hasClass(n, IMG_WRAP_CLASS) ? "IMG" :
 // parts as well (a comment across two code lines matched its quote, which holds a newline, against a hay reading
 // "commentdef" and painted nothing, Slice 3 of plans/markdown-viewer.md; a comment across two cells reads its pipe as a
 // blank and finds the cells apart, Slice 5).
-// codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for
-// Slice 8's exact mapping of code lines and have no caller in production today: reader-place.ts read the code line at
-// the body's top edge through codeLineAt until the Slice 3 review's round 3 retired that hit-test read, and now counts
-// the `.cl` row under the edge as its line, the line codeLineAt gives any position in the row (one row per line).
-// anchor-map-wrapped-code.test.ts exercises the two and pins that no production module calls them; a caller added later
-// updates this paragraph and the plan's Slice 3 build note (item 9).
+// The exact mapping of code lines (walkCode, Slice 8 of plans/markdown-viewer.md) reads no row: the rows drop only the
+// newlines, which the walk never emits, so the character count under a `<pre>` is the walk's and descend and nthNonWs see
+// through the rows to the selected character. codeLineAt and codeLineStart, the line of a DOM position and the position
+// where a line starts, were exported here from Slice 3 for that mapping and had no caller in production (reader-place.ts
+// counts the `.cl` row under the body's top edge as its line, one row per line); Slice 8 deleted them, and
+// anchor-map-wrapped-code.test.ts pins that nothing under ui/webview defines or calls them again (the plan's Slice 3 build
+// note, item 9, records the deletion).
 
 const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl");
 
@@ -223,61 +230,6 @@ function hayRuns(n: DNode): CodeRun[] { const out: CodeRun[] = []; runsUnder(n, 
 
 /** The text of `code` as its source shows it: the text nodes' data with the newline between rows put back. */
 export const codeText = (code: DNode): string => codeRuns(code).map((r) => r.text).join("");
-
-/** The 0-based line of the DOM position (`node`, `offset`) in `code`: a text node and an index into it, or an element
- *  and an index among its children (a caret between two of them, or at its end, the shapes caretRangeFromPoint gives);
- *  -1 for a position not under `code`. The newlines before the position count, real and between rows. The position is
- *  taken as a DOM position, not a character offset, on purpose: once the wrap has dropped the newline, the end of one
- *  row's text and the start of the next are the same character offset and different lines, and the row that holds the
- *  position tells them apart. */
-export function codeLineAt(code: DNode, node: DNode, offset: number): number {
-  const target: DNode | null = isText(node) ? node : node.childNodes[offset] || null;
-  const atEnd = !isText(node) && !target;   // the end of an element: after its last content
-  let lines = 0;
-  const nl = (s: string, end: number): number => { let n = 0; for (let i = 0; i < end; i++) if (s.charCodeAt(i) === 10) n++; return n; };
-  const visit = (n: DNode): boolean => {   // true once the position is reached
-    if (target && n === target) { if (isText(n)) lines += nl(n.data, Math.min(offset, n.data.length)); return true; }
-    if (isText(n)) { lines += nl(n.data, n.data.length); return false; }
-    let prevRow = false;
-    for (let i = 0; i < n.childNodes.length; i++) {
-      const c = n.childNodes[i];
-      if (isControl(c)) continue;
-      const row = isElement(c) && isCodeRow(c);
-      if (row && prevRow) lines++;   // the boundary before this row, whether the position is in it or past it
-      if (visit(c)) return true;
-      prevRow = row;
-    }
-    if (atEnd && n === node) return true;
-    return false;
-  };
-  return visit(code) ? lines : -1;
-}
-
-/** The text position where line `k` (0-based) of `code` starts: the character after the k-th newline (the start of the
- *  next text node when the newline ends one, or the row after it when the newline is a row boundary; the row element
- *  itself, at offset 0, when that row holds no text); null past the last line. */
-export function codeLineStart(code: DNode, k: number): { node: DNode; offset: number } | null {
-  const runs = codeRuns(code);
-  const firstTextFrom = (i: number): DText | null => { for (let j = i; j < runs.length; j++) if (runs[j].node) return runs[j].node; return null; };
-  if (k === 0) { const t = firstTextFrom(0); return t ? { node: t, offset: 0 } : null; }
-  let seen = 0;
-  for (let i = 0; i < runs.length; i++) {
-    const r = runs[i];
-    if (!r.node) {
-      if (++seen < k) continue;
-      const rowText = textNodes(r.row as DNode)[0];
-      return rowText ? { node: rowText, offset: 0 } : { node: r.row as DNode, offset: 0 };
-    }
-    const d = r.text;
-    for (let j = 0; j < d.length; j++) {
-      if (d.charCodeAt(j) !== 10 || ++seen < k) continue;
-      if (j + 1 < d.length) return { node: r.node, offset: j + 1 };
-      const next = firstTextFrom(i + 1);
-      return next ? { node: next, offset: 0 } : { node: r.node, offset: d.length };
-    }
-  }
-  return null;
-}
 
 /** Sum of the lengths of the text nodes under `n` that a `counts` predicate admits (null = all). */
 function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => boolean) | null): number {
@@ -780,7 +732,8 @@ function expandTabs(str: string, n: (i: number) => number): { str: string; map: 
  *  marker left in the text (`> \tquoted`, `>\t\tcode`, a closing `> \t`, `- \titem`) is four spaces in the nested
  *  tokens' raws. The top-level walk runs over N, the source with the same expansion (normalizeSource); this is that step
  *  one level down, and the four spaces take the tab's position, so no emitted character moves and a block the tab opens
- *  (an indented code block) places as a hole where the tab stands. The Slice 4 review, round 6: before this the nested
+ *  (an indented code block) places its lines at their own characters past the tab (walkCode; a hole where the tab stood,
+ *  before Slice 8). The Slice 4 review, round 6: before this the nested
  *  walk ran over the unexpanded text, the nested raws did not tile it, and any such quote refused whole, a closing
  *  `> \t` line with "a paragraph the mapping could not place" (round 5 covered `>\t` and `> ` singly: the strip takes
  *  one whitespace and the nested lexer expanded the second), a `> \tquoted` line with a reason naming the tab. */
@@ -2777,8 +2730,10 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
   const FORMULA_TOUCHED = "This selection touches a formula; comment on it from the Raw view.";
   // a formula at the selection's END is an obstacle like a hole's: named after the obstacles before it in the span (the pass
-  // below), so a drag from a table cell into a formula's glyphs names the table, the obstacle the person's eye meets first;
-  // one at the START is the first obstacle and is named at once
+  // below), so a drag from a table's first cell into a formula's glyphs after the table names the table's one-cell rule, the
+  // obstacle the person's eye meets first, while one from the table's last cell names the formula (a positioned cell is no
+  // obstacle since Slice 8; before it the table was a hole and a drag from any cell named it); one at the START is the first
+  // obstacle and is named at once
   let formulaEnd: Partial<MapRefusal> | null = null;
   const covered: DNode[] = [];   // the formulas the selection covers whole, at its start or its end
   for (const [x, sx, other, o] of [[a, sa, sf, f], [f, sf, sa, a]] as const) {
@@ -4377,8 +4332,11 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
     const hits = occurrences(hay, quote);
     // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's rendering, which the
-    // quote was cut from. A change's text is short (a word, a number), and a table or a code block repeats such tokens; the
-    // first occurrence would mark an unchanged cell and report it painted, the wrong passage under "Scroll to the change".
+    // quote was cut from. A change's text is short (a word, a number) and a block repeats such tokens (until Slice 8 a table's
+    // cells and a code block's lines, which repeat them most, came here; since then those paint by position through the exact
+    // path above, and the ordinal serves what still falls here: an html block's text, a fence line's or the delimiter row's
+    // quote, a cell the per-cell fallback holds); the first occurrence would mark an unchanged passage and report it painted,
+    // the wrong passage under "Scroll to the change".
     // The count is taken over the RENDERED scope, not the raw slice: a comment's quote may carry markup of its own (`` `GET
     // /notes` `` in a table cell, `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the
     // rendering shows its text twice. The ordinal is exact when the rendering shows the text as many times as the scope's
