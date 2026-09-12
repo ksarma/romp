@@ -34,8 +34,11 @@
 //   - the text-first `<p>` with the LOGO's top at the edge, landed by a whole-pixel scroll 0.3 to 0.9px below it (the name's
 //     last sub-pixel above): rowPartsTop classified the edge's part exactly, so the same reader took the row's fraction on one
 //     step and the picture's on the next, as the landing fell, and the logo drifted 2.6 to 3px per text-size step (78c0806ce
-//     held it within 0.5); now the picture's top within the snap pixel and a seat's half-pixel landing counts as inside
-//     (PIC_AT_EDGE);
+//     held it within 0.5); now the picture's top within the snap pixel and a seat's half-pixel landing counts as at the edge
+//     (PIC_AT_EDGE), and since the review's closing pass the seat asks for a top within that band, either side of the edge, at
+//     the whole pixel nearest where it stood, the same ask on every reflow: round 8 asked for the top where it landed, and at
+//     700 to 800px the landings walked past the band over A+, A+ (0.91, 1.27, 1.75) and the first A- took the row's fraction,
+//     2.5px (test 6 runs 700 too);
 //   - an inline ICON beside a heading's text on one line (`<h1><img 24px> Project</h1>`): the parts model took the edge inside
 //     the icon for the picture's part, held the icon and let the heading's text rise by the line's growth, 4.5px per step at
 //     380, or took the row's rule as the sub-pixel landing fell; now a row whose pictures stand beside its text on one line
@@ -342,9 +345,9 @@ const headingCaps = (page: any) => page.evaluate(() => {
   return { top: r10(hr.top - br.top), height: r10(hr.height), icon: { top: r10(ir.top - br.top), height: r10(ir.height) }, lineHeight: r10(parseFloat(cs.lineHeight)), capTop: r10(ir.bottom - br.top - asc), text: (h1.textContent || "").trim() };
 });
 
-test("in a browser, the real module: the text-first `<p align=\"center\"><b>Project name here</b><br><img></p>` with the LOGO's top at the edge, landed by a whole-pixel scrollTop 0.3 to 0.9px below it (the name's last sub-pixel above the edge) or within a pixel above it, holds the logo within 1px across A+, a second A+ and the two A- back at 900 and 380px (the review's round 8: rowPartsTop classified the edge's part exactly, `imgs.top > 0` the text's, where every other inside-the-picture test allows the pixel the browser snaps scrollTop to, so the same reader took the row's fraction on one step and the picture's on the next as the landing fell, and the logo drifted 2.6 to 3px per step, 0.91 to 3.36 to 5.97 at 900 and 0.34 to 2.98 to 5.88 at 380, 2px off after the four steps from the landing above the edge; 78c0806ce held it within 0.5; now the picture's top within PIC_AT_EDGE below the edge counts as inside)", { timeout: 300000 }, async (t) => {
+test("in a browser, the real module: the text-first `<p align=\"center\"><b>Project name here</b><br><img></p>` with the LOGO's top at the edge, landed by a whole-pixel scrollTop 0.3 to 0.9px below it (the name's last sub-pixel above the edge) or within a pixel above it, holds the logo within 1px across A+, a second A+ and the two A- back at 900, 700 and 380px (the review's round 8: rowPartsTop classified the edge's part exactly, `imgs.top > 0` the text's, where every other inside-the-picture test allows the pixel the browser snaps scrollTop to, so the same reader took the row's fraction on one step and the picture's on the next as the landing fell, and the logo drifted 2.6 to 3px per step, 0.91 to 3.36 to 5.97 at 900 and 0.34 to 2.98 to 5.88 at 380, 2px off after the four steps from the landing above the edge; 78c0806ce held it within 0.5; now the picture's top within PIC_AT_EDGE below the edge counts as at the edge; and the closing pass: within that band round 8's seat asked for the top where it landed, and at 700 the landings walked past the band, 0.91 to 1.27 to 1.75 over A+, A+, so the first A- took the row's fraction, 2.5px, and the four steps ended 2px off; now the seat asks for the whole pixel nearest where the top stood, the same ask on every reflow, and the four steps end where they began)", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    for (const width of [900, 380]) {
+    for (const width of [900, 700, 380]) {
       for (const how of ["floor", "ceil"] as const) {
         const where = `pane ${width}, the logo's top landed by ${how} (${how === "floor" ? "in [0, 1) below" : "in (-1, 0] above"} the edge), text-size steps`;
         const { page, errors } = await openViewer(browser, "pane", width, 600, { docs: { [REPORT]: P_TEXT_IMG } }); await imagesDone(page);
@@ -358,7 +361,7 @@ test("in a browser, the real module: the text-first `<p align=\"center\"><b>Proj
           await sizeStep(page, label);
           steps.push(Math.round(((await imgByAlt(page, "logo")).top - before.top) * 100) / 100);
         }
-        for (const [i, d] of steps.entries()) assert.ok(Math.abs(d) <= 1, where + `: after step ${i + 1} the logo is where it was (moved ${d}px; all steps ${JSON.stringify(steps)}; 99e7e2d0c: 2.45 to 2.64 per A+ at the floor landing, 0.45 then 2.61 at 900's ceil landing and -2.09 after the four)`);
+        for (const [i, d] of steps.entries()) assert.ok(Math.abs(d) <= 1, where + `: after step ${i + 1} the logo is where it was (moved ${d}px; all steps ${JSON.stringify(steps)}; 99e7e2d0c: 2.45 to 2.64 per A+ at the floor landing, 0.45 then 2.61 at 900's ceil landing and -2.09 after the four; d831e7a28 at 700's floor landing: 0.36, 0.84, -1.64, -2)`);
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }

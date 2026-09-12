@@ -82,11 +82,14 @@
 // the edge in the last ten pixels of a 508px banner over a 72px row the row's bottom rounded to one pixel, the read passed
 // it for the blank after it, the nested heading was seated at that row's distance, and the picture came back 12 to 20px
 // higher, wholly above the edge); round 8: with such a row's picture's top within the pixel the browser snaps to below the
-// edge, and the half pixel a seat's own landing adds, the edge counts as inside the picture (PIC_AT_EDGE: classified exactly,
-// a text-first `<p>` whose logo's top a whole-pixel scroll landed 0.3 to 0.9px below the edge took the row's fraction on one
-// step and the picture's on the next, and the logo drifted 2.6 to 3px per text-size step, where 78c0806ce's picture rule held
-// it within 0.5); a row whose pictures stand beside its text on ONE line, a 24px icon before a README's `<h1>` name, keeps the
-// row's rule, the line being what the reader has at the edge (picInLine, by the row's line-height: the picture's rule held
+// edge, and the half pixel a seat's own landing adds, the picture is at the edge and keeps the picture's rule (PIC_AT_EDGE:
+// classified exactly, a text-first `<p>` whose logo's top a whole-pixel scroll landed 0.3 to 0.9px below the edge took the
+// row's fraction on one step and the picture's on the next, and the logo drifted 2.6 to 3px per text-size step, where
+// 78c0806ce's picture rule held it within 0.5), and since the review's closing pass the seat asks for a top within that band,
+// either side of the edge, at the whole pixel nearest where it stood, the same ask on every reflow, where asking for the landed
+// top walked it past the band at 700 to 800px (0.91, 1.27, 1.75 over A+, A+, then the row's fraction, 2.5px); a row whose
+// pictures stand beside its text on ONE line, a 24px icon before a README's `<h1>` name, keeps the row's rule, the line being
+// what the reader has at the edge (picInLine, by the row's line-height: the picture's rule held
 // the icon and let the heading's text rise by the line's growth, 4.5px per step at 380, where the row's holds the text and
 // the icon falls with its baseline); and the text under such a row's picture keeps its distance from the picture's bottom
 // scaled by the row's line-height, not by the part's height, so a pane drag that wraps the tagline under the name holds the
@@ -1101,16 +1104,23 @@ export function seatedTop(place: Place, view: View, height: number, same: boolea
 export function seatPlace(body: HTMLElement, source: string, place: Place): boolean {
   return seatPlaceOutcome(body, source, place).seated;
 }
-/** How far below the edge a picture's top may stand for the edge to count as INSIDE the picture when a same-view reflow
- *  chooses between the picture's rule and its row's (picOutranksRow, rowPartsTop): the pixel the browser snaps scrollTop to
- *  (atEdge's bound, the read's) and the half pixel a seat's own landing adds to it (ROW_SHOWN's reasoning: a seat asks for a
- *  fraction and the body takes a whole pixel, so the picture's rule, which asks for the picture's top where it was, lands it up
- *  to half a pixel from there). Classified exactly (`imgs.top > 0` the text's part), a text-first `<p>` whose logo's top a
- *  whole-pixel scroll landed 0.3 to 0.9px below the edge took the row's fraction on one step and the picture's on the next, as
- *  the landing fell, and the logo drifted 2.6 to 3px per text-size step at 900 and 380, 2px off after A+, A+, A-, A-, where
- *  78c0806ce's picture rule held it within 0.5 (the review's round 8). Within this band the picture's rule asks for the top
- *  where it landed, so the landings stay within the band as long as their errors do not run one way for three steps; the
- *  observed landings for one scene bounced within half a pixel of the start. */
+/** How far below the edge a picture's top may stand for the picture to count as AT the edge when a same-view reflow chooses
+ *  between the picture's rule and its row's (picOutranksRow, rowPartsTop): the pixel the browser snaps scrollTop to (atEdge's
+ *  bound, the read's) and the half pixel a seat's own landing adds to it (ROW_SHOWN's reasoning: a seat asks for a fraction and
+ *  the body takes a whole pixel, so a seat lands up to half a pixel from where it asked). Classified exactly (`imgs.top > 0` the
+ *  text's part), a text-first `<p>` whose logo's top a whole-pixel scroll landed 0.3 to 0.9px below the edge took the row's
+ *  fraction on one step and the picture's on the next, as the landing fell, and the logo drifted 2.6 to 3px per text-size step
+ *  at 900 and 380, 2px off after A+, A+, A-, A-, where 78c0806ce's picture rule held it within 0.5 (the review's round 8).
+ *  With the top within this band on EITHER side of the edge (the same pixel and half pixel above it, the edge inside the
+ *  picture's first pixel) rowPartsTop asks for the picture's top at the WHOLE PIXEL nearest where it stood, the edge or the
+ *  pixel above or below it (the top is at the edge, and the browser's scroll can put it nowhere finer: a wheel scroll lands
+ *  whole pixels), so the ask is the same on every reflow of the scene and every landing, within half a pixel of it, stays
+ *  inside the band, and the four steps A+, A+, A-, A- end where they began; round 8 had asked for the top where it landed, and
+ *  the landings walked: at 700 to 800px the logo's top went 0.91, 1.27, 1.75 over A+, A+, past the band, and the first A- took
+ *  the row's fraction, 2.5px (the review's closing pass; 380 and 900 had bounced within half a pixel of the start). The band
+ *  reaches both ways because a fixed ask needs its landings to stay under it: asked for the edge from 0.45px below it, the top
+ *  landed 0.2 above, and the picture's fraction from there asked for each landing again and walked to 0.56 above, 1.01px from
+ *  the start over two steps (measured at 300px with the band below the edge alone). */
 const PIC_AT_EDGE = 1.5;
 /** Whether the pictures of a row of the block's own that holds text beside them stand BESIDE that text on one line, as a 24px
  *  icon does before a README's `<h1>` name, rather than on a line of their own over or under the text, as the logo does in the
@@ -1120,12 +1130,13 @@ const PIC_AT_EDGE = 1.5;
  *  the name beside it: a line box holding a picture is the picture and the text's descent below its baseline, and a line of
  *  words over or under it adds the row's line-height at least). Such a row keeps the ROW's rule on a same-view reflow: the line
  *  is what the reader has at the edge, its text grows about its baseline and the picture hangs from that baseline, and no seat
- *  holds both; the row's fraction scales the line about the edge, so the heading's text at the edge holds within half a pixel
- *  and the icon falls with its baseline, 3.3 to 3.5px per text-size step, where the picture's rule held the icon and let the
- *  text rise by the line's growth, 4.5px per step at 380 and 3.7 at 900, out of the pane after two (the review's round 8:
- *  rowPartsTop's three parts, text over the picture, the picture and text under it, took the edge inside the icon for the
- *  picture's part, and HEAD flipped between the two rules with the sub-pixel landing, the icon's top 0.44px below the edge at
- *  900 taking the row's). Without a line-height to read (a stand-in) the parts model stands. */
+ *  holds both; the row's fraction scales the line about the edge, so the heading's cap tops at the edge hold within half a pixel
+ *  per text-size step with the edge 5px into the heading and within 2px with it 8px in (1.1px at 900 and 1.7 at 380 after two
+ *  steps, picture-line test 7's bound), and the icon falls with its baseline, 2.5 to 3.8px per step and 5.3 to 7.3 over two,
+ *  where the picture's rule held the icon and let the text rise by the line's growth, 4.5px per step at 380 and 3.7 at 900, out
+ *  of the pane after two (the review's round 8: rowPartsTop's three parts, text over the picture, the picture and text under it,
+ *  took the edge inside the icon for the picture's part, and HEAD flipped between the two rules with the sub-pixel landing, the
+ *  icon's top 0.44px below the edge at 900 taking the row's). Without a line-height to read (a stand-in) the parts model stands. */
 const picInLine = (now: LineBoxes): boolean => {
   if (!(now.lh > 0)) return false;
   const rowH = now.box.bottom - now.box.top, picH = now.imgs.bottom - now.imgs.top;
@@ -1148,11 +1159,13 @@ const picInLine = (now: LineBoxes): boolean => {
 /** Where a row of a wrapper's block's own that holds its picture beside text (Pic.imgs: the `<p>` around the logo and the project's
  *  name) goes on a same-view Rendered reflow, as its top from the edge. The row is three parts, the text above the picture, the
  *  picture and the text under it, and the text grows with a text-size step or wraps on a pane drag while the picture does not.
- *  The edge inside the picture, its top within PIC_AT_EDGE below the edge, keeps the picture's fraction of its height, the
- *  picture's rule (round 6: held so, where the `<p>`'s fraction drifted it 1.9 to 2.9px per step; round 8: the band, above). The
- *  edge in the text UNDER the picture keeps its distance from the picture's bottom scaled by the row's LINE-HEIGHT (`before.lh`
- *  as read, `now.lh` after the reflow): the part is lines of that height and the strut between the picture's bottom and its first
- *  line, all of which scale with the font and none of which changes when the part's later lines wrap, so the name under the logo
+ *  The edge inside the picture keeps the picture's fraction of its height, the picture's rule (round 6: held so, where the `<p>`'s
+ *  fraction drifted it 1.9 to 2.9px per step); the picture's top AT the edge, within PIC_AT_EDGE either side of it, goes back
+ *  at the whole pixel nearest where it stood, a fixed ask whose landings stay in the band (round 8: the band below the edge;
+ *  the closing pass: the fixed ask and the band's upper half, PIC_AT_EDGE above). The edge in the text UNDER the picture keeps
+ *  its distance from the picture's bottom scaled by the row's LINE-HEIGHT (`before.lh` as read, `now.lh` after the reflow): the
+ *  part is lines of that height and the strut between the picture's bottom and its first line, all of which scale with the font
+ *  and none of which changes when the part's later lines wrap, so the name under the logo
  *  holds within a pixel across a text-size step (the `<p>`'s fraction moved it 2.3 to 8.7px per step, and the picture held, 1.5 the
  *  other way by the strut's growth; the review's round 7) and exactly across a pane drag that wraps the tagline under it (the
  *  part's own fraction, round 7's rule, took the wrapped lines for growth and moved the name 3.6 to 4.6px on the drag between 900
@@ -1172,7 +1185,8 @@ function rowPartsTop(before: Pic, imgs: { top: number; height: number }, now: Li
   const above = imgs.top - before.top, picH = imgs.height, below = before.height - above - picH;
   const rowH2 = now.box.bottom - now.box.top, above2 = now.imgs.top - now.box.top, picH2 = now.imgs.bottom - now.imgs.top, below2 = rowH2 - above2 - picH2;
   if (d < above - PIC_AT_EDGE) return before.height > 0 ? before.top * rowH2 / before.height : before.top;   // in the text above the picture: the row's fraction
-  if (d < above + picH) return (picH > 0 ? imgs.top * picH2 / picH : imgs.top) - above2;     // inside the picture, or within the band under its top: its fraction
+  if (d < above + Math.min(PIC_AT_EDGE, picH)) return Math.max(-1, Math.min(1, Math.round(imgs.top))) - above2;   // the picture's top AT the edge, within the band either side of it: the whole pixel nearest where it stood
+  if (d < above + picH) return (picH > 0 ? imgs.top * picH2 / picH : imgs.top) - above2;     // inside the picture: its fraction
   const dB = d - above - picH;                                                             // under the picture: its distance from the picture's bottom, by the line-height
   const scale = before.lh && before.lh > 0 && now.lh > 0 ? now.lh / before.lh : below > 0 ? below2 / below : 0;
   return -(dB * scale) - picH2 - above2;

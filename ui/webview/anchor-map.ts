@@ -1216,7 +1216,15 @@ type TopTag = { tag: string; open: boolean; depth: number; empty?: boolean; stra
    *  wrapper opened at depth 1, `<div><div>`, had none, and the next same-tag block took the depth-1 wrapper itself). The text kid
    *  carries its text so the pairing's read of it is bounded (pastKids; the review's round 5: read as every text node and mark from
    *  its place, the run took the bare nodes the NEXT html block leaves at the wrapper's level) */
-  kids?: Kid[] };
+  kids?: Kid[];
+  /** the text the raw puts at the top level right after the tag's element, or after the stray end tag, up to the next top-level tag
+   *  or the raw's end, as the DOM shows it (htmlText's reading, whitespace stripped): the rest of the block's line or its next line
+   *  (`<div>x</div> trailing text`), a top-level text node the browser leaves beside the element, which the scans read past with it
+   *  (scanTake and the pairing loop's scan through pastAfter; the Slice 5 review's closing pass: the run to the end read past an
+   *  html block's element by its tags alone, so such a node stood where the next block's element was expected, the run failed
+   *  and the shortened paragraph before the block was swallowed where 99e7e2d0c had refused it with its own node). Text before
+   *  the block's first tag is no tag's: an html block starts with a tag or a comment, and the resync reads a leftover node. */
+  after?: string };
 /** A child of an open tag's element in the raw (TopTag.kids): an element by its name, a text run as `#text` with its text. */
 type Kid = { name: string; text?: string };
 const VOID_TAGS = new Set(["AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM", "SOURCE", "TRACK", "WBR"]);
@@ -1251,6 +1259,9 @@ const SCOPE_BARRIERS = new Set(["APPLET", "CAPTION", "MARQUEE", "OBJECT", "TABLE
  *  special element other than an address, a div or a p), as far as this module names them: the block-level elements, the raw-text
  *  elements, the scope barriers and the form controls it knows. */
 const LIST_ITEM_STOPS = new Set([...CLOSES_P, ...RAW_TEXT, ...SCOPE_BARRIERS, "BUTTON", "SELECT", "NOSCRIPT", "TBODY", "THEAD", "TFOOT", "TR", "COLGROUP"].filter((s) => s !== "ADDRESS" && s !== "DIV" && s !== "P"));
+/** The parser's special elements, as far as this module names them (LIST_ITEM_STOPS with the three it leaves out): at a formatting
+ *  element's end tag the adoption agency algorithm's furthest block is the outermost of these open above the element (topTags). */
+const SPECIAL = new Set([...LIST_ITEM_STOPS, "ADDRESS", "DIV", "P"]);
 const isHeading = (name: string): boolean => name.length === 2 && name[0] === "H" && name[1] >= "1" && name[1] <= "6";
 /** The parser's implied end tags at the START tag `name` met with `stack` open (outermost first, HTML elements only, the parser's
  *  "in body" rules): the index the stack is popped to, `stack.length` when nothing closes. A start tag that closes a `<p>` (CLOSES_P;
@@ -1288,7 +1299,16 @@ const isTagNameChar = (c: string): boolean => (c >= "a" && c <= "z") || (c >= "A
  *  ends at a start tag are read, because they decide what the block's nodes are (startTagCloses): a `<p>` in button scope
  *  closes when a block-level start tag (CLOSES_P, less `<table>` in the sanitizer's quirks-mode document) follows it, an
  *  `<li>` at the next `<li>`, a `<dt>` or `<dd>` at the next, an `<option>` at the next `<option>` or `<optgroup>`, a heading
- *  at the next heading, a `<button>` at the next `<button>`; and a top-level `<p>` the raw leaves open is CLOSED, since every
+ *  at the next heading, a `<button>` at the next `<button>`. A formatting element's end tag (FORMATTING: `</b>`, `</a>`, `</font>`)
+ *  met with a special element open above the element (SPECIAL: `<b><p>x</b>`, the p) is the parser's adoption agency algorithm:
+ *  the formatting element closes where it stood, with the children it had before the first such element, and each special
+ *  element above it, outermost first, leaves it for the element below it and stays OPEN, a clone of the formatting element
+ *  wrapping what it held so far, so a `<div><b><p>x</b><div>` block's outer div holds [b, p, div] as the DOM does (the Slice 5
+ *  review's closing pass: the end tag closed down to its element, the `<p>` was listed under the `<b>` and the `<b>` alone under
+ *  the div, so the depth-1 wrapper was looked up at the reparented `<p>` and not found, and the nested paragraph and the paragraph
+ *  after were refused, where 701728eae had mapped them); a formatting element that is the top-level tag hands its special element
+ *  up as a top-level tag of its own. Text at the top level after a tag is that tag's `after` (TopTag.after), read past with its
+ *  element by the scans. And a top-level `<p>` the raw leaves open is CLOSED, since every
  *  block marked renders after it opens with a tag that closes a `p` (the paragraph's own `<p>`, a heading, a list, a `<pre>`,
  *  a table), so no markdown nests in it, where it nests in an open `<div>` or `<details>`; and a stray `</p>` at depth 0 is an
  *  empty `<p>` the parser mints, one node. Any other end tag with no open element of its name at depth 0 is listed as `stray`: it opens
@@ -1316,8 +1336,15 @@ function topTags(raw: string): { tags: TopTag[]; pOpen: boolean } {
   const closeDownTo = (d: number): void => { for (let x = stack.length - 1; x >= d; x--) closeInner(x); };
   const openTop = (name: string): void => { out.push({ tag: name, open: true, depth: 0, kids: [] }); top = out.length - 1; };
   const kid = (k: Kid): void => { if (stack.length) kidsAt[stack.length - 1].push(k); };   // a child of the innermost open element
-  /** the text run from textFrom to `to` as the DOM shows it (htmlText's reading), a `#text` kid when it is not blank */
-  const flushText = (to: number): void => { if (to > textFrom) { const t = htmlText(raw.slice(textFrom, to)); if (t !== "") kid({ name: "#text", text: t }); } textFrom = to; };
+  /** the text run from textFrom to `to` as the DOM shows it (htmlText's reading), when it is not blank: a `#text` kid of the innermost
+   *  open element, or, at the top level, the text after the last top-level tag (TopTag.after); text before any tag is no tag's */
+  const flushText = (to: number): void => {
+    if (to > textFrom) {
+      const t = htmlText(raw.slice(textFrom, to));
+      if (t !== "") { if (stack.length) kid({ name: "#text", text: t }); else if (out.length) { const last = out[out.length - 1]; last.after = (last.after || "") + t; } }
+    }
+    textFrom = to;
+  };
   while (i < n) {
     const lt = raw.indexOf("<", i);
     if (lt < 0) break;
@@ -1354,6 +1381,28 @@ function topTags(raw: string): { tags: TopTag[]; pOpen: boolean } {
     if (end) {
       let at = stack.length - 1;
       while (at >= 0 && stack[at] !== name) at--;
+      if (at >= 0 && FORMATTING.has(name) && !stack.slice(at + 1).some((s) => SCOPE_BARRIERS.has(s) || FOREIGN.has(s))) {
+        // the parser's adoption agency algorithm, for a formatting element's end tag met with a special element open above the
+        // element (`<b><p>x</b>`, `<a href><p>x</a>`, `<font><p>x</font>`; a scope barrier or foreign content above it is left to
+        // the rule below): the formatting element closes where it stood, with the children it had before the first special element
+        // (its kids so far), and each special element above it, outermost first, leaves it for the element below it and stays open,
+        // a clone of the formatting element wrapping what it held so far (its kids so far, and every non-special element above it,
+        // which closes inside the clone); a formatting element that is the top-level tag hands its special element up as a top-level
+        // tag of its own. With no special element above, the end tag closes down to the element like any other (below).
+        const specials: string[] = [];
+        for (let d = at + 1; d < stack.length; d++) if (SPECIAL.has(stack[d])) specials.push(stack[d]);
+        if (specials.length) {
+          if (at >= 1) kidsAt[at - 1].push({ name });
+          closeTo(at);
+          for (const s of specials) {
+            if (stack.length === 0) openTop(s);
+            stack.push(s);
+            kidsAt.push(stack.length === 1 ? (out[top].kids as Kid[]) : []);
+            kidsAt[kidsAt.length - 1].push({ name });
+          }
+          continue;
+        }
+      }
       if (at >= 1 && name === "FORM") {
         // the parser's own rule for `</form>`: the implied end tags close what stands innermost (a `<p>` left open in the form), then
         // the form alone is removed from the stack and the elements still open inside it stay open, one depth up, so the markdown
@@ -1911,18 +1960,25 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  with a leftover closed inline on its only paragraph confirmed its run at no end and the closer was swallowed by the html
    *  block after it) */
   const pastMinted = (b: number, k: number): number => blocks[b].minted && k < content.length && emptyP(content[k]) ? k + 1 : k;
+  /** the index past the run of text nodes and highlight marks from k whose text together is `want`, k when the run's text is not: the
+   *  ONE read of a bare text the DOM holds where the source describes it (a hoisted text, pastHoisted; a text kid, pastKids; the text
+   *  after a tag, pastAfter). A MARK is read as its text because a comment on the text wraps it in one, a comment over part of it
+   *  splits it, so the run is read, bounded by the wanted text */
+  const pastText = (want: string, k: number): number => {
+    let acc = "", kk = k;
+    while (kk < content.length && acc.length < want.length && (isText(content[kk]) || tagIs(content[kk], "MARK"))) { acc += nodeText.get(content[kk]); kk++; }
+    return acc === want ? kk : k;
+  };
+  /** the index past the top-level text the raw puts right after a tag's element or a stray end tag (TopTag.after), k when the DOM
+   *  does not hold it there (the Slice 5 review's closing pass) */
+  const pastAfter = (tt: TopTag, k: number): number => tt.after ? pastText(tt.after, k) : k;
   /** the index past the bare text an html block's unwrapped element left at k (Block.htext: `<option>Opt.</option>`, a `<form>`'s
    *  lead): the run of text nodes and highlight marks from k whose text together is the block's, else k. A MARK is read as its text
    *  because a comment on the hoisted text wraps it in one, a top-level `<mark>` when the text is top-level (the Slice 5 review,
    *  round 3: the read accepted a Text node alone, so once such a comment painted, the re-analysis met the mark where the text was
    *  expected, no end confirmed, and the html block before took every node to the document's end; a comment over part of the text
    *  splits it, so the run is read, not one node) */
-  const pastHoisted = (blk: Block, k: number): number => {
-    if (blk.htext === "") return k;
-    let acc = "", kk = k;
-    while (kk < content.length && acc.length < blk.htext.length && (isText(content[kk]) || tagIs(content[kk], "MARK"))) { acc += nodeText.get(content[kk]); kk++; }
-    return acc === blk.htext ? kk : k;
-  };
+  const pastHoisted = (blk: Block, k: number): number => blk.htext === "" ? k : pastText(blk.htext, k);
   const firstTag = (blk: Block): TopTag | undefined => blk.tags ? blk.tags.find((tt) => tt.depth === 0 && !tt.stray) : undefined;
   /** whether html block `blk` leaves a tag open, so the blocks after it nest in its element (spliced children the run check cannot see) */
   const wraps = (blk: Block): boolean => (blk.tags || []).some((tt) => !tt.stray && tt.open);
@@ -1952,9 +2008,8 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         // text searched from the wrapper's offset); a run whose text is not the kid's ends the read, and the resync decides
         let want = kid.text || "";
         while (i + 1 < kids.length && kids[i + 1].name === "#text") { i++; want += kids[i].text || ""; }
-        let acc = "", kk = k;
-        while (kk < content.length && acc.length < want.length && (isText(content[kk]) || tagIs(content[kk], "MARK"))) { acc += nodeText.get(content[kk]); kk++; }
-        if (acc !== want) break;
+        const kk = pastText(want, k);
+        if (kk === k) break;
         k = kk;
         continue;
       }
@@ -1979,7 +2034,8 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  last copy's offsets and a comment on the last copy painted on the first, where round 3's swallow to the end had refused
    *  the selection and painted the right copy through the fallback); content.length and blocks.length when neither is found. The
    *  next html block's element is the first node from k of its first tag from which the blocks AFTER it line up through to the
-   *  content's end or an html block's own element, past the nodes its own scan would take (scanTake, runFits with `toEnd`), when
+   *  content's end, or to an html block's own element once two blocks with text have confirmed the run (the closing pass; the
+   *  tag alone had confirmed it), past the nodes its own scan would take (scanTake, runFits with `toEnd`, from the candidate), when
    *  the block leaves no tag open (a wrapper's nested blocks pair against its spliced children, which the run check cannot see:
    *  for such a block, and when no candidate lines up, the first node of the tag stands, as before); the review's round 6: the
    *  first node of the tag was taken whatever followed, so an html `<p>Go</p>` block after a swallowed run of paragraphs was
@@ -2005,19 +2061,22 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         if (!tagIs(content[i], first.tag) || (first.empty && !emptyP(content[i]))) continue;
         if (wraps(nb)) return { at: i, block: x };
         if (hit < 0) hit = i;
-        if (runFits(x + 1, scanTake(nb, i), true)) return { at: i, block: x };
+        if (runFits(x + 1, scanTake(nb, i), true, false, i)) return { at: i, block: x };   // the run's own nodes begin at the candidate: its element among them
       }
       if (hit >= 0) return { at: hit, block: x };
     }
     return { at: content.length, block: blocks.length };
   };
-  /** the index past the nodes html block `blk`'s scan takes from `at`: each depth-0 tag the node at k when that node is its element
-   *  (the scan in the loop below, for a block that leaves no tag open, so nothing is spliced); nextAnchor's read of a candidate */
+  /** the index past the nodes html block `blk`'s scan takes from `at`: each depth-0 tag the node at k when that node is its element,
+   *  and the top-level text the raw puts after the tag (TopTag.after, pastAfter) when the DOM holds it there (the scan in the loop
+   *  below, for a block that leaves no tag open, so nothing is spliced); nextAnchor's read of a candidate, and the run to the end's
+   *  read past an html block's element (runFits) */
   const scanTake = (blk: Block, at: number): number => {
     let k = at;
     for (const tt of blk.tags || []) {
-      if (tt.stray || tt.depth > 0) continue;
-      if (k < content.length && tagIs(content[k], tt.tag) && !(tt.empty && !emptyP(content[k]))) k++;
+      if (tt.depth > 0) continue;
+      if (!tt.stray && k < content.length && tagIs(content[k], tt.tag) && !(tt.empty && !emptyP(content[k]))) k++;
+      k = pastAfter(tt, k);
     }
     return k;
   };
@@ -2041,11 +2100,22 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
    *  is read: with two, any index whose node count matched would pass, round 5's wrong-copy resume), so the shortened paragraph
    *  first or second in the tail does not end the run either (the review's round 7: main mapped the other three where the swallow
    *  refused all four; the same lookahead confirms nextAnchor's candidate after an html block when the tail's first block is such a
-   *  paragraph, where the first node of the tag was taken and owned a swallowed paragraph's `<p>`). Inside that lookahead an
-  *  html block's element at k confirms nothing by itself: the run goes on past the nodes its scan takes (the review's round 8: it
-  *  had confirmed by tag alone, one node early), and in any run to the end an html block whose element stands BEHIND k is a
-  *  misaligned run, not a dropped element (round 8 as well). */
-  const runFits = (b: number, k: number, toEnd = false, spent = false): boolean => {
+   *  paragraph, where the first node of the tag was taken and owned a swallowed paragraph's `<p>`). In a run to the end an html
+   *  block's element at k confirms nothing by itself until two blocks with text have confirmed the run: the run goes on past the
+   *  nodes its scan takes, the text after them included (scanTake, TopTag.after), and the blocks after must line up too, unless
+   *  the block leaves a tag open, whose nested blocks pair against spliced children the run cannot see (the review's round 8: the
+   *  tag match had confirmed the lookahead's run one node early; its closing pass: outside the lookahead the tag still confirmed
+   *  the run after ONE text confirmation, so with a paragraph repeated inside and after a swallowed run, [F, `</details>`, F, an
+   *  html `<p>`, a paragraph the sanitizer shortened, ...], the `</details>` resume's candidate at the FIRST rendered copy passed
+   *  on the second copy's block and the html block's tag, the second copy's block owned the first rendered copy, a selection in
+   *  the first copy mapped to the second copy's offsets and a comment made there was stored on the wrong passage, fuzz8 seed
+   *  1330, where 99e7e2d0c had refused both copies; the candidate at the second copy, from which the tail lines up through to
+   *  the end, is the one taken now). And in a run to the end an html block whose element stands BEHIND k, among the run's own
+   *  nodes from `from` (the candidate's index, the pairing position's own block start), is a misaligned run, not a dropped
+   *  element (round 8; its closing pass: the scan ran from the content's start, so a kept `<input type="checkbox">` block before
+   *  the swallow, or as the opener's own kid inside it, failed the run at a removed `<input type="text">` block in the tail, the
+   *  sanitizer's one conditional drop, and the tail was swallowed where 99e7e2d0c and main mapped it). */
+  const runFits = (b: number, k: number, toEnd = false, spent = false, from = k): boolean => {
     let confirmed = 0;
     for (; b < blocks.length; b++) {
       const blk = blocks[b];
@@ -2063,25 +2133,31 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         if (blk.blank || blk.nested || !first) continue;
         const isFirst = (x: number): boolean => tagIs(content[x], first.tag) && (!first.empty || emptyP(content[x]));
         if (k < content.length && isFirst(k)) {
-          // inside the lookahead (spent) the element at k confirms nothing by itself: the run goes on past the nodes the block's
-          // scan takes, so the blocks after it must line up too, as nextAnchor's candidate check reads them, unless the block
-          // leaves a tag open, whose nested blocks pair against spliced children the run cannot see (the review's round 8: the tag
-          // match returned true here, so after a `</center>` closer a tail [paragraph, html `<p>`, paragraph] confirmed the
-          // candidate at the node BEFORE the paragraph's: the paragraph mismatched it as the tolerated one, its own `<p>` stood for
-          // the html block's, the html block owned the run and the paragraph was refused as an HTML block at the html block's
-          // offset, where 78c0806ce and main mapped it; likewise nextAnchor's html `<p>` candidate before such a tail)
-          if (!spent || wraps(blk)) return true;
+          // in a run to the end the element at k confirms nothing by itself until two blocks with text have confirmed the run: the
+          // run goes on past the nodes the block's scan takes, so the blocks after it must line up too, as nextAnchor's candidate
+          // check reads them, unless the block leaves a tag open, whose nested blocks pair against spliced children the run cannot
+          // see (the review's round 8: the tag match returned true here inside the lookahead, so after a `</center>` closer a tail
+          // [paragraph, html `<p>`, paragraph] confirmed the candidate at the node BEFORE the paragraph's: the paragraph mismatched
+          // it as the tolerated one, its own `<p>` stood for the html block's, the html block owned the run and the paragraph was
+          // refused as an HTML block at the html block's offset, where 78c0806ce and main mapped it; likewise nextAnchor's html
+          // `<p>` candidate before such a tail; its closing pass: outside the lookahead the tag still confirmed after one text
+          // confirmation, fuzz8 seed 1330's wrong copy, the docblock above); in the pairing loop's own run check the next html
+          // block's element ends the run, since that block resyncs on its own
+          if (!toEnd || wraps(blk) || confirmed >= 2) return true;
           k = scanTake(blk, k); continue;
         }
         for (let x = k + 1; x < content.length; x++) if (isFirst(x)) return false;
-        // an element nowhere forward of k is read past, dropped or unwrapped; in a run to the end one BEHIND k means the run is
-        // misaligned, not the element dropped: a dropped or unwrapped element is nowhere in the content at all, and the candidate
-        // such a run confirms may be this block's own element (round 8: two raw `<table>` blocks with a foster-parented `<br>`
-        // between their elements, then a paragraph the sanitizer shortened, then a paragraph; the second table's element passed
-        // as the first table's candidate, from which the second table was read past as nowhere, the shortened paragraph was the
-        // tolerated mismatch and the last paragraph lined up, so the first table's block took the second's element and the last
-        // paragraph was refused as an HTML block, where 78c0806ce kept the first node of the tag)
-        if (toEnd) for (let x = 0; x < k; x++) if (isFirst(x)) return false;
+        // an element nowhere forward of k is read past, dropped or unwrapped; in a run to the end one BEHIND k among the run's own
+        // nodes (from `from`, the candidate's index) means the run is misaligned, not the element dropped: a dropped or unwrapped
+        // element is nowhere in the run's nodes, and the candidate such a run confirms may be this block's own element (round 8:
+        // two raw `<table>` blocks with a foster-parented `<br>` between their elements, then a paragraph the sanitizer shortened,
+        // then a paragraph; the second table's element passed as the first table's candidate, from which the second table was
+        // read past as nowhere, the shortened paragraph was the tolerated mismatch and the last paragraph lined up, so the first
+        // table's block took the second's element and the last paragraph was refused as an HTML block, where 78c0806ce kept the
+        // first node of the tag). The nodes BEFORE the run belong to the blocks before it, and a same-tag element among them says
+        // nothing about this block's (the closing pass: the scan from the content's start failed every candidate at a removed
+        // `<input type="text">` block when a kept checkbox `<input>` block stood anywhere before, and the tail was swallowed)
+        if (toEnd) for (let x = from; x < k; x++) if (isFirst(x)) return false;
         k = pastHoisted(blk, k);
         continue;
       }
@@ -2089,7 +2165,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       if (k >= content.length) return blk.refused !== null && blk.chars.length === 0;   // the content ran out with a block left that needs a node: no run (main's rule; the review's round 8, below)
       if (!fits(blk, content[k])) {
         if (!toEnd) return false;
-        if (confirmed < 2) return !spent && runFits(b + 1, pastMinted(b, k + 1), true, true);   // one unconfirmed mismatch, when the rest lines up from the node after it
+        if (confirmed < 2) return !spent && runFits(b + 1, pastMinted(b, k + 1), true, true, from);   // one unconfirmed mismatch, when the rest lines up from the node after it
         k = pastMinted(b, k + 1); continue;   // a mismatch in the confirmed tail takes its node
       }
       k = pastMinted(b, k + 1);   // the empty `<p>` the parser minted after a block closing a wrapper inline is no block's node
@@ -2125,7 +2201,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
         let k = j;
         let holder: DNode | null = null;   // the open element the next deeper open tag's element is the last element child of
         for (const tt of blk.tags || []) {
-          if (tt.stray) continue;   // an end tag for an earlier block's element: it opens nothing and takes no node
+          if (tt.stray) { k = pastAfter(tt, k); continue; }   // an end tag for an earlier block's element: it opens nothing and takes no node; the text after it on the block's line is its own (TopTag.after)
           if (tt.depth > 0) {
             // the element left open inside the one before it: the node at k, the first of the holder's spliced children the raw's
             // own kids did not account for, when it is that element; its children join the pairing after it, its own raw children
@@ -2140,11 +2216,12 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
             holder = inner;
             continue;
           }
-          // dropped, unwrapped or reshaped between the raw and the DOM: the resync below decides
-          if (k >= content.length || !tagIs(content[k], tt.tag) || (tt.empty && !emptyP(content[k]))) { holder = null; continue; }
+          // dropped, unwrapped or reshaped between the raw and the DOM: the resync below decides (the text after the tag is read
+          // past where the DOM holds it, pastAfter)
+          if (k >= content.length || !tagIs(content[k], tt.tag) || (tt.empty && !emptyP(content[k]))) { holder = null; k = pastAfter(tt, k); continue; }
           const node = content[k++];
           holder = tt.open ? node : null;
-          if (tt.open) { splice(node, k); k = pastKids(tt, k); }
+          if (tt.open) { splice(node, k); k = pastKids(tt, k); } else k = pastAfter(tt, k);   // a closed tag's element, then the text the raw puts after it (TopTag.after)
         }
         let jj = -1;
         for (let kk = k; kk <= content.length; kk++) if (runFits(b + 1, kk)) { jj = kk; break; }
