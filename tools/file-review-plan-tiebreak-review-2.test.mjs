@@ -251,7 +251,7 @@ test('the painting paragraph, the note and decision 51 record the guessed card\'
   assert.ok(branch.includes('"Show this copy in the Raw view"'), 'the title names the Raw view');
   const saveWords = 'a comment saved from the copy you mean is placed on that copy, and this one keeps its tag until you resolve it';
   assert.ok(branch.includes(saveWords) || (branch.includes('SAVE_FROM_COPY') && panel.includes(`const SAVE_FROM_COPY = "${saveWords}";`)), 'the title says what the save does, as the record states it');
-  assert.ok(panel.includes('type PanelCard = Card & { confirmedAt?: number };'));
+  assert.ok(panel.includes('type PanelCard = Card & { confirmedAt?: number; hintedCopy?: boolean };'));   // hintedCopy: the viewer's sequential hint (plans/markdown-viewer.md Slice 5, item 7) rides beside it
   const words = fn(panel, 'copyUnsureWords');
   assert.ok(words.includes('c.confirmedAt !== undefined') && words.includes("the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted"), 'the words name the confirmed place');
   assert.ok(words.includes('", not a confirmed one. Reveal it and save again from the right copy to confirm."'), 'and still end by asking for the save');

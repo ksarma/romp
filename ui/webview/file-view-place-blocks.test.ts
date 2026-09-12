@@ -5,18 +5,28 @@
 // block after it, a row inside a code block as the code block with the block's rows as its box, an html block of two
 // sibling tags as one block with the two boxes together, a place partway into a block seats the other view at the same
 // fraction of the block's height, a replaced block keeps the depth in pixels and moves down by what it lost, a body at
-// its top stays at its top. The review's second round added: an element an html wrapper swallowed (the map pairs every
-// later element to the wrapper) reads as no place and lends no box; the Raw row at the edge is kept and seated where it
-// was through an edit inside its block; a block deleted under the eye seats the block after it at the edge; with the
-// block and both neighbours gone, the nearest block before that stands places it. The third round replaced the text
-// test on a swallowed element with a trusted pairing (the block's own source parsed by DOMParser yields as many
+// its top stays at its top. The review's second round added: the Raw row at the edge is kept and seated where it was
+// through an edit inside its block; a block deleted under the eye seats the block after it at the edge; with the block
+// and both neighbours gone, the nearest block before that stands places it; and an element an html wrapper swallowed
+// (the map then paired every later element to the wrapper) read as no place and lent no box. The third round replaced
+// the text test on a swallowed element with a trusted pairing (the block's own source parsed by DOMParser yields as many
 // elements with the same text; the review found the hand decoder throwing on an out-of-range entity and refusing a
 // caption on `&mdash;`), refused the wrapper's run from any element (a picture, a rule) and a seat on the wrapper's own
 // rows, refused both of two adjacent html blocks, and kept the line rule to a line that stands (a rewritten or
 // recurring line falls to the depth rule). The fourth round refused a wrapper's one-element pairing too (a wrapper
-// closing at the document's end, or never closed, is paired to itself alone, holding every paragraph after it; the third
-// round trusted any one element), keeping a one-tag html block and any other block's one element, and pinned codeOf's
-// html `<pre>` exclusion here (the stand-in has no hit test, so a seat cannot reach it). The Slice 3 review's third
+// closing at the document's end, or never closed, was paired to itself alone, holding every paragraph after it; the
+// third round trusted any one element), keeping a one-tag html block and any other block's one element, and pinned
+// codeOf's html `<pre>` exclusion here (the stand-in has no hit test, so a seat cannot reach it). Slice 5's flattened
+// walk (anchor-map.ts: the tag scan over an html block's raw, the open element's children taken into the block table)
+// pairs a wrapper's block to the wrapper and its summary and every block nested in the wrapper to its own element, and
+// readPlace descends into a wrapper (reader-place.ts readRendered), so the two wrapper tests below are rewritten for it:
+// a nested paragraph, a paragraph after the wrapper and a rule read and seat as their own blocks; the wrapper's box at
+// the edge reads the first nested block, the summary (a row of the wrapper's block's own) passed over, and a closed
+// details the block after it; a wrapper inside a wrapper is read at each depth; two adjacent html blocks read as their
+// own; and a Raw row of the wrapper's own still seats nothing (the owner's ruling 2 for the slice), where the closing
+// tag's row seats the last nested paragraph. The wrapper's children take boxes stacked inside its box (nestBoxes), as a
+// browser lays a `<details>` or a centred `<div>` out; a closed details' content takes none here (Chromium gives it a box
+// that checkVisibility denies, which boxOf reads as none: file-view-place-closed-details.test.ts). The Slice 3 review's third
 // round pinned that the math fill's source fallback (a `$$` or `\[` block) is no code block to codeOf either, and that a
 // code element with no rows (the stand-in's fences, which nothing wraps) reads and seats no line whatever hit test the
 // document offers: the hit-test path Slice 2 read a code line with, kept in Slice 3 for that fallback, could never reach
@@ -31,7 +41,7 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import { marked } from "marked";
 import { topVisibleIndex, blockIndexAt, blockHolding, followPlace, seatedTop, readPlace, seatPlace, codeOf, type Place } from "./reader-place";
-import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements } from "./anchor-map";
+import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, renderedBlockWrappers } from "./anchor-map";
 import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
@@ -154,6 +164,25 @@ function raw(src: string, top0 = 0, h = 20): { body: FakeElement; code: FakeElem
   pre.appendChild(code); wrap.appendChild(pre); body.appendChild(wrap);
   return { body, code, rows };
 }
+/** Heights for `rendered`: `n` top-level elements of 40px, those named in `over` (by index) as given. */
+const stack = (n: number, over: Record<number, number> = {}): number[] => Array.from({ length: n }, (_, i) => (i in over ? over[i] : 40));
+/** Boxes for a wrapper's element children as a browser lays a `<details>` or a centred `<div>` out: stacked inside the
+ *  wrapper's box from its top, `h` px each, 8 apart (the wrapper's height, from `rendered`'s heights, must hold them);
+ *  the children in order. */
+function nestBoxes(wrapper: FakeElement, h = 40): FakeElement[] {
+  const kids = wrapper.childNodes.filter((n): n is FakeElement => n instanceof FakeElement);
+  let y = wrapper.box!.top;
+  for (const k of kids) { k.box = { top: y, bottom: y + h }; y += h + 8; }
+  assert.ok(y - 8 <= wrapper.box!.bottom, "the fixture: the wrapper's box holds its children (" + (y - 8) + " within " + wrapper.box!.bottom + ")");
+  return kids;
+}
+/** Every box under `root` moved by `d` px (the root's own too, when it has one). */
+function shiftBoxes(root: FakeElement, d: number): void {
+  if (root.box) root.box = { top: root.box.top + d, bottom: root.box.bottom + d };
+  for (const c of root.childNodes) if (c instanceof FakeElement) shiftBoxes(c, d);
+}
+/** The Rendered view scrolled so that `el`'s box straddles the body's top edge (100), `depth` px into it. */
+const toEdge = (md: FakeElement, el: FakeElement, depth: number): void => shiftBoxes(md, 100 - depth - el.box!.top);
 const PARA = (i: number) => `Paragraph ${i}: some words of the report, enough to make a line.`;
 const paras = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
 const CODE = "```python\ndef f(x):\n    return x\n\nprint(f(1))\n```";
@@ -399,35 +428,109 @@ test("seatPlace: a place partway into a block seats the other view's block at th
   assert.equal(seatPlace(H(r.body), DOC, { ...kept, start: -5, end: -5, prev: null, next: null }), false);
 });
 
-// ── the Slice 2 review, round 2: a wrapper's swallowed run, the line at the edge, a deleted block, the wider walk ────
-test("readPlace / seatPlace: an html wrapper the browser nests the following markdown into is paired, as the map stands, to every element after it; any element of the run (a swallowed paragraph, the wrapper, a rule) reads as no place, and a seat that would borrow the wrapper's box, or seat the wrapper's own rows, declines; an html block of sibling tags parsing to its elements reads as one block, whatever markup or entity it carries; two adjacent html blocks read as no place", () => {
+// ── the Slice 2 review, rounds 2 to 4, rewritten under Slice 5's flattened walk: a wrapper's nested blocks and its own rows, the line at the edge, a deleted block, the wider walk ────
+test("readPlace / seatPlace: an html wrapper the browser nests the following markdown into is paired to itself and its summary, and the blocks after it and inside it to their own elements (Slice 5's flattened walk; before it, every element after the wrapper was the wrapper's and read as no place): a paragraph after the wrapper, a rule in the run and the nested paragraph read as their own blocks and seat at their own boxes; the wrapper's box at the edge reads the first nested block, its summary passed over, and a closed details the block after it; a Raw place on the wrapper's own rows still seats nothing, one on the closing tag's row seats the nested paragraph; an html block of sibling tags parsing to its elements reads as one block, whatever markup or entity it carries; two html blocks a blank line apart read as their own", () => {
   const WRAP = "<details>\n<summary>More</summary>\n\nHidden details text here.\n\n</details>";
+  const INNER = "Hidden details text here.";
   const doc = "# Report\n\n" + paras(1, 4) + "\n\n" + WRAP + "\n\n" + paras(5, 12) + "\n";
   const spans = sourceBlockSpans(doc);
   const wb = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<details>"));
-  const r = rendered(doc, 0, 40);
-  const p8 = r.blocks.find((k) => k.textContent.startsWith("Paragraph 8:"))!;
-  const i8 = r.blocks.indexOf(p8);
-  // the fixture: the stand-in nests the inner paragraph inside <details> as a browser does, and the map pairs every later element to the wrapper's block
-  assert.equal(r.blocks[5].tagName, "DETAILS");
-  assert.equal(r.blocks[5].childNodes.filter((n) => n instanceof FakeElement).length, 2, "the summary and the nested paragraph");
-  assert.equal(renderedBlockIndex(El(r.md), doc, El(p8)), wb, "paragraph 8's element is paired to the wrapper's block");
-  assert.equal(renderedBlockElements(El(r.md), doc, wb).length, r.blocks.length - 5, "the wrapper holds every element from itself on");
-  // paragraph 8 straddles the edge (its box 80..120, the edge at 100): no place, where the union of the rest of the document was read
-  const r2 = rendered(doc, 100 - i8 * 48 - 20, 40);
-  assert.equal(readPlace(H(r2.body), doc), null, "the swallowed paragraph reads as no place (the review round 2: read as the wrapper's block, a Raw switch landed on <summary>, 3500px up)");
-  // a Raw place at paragraph 8 seated in this Rendered view: its block has no element of its own, and the nearest block before it with elements is the wrapper's run: no seat, the body unmoved
-  const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:"));
+  const bIn = blockIndexAt(spans, doc.indexOf(INNER)), b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:")), b5 = blockIndexAt(spans, doc.indexOf("Paragraph 5:"));
+  /** the document laid out: the heading, four paragraphs, the details (88px: its summary and its nested paragraph, 40 each, 8 apart,
+   *  as a browser stacks them inside it), eight paragraphs */
+  const build = () => {
+    const r = rendered(doc, 0, stack(14, { 5: 88 }));
+    const [summary, inner] = nestBoxes(r.blocks[5]);
+    return { ...r, det: r.blocks[5], summary, inner, p5: r.blocks.find((k) => k.textContent.startsWith("Paragraph 5:"))!, p8: r.blocks.find((k) => k.textContent.startsWith("Paragraph 8:"))! };
+  };
+  const r = build();
+  // the fixture: the stand-in nests the inner paragraph inside <details> as a browser does, after the summary
+  assert.equal(r.det.tagName, "DETAILS");
+  assert.deepEqual([r.summary.tagName, r.inner.tagName, r.inner.textContent], ["SUMMARY", "P", INNER], "the summary and the nested paragraph");
+  assert.equal(r.blocks.length, 14, "the heading, four paragraphs, the details and eight paragraphs at the top level (the closing tag renders nothing)");
+  // the block table (anchor-map.ts, Slice 5): paragraph 8 is its own block's, the wrapper's block holds the wrapper and its summary
+  // and names the wrapper as its wrapper, the nested paragraph's block holds its <p> and is no wrapper's
+  assert.equal(renderedBlockIndex(El(r.md), doc, El(r.p8)), b8, "paragraph 8's element is its own block's (before: the wrapper's)");
+  sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.det, r.summary], "the wrapper's block holds the wrapper and its summary (before: every element from itself on)");   // by identity (ui/test-dom-shim.ts sameNodes)
+  sameNodes(renderedBlockWrappers(El(r.md), doc, wb), [r.det], "the wrapper alone is the block's wrapper");
+  sameNodes(renderedBlockElements(El(r.md), doc, bIn), [r.inner], "the nested paragraph's block: its own <p>");
+  assert.deepEqual(renderedBlockWrappers(El(r.md), doc, bIn), [], "the nested paragraph's block: no wrapper");
+  assert.equal(renderedBlockIndex(El(r.md), doc, El(r.summary)), wb, "the summary is the wrapper's block's");
+  assert.deepEqual(renderedBlockWrappers(El(r.md), doc, b8), [], "a paragraph's block has no wrapper");
+  // paragraph 8 straddling the edge, 20px in: its own block, partway in (before: no place, the swallowed run; the review round 2
+  // read it as the wrapper's block, and a Raw switch landed on <summary>, 3500px up)
+  toEdge(r.md, r.p8, 20);
+  const q8 = readPlace(H(r.body), doc)!;
+  assert.ok(q8, "a place from a paragraph after the wrapper");
+  assert.deepEqual([q8.start, q8.end, q8.top, q8.height], [spans[b8].start, spans[b8].end, -20, 40], "paragraph 8, 20px in");
+  assert.deepEqual([doc.slice(q8.prev!.start, q8.prev!.end), doc.slice(q8.next!.start, q8.next!.end)], [PARA(7), PARA(9)]);
+  // a Raw place on paragraph 8, half a row in, seated in a fresh Rendered view: paragraph 8's box, half way in (before: its block
+  // had no element of its own and the nearest before it with one was the refused run, so no seat and the body unmoved)
   const kept: Place = { source: doc, view: "raw", start: spans[b8].start, end: spans[b8].end, top: -10, height: 20, atTop: false, prev: spans[b8 - 1], next: spans[b8 + 1] };
-  r2.body.scrollTop = 500;
-  assert.equal(seatPlace(H(r2.body), doc, kept), false);
-  assert.equal(r2.body.scrollTop, 500);
-  // the wrapper element itself at the edge: its text is the nested paragraph's, not the block's own, so no place either
-  const r3 = rendered(doc, 100 - 5 * 48 - 20, 40);
-  assert.equal(readPlace(H(r3.body), doc), null);
+  const s8 = build(); s8.body.scrollTop = 500;
+  assert.equal(seatPlace(H(s8.body), doc, kept), true, "seated");
+  assert.equal(s8.body.scrollTop, 500 + (s8.p8.box!.top - 100) - (-20), "paragraph 8's box 20px above the edge, the row's half");
+  // the wrapper's box at the edge, its summary straddling it: the summary is a row of the block's own and is passed over, so the first
+  // nested block, the hidden paragraph, is the place, at its own box below the edge (before: no place; the owner's call for Slice 5:
+  // the wrapper's rows are never the place, and the edge inside a wrapper reads what is nested there)
+  toEdge(r.md, r.summary, 20);
+  const qs = readPlace(H(r.body), doc)!;
+  assert.ok(qs, "a place from the wrapper's box");
+  assert.deepEqual([qs.start, qs.end, qs.top], [spans[bIn].start, spans[bIn].end, r.inner.box!.top - 100], "the nested paragraph, below the edge by the summary's remaining height and the gap");
+  assert.equal(qs.top, 28);
+  // the nested paragraph straddling the edge: its own block, partway in, its neighbours the wrapper's opening and closing blocks
+  toEdge(r.md, r.inner, 20);
+  const qi = readPlace(H(r.body), doc)!;
+  assert.deepEqual([qi.start, qi.end, qi.top, qi.height], [spans[bIn].start, spans[bIn].end, -20, 40], "the nested paragraph, 20px in");
+  assert.deepEqual([doc.slice(qi.prev!.start, qi.prev!.end), doc.slice(qi.next!.start, qi.next!.end)], ["<details>\n<summary>More</summary>", "</details>"]);
+  // a Raw place on the nested paragraph seated in a fresh Rendered view: the nested <p>'s own box
+  const keptIn: Place = { source: doc, view: "raw", start: spans[bIn].start, end: spans[bIn].end, top: -5, height: 20, atTop: false, prev: spans[bIn - 1], next: spans[bIn + 1] };
+  const sIn = build(); sIn.body.scrollTop = 500;
+  assert.equal(seatPlace(H(sIn.body), doc, keptIn), true, "the nested paragraph's Raw place seats");
+  assert.equal(sIn.body.scrollTop, 500 + (sIn.inner.box!.top - 100) - (-10), "the nested paragraph's box a quarter in, as its row was");
+  // the details CLOSED, as a browser lays one out (the nested paragraph has no layout): the summary at the edge is passed over, nothing
+  // else nested ends below the edge, and the paragraph after the wrapper is the place, at its distance below the edge
+  const c = build(); c.inner.box = null; toEdge(c.md, c.summary, 20);
+  const qc = readPlace(H(c.body), doc)!;
+  assert.ok(qc, "a place past a closed details");
+  assert.deepEqual([qc.start, qc.end, qc.top], [spans[b5].start, spans[b5].end, c.p5.box!.top - 100], "paragraph 5, the block after the wrapper, below the edge");
+  assert.ok(qc.top > 0, "below the edge, so a seat keeps its distance");
   // a paragraph before the wrapper reads as ever
-  const r4 = rendered(doc, 100 - 3 * 48 - 20, 40);
+  const r4 = build(); toEdge(r4.md, r4.blocks[3], 20);
   assert.equal(doc.slice(readPlace(H(r4.body), doc)!.start, readPlace(H(r4.body), doc)!.end), PARA(3));
+  // a tag the html block closed before it opened the wrapper (`<p>Alpha</p>` on the line above `<div align="center">`, one block) is a
+  // row of the block's own too: at the edge it is passed over and the first nested paragraph is the place; the nested paragraphs
+  // read as their own
+  const docPD = "# Report\n\n" + paras(1, 2) + "\n\n<p>Alpha</p>\n<div align=\"center\">\n\n" + paras(3, 4) + "\n\n</div>\n\n" + PARA(5) + "\n";
+  const spansPD = sourceBlockSpans(docPD);
+  const bPD = spansPD.findIndex((sp) => docPD.slice(sp.start, sp.end).startsWith("<p>Alpha</p>"));
+  assert.equal(docPD.slice(spansPD[bPD].start, spansPD[bPD].end), "<p>Alpha</p>\n<div align=\"center\">", "the fixture: the closed tag and the open one are one html block");
+  const rp = rendered(docPD, 0, stack(6, { 4: 88 }));
+  assert.deepEqual(rp.blocks.map((k) => k.tagName), ["H1", "P", "P", "P", "DIV", "P"], "the fixture: Alpha's <p> then the div at the top level, paragraphs 3 and 4 nested in the div");
+  const [n3, n4] = nestBoxes(rp.blocks[4]);
+  sameNodes(renderedBlockElements(El(rp.md), docPD, bPD), [rp.blocks[3], rp.blocks[4]], "the html block holds Alpha's <p> and the div");
+  sameNodes(renderedBlockWrappers(El(rp.md), docPD, bPD), [rp.blocks[4]], "the div alone is its wrapper");
+  assert.equal(renderedBlockIndex(El(rp.md), docPD, El(n4)), blockIndexAt(spansPD, docPD.indexOf(PARA(4))), "the second nested paragraph is its own block's");
+  toEdge(rp.md, rp.blocks[3], 20);
+  const qp = readPlace(H(rp.body), docPD)!;
+  assert.deepEqual([docPD.slice(qp.start, qp.end), qp.top], [PARA(3), n3.box!.top - 100], "Alpha's row passed over: paragraph 3, the first nested, below the edge");
+  toEdge(rp.md, n4, 20);
+  const q4 = readPlace(H(rp.body), docPD)!;
+  assert.deepEqual([docPD.slice(q4.start, q4.end), q4.top], [PARA(4), -20], "the second nested paragraph at the edge: its own block");
+  // a textless element after the wrapper (a rule after paragraph 8, rendered as <hr>): its own block, and at the edge its block by the
+  // depth rule, since a rule shows no lines (before: paired to the wrapper's block and read as no place; round 2 lent the run's union
+  // box, and a Raw switch from a rule or a picture there landed on <details>, 1750px up)
+  const docHr = "# Report\n\n" + paras(1, 4) + "\n\n" + WRAP + "\n\n" + paras(5, 8) + "\n\n---\n\n" + paras(9, 12) + "\n";
+  const spansHr = sourceBlockSpans(docHr);
+  const rh = rendered(docHr, 0, stack(15, { 5: 88 })); nestBoxes(rh.blocks[5]);
+  const hr = rh.blocks.find((k) => k.tagName === "HR")!;
+  assert.ok(hr && hr.textContent === "", "the fixture: a rule with no text");
+  const bHr = spansHr.findIndex((sp) => docHr.slice(sp.start, sp.end) === "---");
+  assert.equal(renderedBlockIndex(El(rh.md), docHr, El(hr)), bHr, "the rule is its own block's (before: the wrapper's)");
+  toEdge(rh.md, hr, 20);
+  const qh = readPlace(H(rh.body), docHr)!;
+  assert.ok(qh, "a place from the rule");
+  assert.deepEqual([qh.start, qh.end, qh.top, qh.line], [spansHr[bHr].start, spansHr[bHr].end, -20, null], "the rule at the edge: its block, 20px in, no line (the depth rule)");
   // DOC's two-tag html block (block 9): each tag's text is in the block's source, so the pair reads as the block, as before
   const r5 = rendered(DOC, 0, 40);
   r5.blocks[9].box = { top: 60, bottom: 90 }; r5.blocks[10].box = { top: 98, bottom: 130 };
@@ -468,23 +571,22 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
     assert.equal(d.slice(qq!.start, qq!.end), html, what + ": the html block");
     assert.equal(qq!.top, -20, what + ": the block's box from its first tag");
   }
-  // a textless element inside the wrapper's run (a rule after paragraph 8, rendered as <hr>): the run's pairing is what is
-  // tested, not the element's text, so the rule reads as no place too (round 2 accepted it and lent the run's union box:
-  // a Raw switch from a rule or a picture there landed on <details>, 1750px up)
-  const docHr = "# Report\n\n" + paras(1, 4) + "\n\n" + WRAP + "\n\n" + paras(5, 8) + "\n\n---\n\n" + paras(9, 12) + "\n";
-  const rh = rendered(docHr, 0, 40);
-  const hr = rh.blocks.find((k) => k.tagName === "HR")!;
-  assert.ok(hr && hr.textContent === "", "the fixture: a rule with no text");
-  assert.equal(renderedBlockIndex(El(rh.md), docHr, El(hr)), sourceBlockSpans(docHr).findIndex((sp) => docHr.slice(sp.start, sp.end).startsWith("<details>")), "paired to the wrapper's block");
-  const rh2 = rendered(docHr, 100 - rh.blocks.indexOf(hr) * 48 - 20, 40);
-  assert.equal(readPlace(H(rh2.body), docHr), null, "the rule at the edge: no place (round 2: the wrapper's block with the union box)");
-  // a Raw place on the wrapper's OWN rows (the summary row) seated in Rendered: the block's pairing is the swallowed run,
-  // so no seat and the body unmoved (round 2 seated the run's union, 3200px)
+  // a Raw place on the wrapper's OWN rows (the summary row) seated in Rendered: the block's source parses to one element, the wrapper
+  // with its summary's text, against the wrapper holding the nested paragraph's text and its summary beside it, so no seat and the
+  // body unmoved (ruling 2 of Slice 5 keeps this; round 2 seated the run's union, 3200px)
   const rowSummary = { start: doc.indexOf("<summary>More</summary>"), end: doc.indexOf("<summary>More</summary>") + "<summary>More</summary>".length };
   const onWrapper: Place = { source: doc, view: "raw", start: spans[wb].start, end: spans[wb].end, top: -8, height: 36, atTop: false, prev: spans[wb - 1], next: spans[wb + 1], line: { ...rowSummary, top: -8 } };
-  const r7 = rendered(doc, 0, 40); r7.body.scrollTop = 360;
+  const r7 = build(); r7.body.scrollTop = 360;
   assert.equal(seatPlace(H(r7.body), doc, onWrapper), false, "no seat for the wrapper's own rows");
   assert.equal(r7.body.scrollTop, 360, "the numeric scrollTop stands");
+  // the closing tag's row: its block owns no element, so the block before it, the nested paragraph, lends its box (before: the nearest
+  // block before it with elements was the wrapper's run, refused, so no seat)
+  const bClose = spans.findIndex((sp) => doc.slice(sp.start, sp.end) === "</details>");
+  assert.deepEqual(renderedBlockElements(El(r.md), doc, bClose), [], "the fixture: the closing tag's block owns nothing");
+  const onClose: Place = { source: doc, view: "raw", start: spans[bClose].start, end: spans[bClose].end, top: -5, height: 20, atTop: false, prev: spans[bClose - 1], next: spans[bClose + 1], line: { start: spans[bClose].start, end: spans[bClose].end, top: -5 } };
+  const r9 = build(); r9.body.scrollTop = 360;
+  assert.equal(seatPlace(H(r9.body), doc, onClose), true, "the closing tag's row seats");
+  assert.equal(r9.body.scrollTop, 360 + (r9.inner.box!.top - 100) - (-10), "at the nested paragraph's box, a quarter in");
   // the neighbour fallback stands: a Raw place on DOC's comment block (no element of its own) seats the two-tag html
   // block before it, whose pairing is trusted, at the same fraction of its box
   const spansD = sourceBlockSpans(DOC);
@@ -494,47 +596,105 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
   assert.equal(seatPlace(H(r8.body), DOC, onComment), true);
   const htmlTop = r8.blocks[9].box!.top, htmlHeight = r8.blocks[10].box!.bottom - htmlTop;
   assert.equal(r8.body.scrollTop, (htmlTop - 100) - (-4 * htmlHeight / 20), "the two-tag block before the comment, 4/20 of its box above the edge");
-  // two html blocks a blank line apart: the map pairs the first to nothing and the second to both elements, so neither
-  // pairing is confirmed by the parse and both elements read as no place (round 2 read Beta's element as its block and put
-  // the Raw view one row off; the anchor-map half is Slice 5's)
+  // two html blocks a blank line apart (`<p>Alpha</p>` over `<p>Beta</p>`): one element each since Slice 5's walk (before: the map
+  // paired the first to nothing and the second to both, and neither element read as a place; round 2 read Beta's element as its
+  // block and put the Raw view one row off), so each element at the edge reads its own block
   const docAB = "# Report\n\n" + paras(1, 2) + "\n\n<p>Alpha</p>\n\n<p>Beta</p>\n\n" + PARA(3) + "\n";
   const spansAB = sourceBlockSpans(docAB);
   const rab = rendered(docAB, 0, 40);
   const bAlpha = spansAB.findIndex((sp) => docAB.slice(sp.start, sp.end) === "<p>Alpha</p>"), bBeta = spansAB.findIndex((sp) => docAB.slice(sp.start, sp.end) === "<p>Beta</p>");
-  assert.deepEqual([renderedBlockElements(El(rab.md), docAB, bAlpha).length, renderedBlockElements(El(rab.md), docAB, bBeta).length], [0, 2], "the fixture: the map's pairing as it stands");
-  assert.equal(readPlace(H(rendered(docAB, 100 - 3 * 48 - 20, 40).body), docAB), null, "Alpha's element at the edge: no place");
-  assert.equal(readPlace(H(rendered(docAB, 100 - 4 * 48 - 20, 40).body), docAB), null, "Beta's element at the edge: no place");
+  sameNodes(renderedBlockElements(El(rab.md), docAB, bAlpha), [rab.blocks[3]], "Alpha's block: its one element (before: nothing)");
+  sameNodes(renderedBlockElements(El(rab.md), docAB, bBeta), [rab.blocks[4]], "Beta's block: its one element (before: both)");
+  const qa = readPlace(H(rendered(docAB, 100 - 3 * 48 - 20, 40).body), docAB)!;
+  assert.deepEqual([docAB.slice(qa.start, qa.end), qa.top], ["<p>Alpha</p>", -20], "Alpha's element at the edge: its block (before: no place)");
+  const qb = readPlace(H(rendered(docAB, 100 - 4 * 48 - 20, 40).body), docAB)!;
+  assert.deepEqual([docAB.slice(qb.start, qb.end), qb.top], ["<p>Beta</p>", -20], "Beta's element at the edge: its block (before: no place)");
   assert.equal(readPlace(H(rendered(docAB, 100 - 2 * 48 - 20, 40).body), docAB)!.start, spansAB[2].start, "paragraph 2 before them reads as ever");
 });
 
-test("readPlace / seatPlace: a wrapper whose closing tag is the document's last block, or is missing, is paired to its one element, holding every paragraph after it, and that pairing is refused like a run's (the wrapper at the edge reads as no place; a Raw place on a nested paragraph or on the wrapper's own row seats nothing); a one-tag html block, a paragraph opening with an inline tag and one opening with an autolink read as their own blocks; codeOf knows a markdown code block from an html <pre>", () => {
+test("readPlace / seatPlace: a wrapper whose closing tag is the document's last block, or is missing, is paired to its one element, and the paragraphs the browser nested in it to their own (Slice 5's flattened walk; before it, the one element held every paragraph after it and the pairing was refused like a run's): a nested paragraph at the edge reads its block and a Raw place on it seats at its <p>; the wrapper's box at the edge reads the first nested paragraph; a Raw place on the wrapper's own row still seats nothing, and one on the closing tag's row seats the last nested paragraph; a wrapper inside a wrapper is read at each depth; a one-tag html block, a paragraph opening with an inline tag and one opening with an autolink read as their own blocks; codeOf knows a markdown code block from an html <pre>", () => {
   for (const [what, tail] of [["closed as the last block", "\n\n</div>\n"], ["never closed", "\n"]] as const) {
     const doc = "# Report\n\n" + paras(1, 4) + "\n\n<div align=\"center\">\n\n" + paras(5, 12) + tail;
     const spans = sourceBlockSpans(doc);
     const wb = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<div"));
-    const r = rendered(doc, 0, 40);
-    // the fixture: the stand-in nests paragraphs 5 to 12 inside the div as a browser does, the div is the last top-level element, and the map pairs the wrapper's block to it alone
+    /** the document laid out: the heading, four paragraphs and the div, 376px tall for its eight nested paragraphs (40 each, 8 apart) */
+    const build = () => { const r = rendered(doc, 0, stack(6, { 5: 8 * 48 - 8 })); const nested = nestBoxes(r.blocks[5]); return { ...r, div: r.blocks[5], nested }; };
+    const r = build();
+    // the fixture: the stand-in nests paragraphs 5 to 12 inside the div as a browser does, and the div is the last top-level element
     assert.equal(r.blocks.length, 6, what + ": the heading, four paragraphs and the div at the top level");
-    assert.equal(r.blocks[5].tagName, "DIV", what);
-    assert.equal(r.blocks[5].childNodes.filter((n) => n instanceof FakeElement).length, 8, what + ": the eight paragraphs after the wrapper are nested in it");
-    sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.blocks[5]], what + ": the wrapper's block is paired to the one element");   // by identity (ui/test-dom-shim.ts sameNodes)
-    const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:"));
-    assert.equal(renderedBlockElements(El(r.md), doc, b8).length, 0, what + ": a nested paragraph's block has no element of its own");
-    // the div straddles the edge (its box 80..120, the edge at 100): the one element's text is the nested paragraphs', not the block's own, so no place
-    const r2 = rendered(doc, 100 - 5 * 48 - 20, 40);
-    assert.equal(readPlace(H(r2.body), doc), null, what + ": the wrapper at the edge reads as no place (the third round read the wrapper's block, 20px in, and seated that depth as a fraction of its one Raw row)");
-    // a Raw place on nested paragraph 8 seated in this Rendered view: no element of its own, and the nearest block before it with one is the wrapper, refused: no seat, the body unmoved
+    assert.equal(r.div.tagName, "DIV", what);
+    assert.equal(r.nested.length, 8, what + ": the eight paragraphs after the wrapper are nested in it");
+    sameNodes(renderedBlockElements(El(r.md), doc, wb), [r.div], what + ": the wrapper's block is paired to the one element");   // by identity (ui/test-dom-shim.ts sameNodes)
+    sameNodes(renderedBlockWrappers(El(r.md), doc, wb), [r.div], what + ": which is its wrapper");
+    const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:")), b5 = blockIndexAt(spans, doc.indexOf("Paragraph 5:"));
+    const p8 = r.nested[3];
+    assert.equal(p8.textContent, PARA(8), what);
+    sameNodes(renderedBlockElements(El(r.md), doc, b8), [p8], what + ": a nested paragraph's block owns its <p> (before: no element of its own)");
+    assert.equal(renderedBlockIndex(El(r.md), doc, El(p8)), b8, what);
+    // the div's box at the edge, its first nested paragraph straddling it 20px in: paragraph 5's block (before: the wrapper at the edge
+    // read as no place; the third round read the wrapper's block, 20px in, and seated that depth as a fraction of its one Raw row)
+    toEdge(r.md, r.nested[0], 20);
+    const q5 = readPlace(H(r.body), doc)!;
+    assert.ok(q5, what + ": a place from the wrapper's box");
+    assert.deepEqual([q5.start, q5.end, q5.top, q5.height], [spans[b5].start, spans[b5].end, -20, 40], what + ": paragraph 5, 20px in");
+    // nested paragraph 8 straddling the edge: its own block
+    toEdge(r.md, p8, 20);
+    const q8 = readPlace(H(r.body), doc)!;
+    assert.deepEqual([q8.start, q8.end, q8.top], [spans[b8].start, spans[b8].end, -20], what + ": paragraph 8, 20px in (before: the wrapper's one element at the edge, no place)");
+    // a Raw place on nested paragraph 8 seated in a fresh Rendered view: the nested <p>'s box (before: no element of its own, and the
+    // nearest block before it with one was the wrapper, refused: no seat; the third round borrowed the wrapper's box)
     const kept: Place = { source: doc, view: "raw", start: spans[b8].start, end: spans[b8].end, top: -3, height: 20, atTop: false, prev: spans[b8 - 1], next: spans[b8 + 1] };
-    r2.body.scrollTop = 500;
-    assert.equal(seatPlace(H(r2.body), doc, kept), false, what + ": the nested paragraph's Raw place seats nothing (the third round borrowed the wrapper's box)");
-    assert.equal(r2.body.scrollTop, 500, what + ": the numeric scrollTop stands");
-    // the wrapper's own Raw row seated in Rendered: its pairing is refused, so no seat either
+    const s = build(); s.body.scrollTop = 500;
+    assert.equal(seatPlace(H(s.body), doc, kept), true, what + ": the nested paragraph's Raw place seats");
+    assert.equal(s.body.scrollTop, 500 + (s.nested[3].box!.top - 100) - (-6), what + ": at paragraph 8's box, 3/20 in");
+    // the wrapper's own Raw row seated in Rendered: its pairing is refused by the parse (one element whose text is the nested
+    // paragraphs', against a parse of the tag alone), so no seat (ruling 2 of Slice 5)
     const onWrapper: Place = { source: doc, view: "raw", start: spans[wb].start, end: spans[wb].end, top: -8, height: 20, atTop: false, prev: spans[wb - 1], next: spans[wb + 1], line: { start: spans[wb].start, end: spans[wb].end, top: -8 } };
-    assert.equal(seatPlace(H(r2.body), doc, onWrapper), false, what + ": the wrapper's own row seats nothing");
-    assert.equal(r2.body.scrollTop, 500, what);
+    const s2 = build(); s2.body.scrollTop = 500;
+    assert.equal(seatPlace(H(s2.body), doc, onWrapper), false, what + ": the wrapper's own row seats nothing");
+    assert.equal(s2.body.scrollTop, 500, what + ": the numeric scrollTop stands");
+    // the closing tag's row, when there is one: its block owns no element, so the last nested paragraph, the block before it, lends
+    // its box (before: the nearest block before it with an element was the wrapper, refused)
+    if (what === "closed as the last block") {
+      const bc = spans.length - 1;
+      assert.equal(doc.slice(spans[bc].start, spans[bc].end), "</div>", what + ": the fixture's last block is the closing tag");
+      assert.deepEqual(renderedBlockElements(El(r.md), doc, bc), [], what + ": the closing tag owns nothing");
+      const onClose: Place = { source: doc, view: "raw", start: spans[bc].start, end: spans[bc].end, top: -5, height: 20, atTop: false, prev: spans[bc - 1], next: null, line: { start: spans[bc].start, end: spans[bc].end, top: -5 } };
+      const s3 = build(); s3.body.scrollTop = 500;
+      assert.equal(seatPlace(H(s3.body), doc, onClose), true, what + ": the closing tag's row seats");
+      assert.equal(s3.body.scrollTop, 500 + (s3.nested[7].box!.top - 100) - (-10), what + ": at paragraph 12's box, a quarter in");
+    }
     // a paragraph before the wrapper reads as ever
-    const r4 = rendered(doc, 100 - 3 * 48 - 20, 40);
+    const r4 = build(); toEdge(r4.md, r4.blocks[3], 20);
     assert.equal(doc.slice(readPlace(H(r4.body), doc)!.start, readPlace(H(r4.body), doc)!.end), PARA(3), what + ": paragraph 3 before the wrapper");
+  }
+  // a wrapper inside a wrapper, as two html blocks (each block's wrapper its own div) and as `<div><div>` in one block (both divs that
+  // block's wrappers): the descent reads the paragraph nested at each depth as its own block, from the outer wrapper's box on
+  const NESTED = "Intro para.\n\n<div align=\"center\">\n\n<div class=\"inner\">\n\nInner paragraph here.\n\n</div>\n\nOuter paragraph here.\n\n</div>\n\nAfter para.\n";
+  const ONE = "Intro para.\n\n<div align=\"center\"><div class=\"inner\">\n\nInner paragraph here.\n\n</div></div>\n\nAfter para.\n";
+  for (const [what, src, outerKids, wrapClasses] of [["two blocks", NESTED, ["DIV", "P"], ["outer"]], ["one block", ONE, ["DIV"], ["outer", "inner"]]] as const) {
+    const spansN = sourceBlockSpans(src);
+    const rn = rendered(src, 0, stack(3, { 1: 88 }));
+    assert.deepEqual(rn.blocks.map((k) => k.tagName), ["P", "DIV", "P"], what + ": the outer div at the top level");
+    const outer = nestBoxes(rn.blocks[1]);
+    assert.deepEqual(outer.map((k) => k.tagName), outerKids, what + ": the inner div (and the outer paragraph) nest in it");
+    const [innerP] = nestBoxes(outer[0]);
+    assert.equal(innerP.textContent, "Inner paragraph here.", what + ": the inner paragraph nests in the inner div");
+    const bOuter = spansN.findIndex((sp) => src.slice(sp.start, sp.end).startsWith("<div align"));
+    assert.deepEqual(renderedBlockWrappers(El(rn.md), src, bOuter).map((e) => (e as unknown as FakeElement).getAttribute("class") || "outer"), wrapClasses, what + ": the outer block's wrappers");
+    toEdge(rn.md, innerP, 20);
+    const qIn = readPlace(H(rn.body), src)!;
+    assert.deepEqual([src.slice(qIn.start, qIn.end), qIn.top], ["Inner paragraph here.", -20], what + ": the inner paragraph at the edge, through both wrappers");
+    toEdge(rn.md, outer[0], 8);   // the inner div's box 8px in: its one nested paragraph, 8px in
+    const qDiv = readPlace(H(rn.body), src)!;
+    assert.deepEqual([src.slice(qDiv.start, qDiv.end), qDiv.top], ["Inner paragraph here.", -8], what + ": the inner div's box at the edge: the paragraph nested in it");
+    if (what === "two blocks") {
+      toEdge(rn.md, outer[1], 20);
+      const qOut = readPlace(H(rn.body), src)!;
+      assert.deepEqual([src.slice(qOut.start, qOut.end), qOut.top], ["Outer paragraph here.", -20], what + ": the outer paragraph at the edge, one wrapper deep");
+    }
+    toEdge(rn.md, rn.blocks[2], 20);
+    assert.equal(src.slice(readPlace(H(rn.body), src)!.start, readPlace(H(rn.body), src)!.end), "After para.", what + ": the paragraph after both wrappers");
   }
   // the blocks the widened rule must keep, each one element: a one-tag html block (its parse yields the tag with its own
   // text), and two paragraphs whose source opens with `<` (an inline tag, an autolink), which are no html blocks and

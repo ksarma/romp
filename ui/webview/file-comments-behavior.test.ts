@@ -834,7 +834,9 @@ test("the paint pass stands down while the editor is up (Slice 5): a repaint mar
   w.editing = false;
   w.setText(w.disk);                                     // Cancel or Save: the read view is back
   assert.ok(w.body.querySelector(".fc-hl"), "…and the marks with it");
-  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.render\(\); return; \}/, "the first line of the pass");
+  // ...recording the selection as the editor's take of the body left it first (afterPaint), so the offer's record holds no node of
+  // the read view the editor replaced (the Slice 5 review, round 1)
+  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.render\(\); return; \}/, "the first line of the pass");
 });
 
 // The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the

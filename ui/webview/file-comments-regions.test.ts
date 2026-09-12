@@ -911,7 +911,11 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   for (const ev of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) assert.ok(OVL.includes('o.addEventListener("' + ev + '"'), ev);
   assert.match(OVL, /o\.setPointerCapture\(ev\.pointerId\)/);
   assert.match(OVL, /this\.sizer = new ResizeObserver\(\(\) => this\.place\(\)\); this\.sizer\.observe\(img\);/, "the drawn size's own event re-measures the overlay");
-  assert.match(SRC, /onPress: \(\) => \{ this\.float\.hidden = true; this\.imageTarget = null; \}/);
+  // the press hides the float THROUGH hideFloat, so its record (floatAt) goes with it and the panel's next paint re-seats nothing the
+  // press hid (the Slice 5 review, round 8: the hidden bit alone kept the record, and a peer's mark landing on the still-selected line
+  // showed the passage's Comment button again beside a selection the press had dismissed)
+  assert.match(SRC, /onPress: \(\) => this\.hideFloat\(\),/);
+  assert.doesNotMatch(SRC, /onPress: \(\) => \{ this\.float\.hidden = true;/, "no press hides the float by its hidden bit alone");
   assert.match(OVL, /o\.addEventListener\("click", \(ev: Event\) => \{ if \(this\.drew\) \{ this\.drew = false; ev\.stopPropagation\(\); ev\.preventDefault\(\); \} \}\);/);
   // the panel: the Re-place act, retarget with the comment's src, the composer's target path with the embed anchor
   assert.match(SRC, /fcreplace: \(x, ev\) => \{ ev\.stopPropagation\(\); this\.startReplace\(x\.dataset\.id!\); \}/);
@@ -930,8 +934,8 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   assert.match(SRC, /this\.regionLayers\.set\(img, layer\);\n\s*this\.mark\(layer\.overlay\);/, "so is the overlay the browser's own click lands on after a handed-on press");
   // the overlay pass runs for a media body (where the text pass has nothing to paint) and after the text pass
   assert.match(SRC, /if \(src === null \|\| !root\) \{ this\.paintRegions\(\); this\.render\(\); return; \}/);
-  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.trimBlanks\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of byCard\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of this\.passChanges\) if \(!c\.marks\.some\(standing\)\) this\.paintedChanges\.delete\(c\.id\);\n\s*this\.paintRegions\(\);\n\s*if \(held\) this\.refocusMark\(held\);\n\s*this\.render\(\);/,
-    "after the text pass and its one trim of collapsed blanks (trimBlanks, then the cards whose every mark was trimmed re-filed as not painted, and the changes whose every mark was trimmed filed as not shown); the mark that held the keyboard is re-found once every pass has painted (heldMark / refocusMark), then the render");
+  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.trimBlanks\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of byCard\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*for \(const c of this\.passChanges\) if \(!c\.marks\.some\(standing\)\) this\.paintedChanges\.delete\(c\.id\);\n\s*this\.paintRegions\(\);\n\s*if \(held\) this\.refocusMark\(held\);\n\s*this\.afterPaint\(\);\n\s*this\.render\(\);/,
+    "after the text pass and its one trim of collapsed blanks (trimBlanks, then the cards whose every mark was trimmed re-filed as not painted, and the changes whose every mark was trimmed filed as not shown); the mark that held the keyboard is re-found once every pass has painted (heldMark / refocusMark), the selection as the pass left it is recorded (afterPaint, the Slice 5 review's round 1), then the render");
   // the region card: a region's picture is not ALSO framed; the stale tag from regionState; Reveal scrolls to the picture
   assert.match(SRC, /if \(!painted && rendered && !card\.target\) \{/);
   assert.match(SRC, /const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";/);

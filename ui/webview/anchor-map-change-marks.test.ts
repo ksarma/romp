@@ -333,22 +333,38 @@ test("Rendered fallback: a repeated token in a code fence marks the changed line
   assert.equal(marks[0].textContent, "y");
 });
 
-test("Rendered fallback: when the rendering shows the text a different number of times than the source holds it, nothing is painted — the change keeps its card, never a mark on the wrong passage", () => {
-  // an HTML block whose attribute repeats its text: the page shows one "note", the source holds two
-  const source = "# Notes\n\n<div title=\"note\">note</div>\n";
-  const attr = source.indexOf("note"), text = source.lastIndexOf("note");
-  assert.ok(attr < text);
-  for (const [label, from] of [["the visible text", text], ["the attribute", attr]] as [string, number][]) {
-    const box = buildRendered(source);
-    const before = serialize(box);
-    const res = paintChangesRendered(El(box), source, [ins("h", "web", source, from, "note")], stylesFor);
-    assert.deepEqual(res, { painted: [], unpainted: ["h"] }, label + ": the counts disagree, so the change is card-only");
-    assert.equal(withClass(box, "fc-ins").length, 0);
-    assert.equal(serialize(box), before);
-  }
+test("Rendered fallback: when the rendering shows the text a different number of times than the source, rendered, holds it, nothing is painted (the change keeps its card, never a mark on the wrong passage); an HTML block's entity is the character it shows, so a change on the plain `note` beside `&#110;ote` paints the plain one by ordinal", () => {
+  // the count-guard scene: a paragraph the walk refuses (an entity) whose DOM node shows the passage twice where the source,
+  // rendered, holds it once (a rendering that gained a copy of the passage), so the counts disagree in the block's node and over
+  // the whole text and the change is card-only. The Slice 5 review's round 2 had this scene on an html block whose entity spelt
+  // its text (`<div>&#110;ote note</div>`), the strip keeping the entity's source form so the counts disagreed; its round 3 reads
+  // an html block as the DOM shows it, the entity decoded, so that block's counts agree and it is the positive pin below.
+  const source = "Alpha one.\n\nBeta &amp; two.\n\nGamma three.\n";
+  const doubled = "Alpha one.\n\nBeta &amp; two. Beta &amp; two.\n\nGamma three.\n";
+  const passage = "Beta &amp; two.";
+  const beta = at(source, passage);
+  assert.equal(source.indexOf(passage, beta + 1), -1, "the source holds the passage once");
+  const page = buildRendered(doubled);
+  assert.equal(page.textContent.split("Beta & two.").length - 1, 2, "the rendering shows it twice");
+  const before = serialize(page);
+  const res = paintChangesRendered(El(page), source, [ins("h", "web", source, beta, passage)], stylesFor);
+  assert.deepEqual(res, { painted: [], unpainted: ["h"] }, "two shown, one rendered from the source: the counts disagree, so the change is card-only");
+  assert.equal(withClass(page, "fc-ins").length, 0);
+  assert.equal(serialize(page), before);
   // the same for a comment highlight
-  const box = buildRendered(source);
-  assert.equal(paintRendered(El(box), source, { start: text, end: text + 4 }, "fc-hl"), null);
+  const box = buildRendered(doubled);
+  assert.equal(paintRendered(El(box), source, { start: beta, end: beta + passage.length }, "fc-hl"), null);
+  // the entity scene, now the positive pin: the page shows `note note` and so does the block's reading (round 2 refused the
+  // change: the strip kept `&#110;ote` as written and counted one against the page's two)
+  const html = "# Notes\n\n<div>&#110;ote note</div>\n";
+  const text = html.lastIndexOf("note");
+  assert.equal(html.indexOf("note"), text, "the source spells `note` once, outside the entity");
+  const div = buildRendered(html);
+  assert.equal(div.textContent.split("note").length - 1, 2, "the rendering shows `note` twice");
+  assert.deepEqual(paintChangesRendered(El(div), html, [ins("n", "web", html, text, "note")], stylesFor), { painted: ["n"], unpainted: [] }, "the plain `note` paints");
+  const marks = withClass(div, "fc-ins");
+  assert.equal(marks.length, 1);
+  assert.equal(textBefore(div, marks[0]), "Notes\nnote ", "its mark sits on the second shown `note`, the range's own");
   // and the unique case still paints through the fallback (the existing behaviour, a token the block holds once)
   const one = buildRendered(TABLE);
   assert.deepEqual(paintChangesRendered(El(one), TABLE, [ins("u", "web", TABLE, at(TABLE, "after"), "after")], stylesFor), { painted: ["u"], unpainted: [] });

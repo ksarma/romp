@@ -2,7 +2,8 @@
 // the DOM post-passes are proven in headless Chromium: md-sanitize-browser.test.ts opens a note in the real file
 // viewer, md-sanitize-postpass-browser.test.ts runs the chat's pipeline, md-sanitize-chat-fragment-browser.test.ts
 // clicks a message's own `#` link over the real chat bundle. Here: the colour grammar an inline `style` is held to,
-// the profile's forbidden tags and attributes, the hook body, the hook's install guard, and the source pins that
+// the profile's forbidden tags and attributes, the three hook bodies (the style rewrite, the comment drop, the body
+// title's drop), the hooks' install guard, and the source pins that
 // make md-sanitize.ts the ONE sanitizer the dashboard has (the chat's md() and userMd(), the viewer's mdBlock). The
 // design is plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does; the colour-only rule is its decision 6), and
 // the last test holds SECURITY.md's output-sanitization bullet to the math renderer's trust boundary and its bounds
@@ -12,7 +13,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, installMdSanitizeHooks } from "./md-sanitize";
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks } from "./md-sanitize";
+import { hideEdges, sameNodes } from "../test-dom-shim";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -70,7 +72,163 @@ test("the style hook rewrites a style attribute to its colours, drops it when no
   assert.equal(upper.attrValue, "color: #fff");
 });
 
-test("installMdSanitizeHooks registers ONE uponSanitizeAttribute hook however often it is called, and that hook is the style rewrite", () => {
+// A stand-in node for the two element-hook bodies, which read nodeType, childNodes, namespaceURI, parentNode and
+// ownerDocument and call removeChild and appendChild (the DOM's names; the hooks run inside DOMPurify's walk, over real nodes;
+// here the bodies are proven pure, as the style hook's is above), built through the shared shim like every ui test fake:
+// hideEdges stamps the serial and hides the childNodes list, the parent, the document and the methods, so a failing assertion
+// over a fake dumps its numbers and never its tree (ui/test-dom-shim.ts; the ratchet in ui/test-dom-shim.test.ts reads the
+// longhand `childNodes: kids` as the edge the call must cover). `removed` counts the removeChild calls, so a test can say the
+// hook touched nothing. appendChild MOVES an attached node, as the DOM's does (the old parent's removeChild first: the removal
+// DOMPurify's NodeIterator steps over), and remove() is the node's own, so the hook's earlier cut runs over the same fakes.
+const TEXT = 3, ELEMENT = 1, COMMENT = 8, FRAGMENT = 11;
+type FakeNode = {
+  nodeType: number; namespaceURI: string | undefined; childNodes: FakeNode[]; parentNode: FakeNode | null; ownerDocument: FakeDocument; removed: number;
+  removeChild(c: FakeNode): FakeNode; appendChild(c: FakeNode): FakeNode; remove(): void;
+};
+/** The fakes' one document: mints the fragment dropBodyTitle asks for and keeps every one, so a test can read where a title went. */
+type FakeDocument = { fragments: FakeNode[]; createDocumentFragment(): FakeNode };
+const fakeDocument: FakeDocument = hideEdges({ fragments: [] as FakeNode[], createDocumentFragment() { const f = fakeNode(FRAGMENT); fakeDocument.fragments.push(f); return f; } });
+function fakeNode(nodeType: number, kids: FakeNode[] = [], namespaceURI?: string): FakeNode {
+  const n: FakeNode = {
+    nodeType, namespaceURI, childNodes: kids, parentNode: null, ownerDocument: fakeDocument, removed: 0,
+    removeChild(c) { const i = n.childNodes.indexOf(c); if (i < 0) throw new Error("not a child"); n.childNodes.splice(i, 1); c.parentNode = null; n.removed++; return c; },
+    appendChild(c) { if (c.parentNode) c.parentNode.removeChild(c); c.parentNode = n; n.childNodes.push(c); return c; },
+    remove() { if (n.parentNode) n.parentNode.removeChild(n); },
+  };
+  for (const k of kids) k.parentNode = n;
+  return hideEdges(n);
+}
+
+/** DOMPurify 3.4.10's `_forceRemove`, transcribed over the fakes (purify.es.mjs): detach the node through its parent, and when
+ *  that throws (a parentless node: `getParentNode(node)` is null, so `.removeChild` is a TypeError) fall back to the node's own
+ *  remove(), a no-op with no parent, and throw when the node is still parentless. The three branches of `_sanitizeElements`
+ *  after the uponSanitizeElement hook that drop a node all end here (the markup guard, the disallowed-tag branch, the namespace
+ *  check), so this is the call the hook's removal must leave survivable; the node test has no window for the real one, and
+ *  md-sanitize-body-title-browser.test.ts runs the real one over the same configs. */
+function forceRemove(node: FakeNode): void {
+  try { (node.parentNode as FakeNode).removeChild(node); }
+  catch (_) {
+    node.remove();
+    if (!node.parentNode) throw new TypeError("a node selected for removal could not be detached from its tree and cannot be safely returned; refusing to sanitize in place");
+  }
+}
+
+test("the fakes go through the shim: a fake node enumerates as its serial, its numbers and its namespace, the childNodes edge, the parent, the document and the methods hidden, so a failing assertion over one dumps no tree", () => {
+  const el = fakeNode(ELEMENT, [fakeNode(COMMENT), fakeNode(TEXT)]);
+  assert.deepEqual(Object.keys(el).sort(), ["_nid", "nodeType", "removed"], "no namespace given: the undefined placeholder hides with the objects");
+  assert.deepEqual(Object.keys(fakeNode(ELEMENT, [], "ns")).sort(), ["_nid", "namespaceURI", "nodeType", "removed"], "a namespace is a string and stays");
+  for (const edge of ["childNodes", "parentNode", "ownerDocument"]) assert.equal(Object.getOwnPropertyDescriptor(el, edge)!.enumerable, false, edge + " is an own property, hidden from enumeration");
+  assert.equal(el.childNodes.length, 2, "and still there to read");
+  assert.ok(el.childNodes[0].parentNode === el, "a child knows its parent");
+  assert.deepEqual(Object.keys(fakeDocument).sort(), ["_nid"], "the document hides its fragments and its method");
+});
+
+test("dropCommentChildren: an element loses every comment child and nothing else, in one pass over a snapshot of its children", () => {
+  const nested = fakeNode(ELEMENT, [fakeNode(COMMENT)]);
+  const el = fakeNode(ELEMENT, [fakeNode(COMMENT), fakeNode(TEXT), fakeNode(COMMENT), fakeNode(COMMENT), nested, fakeNode(TEXT), fakeNode(COMMENT)]);
+  dropCommentChildren(el as unknown as Node);
+  assert.deepEqual(el.childNodes.map((c) => c.nodeType), [TEXT, ELEMENT, TEXT], "the comments are gone, the text and the element stay in order");
+  assert.equal(el.removed, 4, "adjacent comments are both removed: the walk is over a snapshot, not the live list a removal shifts");
+  assert.deepEqual(nested.childNodes.map((c) => c.nodeType), [COMMENT], "a comment inside a child element is that element's, dropped when DOMPurify's walk reaches it");
+  dropCommentChildren(el as unknown as Node);
+  assert.equal(el.removed, 4, "a second pass finds nothing to remove");
+});
+
+test("dropCommentChildren leaves a non-element alone and cannot throw on a clobbered childNodes", () => {
+  const text = fakeNode(TEXT, [fakeNode(COMMENT)]);   // a text node holds no children in the DOM; the hook must not act on the type
+  dropCommentChildren(text as unknown as Node);
+  assert.equal(text.removed, 0);
+  const comment = fakeNode(COMMENT, [fakeNode(COMMENT)]);
+  dropCommentChildren(comment as unknown as Node);
+  assert.equal(comment.removed, 0);
+  // a form whose <input name="childNodes"> shadows the list: DOMPurify removes a clobbered form for the names it
+  // probes, and childNodes is not one of them, so the hook reads what it is given and steps back
+  const clobbered = hideEdges({ nodeType: ELEMENT, childNodes: { nodeName: "INPUT" }, removeChild() { throw new Error("must not be called"); } });
+  assert.deepEqual(Object.keys(clobbered).sort(), ["_nid", "nodeType"], "the clobbered stand-in goes through the shim too");
+  assert.doesNotThrow(() => dropCommentChildren(clobbered as unknown as Node));
+  const empty = fakeNode(ELEMENT);
+  dropCommentChildren(empty as unknown as Node);
+  assert.equal(empty.removed, 0);
+});
+
+test("dropBodyTitle: an HTML `<title>` leaves the tree WITH its text, into a fragment of its own document, before DOMPurify judges it, and the allowedTags set the hook is handed is left as it was; an svg's `<title>`, every other element, and a non-element the walk names title are untouched (the Slice 5 review, round 5: the svg profile kept a body title as a hidden element whose text the reader and the paint read as shown; the PR's review, round 1: the first cut set `title` off in that set, DOMPurify's live per-call set, so the write stood on every later element of the call)", () => {
+  const HTML_NS = "http://www.w3.org/1999/xhtml", SVG_NS = "http://www.w3.org/2000/svg";
+  const title = (ns: string) => fakeNode(ELEMENT, [fakeNode(TEXT)], ns);
+  const data = (tagName: string) => ({ tagName, allowedTags: { title: true, p: true, svg: true } });
+  // <p>a</p><title>T</title><p>b</p><svg><title>S</title></svg>, each element as the walk meets it
+  let d = data("title");
+  const a = fakeNode(ELEMENT, [fakeNode(TEXT)], HTML_NS), t1 = title(HTML_NS), b = fakeNode(ELEMENT, [fakeNode(TEXT)], HTML_NS);
+  const svgTitle = title(SVG_NS), svg = fakeNode(ELEMENT, [svgTitle], SVG_NS);
+  const body = fakeNode(ELEMENT, [a, t1, b, svg], HTML_NS);
+  const before = fakeDocument.fragments.length;
+  dropBodyTitle(t1 as unknown as Node, d);
+  sameNodes(body.childNodes, [a, b, svg], "a body title: out of the body before DOMPurify judges it");
+  assert.equal(fakeDocument.fragments.length, before + 1, "into one fresh fragment of the node's own document");
+  const frag = fakeDocument.fragments[before];
+  assert.ok(t1.parentNode === frag, "the fragment is the title's parent now: every DOMPurify branch after the hook detaches through the parent");
+  sameNodes(frag.childNodes, [t1], "the fragment holds the title alone");
+  assert.deepEqual(t1.childNodes.map((c) => c.nodeType), [TEXT], "its text went with it: nothing is unwrapped into the body");
+  assert.deepEqual(d.allowedTags, { title: true, p: true, svg: true }, "the set DOMPurify hands the hook is untouched: it is the live set for the rest of the call");
+  dropBodyTitle(svgTitle as unknown as Node, d);
+  assert.ok(svgTitle.parentNode === svg, "an svg title: the drawing's own element, kept where it is");
+  assert.equal(svg.removed, 0);
+  assert.equal(fakeDocument.fragments.length, before + 1, "and no fragment minted for it");
+  assert.deepEqual(d.allowedTags, { title: true, p: true, svg: true });
+  d = data("p");
+  dropBodyTitle(a as unknown as Node, d);
+  assert.ok(a.parentNode === body, "another element: untouched");
+  assert.equal(fakeDocument.fragments.length, before + 1);
+  d = data("title");
+  const text = fakeNode(TEXT, [], HTML_NS), holder = fakeNode(ELEMENT, [text], HTML_NS);
+  dropBodyTitle(text as unknown as Node, d);
+  assert.ok(text.parentNode === holder, "a non-element the walk names title: untouched");
+  assert.equal(holder.removed, 0);
+  assert.equal(fakeDocument.fragments.length, before + 1);
+  assert.deepEqual(d.allowedTags, { title: true, p: true, svg: true });
+});
+
+test("dropBodyTitle under every profile: with `title` NOT allowed (the html profile alone) or forbidden (FORBID_TAGS, a set the hook is never handed), DOMPurify's own force-remove of the moved title detaches it from the fragment, no throw, and the title is gone with its text; under the default profile the body title is out of the body and the svg's stays (the PR's review, round 2: the second cut's remove() left the title parentless, and 3.4.10's _forceRemove throws for a parentless node, so the hook was safe only while `title` stayed allowed)", () => {
+  const HTML_NS = "http://www.w3.org/1999/xhtml", SVG_NS = "http://www.w3.org/2000/svg";
+  const title = (ns: string) => fakeNode(ELEMENT, [fakeNode(TEXT)], ns);
+  const data = (allowed: Record<string, boolean>) => ({ tagName: "title", allowedTags: allowed });
+  const before = fakeDocument.fragments.length;
+  // the hazard the transcription carries: a parentless node is what makes _forceRemove throw
+  assert.throws(() => forceRemove(title(HTML_NS)), TypeError, "the transcribed _forceRemove throws for a parentless node, as 3.4.10's does");
+  // under the html profile alone (`title` is in DOMPurify's svg list and not its html list) or with `title` in FORBID_TAGS,
+  // DOMPurify's disallowed-tag branch force-removes the title the hook has moved, and that removal must find a parent
+  const configs: Array<[string, Record<string, boolean>]> = [
+    ["a profile without svg, title off the allowed set", { p: true }],
+    ["title forbidden: on the allowed set, listed in FORBID_TAGS", { title: true, p: true }],
+  ];
+  for (const [why, allowed] of configs) {
+    const t = title(HTML_NS), p = fakeNode(ELEMENT, [fakeNode(TEXT)], HTML_NS);
+    const root = fakeNode(ELEMENT, [p, t], HTML_NS);
+    dropBodyTitle(t as unknown as Node, data(allowed));
+    sameNodes(root.childNodes, [p], why + ": the title is out of the body before DOMPurify judges it");
+    assert.ok(t.parentNode !== null && t.parentNode.nodeType === FRAGMENT, why + ": and has a parent, the fragment");
+    assert.doesNotThrow(() => forceRemove(t), why + ": DOMPurify's own removal of the disallowed title detaches it from the fragment (before: the node's own remove() left it parentless, and _forceRemove threw a TypeError)");
+    assert.equal(t.parentNode, null, why + ": detached");
+    assert.deepEqual(t.childNodes.map((c) => c.nodeType), [TEXT], why + ": the text is the title's still, in no tree");
+  }
+  assert.equal(fakeDocument.fragments.length, before + 2, "one fragment per moved title");
+  // the default profile keeps an allowed title where it stands, so the moved title's fate is the fragment's: out of the body,
+  // its text with it, the svg's title where it was; and the other two dropping branches (the markup guard, the namespace
+  // check) are the same _forceRemove, so the moved title would survive them too, were either to fire for a title (neither
+  // does: the guard reads escaped innerHTML, an HTML title passes the check)
+  const t = title(HTML_NS), svgTitle = title(SVG_NS), svg = fakeNode(ELEMENT, [svgTitle], SVG_NS), p = fakeNode(ELEMENT, [fakeNode(TEXT)], HTML_NS);
+  const body = fakeNode(ELEMENT, [p, t, svg], HTML_NS);
+  const d = data({ title: true, p: true, svg: true });
+  dropBodyTitle(t as unknown as Node, d);
+  dropBodyTitle(svgTitle as unknown as Node, d);
+  sameNodes(body.childNodes, [p, svg], "the default profile: the body title is out of the body, the svg stays");
+  assert.ok(svgTitle.parentNode === svg, "and the svg's title stays inside it");
+  assert.deepEqual(t.childNodes.map((c) => c.nodeType), [TEXT], "the body title's text went with it");
+  assert.doesNotThrow(() => forceRemove(t), "a force-remove of the moved title, were a branch to fire for it, detaches from the fragment");
+  assert.deepEqual(d.allowedTags, { title: true, p: true, svg: true }, "the set is untouched under every profile");
+  assert.equal(fakeDocument.fragments.length, before + 3);
+});
+
+test("installMdSanitizeHooks registers its two hooks ONCE however often it is called: the style rewrite on uponSanitizeAttribute, the comment drop and the body title's drop on uponSanitizeElement", () => {
   // The guard is module-global and never reset, so this test must be the module's FIRST installer: node runs a
   // file's tests in order, and nothing above calls installMdSanitizeHooks or sanitizeMd (which would need a window).
   const calls: { name: string; fn: Function }[] = [];
@@ -78,12 +236,27 @@ test("installMdSanitizeHooks registers ONE uponSanitizeAttribute hook however of
   installMdSanitizeHooks(fake);
   installMdSanitizeHooks(fake);
   installMdSanitizeHooks(fake);
-  assert.equal(calls.length, 1, "idempotent: a second registration would run the rewrite twice per attribute");
-  assert.equal(calls[0].name, "uponSanitizeAttribute");
+  assert.equal(calls.length, 2, "idempotent: a second registration would run the rewrite twice per attribute and the drop twice per element");
+  assert.deepEqual(calls.map((c) => c.name), ["uponSanitizeAttribute", "uponSanitizeElement"]);
   const ev = { attrName: "style", attrValue: "font-size: 80px; color: rgb(200, 0, 0)", keepAttr: true, allowedAttributes: {}, forceKeepAttr: undefined };
   calls[0].fn.call(fake, {} as Element, ev, {});
   assert.equal(ev.attrValue, "color: rgb(200, 0, 0)");
   assert.equal(ev.keepAttr, true);
+  // the element hook is the comment drop: DOMPurify calls it with the node, the tag data and the config, and only the
+  // node matters to it
+  const el = fakeNode(ELEMENT, [fakeNode(TEXT), fakeNode(COMMENT), fakeNode(ELEMENT)]);
+  const allowed: Record<string, boolean> = { title: true, p: true };
+  calls[1].fn.call(fake, el as unknown as Node, { tagName: "p", allowedTags: allowed }, {});
+  assert.deepEqual(el.childNodes.map((c) => c.nodeType), [TEXT, ELEMENT], "the comment child is gone before DOMPurify's markup guard reads the element's innerHTML");
+  assert.deepEqual(allowed, { title: true, p: true }, "a paragraph leaves the allowed set alone");
+  // the same hook drops a body title: an HTML-namespace `title` leaves the body whole, for a fragment of its document, and the set
+  // DOMPurify judges by is left alone
+  const title = fakeNode(ELEMENT, [fakeNode(TEXT)], "http://www.w3.org/1999/xhtml"), body = fakeNode(ELEMENT, [title]);
+  calls[1].fn.call(fake, title as unknown as Node, { tagName: "title", allowedTags: allowed }, {});
+  assert.equal(body.childNodes.length, 0, "the body title's drop rides the same element hook (dropBodyTitle)");
+  assert.equal(title.parentNode && title.parentNode.nodeType, FRAGMENT, "into a fragment, a parent DOMPurify's own removal can detach it from under any profile");
+  assert.deepEqual(allowed, { title: true, p: true }, "and writes nothing in the set: DOMPurify hands the hook its live per-call set");
+  assert.deepEqual(title.childNodes.map((c) => c.nodeType), [TEXT], "the title's own text goes with the element; nothing is unwrapped");
 });
 
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
@@ -207,6 +380,9 @@ test("the guide says what a file's own HTML may do, in the terms the code enforc
   assert.match(para, /`color` and `background-color`/);
   assert.match(para, /`background=`/);
   assert.match(para, prose("cannot be ticked"));
+  assert.match(para, prose("HTML comment is dropped"), "the comment rule: dropped before the element holding it is judged, so the prose around it stays (dropCommentChildren)");
+  assert.match(para, prose("An HTML `<title>` is dropped with its text"), "the body title rule: dropped with its text, since the browser shows one nowhere outside the page's head (dropBodyTitle)");
+  assert.match(para, prose("the `<title>` of an inline `svg`, the drawing's tooltip, stays"), "and its one exception, dropBodyTitle's namespace test: an svg's own <title> is kept (review round 6: the sentence had said every <title> is dropped, while the same paragraph says an inline svg is kept)");
   assert.doesNotMatch(para, /\u2014/, "no em dash");
 });
 

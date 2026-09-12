@@ -507,7 +507,7 @@ test("the phone's words are the pictured view's with the sentence about Re-place
   assert.ok(SRC.includes('const REGION_CONFIRM_TOUCH = "' + REGION_CONFIRM_TOUCH + '";'), "the module holds the panel's words, so a change to either fails here");
   assert.ok(SRC.includes('const REGION_CONFIRM = "' + REGION_CONFIRM + '";'));
   assert.ok(SRC.includes("type Shown = { editing: boolean; pictured: boolean; draws: boolean };"), "what the render shows: the editor, the picture, and a pointer that draws");
-  assert.ok(SRC.includes("const c: WordedCard = { ...given, shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };"), "stamped from the same test the Re-place gate makes");
+  assert.ok(SRC.includes("const c: WordedCard = { ...given, hintedCopy: this.hintedCopies.has(given.id), shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };"), "stamped from the same test the Re-place gate makes");
   assert.match(SRC, /const replaceOffered = \(!!picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\);/, "the gate: the picture (or a page the PDF lost), an unresolved card, a pointer that draws");
   assert.ok(SRC.includes("if (card.resolved || !card.anchor) continue;"), "the paint skips resolved cards, so a card wearing these words is never resolved and the picture and the pointer are the whole gate");
   const start = SRC.indexOf("function copyUnsureWords(");

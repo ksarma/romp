@@ -515,7 +515,7 @@ test("a file the viewer shows only Raw (setMode returns early): with the marks o
 
 test("pins: paintAll clears the landing before it paints; both Reveal branches cue right after the scroll; closePanel and dispose clear it; the dress names the accent tokens and no hex; the row is the one the viewer's scrollToOffset centres", () => {
   // the editor's stand-down keeps the first line (file-comments-behavior.test.ts pins it; the rows are the editor's then), the cue clears next
-  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.render\(\); return; \}[^\n]*\n\s+this\.clearLanding\(\);/, "the first statement of the read view's paint pass");
+  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.render\(\); return; \}[^\n]*\n\s+this\.clearLanding\(\);/, "the first statement of the read view's paint pass (the stand-down records the selection first, afterPaint, the Slice 5 review's round 1)");
   assert.match(SRC, /this\.ctx\.scrollToOffset\(c\.curFrom\);\n\s+this\.landOn\(c\.curFrom, "fcchange", c\.id\);/, "a change: its start, its marks' action and id");
   assert.match(SRC, /this\.ctx\.scrollToOffset\(loc\.range\.start\);\n\s+this\.landOn\(loc\.range\.start, "fcopen", key\);/, "a comment: its range's start, its highlight's action and id");
   const close = SRC.slice(SRC.indexOf("  closePanel(): void {"), SRC.indexOf("  dispose(): void {"));

@@ -11,8 +11,8 @@
   "md-config-paint-trim-browser.test.ts reads the answer off the browser's layout for every scene (no blank mark of zero width, no",
   "top-level mark, the trim removing blank marks alone, the unpaint exact). Two scenes are shaped around the pairing's recorded refusal",
   "(plans/markdown-viewer.md, Slice 4 build note item 10 (d)): the broken-img scene's list item reads **z** so its stripped text differs from",
-  "the html block's bold before it (written **a** it painted nothing past that block); the stripped-comment scene is left hitting the refusal as",
-  "the union's one recorded case. A CR is always the CRLF pair: to marked a lone CR before CRLF is a blank line, which ends an html block",
+  "the html block's bold before it (written **a** it painted nothing past that block); the stripped-comment scene hit the refusal as",
+  "the union's one recorded case until Slice 5's pairing (the html block takes its own element and no more; the shortened list item is a mismatch with its own element, and the paint reaches the closing paragraph in every scene). A CR is always the CRLF pair: to marked a lone CR before CRLF is a blank line, which ends an html block",
   "(md-config-blank-scenes-fixture.test.ts pins it). Synthetic prose, no paths."
  ],
  "scenes": [

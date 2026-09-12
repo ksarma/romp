@@ -256,7 +256,7 @@ test('the panel words the recourse for what the render shows: the editor names t
   assert.ok(pictured.includes('Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. '), 'the pictured view\'s words, on a pointer that draws, say what Re-place does');
   assert.equal(touch, pictured.replace('Re-place redraws the rectangle on the figure shown and does not move the comment to another figure. ', ''), 'the coarse pointer\'s words are the pictured view\'s less that sentence, and nothing else changed');
   // the render stamps the editor, the picture and the pointer on the card its words read, and offers Reveal outside the editor alone
-  assert.ok(panel.includes('const c: WordedCard = { ...given, shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };'), 'what this render shows rides on the card');
+  assert.ok(panel.includes('const c: WordedCard = { ...given, hintedCopy: this.hintedCopies.has(given.id), shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };'), 'what this render shows rides on the card');
   const reveal = panel.indexOf('const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;');
   assert.ok(reveal >= 0, 'a comment card\'s Reveal');
   const gate = panel.lastIndexOf('if (!editing) {', reveal);

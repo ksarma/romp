@@ -3695,7 +3695,10 @@ document stands on its own, each with the reasoning it was given.
     resolve it; `tests/test_guide_files_comments_confirm.py`). A confirmed place the view's text has moved past
     (the poll's reload paints before the fresh status lands; a refused refresh keeps the old status) paints the
     copy nearest that place as a guess whose words name the confirmed place (`confirmedAt`), never plainly on a
-    copy the host did not vouch for in the text shown.
+    copy the host did not vouch for in the text shown. The viewer's own sequential hint comes last, after the confirmed
+    copy and the stored position (plans/markdown-viewer.md, Slice 5 item 7: a card with neither whose anchor an earlier
+    card of the paint pass shares is painted on the copy after that card's, `nextCopyHint`, and its words name that copy,
+    `hintedCopy`).
     A region comment on an embed line that recurs is guessed by the same rules (the host stamps and places every
     anchored comment, and the panel's `copyUnsure` asks the same of a rectangle, which `paintRegions` puts on the
     figure nearest the hint by `regionImageFor`), but the passage's recourse is not open to it: Reveal for a

@@ -439,6 +439,34 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
   img.style.outline = ""; img.style.outlineOffset = "";
   delete img.dataset.act; delete img.dataset.id;
 }
+/** The unpaint step over `marks` (Panel.unpaint over a selector's matches, Panel.unwrap over elements the repaint holds; the
+ *  whitespace leg times the panel's unpaint through it, md-config-paint-whitespace-browser.test.ts): each mark's children go back
+ *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
+ *  section 2 (d)). Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
+ *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
+ *  normalized once per parent they unwrap in 11 ms. Both figures are for marks the browser has not laid out (the unpaint in the
+ *  same task as the paint, or a host outside the document). The panel's unpaint always finds its marks laid out (the pass before
+ *  measured them in trimBlanks, and frames rendered since), and there Chromium detaches each mark's layout object on removeChild,
+ *  a cost the order of the normalize does not touch: the same 9,999 marks unwrap in about 340 ms against about 790, a gain of
+ *  2.3x, not 40x (the Slice 5 review, round 1, headless Chromium). Nested marks (two comments over one passage) come in document
+ *  order, the outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first
+ *  (an order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
+export function unwrapMarks(marks: Iterable<Element>): void {
+  const parents = new Set<Node>();
+  for (const n of marks) {
+    const p = n.parentNode; if (!p) continue;
+    while (n.firstChild) p.insertBefore(n.firstChild, n);
+    p.removeChild(n); parents.add(p);
+  }
+  for (const p of parents) p.normalize();
+}
+/** A selection's two ends as the browser reports them (Panel.offeredFor), and whether a live selection stands at them: four
+ *  compares by node identity and offset, where Selection.toString walks the selected text (2 ms over a paragraph of 5,000 links),
+ *  so a changed selection is settled for free and the text is read only for one whose ends match (onSelectionChange). */
+type SelectionEnds = { anchorNode: Node | null; anchorOffset: number; focusNode: Node | null; focusOffset: number };
+const endsOf = (sel: Selection): SelectionEnds => ({ anchorNode: sel.anchorNode, anchorOffset: sel.anchorOffset, focusNode: sel.focusNode, focusOffset: sel.focusOffset });
+const atEnds = (was: SelectionEnds, sel: Selection): boolean =>
+  was.anchorNode === sel.anchorNode && was.anchorOffset === sel.anchorOffset && was.focusNode === sel.focusNode && was.focusOffset === sel.focusOffset;
 /** Whether a selection end (`node`, `offset`) lies inside the mark `x`, or at one of its edges (Panel.dragClick). A drag
  *  that ends at the mark's boundary may be reported by the engine not as a point inside the mark but as one in the mark's
  *  parent, at the mark's index (its start) or the next (its end), or at the end of the text node before the mark or the
@@ -614,14 +642,24 @@ const EMBED_ELSEWHERE = "The file changed where you drew this region, and the li
 /** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
 const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
 const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** One anchor's identity for the pass's sequential hint (paintAll, nextCopyHint): the quote with its prefix and suffix, the
+ *  three the host compares when it asks whether two comments share a passage; two anchors alike in all three tie at the same
+ *  copies, whatever the copies' positions. */
+type PassageAnchor = NonNullable<Card["anchor"]>;
+const anchorKey = (a: PassageAnchor): string => JSON.stringify([a.quote, a.prefix, a.suffix]);
 /** A card as the panel holds it (cards): the model's Card and, for a passage comment the host's tie-break CONFIRMED a copy
  *  for, that copy's offset in the view's coordinates (`confirmedAt`, placedAt's answer for the status showing; absent
  *  without a confirmed verdict). It rides on the card because the paint takes it as the hint over the stored position
  *  (paintAll) and the words for a guessed copy, handed the card alone, must say which hint the pick was nearest to
  *  (copyUnsureWords, unsureMarkTitle): before it they described the copy nearest the stored position while the paint had
  *  taken the copy nearest the confirmed place, a different copy when the view's text had moved past the status (the
- *  review, 2026-09-11). */
-type PanelCard = Card & { confirmedAt?: number };
+ *  review, 2026-09-11). `hintedCopy` is the paint's third hint, the sequential one: the card had no confirmed copy and no
+ *  stored position, and its anchor an earlier card of the pass shared, so the copy painted is the one after that card's
+ *  (paintAll, nextCopyHint; Panel.hintedCopies) and the same words name that copy rather than the first (the Slice 5
+ *  review, round 1: a hinted card's words named the first copy while its highlight sat on the second). It is a fact of
+ *  the paint pass, not of the status, so cards(), a pure function of the status, never stamps it: renderCard stamps it
+ *  on the card it hands the words, beside `shown`, and paintAll on the card it titles the mark for. */
+type PanelCard = Card & { confirmedAt?: number; hintedCopy?: boolean };
 /** What the render a card's words are for shows of it, stamped by renderCard on the card it hands copyUnsureWords
  *  (WordedCard): whether the editor holds the body, for a region whether this view shows its picture (regionImageFor),
  *  and whether an overlay in view takes a drag (drawsRegions: the panel open on a pointer that draws; a phone's layers
@@ -668,13 +706,17 @@ const REGION_CONFIRM_AFTER_EDIT = "To confirm the copy, leave edit mode, then dr
 const PASSAGE_CONFIRM_AFTER_EDIT = "To confirm the copy, leave edit mode, then reveal it and save again from the right copy.";
 /** The state with the editor up, for either card kind: the editor paints no highlight of ours (it carries the changes
  *  alone, Slice 5), so no copy is shown and there is no hint to name, and the words say only that the copy is a guess;
- *  the read view's three states (copyUnsureWords) each name the place the painted copy is the nearest to. */
+ *  the read view's four states (copyUnsureWords) each name the place the painted copy is the nearest to, or the copy it is. */
 const UNSURE_IN_EDITOR = "This passage occurs in the file more than once with the same surroundings, and as the file is now the copy this comment is on can only be guessed. ";
 /** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
- *  open card, since a tag's title never reaches touch. Three states, by the hint the paint took (paintAll): the host's
+ *  open card, since a tag's title never reaches touch. Four states, by the hint the paint took (paintAll): the host's
  *  confirmed place, when the view's text has moved past it (`confirmedAt`: the poll's reload paints before the fresh
- *  status lands, and a refused refresh keeps the old one), the copy nearest THAT place; else no stored position, the
- *  first copy; else the stored position, the copy nearest it. They end by saying how to confirm the copy (the tie-break,
+ *  status lands, and a refused refresh keeps the old one), the copy nearest THAT place; else no stored position and the
+ *  sequential hint (`hintedCopy`: an earlier card of the pass shares the anchor, plans/markdown-viewer.md Slice 5, item 7),
+ *  the copy after the previous comment's on this passage; else no stored position, the first copy; else the stored
+ *  position, the copy nearest it. The first copy is named only where it is the one highlighted (the Slice 5 review,
+ *  round 1: a hinted card's words named the first copy while its highlight sat on the second). They end by saying how to
+ *  confirm the copy (the tie-break,
  *  2026-09-11): a comment saved from the right copy stores the position, ordinal and heading path the host confirms by,
  *  and the card offers the Reveal the sentence names (renderCard), with what that save does said under it
  *  (SAVE_FROM_COPY_NOTE). A REGION comment (`target`) whose embed line ties is in the same state, its rectangle on the
@@ -698,7 +740,9 @@ function copyUnsureWords(c: WordedCard): string {
     + (c.confirmedAt !== undefined
       ? "the place where the comment's copy was last confirmed names none of the copies as the file is now, so the copy nearest that place is highlighted"
       : c.anchorAt === null
-      ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
+      ? (c.hintedCopy
+        ? "the comment stores no position to tell the copies apart, so the copy after the previous comment's on this passage is highlighted"
+        : "the comment stores no position to tell the copies apart, so the first copy is highlighted")
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted");
   if (c.target && !c.shown.pictured) return state + ", not a confirmed one. " + REGION_CONFIRM_UNSEEN;
   if (c.target && !c.shown.draws) return state + ", not a confirmed one. " + REGION_CONFIRM_TOUCH;
@@ -706,15 +750,17 @@ function copyUnsureWords(c: WordedCard): string {
   return state + ", not a confirmed one. Reveal it and save again from the right copy to confirm.";
 }
 /** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branches as
- *  copyUnsureWords, so the mark and the card never disagree about which place the copy is the nearest to, or whether a
+ *  copyUnsureWords, so the mark and the card never disagree about which place the copy is the nearest to, whether a
  *  position is stored (the review, 2026-09-08: the title claimed a stored position on a comment `track-comment` wrote,
- *  whose card said it stores none). */
+ *  whose card said it stores none) or which copy is painted (the Slice 5 review, round 1). */
 function unsureMarkTitle(c: PanelCard): string {
   return "Open the comment; this passage recurs, and "
     + (c.confirmedAt !== undefined
       ? "this copy is the nearest to where the comment's copy was last confirmed"
       : c.anchorAt === null
-      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      ? (c.hintedCopy
+        ? "the comment stores no position to tell the copies apart, so this is the copy after the previous comment's on this passage"
+        : "the comment stores no position to tell the copies apart, so this is the first copy")
       : "this copy is the nearest to the comment's stored position")
     + ", not a confirmed one";
 }
@@ -1158,6 +1204,70 @@ class Panel {
    *  subject is a picture, the picture itself; a passage is re-read from the live selection. hideFloatOnScroll compares the
    *  subject's rect now against it; cleared with the float (hideFloat), so no element of a swapped-out render is held. */
   floatAt: { top: number; right: number; img: HTMLElement | null } | null = null;
+  /** The selection the float answers to: the one it was last offered beside (onSelection), as the panel's own writes over the
+   *  body's text have since left it (afterPaint: the end of paintAll and repaintPresel); its text and its two ends. The document's
+   *  selectionchange re-offers for a DIFFERENT selection only (onSelectionChange), so the seam's re-seat of the same selection after
+   *  a reflow makes no second offer, an offer a scroll hid stays hidden until the selection changes, and the paint's own move of the
+   *  selection is no offer either: unwrapping a mark collapses a selection end inside its text to the mark's place, so a selection
+   *  overlapping a highlight is cut short by every paint that is no gesture of the person's (a peer's comment landing through the
+   *  poll, a filter or settings pick), and the browser fires selectionchange for the move; compared with the ends of the OFFER, that
+   *  change read as the person's and re-offered a float a scroll had hidden, beside a passage nobody selected (the Slice 5 review,
+   *  round 1). Read from the live selection after each paint, the record holds no node of a swapped-out render: it used to keep the
+   *  offer's two nodes past a reload's paint, and the whole previous render behind them, until the next offer (the same review).
+   *  Dropped when the listener hides the float for a selection that is no passage of the body's (onSelectionChange: collapsed, or
+   *  an end outside the body), since a record the float no longer answers to read the selection brought back to its ends as
+   *  already offered (the same review, round 4); the scroll's hide keeps it, so the re-seat of the same ends stays no offer. */
+  offeredFor: SelectionEnds & { text: string } | null = null;
+  /** A pointer is down (the document's capture mousedown, for the PRIMARY button, or touchstart; cleared at mouseup, touchend,
+   *  touchcancel, the dragend of a press that became a drag of the selected text, which ends in no mouseup, a contextmenu, and the
+   *  window's blur): a drag's every selectionchange is ignored, so the drag keeps its one offer at mouseup (the seam's onSelect) and
+   *  the float does not flicker mid-drag. The flag takes pressHold's shape (actions.ts): a right or middle press selects nothing and
+   *  often ends in no mouseup, since Chromium on Linux and macOS opens the native context menu on the mousedown and the menu takes
+   *  the release, so a flag raised by one stood until the reader's next left click, and every keyboard change of the selection in
+   *  between offered nothing (the Slice 5 review, round 2); a contextmenu means the browser ended the press itself (ctrl+click on
+   *  macOS, a long press on a touch screen, no click following), and the window's blur that a release in another frame never
+   *  reaches this one. A touch press has no button and is held as before. */
+  pointerHeld = false;
+  pressBegan = (ev: Event): void => { if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return; this.pointerHeld = true; };
+  pressEnded = (): void => { this.pointerHeld = false; };
+  /** The document's selection changed (plans/markdown-viewer.md Slice 5, item 9): a selection made or changed from the KEYBOARD
+   *  (Shift+Arrow over a selection a drag began, caret browsing, assistive technology) reaches no mouseup, so the seam's onSelect
+   *  never ran for it, the float stayed where a drag had left it while the selection shrank under it, and a keyboard selection
+   *  never offered Comment. Four guards, then the seam's own path (onSelection): nothing while a pointer is down (pointerHeld: the
+   *  drag's offer comes at mouseup); a collapsed selection, or one with an end outside the body (Ctrl+A puts one at the page's
+   *  start; a selection in the aside), hides a passage's float, since the passage it was offered for is no longer the selection
+   *  (a picture's float has no selection to answer to and stands), and drops the record of the offer with it (offeredFor), so the
+   *  selection the keyboard brings back to the offered ends is a new selection and offers: with the record kept past the hide,
+   *  Shift+ArrowDown carrying the focus into the aside hid the float, and the Shift+ArrowUp after it, back at exactly the ends of
+   *  the last offer, read as the selection already answered, and a live keyboard selection in the body had no button (the Slice 5
+   *  review, round 4); the selection the float is already offered beside changes nothing (offeredFor: the seam's re-seat of the
+   *  same ends after a paint fires this event too). A scroll fires no selectionchange, so a float hidden by one stays hidden
+   *  (hideFloatOnScroll), its record kept, so the re-seat of the same ends after it is no second offer; onRendered hides it on
+   *  every paint and reflow.
+   *  Nothing while the editor holds the body: its selections are edits (the seam gates its own path the same way). */
+  onSelectionChange = (): void => {
+    if (this.pointerHeld || this.ctx.editing()) return;
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    if (!sel || this.passageGone(sel)) {
+      if (this.floatAt && !this.floatAt.img) this.hideFloat();
+      this.offeredFor = null;   // the passage is gone, and the record of its offer with it: a selection brought back to those ends is a new one (the header)
+      return;
+    }
+    // the selection the float answers to, as offered or as the panel's own paint left it (offeredFor): the ends first (atEnds), the
+    // text last and only for ends that match, handed on so a changed selection is read once, in onSelection, not twice (the Slice 5
+    // review, round 1: 2 ms a read over a paragraph of 5,000 links)
+    const was = this.offeredFor;
+    let text: string | undefined;
+    if (was && atEnds(was, sel)) { text = sel.toString(); if (was.text === text) return; }
+    this.onSelection(sel, text);
+  };
+  /** Whether `sel` is no passage of the body's: no range, collapsed, or an end outside the body (Ctrl+A puts one at the page's start;
+   *  a selection in the aside). A passage's float answers to such a selection no longer, whichever way it came about: the person's
+   *  keyboard (onSelectionChange) or the panel's own writes over the text (afterPaint); a picture's float has no selection to answer to. */
+  private passageGone(sel: Selection): boolean {
+    const body = this.ctx.body();
+    return !sel.rangeCount || sel.isCollapsed || !body.contains(sel.anchorNode) || !body.contains(sel.focusNode);
+  }
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
   pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
@@ -1219,6 +1329,10 @@ class Panel {
    *  hint, the stored position or the host's confirmed place the view moved past (PanelCard.confirmedAt), names none of the
    *  tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
   unsureCopies = new Set<string>();
+  /** The comments among them whose copy is the sequential hint's, the one after the previous comment's on the same passage
+   *  (paintAll, nextCopyHint), so the card's and the mark's words name that copy and not the first (copyUnsureWords,
+   *  unsureMarkTitle, by PanelCard.hintedCopy: renderCard stamps it from this set, paintAll from the pass's own flag). */
+  hintedCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
   // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
@@ -1404,11 +1518,18 @@ class Panel {
    *  adjustment included, so the one comparison tells the two figures apart. The selection itself stands either way,
    *  and the next mouseup over it offers the button again. */
   hideFloatOnScroll = () => {
-    if (this.float.hidden) return;
-    const was = this.floatAt, now = this.floatSubjectRect();
-    if (was && now && Math.abs(now.top - was.top) < 1 && Math.abs(now.right - was.right) < 1) return;   // anchoring held the passage under the button
+    if (this.float.hidden || this.subjectHeld()) return;   // anchoring held the passage under the button
     this.hideFloat();
   };
+  /** Whether the float's subject still sits within a pixel of where the button was offered beside it (floatAt): the passage (or
+   *  picture) has a box now, and its top and right edges are under a pixel from the offer's. The one test for a float whose subject
+   *  the page may have moved from under it, wherever the move came from: the body's scroll and a figure's load (hideFloatOnScroll,
+   *  whose comment says why a pixel) and the panel's own writes over the text (afterPaint). False for a subject that is gone or has
+   *  no box (floatSubjectRect: null). */
+  private subjectHeld(): boolean {
+    const was = this.floatAt, now = this.floatSubjectRect();
+    return !!(was && now && Math.abs(now.top - was.top) < 1 && Math.abs(now.right - was.right) < 1);
+  }
   // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
   // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
   // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
@@ -1478,6 +1599,16 @@ class Panel {
     ctx.body().addEventListener("load", this.hideFloatOnScroll, true);
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
+    // ...and the keyboard's selections, which the seam's mouseup and touchend never see (onSelectionChange): the document's
+    // selectionchange, heard here and not in the seam, whose onSelect also seeds the quote chip with a fetch of the file per
+    // gesture, which must not run per keystroke (Slice 5, item 9). The press flag it reads rides the same document-capture
+    // mousedown (the primary button's) and touchstart hideFloatOnDown hears, cleared when the press ends, by the browser's own hand
+    // included (a contextmenu, the window's blur: pointerHeld's note). Installed after the seam's hook, whose line
+    // file-view-place.test.ts reads beside the scroll listener's; removed at dispose with the float's other listeners.
+    for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.pressBegan, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.addEventListener(ev, this.pressEnded, true);
+    window.addEventListener("blur", this.pressEnded);
+    document.addEventListener("selectionchange", this.onSelectionChange);
     // the layout changes that re-wrap the lines with no width report, so the seam fires no reflow (the width observer's report
     // is its only source): a figure's bytes landing (the same captured `load`; a gated figure's restored media loads through it
     // too) and a font face arriving (the document's FontFaceSet `loadingdone`: the sheet's faces load with `font-display: swap`,
@@ -1598,8 +1729,10 @@ class Panel {
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
         // handed-on press on a rectangle inside it, since the overlay and its rectangles stand inside the <a>
         // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before — unless
-        // the click ends a drag-selection inside the highlight (dragClick), as for a change mark above.
-        fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
+        // the click ends a drag-selection inside the highlight (dragClick), as for a change mark above. Two comments over one
+        // passage nest their marks, and the mark under a click on the overlap is the innermost: the covering comments' cards
+        // open with it (openCovering), the clicked one the focus.
+        fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.openCovering(x); this.showCard(this.cardKey(x.dataset.id!)); },
         fcreplace: (x, ev) => { ev.stopPropagation(); this.startReplace(x.dataset.id!); },   // a region comment's Re-place (Slice 3)
       }),
     });
@@ -2019,6 +2152,11 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     this.ctx.body().removeEventListener("load", this.hideFloatOnScroll, true);
     this.ctx.body().removeEventListener("scroll", this.hideFloatOnScroll);
+    for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.pressBegan, true);
+    for (const ev of ["mouseup", "touchend", "touchcancel", "dragend", "contextmenu"]) document.removeEventListener(ev, this.pressEnded, true);
+    window.removeEventListener("blur", this.pressEnded);
+    document.removeEventListener("selectionchange", this.onSelectionChange);   // the keyboard's offer goes with the float (onSelectionChange)
+    this.offeredFor = null;                                                      // ...and the selection it compared with
     this.ctx.body().removeEventListener("load", this.scheduleRetrim, true);
     const fonts = typeof document !== "undefined" ? (document as any).fonts : null;
     if (fonts && typeof fonts.removeEventListener === "function") fonts.removeEventListener("loadingdone", this.scheduleRetrim);   // the document outlives the viewer
@@ -2507,7 +2645,7 @@ class Panel {
   }
 
   // ── commenting ─────────────────────────────────────────────────────────────────────────────────
-  onSelection(sel: Selection): void {
+  onSelection(sel: Selection, text?: string): void {
     if (!this.open || this.ctx.mode() === "media" || !sel.rangeCount) return;
     // the seam fires for any selection inside the viewer's box, the aside included: a passage is text of the
     // FILE, so a selection in a card, the Log or the message preview offers nothing (it would only be refused)
@@ -2516,6 +2654,7 @@ class Panel {
     const rect = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     if (!rect.width && !rect.height) return;
     this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
+    this.offeredFor = { text: text ?? sel.toString(), ...endsOf(sel) };   // what a selectionchange compares with (onSelectionChange; `text` when it read the text already)
     this.showFloat(rect);
   }
   private showFloat(rect: { right: number; top: number }, img: HTMLElement | null = null): void {
@@ -2526,8 +2665,10 @@ class Panel {
     this.floatAt = { top: rect.top, right: rect.right, img };
   }
   /** The float's subject as it sits on screen now: the picture's box, or the live selection's last range (null once the
-   *  selection is gone or collapsed, or the picture has left the document); what hideFloatOnScroll compares with floatAt. */
-  private floatSubjectRect(): { top: number; right: number } | null {
+   *  selection is gone or has no box, or the picture has left the document); what subjectHeld compares with floatAt, on the body's
+   *  scroll (hideFloatOnScroll) and after the panel's own writes (afterPaint: a remnant with no box is no subject, and the box of a
+   *  selection the writes moved whole is where the float is offered again). */
+  private floatSubjectRect(): { top: number; right: number; bottom: number; left: number } | null {
     const at = this.floatAt;
     if (!at) return null;
     if (at.img) return at.img.isConnected ? at.img.getBoundingClientRect() : null;
@@ -2535,6 +2676,14 @@ class Panel {
     if (!sel || !sel.rangeCount) return null;
     const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
     return r.width || r.height ? r : null;
+  }
+  /** Whether `rect` lies at least partly inside the body's box: a passage the panel's own writes moved whole is re-seated beside
+   *  only while some of it is in view (afterPaint). The body clips what it scrolls, and showFloat clamps to the window alone, so a
+   *  passage the writes pushed past the body's edge took a button over the body's last visible line, beside other text (the Slice 5
+   *  review, round 8). */
+  private inBodyBox(rect: { top: number; right: number; bottom: number; left: number }): boolean {
+    const b = this.ctx.body().getBoundingClientRect();
+    return rect.top < b.bottom && rect.bottom > b.top && rect.left < b.right && rect.right > b.left;
   }
   /** A click on a rendered picture (the plan's Images and PDFs): with the panel open, the float offers
    *  Comment beside it; the anchor will be the embed's source text. A picture the source holds no embed
@@ -3267,6 +3416,20 @@ class Panel {
     saveSettings({ commentsFilter: f });
     this.paintAll();
   }
+  /** The cards of the OTHER comments whose highlights cover the mark `x` a click or Enter landed on, opened with it (plans/
+   *  markdown-viewer.md Slice 5, item 6). Two comments over one passage nest their marks: the later paint wraps the text where it
+   *  stands, inside the earlier comment's mark (anchor-map.ts wrapNode; paintAll paints in cards() order and repaintPresel keeps
+   *  that order), and the Raw view nests the same way (paintRaw wraps the row's text in place). So the mark under the overlap is
+   *  the innermost, the delegate resolves the control to it (actions.ts, closest("[data-act]")), and the outer comment's card
+   *  could not be reached from that text. Every fcopen mark of ours above the clicked one (owns) is a covering comment: its card
+   *  opens as a head click would open it (openCards), in the same render as the clicked card, which is the focus (showCard, the
+   *  caller's next step). The sheets draw the nest as one wash and one ring (`.fc-hl .fc-hl`); the marks' own attributes
+   *  (data-new, tabIndex, the title) stay per mark. */
+  private openCovering(x: HTMLElement): void {
+    for (let e = x.parentElement; e; e = e.parentElement) {
+      if (e.dataset.act === "fcopen" && e.dataset.id && this.marks.has(e)) this.openCards.add(this.cardKey(e.dataset.id));
+    }
+  }
   /** Expand and scroll to a card by key — a change card inside the fold unfolds it first. */
   showCard(key: string): void {
     if (key.startsWith("chg:")) {
@@ -3307,7 +3470,7 @@ class Panel {
    *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
-    if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    if (this.ctx.editing()) { this.afterPaint(); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
@@ -3323,7 +3486,7 @@ class Panel {
     if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
     if (this.changesUnreadUnderEdit) { this.changesUnreadUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_UNREAD_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
-    this.unsureCopies = new Set();
+    this.unsureCopies = new Set(); this.hintedCopies = new Set();
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
@@ -3340,6 +3503,9 @@ class Panel {
     // again, 0.45 ms a call on a 12k-element note, 90 ms added to a 200-comment pass; batched, the pass pays one layout
     this.passMarks = []; this.passChanges = [];
     const byCard: Array<{ id: string; marks: Element[] }> = [];
+    // the last located range per anchor over this pass (the anchor's quote, prefix and suffix, anchorKey): the sequential hint's
+    // subject for a card with no stored position that shares its anchor with a card painted before it (nextCopyHint)
+    const lastLocated = new Map<string, SourceRange>();
     // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
     for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
@@ -3350,13 +3516,22 @@ class Panel {
       // position names no copy any more and the host's tie-break confirmed one from the copy fields it stores (the
       // status's `placed`, the tie-break, 2026-09-11), that copy is the hint instead, so it is painted as the chosen one;
       // where the view's text has moved past that place too, the copy nearest it is a guess whose words name the place
-      // (copyUnsureWords, by the card's confirmedAt, the same answer stamped by cards())
+      // (copyUnsureWords, by the card's confirmedAt, the same answer stamped by cards()). A card with NO confirmed copy and
+      // NO stored position (written by the CLI or another editor) whose anchor an earlier card of this pass shares takes a
+      // sequential hint instead, the copy after that card's (plans/markdown-viewer.md Slice 5, item 7; nextCopyHint), so
+      // same-text comments without a position take the copies in turn where they all painted on the first copy; copyUnsure
+      // below still reads `at`, the confirmed or STORED position, so the guess is painted as one
       const at = this.placedAt(card) ?? this.viewAt(card);
-      const loc = locateComment(src, card.anchor, at);
+      const key = anchorKey(card.anchor), prev = lastLocated.get(key);
+      const hint = at !== undefined || !prev ? at : this.nextCopyHint(src, card.anchor, prev);
+      const loc = locateComment(src, card.anchor, hint);
+      if (loc.state === "located" && loc.range) lastLocated.set(key, loc.range);
       // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
       // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
       const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
       if (unsure) this.unsureCopies.add(card.id);
+      const hinted = at === undefined && hint !== undefined;   // the hint moved the pick past the previous card's copy: the words name that copy (copyUnsureWords, unsureMarkTitle, by PanelCard.hintedCopy)
+      if (hinted) this.hintedCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
@@ -3367,7 +3542,7 @@ class Panel {
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
-        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
+        const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";
         for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
@@ -3388,7 +3563,71 @@ class Panel {
     for (const c of this.passChanges) if (!c.marks.some(standing)) this.paintedChanges.delete(c.id);
     this.paintRegions();
     if (held) this.refocusMark(held);
+    this.afterPaint();
     this.render();
+  }
+  /** After the panel's own writes over the body's text (the end of paintAll, of repaintPresel, and paintAll's stand-down while the
+   *  editor holds the body): the selection the float answers to is the selection as the writes left it (offeredFor, read by
+   *  onSelectionChange), so the selectionchange the writes fire is no offer, and a record whose nodes a reload's paint or the editor
+   *  replaced holds the live selection's nodes instead of the swapped-out render's. Read after every write of the pass, the overlays'
+   *  (paintRegions) included, since a live range's ends move with the nodes around them; the text once (Selection.toString), the
+   *  same read the offer makes. And a passage's float the writes left beside NO selection goes (passageGone, the listener's own
+   *  rule): a highlight that is its paragraph's whole text is the <p>'s only child, so the unwrap and the wrap again of its mark
+   *  collapse a selection inside it to the paragraph, and Chromium fires no selectionchange for that move (a text node merged by
+   *  the unpaint's normalize or split by the wrap is what fires it: a highlight beside plain text does, a lone-child mark does
+   *  not), so the listener's collapsed-selection guard never ran, and a peer's comment landing through the poll, or a settings pick
+   *  from another pane, left the float standing beside nothing until a click on it hid it and opened no composer (the Slice 5
+   *  review, round 2). A float the writes left beside a selection cut short but not to nothing answers to the test the scroll's
+   *  listener reads (subjectHeld): it stays while the remnant sits within a pixel of where the button was offered beside it (a cut
+   *  that trims the selection inside the line box the button sits beside keeps its top and right edges), and goes once the remnant
+   *  has no box or has moved a pixel or more. No box: a selection from inside a paragraph's mark into the next block's start is cut
+   *  to a bare line break between the two blocks (the rewrap moves an anchor inside the mark's text to the paragraph's end, a
+   *  removed node's descendant boundary points moving to its parent, while the focus at the next block's start stays), a range in
+   *  the body and not collapsed but with no client rect, text nobody can see, which the offer itself refuses (onSelection's guard
+   *  on a range with no width and no height) and whose Comment button opened a composer the whitespace refusal closed at once
+   *  (the Slice 5 review, round 5). Moved: the same drag carried into the next paragraph's middle leaves the line break and that
+   *  paragraph's first half, a remnant with a box a line or more below the offer's, and the float, which stayed where it was
+   *  offered as it did on main, stood 74 px above the passage it now offered to comment on, while a scroll that moves the passage
+   *  one pixel from under the button hides it (the same review, round 6); the paint is the event and the subject's rect the test,
+   *  as for the scroll. A selection the writes moved WHOLE, not a character cut, follows the passage instead (the same review,
+   *  round 7): a peer's mark landing through the poll on the selection's own line, before it, on it or inside it, wears the
+   *  sheet's 2 px side padding (.fc-hl), so the still-selected text stands 4 px further right, and the remnant's test read that
+   *  displacement as the subject gone from under the button and hid the offer while the passage stood selected and visible
+   *  (8924fa17e and main kept it, 4 px off). The paint is the panel's write, not the person's gesture, so the float is offered
+   *  again at the selection's box as the writes left it (showFloat re-records floatAt, so the scroll's test measures from the new
+   *  place). Intact is read as the seam reads a selection its reflow paint left standing (file-view.ts
+   *  fireRenderedKeepingSelection): both ends in the body and the same text selected, against the record as the last paint left
+   *  it (offeredFor before this read); the writes add no text and take none (a mark wraps text, a deletion mark is a point with no
+   *  text node), so the same text selected is the same characters. Not the ends by node identity: the wrap splits the text node
+   *  the mark lands in (anchor-map.ts wrapSlices, splitText), and a live range's boundary past the split moves into the new node,
+   *  so an intact selection's ends name new nodes after every such paint (the round's probes: an anchor at 40 read 22 in a new
+   *  tail node, the text unchanged) and an ends test reads it as cut. A remnant, the text changed, goes as round 6 rules once it
+   *  has no box or has moved. One more rect read, for a subject that moved and stayed whole alone. A picture's stands. A float the
+   *  writes find HIDDEN is left so, whatever hid it (the same review, round 8): the picture overlay's press hid the float with the
+   *  hidden bit alone and kept floatAt, the record this read took for a showing float, so a peer's mark landing on the still-selected
+   *  line while the person pressed on a picture, or after a click on a region's rectangle had opened its card, showed the passage's
+   *  Comment button again beside a selection the press had dismissed; the press goes through hideFloat now (one mechanism for a
+   *  hidden float, its record cleared with it) and this read guards on the hidden bit, as the scroll's listener does. And a passage
+   *  the writes moved whole OUT OF THE BODY'S BOX is no re-seat (the same round): the body clips what it scrolls and showFloat clamps
+   *  to the window alone, so a paint that pushed a last-visible-line selection below the body's bottom edge (Show changes inline
+   *  toggled from the keyboard, the struck label above the line growing the text; a settings signal; a poll's mark a line above)
+   *  seated the button 30 px above a passage nobody can see, over the body's last visible line and the other text it holds, and a
+   *  click on it commented on text out of view (78c0806ce hid it, as for any move; the scroll's listener hides for the same
+   *  displacement). The re-seat takes a box at least partly inside the body's (inBodyBox) and hides otherwise, as for a remnant
+   *  that moved; the offer's own path (onSelection) keeps its guards, since a gesture's selection is in view by the browser's doing. */
+  private afterPaint(): void {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const was = this.offeredFor;
+    this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
+    // no passage's float SHOWING: a hidden float stays hidden whatever hid it, the scroll listener's own guard (a picture's stands)
+    if (!sel || this.float.hidden || !this.floatAt || this.floatAt.img) return;
+    if (this.passageGone(sel)) { this.hideFloat(); return; }          // the writes left the float beside no selection
+    if (this.subjectHeld()) return;                                    // the subject sits under the button, cut or whole
+    // moved a pixel or more, or left with no box: a remnant the writes cut goes, as on a scroll; a selection the writes moved whole
+    // (the same text as the record's between two ends in the body) is offered again beside its box now, when that box lies at least
+    // partly inside the body's (inBodyBox: the body clips what it scrolls, and showFloat clamps to the window alone)
+    const now = was && this.offeredFor && this.offeredFor.text === was.text ? this.floatSubjectRect() : null;
+    if (now && this.inBodyBox(now)) this.showFloat(now); else this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every
@@ -3474,6 +3713,29 @@ class Panel {
     const last = locateComment(src, card.anchor, src.length);
     return last.state === "located" && !!last.range && last.range.start !== first.range.start;
   }
+  /** The hint for a card with no stored position whose anchor a card painted before it in this pass shares (paintAll): a
+   *  position whose nearest tied copy is the first copy AFTER that card's (`prev`, its located range), so same-text comments
+   *  without a position take the copies in turn; undefined when no copy follows, and the engine's own earliest pick stands, as
+   *  it did before the hint (plans/markdown-viewer.md Slice 5, item 7; the design's narrow case: only a card with no position,
+   *  only an anchor equal in quote, prefix and suffix, the host's own reading of "the anchor ties"). The engine breaks a tie by
+   *  the copy nearest the hint (engine.js pickCandidate), so the previous copy's end names the next copy only when it starts
+   *  within a quote's length of that end (a line repeated back to back), and a repeated paragraph would keep landing on the
+   *  same copy. The probe steps the hint right from the previous copy's start, doubling the distance, until the engine's pick
+   *  moves past that copy: at each step the pick said no copy started nearer than the same distance beyond the hint, so the
+   *  next step stays at or short of the next copy, which is then the pick, never a copy beyond it; log2(gap / quote) probes,
+   *  each an engine scan of the text, only for such a card, and one when no copy follows (the engine's last pick, hint at the
+   *  text's end, is the card's own copy). */
+  private nextCopyHint(src: string, anchor: PassageAnchor, prev: SourceRange): number | undefined {
+    const last = locateComment(src, anchor, src.length);
+    if (last.state !== "located" || !last.range || last.range.start <= prev.start) return undefined;
+    const quote = Math.max(1, prev.end - prev.start);
+    for (let step = quote; prev.start + step <= src.length; step *= 2) {
+      const hint = prev.start + step;
+      const loc = locateComment(src, anchor, hint);
+      if (loc.state === "located" && loc.range && loc.range.start > prev.start) return hint;
+    }
+    return undefined;
+  }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
    *  substitution paints a deletion point and then its new text, all with the same action and id. */
   private ownMarks(act: string, id: string): HTMLElement[] {
@@ -3553,16 +3815,15 @@ class Panel {
     if (!out || !out.length) { const img = imgForRange(root, src, c.range, this.ctx.path); if (img) frameImage(img, "fc-presel"); }
     return out || [];
   }
-  /** Unwrap painted marks: the text nodes go back in place and the parent is normalized. A framed
+  /** Unwrap painted marks: the text nodes go back in place and each parent is normalized, once (unwrapMarks). A framed
    *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
   private unpaint(selector: string): void {
     const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
+    const held: Element[] = [];
     for (const n of Array.from(this.ctx.body().querySelectorAll(selector))) {
-      if (n.classList.contains("fc-img")) { unframeImage(n as HTMLElement, marks); continue; }
-      const p = n.parentNode; if (!p) continue;
-      while (n.firstChild) p.insertBefore(n.firstChild, n);
-      p.removeChild(n); p.normalize();
+      if (n.classList.contains("fc-img")) unframeImage(n as HTMLElement, marks); else held.push(n);
     }
+    unwrapMarks(held);
   }
   /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
    *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
@@ -3587,14 +3848,10 @@ class Panel {
     memo.set(p, box);
     return box;
   }
-  /** Unwrap these marks: the text nodes go back in place and each parent is normalized (unpaint's own step, over elements the
-   *  caller holds rather than a selector). */
+  /** Unwrap these marks: the text nodes go back in place and each parent is normalized once (unpaint's own step, unwrapMarks, over
+   *  elements the caller holds rather than a selector). */
   private unwrap(marks: Element[]): void {
-    for (const n of marks) {
-      const p = n.parentNode; if (!p) continue;
-      while (n.firstChild) p.insertBefore(n.firstChild, n);
-      p.removeChild(n); p.normalize();
-    }
+    unwrapMarks(marks);
   }
   /** The pending target repainted alone (a composer opened, closed or moved: startComment, closeComposer and the other sites), as
    *  a paint pass over the LINE BOXES the target leaves and enters (lineBoxOf). The target's 2 px side padding is in the layout,
@@ -3649,7 +3906,8 @@ class Panel {
    *  whitespace, so it is never painted; md-config-paint-presel-refile-browser.test.ts, both directions, the paragraph in a
    *  monospace face at a fixed measure so the wrap point is the design's and not the face's). A filing that did not move renders
    *  nothing: the caller's render stands, and no card moves on no new information. */
-  private repaintPresel(): void {
+  private repaintPresel(): void { this.repaintPreselPass(); this.afterPaint(); }   // the selection as the repaint left it is the one the float answers to (afterPaint)
+  private repaintPreselPass(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
       this.unpaint(".fc-presel");
@@ -3922,7 +4180,10 @@ class Panel {
     // they did before the overlay stood over it
     const layer = new RegionLayer(img, {
       onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
-      onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
+      // what hideFloatOnDown does for a mousedown the overlay cancels: the float goes WITH its record (floatAt), so the panel's next
+      // paint re-seats nothing the press hid (the hidden bit alone left the record, and afterPaint read it as a showing float; the
+      // Slice 5 review, round 8)
+      onPress: () => this.hideFloat(),
     }, isCanvas(img) ? img.parentElement : null);
     this.regionLayers.set(img, layer);
     this.mark(layer.overlay);                          // the browser's own click after a handed-on press lands here (panelMark)
@@ -5652,8 +5913,9 @@ class Panel {
     // the card as its words see it (WordedCard): what this render shows of it rides on the card, since the words for a
     // guessed copy are handed the card alone (copyUnsureWords) and name the recourse by the controls this render offers;
     // `draws` is the pointer half of the Re-place gate (replaceOffered, below), read the same way, so the words and the
-    // button agree on whether this card has a Re-place
-    const c: WordedCard = { ...given, shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };
+    // button agree on whether this card has a Re-place; the paint's sequential hint rides with them (hintedCopy, from
+    // hintedCopies), the fact of the pass that cards() cannot carry
+    const c: WordedCard = { ...given, hintedCopy: this.hintedCopies.has(given.id), shown: { editing, pictured: !!picture, draws: this.drawsRegions() } };
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)

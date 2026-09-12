@@ -2125,6 +2125,14 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-hl { background: color-mix(in srgb, var(--warn) 14%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warn) 85%, transparent);
   color: inherit; border-radius: 5px; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
 .fc-hl-context { box-shadow: none; outline: 1.5px dashed color-mix(in srgb, var(--warn) 70%, transparent); outline-offset: -1.5px; }
+/* two comments over one passage (plans/markdown-viewer.md Slice 5, item 6): the later paint wraps the text where it stands,
+   inside the earlier comment's mark (anchor-map.ts wrapNode), so the overlap is a nest of marks, and each level painted its own
+   wash and ring over the one below (two layers of each on the overlap). The inner mark drops both, so the passage wears one wash
+   and one ring whatever covers it. The padding stays, so every wrap point stays where the nest legs measure it
+   (md-config-paint-trim-panel-browser.test.ts); the dashed cue of a guessed or moved copy stays (an outline, not a wash); and the
+   arrivals dot stays (its rule below comes later in the sheet at the same weight). A click on the nest opens every covering
+   card (file-comments.ts openCovering). */
+.fc-hl .fc-hl { background: none; box-shadow: none; }
 .fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); color: inherit; border-radius: 5px; padding: 0 2px;
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }

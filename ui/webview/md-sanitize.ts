@@ -32,6 +32,17 @@
 //     left: colorOnlyStyle below is the whole grammar, applied by a DOMPurify uponSanitizeAttribute hook on
 //     every element, inline SVG included.
 //   • data-* never rides in (ALLOW_DATA_ATTR: false): both pages key their delegated actions off data-act.
+//   • an html comment is dropped, as GitHub drops it, and dropped BEFORE the element holding it is judged. DOMPurify
+//     removes every comment on its own (no profile lists `#comment`), but its walk judges a parent before it reaches
+//     the comment inside, and the parent's markup guard (SAFE_FOR_XML, its mXSS defence) reads the comment's `<!--`
+//     in the innerHTML: a `<p>` or `<td>` holding a comment and a literal `<word` (`&lt;x&gt;`, which reads `<x` in
+//     the textContent) matched the guard from two different children and vanished whole with its prose.
+//     dropCommentChildren below, on the uponSanitizeElement hook, empties an element of its comments first; every
+//     other output is unchanged, since no comment ever survived (Slice 5 review, round 4).
+//   • an HTML `<title>` in the body is dropped with its text: the browser shows a title nowhere outside the page's head,
+//     and DOMPurify's svg profile kept one as a hidden element whose text stood in the DOM. dropBodyTitle below, on the
+//     same hook, moves the element out of the tree before DOMPurify judges it, into a fragment DOMPurify can still detach
+//     it from under any profile; an inline svg's own `<title>` stays (Slice 5 review, round 5; the PR's review, round 2).
 //   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser
 //     fetch the URL the moment the note renders, a tracking pixel with no click and no gate; DOMPurify's html
 //     list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
@@ -53,7 +64,7 @@
 // (Slice 4 of plans/markdown-viewer.md; before it files.js and feed.js had neither the grammar nor the pass
 // nor the library). A renderer romp itself runs never goes through the sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
-import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent } from "dompurify";
+import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent, UponSanitizeElementHookEvent } from "dompurify";
 
 /** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
 export const MD_FORBID_TAGS: readonly string[] = [
@@ -144,14 +155,82 @@ export function styleAttributeHook(ev: Pick<UponSanitizeAttributeHookEvent, "att
   else ev.keepAttr = false;
 }
 
+/** The DOMPurify uponSanitizeElement hook body: an element's html comment children go before DOMPurify judges the
+ *  element. DOMPurify drops every comment itself (`#comment` is in no profile, so the walk removes one when it reaches
+ *  it), but the walk is in document order, so a parent is judged with its comments still inside it, and one of the
+ *  judgments reads them: the markup guard DOMPurify runs under SAFE_FOR_XML (its `_isUnsafeNode`, an mXSS defence)
+ *  force-removes an element that has child nodes but no element child when BOTH its textContent and its innerHTML
+ *  read as markup (`/<[/\w!]/`), the shape of a raw-text element whose text would re-parse as tags. A `<p>` or a
+ *  `<td>` holding a comment and a literal `<word` matched both probes from two different children (marked emits
+ *  `&lt;x&gt;` as the entity, so the textContent reads `<x`, and the comment verbatim, so the innerHTML reads `<!--`)
+ *  and vanished whole with its prose: the table cell `a <!-- c --> b &lt;x&gt;` rendered as a row with one cell, and
+ *  a comment on it painted nothing (the Slice 5 review, round 4, 2026-09-11; identical on main). With the comments
+ *  gone first the guard reads the innerHTML DOMPurify would have produced anyway, so the element stays; for every
+ *  other input the output is what it always was, since no comment ever survived the sanitize. The guard itself is
+ *  untouched: a raw-text element's text is one text node, with no comment in it to drop. Reads `childNodes` as a
+ *  snapshot and touches nothing but comments; DOMPurify removes a clobbered form before this hook runs for the names
+ *  it probes (removeChild and nodeType among them), and `childNodes`, which it does not probe, is stepped back from
+ *  here when a form's `<input name="childNodes">` has made it no list. */
+export function dropCommentChildren(node: Node): void {
+  if (node.nodeType !== 1 /* Node.ELEMENT_NODE */) return;
+  const children = node.childNodes;
+  if (!children || typeof children.length !== "number") return;
+  for (const child of Array.from(children)) {
+    if (child.nodeType === 8 /* Node.COMMENT_NODE */) node.removeChild(child);
+  }
+}
+
+/** The HTML namespace, an element's `namespaceURI` when it is HTML's and not SVG's or MathML's. */
+const HTML_NS = "http://www.w3.org/1999/xhtml";
+/** The other DOMPurify uponSanitizeElement hook body: an HTML `<title>` in the body goes WITH its content. The browser never
+ *  shows a title outside the page's head (the parser keeps one met in the body as an element the UA sheet hides, `title {
+ *  display: none }`), but `title` is in DOMPurify's svg profile, so the namespace check kept a body `<title>` as a hidden
+ *  element: a `<title>` block in a note, one inside a `<div>`, inline in a paragraph or in a table cell rendered nothing while
+ *  its text stood in the DOM, in the comment painter's hay and in the fallback reader's text (which read it as shown), so a
+ *  comment on that text painted a mark with no box and its card offered Scroll to nothing (the Slice 5 review, round 5). An
+ *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. The hook moves the element out of the tree
+ *  itself, into a fresh DocumentFragment of the node's own document, right before DOMPurify judges it: the content goes with it
+ *  (a title's content is one text node, the parser reading it as RCDATA), so no unwrapped text is left behind, and nothing
+ *  shared is written. The first cut used the lever DOMPurify hands a hook, `allowedTags`, setting `title` off for a body title
+ *  and on for an svg's; that set is DOMPurify's LIVE per-call ALLOWED_TAGS (`_sanitizeElements` passes the variable itself, no
+ *  copy), so the write stood on every later element of the same call, and a hook reading the set after this one saw `title`
+ *  false on the paragraphs after a body title. It reached no later `sanitize` call only because a call with a config rebuilds
+ *  the set (`_parseConfig` clones the config and rebuilds ALLOWED_TAGS under USE_PROFILES), and under `setConfig`, which keeps
+ *  one set across calls, it would have (the PR's review, round 1; md-sanitize-body-title-browser.test.ts pins both over the
+ *  real DOMPurify). DOMPurify takes the move as it takes its own removals: its walk's NodeIterator steps over a reference node
+ *  that leaves the root's tree (the DOM's pre-removing steps run for a node appended elsewhere as for one removed, the path
+ *  `_forceRemove` relies on), and it goes on to judge the title, the fragment's child now, as it goes on with every node it
+ *  removes itself (3.4.10 reads no return value from `_sanitizeElements`). Three of its branches after the hook end in
+ *  `_forceRemove`, which in 3.4.10 detaches through the parent (`getParentNode(node).removeChild(node)`) and THROWS when that
+ *  fails and the node is still parentless: the markup guard (a title's innerHTML is escaped text, so it cannot match), the
+ *  namespace check (an HTML title passes it under the stand-in parent DOMPurify uses when the parent has no tagName, a
+ *  fragment's case), and the disallowed-tag branch, `_sanitizeDisallowedNode`, taken whenever `title` is off the allowed set
+ *  (a profile without svg) or in FORBID_TAGS, which hoists nothing for a title (`title` is in DOMPurify's default
+ *  FORBID_CONTENTS) and force-removes it. The second cut removed the title by the node's own `remove()` and left it parentless,
+ *  so that third branch threw, and the hook was safe only while `title` stayed allowed, the svg profile's case (the PR's
+ *  review, round 2). Under the fragment every branch detaches the title from a parent that has it, and a KEEP_CONTENT hoist,
+ *  were `title` ever off FORBID_CONTENTS, would land its text in the fragment, never in the body (the browser leg sanitizes a
+ *  title whose text reads as markup, and a body title under the html profile alone and under FORBID_TAGS with `title`, for the
+ *  three). `DOMPurify.removed` lists the title only when DOMPurify drops it from the fragment; nothing here reads that list.
+ *  The node's document and a fresh fragment's `appendChild`, not the parent's `removeChild`: only a form can be clobbered by a
+ *  named control, so a title's `ownerDocument` and the fragment's method are the prototypes' whatever the title's parent is.
+ *  Reads `nodeType`, the hook's lower-cased tagName, `namespaceURI` and `ownerDocument`. */
+export function dropBodyTitle(node: Node, data: Pick<UponSanitizeElementHookEvent, "tagName">): void {
+  if (data.tagName !== "title" || node.nodeType !== 1 /* Node.ELEMENT_NODE */ || (node as Element).namespaceURI !== HTML_NS) return;
+  // an element always has a document; the fragment is a parent DOMPurify's own removal can detach the title from
+  (node.ownerDocument as Document).createDocumentFragment().appendChild(node);
+}
+
 let hooksInstalled = false;
-/** Install the style hook on the (module-global) DOMPurify instance, once. Idempotent: DOMPurify's hooks
- *  are a list, and a second registration would run the same rewrite twice per attribute. `purify` is a
- *  seam for the node tests, which have no window for the real instance to sanitize in. */
+/** Install the two hooks on the (module-global) DOMPurify instance, once: the style rewrite on every attribute
+ *  (styleAttributeHook) and, on every element, the comment drop (dropCommentChildren) and the body title's drop
+ *  (dropBodyTitle). Idempotent: DOMPurify's hooks are a list, and a second registration would run the same rewrite twice
+ *  per attribute. `purify` is a seam for the node tests, which have no window for the real instance to sanitize in. */
 export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"> = DOMPurify): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   purify.addHook("uponSanitizeAttribute", (_node, ev) => { styleAttributeHook(ev); });
+  purify.addHook("uponSanitizeElement", (node, data) => { dropCommentChildren(node); dropBodyTitle(node, data); });
 }
 
 /** marked's task checkbox is the one control a note keeps, inert: every other <input> goes, and a

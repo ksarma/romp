@@ -69,10 +69,6 @@ const UI = path.resolve(EXT, "..", "ui", "webview");
 const FEED = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
 type Scene = { name: string; width: number; markdown: string };
 const SCENES = (JSON.parse(fs.readFileSync(path.join(UI, "anchor-map-fixtures", "blank-scenes.json"), "utf8")) as { scenes: Scene[] }).scenes;
-/** The one scene the block pairing refuses early (the recorded defect, plan item 10 (d); the helpers' comment below): its paint
- *  stops at the html block and never reaches the closing paragraph. */
-const REFUSED = "adjacent whitespace nodes left by a stripped comment";
-
 /** marked with the viewer's grammar, the sanitizer, the paint and the trim, bundled as the webview build bundles them. */
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
@@ -107,9 +103,10 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
  *  over all of them), and reads each mark's text, both widths, whether it has a box of its own, how many marks it holds and
  *  whether it is a top-level node; `__bare` lists the blank text nodes below the top level that render with a width and carry no
  *  mark, inside the top-level blocks the paint reached (a block the pairing refused holds no mark and is no unmarked blank of the
- *  trim's: the union holds one such scene, REFUSED, an html block followed by a list item whose source text the sanitizer
- *  shortens, a stripped style, the pairing's own recorded defect, plan item 10 (d); every other scene's paint must reach the
- *  closing paragraph, test 1); `__unpaint` is the panel's (children back, the parent normalized) and returns the HTML; `__nest`
+ *  trim's: the stripped-style scene's list item, whose source text the sanitizer shortens, is refused as a mismatch with its own
+ *  element since Slice 5's pairing, where the html block before it used to take every node and the paint stopped there, plan
+ *  item 10 (d); every scene's paint must reach the closing paragraph, test 1); `__unpaint` is the panel's (children back, the
+ *  parent normalized) and returns the HTML; `__nest`
  *  hand-wraps a collapsed blank mark of an untrimmed paint in two more marks and reads all three. */
 const HELPERS = `
 const BLANK = /^(?:[^\\p{L}\\p{N}\\p{P}\\p{S}]|[\\u115f\\u1160\\u3164\\uffa0])*$/u;
@@ -214,8 +211,9 @@ test("every scene of the union, one comment and two comments across the passage:
         const { untrimmed, trimmed, unwrapped } = await drive(page, what, sc.markdown, sc.width, k);
         // the paint reaches the closing paragraph: a scene the pairing refuses early passes every oracle above vacuously, its
         // construct never painted (round 13 found two such scenes in the union, a lone CR that split an html block and a list item
-        // whose stripped text equalled the html block's before it); the recorded refused scene is the one exception
-        if (!sc.name.startsWith(REFUSED)) assert.equal(untrimmed[untrimmed.length - 1].text, "After para.", what + ": the paint reaches the closing paragraph (a scene the pairing refuses early exercises nothing)");
+        // whose stripped text equalled the html block's before it; the stripped-style scene was the one recorded exception until
+        // Slice 5's pairing let the html block before its list item take that block's own element and no more)
+        assert.equal(untrimmed[untrimmed.length - 1].text, "After para.", what + ": the paint reaches the closing paragraph (a scene the pairing refuses early exercises nothing)");
         if (unwrapped > 0) trimmedSomething++;
         if (sc.name.startsWith("plain note")) assert.deepEqual(trimmed.map((m) => m.text), untrimmed.map((m) => m.text), what + ": the trim unwraps nothing on the plain note");
       }

@@ -16,7 +16,8 @@
 //     and the text column stays one line, where a basis a single row outgrew widened that row alone.
 //   - addCopyBtn parks a Copy button top-right of the <pre>, idempotent (a re-render can run it again), copying the text
 //     it was given: the on-screen textContent lost its newlines to the wrap and is not copy-safe.
-//   - copyText: the async Clipboard API with a hidden-textarea execCommand fallback.
+//   - copyText: the async Clipboard API with a hidden-textarea execCommand fallback that leaves the page's selection (its
+//     direction included) and focus as it found them.
 //
 // The Copy button's action stays on the button. Delegating it to a stable ancestor would change nothing for the one way
 // a press on it is lost, a surface that REPLACES the fence while the pointer is down: a pressed node removed before the
@@ -82,15 +83,54 @@ export function copyText(text: string): Promise<boolean> {
   }
   return Promise.resolve(fallbackCopy(text));
 }
+/** The fallback: a textarea off screen takes the text, the focus and the selection (execCommand copies the selection), and
+ *  is removed. Those two moves are the copy's and not the person's, so both are undone once the command has run: the
+ *  selection's two ends, anchor and focus, are kept before the textarea takes it and put back after with setBaseAndExtent,
+ *  each where it was, and the element that held the focus takes it back. Left as the textarea's removal leaves them, the
+ *  selection sat collapsed outside whatever was selected and the focus on the body, with no selectionchange the document
+ *  hears: in the file viewer a passage stood with its Comment button beside it and nothing selected under the button, and a
+ *  click on the button opened nothing (the Slice 5 review of plans/markdown-viewer.md, round 6;
+ *  file-comments-copy-fallback-browser.test.ts), and Space on a focused Copy button lost the keyboard's place. The ends and
+ *  not a Range: a Range has no direction, and a selection put back from one (removeAllRanges and addRange, round 6's restore)
+ *  is FORWARD whichever way the person made it. A passage selected right to left, or extended with Shift+ArrowLeft, came back
+ *  with its anchor and focus swapped, so the next Shift+ArrowLeft shrank it from the other end, and the viewer's panel, which
+ *  knows the selection it offered Comment beside by its ends, read the restored one as new and offered again, at the pane's
+ *  top edge when a scroll had taken the passage off the pane and hidden the button (round 7). The Ranges, cloned (the Range a
+ *  selection hands out is the selection's own and follows it), stay the route for an engine without setBaseAndExtent, for a
+ *  selection of several ranges (Firefox's Ctrl-selected table cells; the API carries no direction for those) and for a
+ *  put-back the engine refuses. The Clipboard API path moves neither, and this path leaves the page as that one does. A
+ *  document with no selection API (a test stand-in) restores nothing. */
 function fallbackCopy(text: string): boolean {
+  const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+  const ends = sel && sel.rangeCount === 1 && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
+    ? { anchor: sel.anchorNode, anchorOffset: sel.anchorOffset, focus: sel.focusNode, focusOffset: sel.focusOffset } : null;
+  const ranges: Range[] = [];
+  if (sel) for (let i = 0; i < sel.rangeCount; i++) ranges.push(sel.getRangeAt(i).cloneRange());
+  const active = document.activeElement as HTMLElement | null;
+  let ok = false;
   try {
     const ta = document.createElement("textarea");
     ta.value = text; ta.style.position = "fixed"; ta.style.top = "-9999px"; ta.style.opacity = "0";
     document.body.appendChild(ta); ta.focus(); ta.select();
-    const ok = document.execCommand("copy");
+    ok = document.execCommand("copy");
     document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
+  } catch { ok = false; }
+  try {
+    if (sel) restoreSelection(sel, ends, ranges);
+    if (active && active !== document.body && typeof active.focus === "function") active.focus({ preventScroll: true });
+  } catch { /* the copy's verdict stands whatever the restore could not do */ }
+  return ok;
+}
+type SelectionEnds = { anchor: Node; anchorOffset: number; focus: Node; focusOffset: number };
+/** The selection put back as fallbackCopy found it: by its ends when they were kept (setBaseAndExtent keeps the direction),
+ *  else its Ranges, in place of whatever the textarea's removal left (nothing put back where nothing was selected). */
+function restoreSelection(sel: Selection, ends: SelectionEnds | null, ranges: Range[]): void {
+  if (ends) {
+    try { sel.setBaseAndExtent(ends.anchor, ends.anchorOffset, ends.focus, ends.focusOffset); return; }
+    catch { /* a point the engine refuses: the Ranges below */ }
+  }
+  sel.removeAllRanges();
+  for (const r of ranges) sel.addRange(r);
 }
 
 // The fence the press was on, for the acknowledgement after a swap (the header): its SOURCE, the text its Copy copies,

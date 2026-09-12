@@ -473,8 +473,11 @@ heading in the file still lands on it, and a link to an element's own `id` or `<
 on it under the prefix. A link in the file is handled by its target, not by the element that
 carries it, a link drawn inside an inline SVG included: a web address opens a tab, a file
 target opens the file in the viewer, and a section link scrolls to it. An image map (`<map>`,
-`usemap`) is dropped. The same rules apply to the HTML in a chat message, where a link to an
-element's own `id` or `<a name>` lands on it under the prefix.
+`usemap`) is dropped. An HTML comment is dropped and the text around it is kept. An HTML
+`<title>` is dropped with its text, since a browser shows one nowhere outside the page's head;
+the `<title>` of an inline `svg`, the drawing's tooltip, stays. The same rules apply to the
+HTML in a chat message, where a link to an element's own `id` or `<a name>` lands on it under
+the prefix.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file, where each card sits level with the passage it is about and scrolls with the text;
@@ -483,7 +486,8 @@ you click sits level with its passage whatever stands above it, and a long card 
 lines with **Show more** at its foot. Neither happens in the list under a narrow column, where a
 long card shows whole. Select a
 passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection (it
-hides when you scroll and appears again when you select); type the comment
+hides when you scroll and appears again when you select, and it follows a selection you make or change from the
+keyboard); type the comment
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button; on a phone or a tablet the button is the way, and the line under the box says so.
 Saving leaves the text where it is. When the new card lands out of view, a line at the foot of the panel, **Saved · the card is above** (or **below**), says where it went; click the line to bring the card into view, or leave it: it goes with your next scroll, click, tap, or key, except Tab or a modifier key pressed on its own, so you can reach it from the keyboard.
@@ -503,10 +507,13 @@ record of where it was, which copy it is and the heading above it places it agai
 those can tell which copy the comment meant, its highlight is dashed and the card carries a
 **passage recurs** tag: the copy shown is a guess, and the card says so. Saving the comment again
 from the right copy, as the card asks, adds a new card on that copy with no tag; the old card keeps
-its tag, so resolve it once the new one is saved. When the session has
+its tag, so resolve it once the new one is saved. Where two comments cover the same text, the text
+carries one highlight, and a click where they overlap opens both cards, the one you clicked in
+front. When the session has
 rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
-show it.
+show it. Going to a comment whose passage sits inside a closed fold (a `<details>` block, a
+callout written `[!note]-`) opens the fold first.
 
 **Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
 drag a rectangle to comment on that part of it. The rectangle stays on the picture with the

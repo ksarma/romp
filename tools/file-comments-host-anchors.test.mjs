@@ -413,3 +413,104 @@ test('the sidecar round-trips through store-io with anchorAt kept and nothing el
   assert.equal(saved.v, 3);
   assert.deepEqual(saved.fingerprint, disk.fingerprint);
 });
+
+// ── the painter's raw contract (Slice 5 of plans/markdown-viewer.md, items 2 and 8) ─────────────────
+// Since Slice 5 the Rendered paint reads a code quote raw and a table quote with its cell delimiters
+// as blanks, at PAINT time (the owner's ruling of 2026-09-09: the plan's "strip cell delimiters from a
+// table quote" is a paint-time rule); the stored quote stays the exact source slice, asterisks and pipe
+// included, which is what locateExact and uniqueAnchor have read byte for byte since the anchors
+// follow-on. Neither case below failed before Slice 5: they are regression guards on the contract the
+// painter now relies on, and their titles say so. The passages are the ones the painter's browser leg
+// drags over (ui/webview/anchor-map-fixtures/wrappers-plain.md, synthetic); the note here is synthetic
+// too and holds each once, so no width of context is needed and no hint settles anything.
+const PAINTED = [
+  '# Painted',
+  '',
+  'Intro paragraph one with several words in it.',
+  '',
+  '```python',
+  'total = a * b * 2',
+  'name_ = under_score  # trailing comment',
+  '```',
+  '',
+  '| Col A | Col B |',
+  '|-------|-------|',
+  '| cell one | cell two |',
+  '| cell three | cell four |',
+  '',
+  'Final paragraph here.',
+  '',
+].join('\n');
+function paintedWorld() {
+  const w = world();
+  w.note = path.join(w.root, 'docs', 'note.md');
+  fs.writeFileSync(w.note, PAINTED);
+  return w;
+}
+// The comment verb over one passage of the note: the stored comment, checked against the source slice.
+function commentOnPassage(w, quote, note) {
+  assert.equal(PAINTED.indexOf(quote), PAINTED.lastIndexOf(quote), `the fixture holds ${JSON.stringify(quote)} once`);
+  const at = PAINTED.indexOf(quote);
+  assert.ok(at >= 0, `the fixture holds ${JSON.stringify(quote)}`);
+  const browser = engine.makeAnchor(PAINTED, at, at + quote.length);
+  assert.equal(browser.quote, quote, 'the browser\'s anchor quotes the source slice as it is');
+  const r = comment(w, w.note, { anchor: browser, note, hintOffset: at });
+  const c = readSidecar(r.storePath).comments[readSidecar(r.storePath).comments.length - 1];
+  assert.equal(c.anchor.quote, quote, 'the stored quote is the exact source slice');
+  assert.deepEqual(c.anchor, browser, 'unique at 24: the browser\'s anchor is stored as it came');
+  assert.equal(c.anchorAt, at);
+  assert.equal(c.id, `${c.ts}-${at}`);
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'ordinal', 'copies', 'section', 'body', 'replies', 'resolved'], 'the position, then the copy fields (the tie-break, 2026-09-11)');
+  assert.deepEqual([c.ordinal, c.copies, c.section], [1, 1, 'Painted'], 'the copy fields: 1 of 1 under the note\'s one heading (the fixture holds the quote once, asserted above; the fence\'s `# trailing comment` is code, not a heading)');
+  assert.equal(PAINTED.slice(c.anchorAt, c.anchorAt + c.anchor.quote.length), quote, 'the position names the slice');
+  assert.equal(engine.locateAnchor(PAINTED, c.anchor).from, at, 'a hintless reader lands on it too');
+  assert.deepEqual(r.store.comments[r.store.comments.length - 1], c, 'the reply carries the stored comment as written');
+  assert.equal(fs.readFileSync(w.note, 'utf8'), PAINTED, 'the file is untouched');
+  return { c, at };
+}
+
+test('regression guard, green before Slice 5: a code line holding `*` is located byte for byte by uniqueAnchor and locateExact, and the comment verb stores that slice, asterisks kept, with anchorAt', () => {
+  const w = paintedWorld();
+  const quote = 'total = a * b * 2';
+  const at = PAINTED.indexOf(quote);
+  const fenceOpen = PAINTED.indexOf('```python'), fenceClose = PAINTED.indexOf('```', fenceOpen + 3);
+  assert.ok(fenceOpen < at && at + quote.length < fenceClose, 'the fixture: the line sits inside the fence');
+  const u = uniqueAnchor(PAINTED, at, at + quote.length);
+  assert.equal(u.unique, true);
+  assert.equal(u.anchor.quote, quote, 'the quote keeps its asterisks (the painter\'s old strip lost them; the host never did)');
+  assert.deepEqual(ctxOf(u.anchor), [24, 24]);
+  assert.deepEqual(locateExact(PAINTED, u.anchor, undefined), { from: at, to: at + quote.length });
+  assert.deepEqual(locateExact(PAINTED, engine.makeAnchor(PAINTED, at, at + quote.length), at), { from: at, to: at + quote.length });
+  // a quote that opens with the comment marker the old strip read as a heading: located from its `#`
+  const tail = '# trailing comment';
+  const tailAt = PAINTED.indexOf(tail);
+  assert.deepEqual(locateExact(PAINTED, engine.makeAnchor(PAINTED, tailAt, tailAt + tail.length), undefined), { from: tailAt, to: tailAt + tail.length });
+  // through the comment verb, as the panel saves it from the Raw view
+  const { c } = commentOnPassage(w, quote, 'Why times two?');
+  assert.ok(c.anchor.quote.includes(' * '), 'the stored quote holds the operator as written');
+  assert.equal(c.body, 'Why times two?');
+});
+
+test('regression guard, green before Slice 5: a table quote across two cells is located byte for byte with its pipe, and the comment verb stores the slice, pipe kept, with anchorAt', () => {
+  const w = paintedWorld();
+  const quote = 'cell one | cell two';
+  const at = PAINTED.indexOf(quote);
+  const rowStart = PAINTED.lastIndexOf('\n', at) + 1, rowEnd = PAINTED.indexOf('\n', at);
+  assert.equal(PAINTED.slice(rowStart, rowEnd), '| cell one | cell two |', 'the fixture: the quote spans the row\'s two cells');
+  const u = uniqueAnchor(PAINTED, at, at + quote.length);
+  assert.equal(u.unique, true);
+  assert.equal(u.anchor.quote, quote, 'the pipe is part of the stored quote (the painter reads it as a blank at paint time; the store never strips it)');
+  assert.deepEqual(locateExact(PAINTED, u.anchor, undefined), { from: at, to: at + quote.length });
+  assert.deepEqual(locateExact(PAINTED, engine.makeAnchor(PAINTED, at, at + quote.length), at), { from: at, to: at + quote.length });
+  // one cell alone locates the same way
+  const cell = 'cell three';
+  const cellAt = PAINTED.indexOf(cell);
+  assert.deepEqual(locateExact(PAINTED, engine.makeAnchor(PAINTED, cellAt, cellAt + cell.length), undefined), { from: cellAt, to: cellAt + cell.length });
+  const { c } = commentOnPassage(w, quote, 'One cell would do.');
+  assert.ok(c.anchor.quote.includes('|'), 'the stored quote holds the delimiter as written');
+  // and a second comment in the same sidecar, on the code line, sits beside it with its own position
+  const { c: c2, at: codeAt } = commentOnPassage(w, 'total = a * b * 2', 'Why times two?');
+  assert.notEqual(c2.anchorAt, c.anchorAt);
+  assert.equal(c2.anchorAt, codeAt);
+  assert.equal(readSidecar(path.join(w.root, '.trackchanges', 'docs%2Fnote.md.json')).comments.length, 2);
+});

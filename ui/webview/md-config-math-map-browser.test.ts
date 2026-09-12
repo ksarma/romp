@@ -34,6 +34,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { MATH_TEX_MAX_CHARS } from "./math";
+import { inBrowser as inRealViewer, openViewer, openPanel, frames as viewerFrames, REPORT as VIEWER_REPORT, type Mode } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 // resolve playwright and esbuild from the extension, not from wherever this bundle was written (a single-file run lands it under TMPDIR)
@@ -65,9 +66,12 @@ const FALLBACKS = [
 /** A display formula the fill cannot render (or a rendered one) over forty paragraphs, for the reader's place. */
 const FILLER = (i: number) => `Filler paragraph ${i} ` + "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".repeat(2).trim() + ".";
 const PLACE_NOTE = (tex: string) => "# Title\n\n$$\n" + tex + "\n$$\n\n" + Array.from({ length: 40 }, (_, i) => FILLER(i + 1)).join("\n\n") + "\n";
+/** A paragraph that opens with a formula, and one that ends in one (the Slice 5 review's round 2: a formula covered whole). */
+const FIRST_NOTE = "# Title\n\n$E = mc^2$ opens this paragraph with prose after it.\n\nPara after, ending in $a+b$\n\nLast para.\n";
 const DOCS: Record<string, string> = {
   [DIR + "fallbacks.md"]: FALLBACKS,
   [DIR + "report.md"]: OBSIDIAN,
+  [DIR + "first.md"]: FIRST_NOTE,
   [DIR + "place-broken.md"]: PLACE_NOTE("\\frac{a}{b"),
   [DIR + "place-huge.md"]: PLACE_NOTE(HUGE),
   [DIR + "place-fine.md"]: PLACE_NOTE("\\sum_i i"),
@@ -212,7 +216,7 @@ function readLiveSelection(source: string) {
     for (let e: Element | null = el; e && e !== md; e = e.parentElement) chain.push(e.tagName.toLowerCase() + (e.className ? "." + String(e.className).trim().split(/\s+/).join(".") : ""));
     return chain.join(" < ");
   };
-  return { text: s.toString(), anchor: where(s.anchorNode), anchorOffset: s.anchorOffset, focus: where(s.focusNode), result: probe.mapRenderedSelection(s, md, source) as MapOut };
+  return { text: s.toString(), anchor: where(s.anchorNode), anchorOffset: s.anchorOffset, anchorIsText: !!s.anchorNode && s.anchorNode.nodeType === 3, focus: where(s.focusNode), result: probe.mapRenderedSelection(s, md, source) as MapOut };
 }
 /** The highlight over `Inline $x^2$ math and`, painted as the panel paints a comment's (paintRendered with the panel's class and
  *  data) over a real selection made across the formula: the marks, their children, their boxes and the dress each wears (the
@@ -345,12 +349,15 @@ test("a selection endpoint inside a control over the real DOM: inside a formula'
     const formulaLine = (src.slice(0, at(src, "$x^2$")).match(/\n/g) || []).length;
     const displayLine = (src.slice(0, at(src, "$$\n\\sum")).match(/\n/g) || []).length;
     // inside the glyphs: the formula touched, the Raw offer at the formula's first character
-    for (const [what, m] of [["fromInside", e.fromInside], ["intoIt", e.intoIt], ["formulaAlone", e.formulaAlone], ["fromStart", e.fromStart]] as const) {
+    for (const [what, m] of [["fromInside", e.fromInside], ["intoIt", e.intoIt], ["formulaAlone", e.formulaAlone]] as const) {
       assert.equal(m.ok, false, what);
       assert.equal(m.reason, "This selection touches a formula; comment on it from the Raw view.", what + ": " + m.reason);
       assert.equal(m.blockStartLine, formulaLine, what + ": the Raw view opens at the formula's line");
       assert.equal(m.blockStartOffset, at(src, "$x^2$"), what + ": at its first character");
     }
+    // from the formula's first glyph out into the prose: the formula is covered whole, prose holding a formula, its source in the quote
+    // (the Slice 5 review's round 2 ruling; before: refused as the formula)
+    assert.equal(e.fromStart.ok, true, JSON.stringify(e.fromStart)); assert.equal(e.fromStart.quote, "$x^2$ math and");
     // the edge that selects none of the formula maps the prose beside it
     assert.equal(e.upToIt.ok, true, JSON.stringify(e.upToIt)); assert.equal(e.upToIt.quote, "Inline");
     assert.equal(e.fromEnd.ok, true, JSON.stringify(e.fromEnd)); assert.equal(e.fromEnd.quote, "math and");
@@ -388,7 +395,10 @@ test("a selection endpoint inside a control over the real DOM: inside a formula'
     assert.ok(tripleBefore.text.includes("math and display:"), JSON.stringify(tripleBefore.text));
     assert.equal(tripleBefore.result.ok, true, "the paragraph before the display formula maps under a triple-click (anchor " + tripleBefore.anchor + ", focus " + tripleBefore.focus + "): " + JSON.stringify(tripleBefore.result));
     assert.equal(tripleBefore.result.quote, tripleBefore.text.trim(), "the words the gesture selected (focus " + tripleBefore.focus + ")");
-    // a drag from the inline formula's first glyph into the prose after it
+    // a drag from the middle of the inline formula's first glyph into the prose after it: Chromium puts the caret at the superscript's
+    // first glyph (probed: the left fifth of the `x` box gives the `x` at 0, the formula's first character, which covers the formula
+    // whole and maps since the Slice 5 review's round 2; the middle gives the `2` at 0, strictly inside; the right fifth the `2` at 1,
+    // its end, which selects none of it)
     await clear();
     const glyph = await page.locator("#romp-fileview .fileview-md p .katex .mord").first().boundingBox();
     const to = await page.evaluate(() => {
@@ -406,8 +416,79 @@ test("a selection endpoint inside a control over the real DOM: inside a formula'
     await page.mouse.up();
     const drag = await page.evaluate(readLiveSelection, src);
     assert.match(drag.anchor, /katex/, "the drag anchored inside the formula: " + drag.anchor);
-    assert.deepEqual([drag.result.ok, drag.result.reason], [false, "This selection touches a formula; comment on it from the Raw view."], JSON.stringify(drag.result));
+    assert.deepEqual([drag.result.ok, drag.result.reason], [false, "This selection touches a formula; comment on it from the Raw view."], "a drag begun strictly inside the glyphs is the formula's (anchor " + drag.anchor + " at " + drag.anchorOffset + "): " + JSON.stringify(drag.result));
     assert.equal(drag.result.blockStartLine, formulaLine);
+    assert.deepEqual(errors, [], "no page errors");
+    await page.context().close();
+  });
+});
+
+/** The formula-first paragraph's endpoints, mapped through the probe: the triple-click's shape, a start strictly inside, a drag to
+ *  the closing formula's last glyph. */
+function readFirstEndpoints(source: string) {
+  const probe = (window as any).__rompProbe;
+  const md = document.querySelector("#romp-fileview .fileview-md") as HTMLElement;
+  const texts = (root: Node): Text[] => { const out: Text[] = []; const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); for (let n = w.nextNode(); n; n = w.nextNode()) if ((n as Text).data.length) out.push(n as Text); return out; };
+  const point = (needle: string, atEnd = false): Pt => {
+    for (const n of texts(md)) { const i = n.data.indexOf(needle); if (i >= 0) return { node: n, offset: atEnd ? i + needle.length : i }; }
+    throw new Error("not in the rendered text: " + needle);
+  };
+  const map = (a: Pt, f: Pt): MapOut => probe.mapRenderedSelection({ anchorNode: a.node, anchorOffset: a.offset, focusNode: f.node, focusOffset: f.offset, isCollapsed: false }, md, source);
+  const paras = Array.from(md.querySelectorAll(":scope > p")) as HTMLElement[];
+  const g = texts(paras[0].querySelector(".katex")!), lg = texts(paras[1].querySelector(".katex")!);
+  const last = lg[lg.length - 1];
+  return {
+    glyphs: g.map((t) => t.data),
+    triple: map({ node: g[0], offset: 0 }, { node: paras[1], offset: 0 }),
+    toWord: map({ node: g[0], offset: 0 }, point(" opens this", true)),
+    inside: map({ node: g[0], offset: 1 }, point(" opens this", true)),
+    toEnd: map(point("Para after"), { node: last, offset: last.data.length }),
+    toInside: map(point("Para after"), { node: last, offset: Math.max(0, last.data.length - 1) }),
+    afterFormula: map(point(" opens this"), { node: paras[1], offset: 0 }),
+    onParagraph: map({ node: paras[0], offset: 0 }, { node: paras[1], offset: 0 }),
+  };
+}
+
+test("a paragraph that opens with a formula over the real Files bundle: the triple-click's shape (the formula's first glyph to the next paragraph's start) and a range from the first glyph to a word map with the formula's source inside the quote, a range begun strictly inside the glyphs is the formula's, a drag ending at a closing formula's last glyph covers it (the Slice 5 review's round 2 ruling: a formula covered whole is prose holding a formula; before: refused as the formula, the Raw view preselecting the formula alone); and a REAL triple-click on the paragraph selects the words after the formula and maps them, the formula's source outside the quote (Chromium's paragraph selection leaves the leading inline-block out of its range: the anchor is the text node after the formula at 0; the whole-source mapping stands on the synthetic shapes)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openFile(browser, filesBundle(), DIR + "first.md", { width: 900, height: 900 });
+    const src = FIRST_NOTE;
+    const e = await page.evaluate(readFirstEndpoints, src);
+    assert.ok(e.glyphs.length >= 2, "KaTeX laid the opening formula out as glyph text nodes: " + JSON.stringify(e.glyphs));
+    assert.equal(e.triple.ok, true, "the triple-click's shape maps: " + JSON.stringify(e.triple));
+    assert.equal(e.triple.quote, "$E = mc^2$ opens this paragraph with prose after it.", "the paragraph's whole source, the formula first");
+    assert.equal(e.toWord.ok, true, JSON.stringify(e.toWord)); assert.equal(e.toWord.quote, "$E = mc^2$ opens this");
+    assert.equal(e.onParagraph.ok, true, JSON.stringify(e.onParagraph)); assert.equal(e.onParagraph.quote, "$E = mc^2$ opens this paragraph with prose after it.", "a boundary on the paragraph before its first child covers the formula from outside it");
+    assert.deepEqual([e.inside.ok, e.inside.reason], [false, "This selection touches a formula; comment on it from the Raw view."], "strictly inside: the formula's");
+    assert.deepEqual(e.inside.rawRange, { start: src.indexOf("$E"), end: src.indexOf("$E") + "$E = mc^2$".length }, "the Raw offer preselects the formula");
+    assert.equal(e.toEnd.ok, true, JSON.stringify(e.toEnd)); assert.equal(e.toEnd.quote, "Para after, ending in $a+b$", "the closing formula, covered whole, travels inside the quote");
+    assert.deepEqual([e.toInside.ok, e.toInside.reason], [false, "This selection touches a formula; comment on it from the Raw view."], "to inside the closing formula: the formula's");
+    // a selection begun on the text right after the formula does not cover it: the formula stands before the selection's start
+    assert.equal(e.afterFormula.ok, true, JSON.stringify(e.afterFormula)); assert.equal(e.afterFormula.quote, "opens this paragraph with prose after it.", "the words alone, the formula outside the selection");
+    // the real gesture: a triple-click on the formula-first paragraph's words. Chromium's paragraph selection leaves the leading
+    // inline-block out of its range: the anchor is the text node after the formula at 0, the focus the next paragraph's start, so the
+    // words alone are selected and map, the formula outside the selection and its source outside the quote (probed at ten positions
+    // across the paragraph's width, the words' shape at every one past the glyphs; a click on the glyphs themselves selects the formula
+    // alone, refused as the formula, which leg 6 reads). The whole-source mapping stands on the synthetic shapes above (e.triple,
+    // e.onParagraph). The anchor is pinned here, as the footnote leg pins its back-link anchor, so a browser that changes the gesture's
+    // shape fails this line and the records naming the shape (the plan's item 5 note, the build report) are revisited; and the quote is
+    // read against what the selection covers, not derived from the anchor (the review's round 3: the assertion that stood here took the
+    // formula's presence in the quote from the anchor's own description, so it accepted the words alone under a title claiming the
+    // paragraph's whole source, and could not fail on the difference).
+    await page.evaluate(() => window.getSelection()!.removeAllRanges());
+    const b = await page.locator("#romp-fileview .fileview-md p:has(.katex)").first().boundingBox();
+    await page.mouse.click(b.x + b.width * 0.7, b.y + b.height / 2, { clickCount: 3 });
+    const triple = await page.evaluate(readLiveSelection, src);
+    const coversFormula = await page.evaluate(() => {
+      const s = window.getSelection()!;
+      const katex = document.querySelector("#romp-fileview .fileview-md p .katex")!;
+      return s.rangeCount > 0 && s.getRangeAt(0).intersectsNode(katex);
+    });
+    assert.equal(triple.text.trim(), "opens this paragraph with prose after it.", "the triple-click selected the paragraph's words, none of the formula's glyphs: " + JSON.stringify(triple.text));
+    assert.deepEqual([triple.anchorIsText, triple.anchor, triple.anchorOffset], [true, "p", 0], "Chromium anchors the triple-click on the text node after the formula at 0, the leading inline-block outside its range (a different anchor is a new gesture shape: check the map's rules for it and the records that name this one): " + JSON.stringify({ anchor: triple.anchor, anchorOffset: triple.anchorOffset, anchorIsText: triple.anchorIsText, focus: triple.focus }));
+    assert.equal(coversFormula, false, "the selection's range leaves the formula out: " + JSON.stringify(triple.text));
+    assert.equal(triple.result.ok, true, "the formula-first paragraph maps under a triple-click (anchor " + triple.anchor + " at " + triple.anchorOffset + ", focus " + triple.focus + "): " + JSON.stringify(triple.result));
+    assert.equal(triple.result.quote, "opens this paragraph with prose after it.", "the words the gesture selected, the formula's source outside the quote as the formula is outside the selection: " + JSON.stringify(triple.result));
     assert.deepEqual(errors, [], "no page errors");
     await page.context().close();
   });
@@ -475,6 +556,115 @@ test("the reader's place under a display formula the fill could not render: para
       assert.equal(raw.top?.text, "Filler paragraph 20", name + ": the Raw view opens on paragraph 20's row: " + JSON.stringify(raw));
       assert.deepEqual(errors, [], name + ": no page errors");
       await page.context().close();
+    }
+  });
+});
+
+// ── Slice 5, item 3: the Raw offer at a formula preselects the formula, over the REAL viewer and the REAL Comments panel ──
+// A selection that touched a formula was refused with the Raw view offered at the formula's line and nothing selected there
+// (the slice's probe (c)): the map took the Raw range from the selected rendered text, and KaTeX's glyphs are not in the source,
+// so the switch preselected the prose the drag ran into (`math and`) or, for a formula selected alone, nothing, the button reading
+// "scrolled to the block; select the passage there", and the person had to find the formula in the Raw view themselves. Now the map answers the formula's hole (formulaExtra: rawHasQuote with the hole's span), so the button
+// reads "with this passage selected", the switch preselects the formula with its delimiters and the composer quotes it, with
+// Save (the owner's ruling 7: the whole formula, not the TeX between the delimiters). Read through real-viewer-leg.ts (the panel
+// registered by the viewer's own module) under the Files pane's sheet and the chat modal's, with real gestures: a drag begun at
+// the inline formula's left edge into the prose after it (a drag begun at the centre of a lone glyph collapses to a caret in
+// Chromium, whatever the harness; probed over five formula shapes), and a triple-click on the display formula (Chromium anchors
+// it on the formula's first glyph and ends it at the next paragraph's start). Each gesture runs on a fresh page.
+const PRESEL_NOTE = "# Title\n\nInline $E = mc^2$ math and after.\n\n$$\n\\sum_i i\n$$\n\nPara after display.\n";
+const INLINE_Q = "$E = mc^2$", DISPLAY_Q = "$$\n\\sum_i i\n$$";
+const REFUSAL = "This selection touches a formula; comment on it from the Raw view.";
+type ComposerState = { open: boolean; refused: string | null; rawTitle: string | null; quote: string | null; save: boolean | null; raw: boolean };
+/** The composer as the panel shows it: the refusal line, the Raw button's title, the quote, whether Save is offered. */
+const composerState = (page: any): Promise<ComposerState> => page.evaluate(() => {
+  const box = document.querySelector(".fc-composer") as HTMLElement | null;
+  if (!box || !document.contains(box) || box.getClientRects().length === 0) return { open: false, refused: null, rawTitle: null, quote: null, save: null, raw: false };
+  const sw = box.querySelector('[data-act="fcraw"]') as HTMLElement | null;
+  const save = box.querySelector('[data-act="fcsave"]') as HTMLButtonElement | null;
+  return { open: true, refused: box.querySelector(".fc-refused")?.textContent ?? null, rawTitle: sw ? sw.title : null, quote: box.querySelector(".fc-quote")?.textContent ?? null, save: save ? !save.disabled : null, raw: !!sw };
+});
+/** The Raw view's preselection: the marks' text in order, and whether the first sits inside the body's box (the view scrolled to it). */
+const preselRead = (page: any): Promise<{ text: string; rows: number; inView: boolean }> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const marks = Array.from(body.querySelectorAll(".fc-presel")) as HTMLElement[];
+  const rows = new Set(marks.map((m) => m.closest(".fv-cl")));
+  const b = body.getBoundingClientRect(), r = marks.length ? marks[0].getBoundingClientRect() : null;
+  return { text: marks.map((m) => m.textContent).join(""), rows: rows.size, inView: !!r && r.top >= b.top - 1 && r.bottom <= b.bottom + 1 };
+});
+const squash = (s: string): string => s.replace(/\s+/g, "");
+/** The float's click, the refusal, the Raw switch, the preselection and the composer's quote; the box cancelled at the end. */
+async function throughRaw(page: any, what: string, quote: string, rows: number): Promise<void> {
+  await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+  await page.click(".fc-float");
+  await viewerFrames(page, 2);
+  const c1 = await composerState(page);
+  assert.equal(c1.open, true, what + ": the composer opens");
+  assert.equal(c1.refused, REFUSAL, what + ": the refusal, as before");
+  assert.equal(c1.rawTitle, "Raw view, with this passage selected", what + ": the Raw button promises the passage (before: 'Raw view, scrolled to the block; select the passage there')");
+  await page.click('.fc-composer [data-act="fcraw"]');
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+  await viewerFrames(page, 3);
+  const p = await preselRead(page);
+  assert.equal(squash(p.text), squash(quote), what + ": the Raw view preselects the formula with its delimiters (before: the prose beside it, or nothing): " + JSON.stringify(p));
+  assert.equal(p.rows, rows, what + ": over the formula's rows");
+  assert.equal(p.inView, true, what + ": the view scrolled to it");
+  const c2 = await composerState(page);
+  assert.equal(c2.refused, null, what + ": the refusal is answered");
+  assert.equal(c2.raw, false, what + ": no Switch to Raw left");
+  assert.equal(c2.quote, quote.replace(/\s+/g, " ").trim(), what + ": the composer quotes the formula");
+  assert.equal(c2.save, true, what + ": Save is offered");
+  await page.click('.fc-composer [data-act="fccancel"]');
+  await viewerFrames(page, 2);
+  assert.equal((await composerState(page)).open, false, what + ": Cancel closes the box");
+}
+/** A page of the surface with the note open and filled, the panel open. KaTeX's own sheet is added to the page: real-viewer-leg.ts
+ *  drops the sheet's `@import` (no bundler resolves it in the page), where the viewer's own page carries it through styles.css,
+ *  and without it KaTeX's MathML copy is laid out beside the HTML one and a drag that starts on a glyph selects nothing (probed). */
+async function openPresel(browser: any, mode: Mode, width: number): Promise<{ page: any; errors: string[] }> {
+  const { page, errors } = await openViewer(browser, mode, width, 900, { docs: { [VIEWER_REPORT]: PRESEL_NOTE } });
+  await page.addStyleTag({ content: KATEX_CSS });
+  await page.waitForFunction(() => !document.querySelector(".fileview-md .md-math-inline, .fileview-md .md-math-display"), null, { timeout: 15000 });   // the fill ran
+  await viewerFrames(page, 2);
+  await openPanel(page);
+  return { page, errors };
+}
+
+test("Switch to Raw at a formula preselects the formula with its delimiters over the real viewer and panel, on the Files pane and in the chat modal: a real drag from inside the inline formula's glyphs into the prose, and a real triple-click on the display formula, each refused as touching a formula with the Raw button promising the passage; the Raw view opens on `$E = mc^2$` (or the `$$` block over its three rows) selected, and the composer quotes it with Save (before: the prose the drag ran into was selected, or nothing for the display formula alone)", { timeout: 240000 }, async (t) => {
+  await inRealViewer(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      // the inline formula: a drag from inside its glyphs into the prose after it (a press at its left edge covers the formula whole
+      // and maps since the Slice 5 review's round 2; the inside is the formula's)
+      let { page, errors } = await openPresel(browser, mode, width);
+      const kbox = await page.locator(".fileview-md p .katex").first().boundingBox();
+      const to = await page.evaluate(() => {
+        const md = document.querySelector(".fileview-md")!;
+        const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+        for (let n = w.nextNode() as Text | null; n; n = w.nextNode() as Text | null) {
+          const i = n.data.indexOf(" math and");
+          if (i >= 0) { const r = document.createRange(); r.setStart(n, i + " math and".length); r.setEnd(n, i + " math and".length); const b = r.getBoundingClientRect(); return { x: b.x - 1, y: b.y + b.height / 2 }; }
+        }
+        throw new Error("no prose after the formula");
+      });
+      await page.mouse.move(kbox.x + kbox.width * 0.6, kbox.y + kbox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 8 });
+      await page.mouse.up();
+      await viewerFrames(page, 2);
+      const drag = await page.evaluate(() => { const s = getSelection()!; const el = s.anchorNode && (s.anchorNode.nodeType === 3 ? s.anchorNode.parentElement : s.anchorNode as Element); return { text: String(s), inKatex: !!el && !!el.closest(".katex"), atStart: !!el && !!el.closest(".katex") && s.anchorOffset === 0 && !s.anchorNode!.previousSibling && !(s.anchorNode!.parentElement as HTMLElement).previousElementSibling }; });
+      assert.equal(drag.inKatex, true, mode + ": the drag anchored inside the formula: " + JSON.stringify(drag));
+      await throughRaw(page, mode + " " + width + "px, inline drag", INLINE_Q, 1);
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
+      // the display formula: a triple-click on it
+      ({ page, errors } = await openPresel(browser, mode, width));
+      const box = await page.locator(".fileview-md .katex-display").first().boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 3 });
+      await viewerFrames(page, 2);
+      const triple = await page.evaluate(() => { const s = getSelection()!; const el = s.anchorNode && (s.anchorNode.nodeType === 3 ? s.anchorNode.parentElement : s.anchorNode as Element); return { text: String(s), inDisplay: !!el && !!el.closest(".katex-display") }; });
+      assert.equal(triple.inDisplay, true, mode + ": the triple-click anchored in the display formula: " + JSON.stringify(triple));
+      await throughRaw(page, mode + " " + width + "px, display triple-click", DISPLAY_Q, 3);
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
     }
   });
 });

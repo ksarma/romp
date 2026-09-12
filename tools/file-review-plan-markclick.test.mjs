@@ -107,7 +107,8 @@ test('the Tests bullet names the stand-in\'s cases, the browser leg\'s second te
 
 test('the guard reads the clicked control, both selection ends inside it or at its edges, and takes the pulse back: no body containment', () => {
   assert.ok(panel.includes('fcchange: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard("chg:" + x.dataset.id!); },'));
-  assert.ok(panel.includes('fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },'));
+  // the covering comments' cards open with the clicked one since plans/markdown-viewer.md Slice 5 (openCovering): the guard still runs first
+  assert.ok(panel.includes('fcopen: (x, ev) => { ev.preventDefault(); if (this.dragClick(ev)) return; this.openPanel(); this.openCovering(x); this.showCard(this.cardKey(x.dataset.id!)); },'));
   const guard = /private dragClick\(ev: Event\): boolean \{\n([\s\S]*?)\n  \}/.exec(panel);
   assert.ok(guard, 'dragClick');
   const body = guard[1];
