@@ -11,8 +11,11 @@
 // posts a quote holding the TAB byte where the rows show four spaces (the position is the source's, not a text search's). Before
 // this slice the probe (the Slice 5 report's section (j)) recorded the code drag refused as "touches a code block" with the Raw
 // view preselecting the line after the switch. A last leg times the index, one map and forty marks over a 5,000-line fence for
-// the build note (the brief's open question 13; diagnostics, not a bound). Skips LOUDLY without a playwright browser (CI
-// installs none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// the build note (the brief's open question 13; diagnostics, not a bound). A leg of the Slice 8 review's round 1 serves a
+// session's deletions on a blank code line and on a whitespace-only one: each point stands in its line's own row, as the Raw
+// view's does, where the build's head put it one row down, at the start of the next line. Skips LOUDLY without a playwright
+// browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the
+// placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -303,6 +306,54 @@ test("in a browser, the real viewer: a 5,000-line fence, the index build plus on
     assert.equal(out.mapped.range.start, big.indexOf("line_2500 = value_2500"));
     assert.ok(out.painted >= 40 && out.rowsHit === 40, "forty marks on forty rows: " + JSON.stringify([out.painted, out.rowsHit]));
     t.diagnostic("5,000-line fence in Chromium: index build plus one map " + out.tMap.toFixed(1) + " ms, forty marks " + out.tPaint.toFixed(1) + " ms");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── the Slice 8 review, round 1: a deletion point on a code line that shows no character stands in the line's own row ──
+const BLANKS = "Intro.\n\n```python\nfirst = 1\n\nthird = 3\n    \nfifth = 5\n```\n\nAfter.\n";
+const B_SENT = comment(BLANKS, "Intro.", 6);
+/** A session's pending deletion at `curFrom`, in the shape the kernel's status carries. */
+const hunk = (hid: string, curFrom: number, oldText: string): Record<string, unknown> => ({ id: hid, author: "web", ts: T0, kind: "del", curFrom, curTo: curFrom, baseFrom: curFrom, baseTo: curFrom + oldText.length, oldText, newText: "", anchor: null });
+const B_HUNKS = [
+  hunk("h-blank", BLANKS.indexOf("first = 1") + "first = 1".length + 1, "second = 2"),   // the blank line's own position
+  hunk("h-ws", BLANKS.indexOf("\n    \n") + 1 + 2, "x"),                                 // the whitespace-only line, after its second space
+  hunk("h-mid", BLANKS.indexOf("third ") + 6, "y"),                                      // inside a line: the control
+];
+type PointRead = { id: string | undefined; row: number; rowText: string | null; inRow: boolean; parentClass: string; prev: string | null; next: string | null; label: string; hit: boolean };
+/** Every deletion point in the view, by id: the row it stands in among the fence's `.cl` rows (the Raw view's `.fv-cl`), whether its
+ *  box lies inside that row's, its parent's class, its neighbours' text, its label and whether a hit test at its centre finds it. */
+const readPoints = (page: any, raw: boolean): Promise<PointRead[]> => page.evaluate((r: boolean) => {
+  const rows = Array.from(document.querySelectorAll(r ? ".fileview-body .fv-cl" : ".fileview-md pre code .cl")) as HTMLElement[];
+  return (Array.from(document.querySelectorAll(".fileview-body .fc-del")) as HTMLElement[]).map((p) => {
+    const b = p.getBoundingClientRect(); const row = rows.findIndex((x) => x.contains(p)); const rb = row >= 0 ? rows[row].getBoundingClientRect() : null;
+    const hit = document.elementFromPoint(b.left + Math.max(1, b.width / 2), b.top + b.height / 2);
+    return { id: p.dataset.id, row, rowText: row >= 0 ? rows[row].textContent : null, inRow: !!rb && b.top >= rb.top - 0.5 && b.bottom <= rb.bottom + 0.5, parentClass: p.parentElement!.className, prev: p.previousSibling ? p.previousSibling.textContent : null, next: p.nextSibling ? p.nextSibling.textContent : null, label: getComputedStyle(p, "::before").content, hit: hit === p || (!!hit && p.contains(hit)) };
+  }).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}, raw);
+const rowHeights = (page: any, sel: string): Promise<number[]> => page.evaluate((q: string) => Array.from(document.querySelectorAll(q)).map((x) => Math.round(x.getBoundingClientRect().height)), sel);
+
+test("in a browser, the real viewer and panel on the Files pane: a served deletion on a blank code line paints its point in the blank line's own row, inside the row's empty text cell and the row's box (the Slice 8 review, round 1; before: at the start of the next line, one row down, which read as that line changed), one on a whitespace-only line at its column among the spaces (before: at the start of the line after), one inside a line in its row; the rows keep one height; and the Raw view puts the same three points on the same source lines", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openWith(browser, "pane", 900, BLANKS, B_SENT, { ...withComments([B_SENT], 7), hunks: B_HUNKS });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md .fc-del").length === 3, null, { timeout: 10000 });
+    await frames(page, 2);
+    const rowsText = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md pre code .cl")).map((x) => x.textContent));
+    assert.deepEqual(rowsText, ["first = 1", "", "third = 3", "    ", "fifth = 5"], "the fence's rows: the blank line and the whitespace-only line each a row of their own");
+    assert.deepEqual(await readPoints(page, false), [
+      { id: "h-blank", row: 1, rowText: "", inRow: true, parentClass: "ct", prev: null, next: null, label: '"second = 2"', hit: true },
+      { id: "h-mid", row: 2, rowText: "third = 3", inRow: true, parentClass: "ct", prev: "third ", next: "= ", label: '"y"', hit: true },
+      { id: "h-ws", row: 3, rowText: "    ", inRow: true, parentClass: "ct", prev: "  ", next: "  ", label: '"x"', hit: true },
+    ], "Rendered: the blank line's point alone in row 1's empty cell (before: row 2, before `third `), the whitespace line's between its second and third space in row 3 (before: row 4, before `fifth `), the line's own in row 2");
+    const heights = await rowHeights(page, ".fileview-md pre code .cl");
+    assert.ok(heights.length === 5 && heights.every((h) => h === heights[0]), "every row keeps one height with the points in them: " + JSON.stringify(heights));
+    await toRaw(page);
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body .fc-del").length === 3, null, { timeout: 10000 });
+    await frames(page, 2);
+    const raw = await readPoints(page, true);
+    assert.deepEqual(raw.map((p) => [p.id, p.row, p.rowText, p.inRow]), [["h-blank", 4, "", true], ["h-mid", 5, "third = 3", true], ["h-ws", 6, "    ", true]], "Raw: the same three lines, three rows down for the prose and the opener above the fence");
+    assert.deepEqual(raw.filter((p) => p.id === "h-ws").map((p) => [p.prev, p.next]), [["  ", "  "]], "Raw: the whitespace line's point at the same column");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

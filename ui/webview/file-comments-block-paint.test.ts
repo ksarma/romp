@@ -9,14 +9,20 @@
 // block classes, so the class stayed on the box across passes). Driven over a DOM stand-in of the RENDERED view (the unpaint-
 // normalize suite's stand-in, its `title` an attribute as the DOM's is), the box stamped as the paint and the pass leave it, and
 // the panel's own pass fired through the seam's onRendered; then the exported step directly; then the sheets and the readers by
-// source text (the parity list holds the heads; fileview-parity.test.ts compares the bodies). Nodes hide their edges at
-// construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
+// source text (the parity list holds the heads; fileview-parity.test.ts compares the bodies). Two cases from the Slice 8
+// review's round 1: two comments on one formula share the box, so the pass keeps the covering set on it (`data-ids`, the later
+// comment's id in front as `data-id`; coverBox) and a click opens both cards while each card's Scroll finds the box (before: the
+// later paint's id overwrote the earlier's); and the strip takes off the block classes a selector named and no other, the
+// highlight's attributes going with its class alone, so the pending target's unpaint leaves a highlight standing on a box the
+// two share (before: Cancel stripped both classes and every attribute). Nodes hide their edges at construction (hideEdges,
+// ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
-import type { Status } from "./file-comments-model";
+import type { Status, StoreComment } from "./file-comments-model";
+import { makeAnchor } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -292,13 +298,13 @@ function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status")): v
   if (s.storePath && s.storeMtimeNs !== null) w.mtimes[s.storePath] = s.storeMtimeNs;
   if (s.root && s.configMtimeNs !== null) w.mtimes[s.root + "/.trackchanges/config.json"] = s.configMtimeNs;
 }
-async function openPanel(w: World): Promise<void> {
+async function openPanel(w: World, s: Status = status()): Promise<void> {
   const fc = await import("./file-comments");
   const unit = fc.fileCommentsAction.mount(w.ctx) as unknown as El;
   const button = unit.childNodes[0] as El;
-  answer(w, status()); await flush();
+  answer(w, s); await flush();
   button.click();
-  answer(w, status()); await flush(); await flush();
+  answer(w, s); await flush(); await flush();
   assert.ok(w.main.querySelector(".fileview-aside"), "the panel is mounted beside the body");
 }
 /** The shape of an element's children: T(text) for a text node, TAG.class for an element. */
@@ -425,9 +431,77 @@ test("the panel's readers select the block class beside the mark's: paintAll's u
   const lineBox = SRC.split("  private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {")[1].split("\n  }\n")[0];
   assert.match(lineBox, /^\s*if \(isBlockPaint\(m\)\) return m;/, "a stamped box is its own line box: the climb stops at itself");
   const goTo = SRC.split("  goTo(key: string): void {")[1].split("\n  }\n")[0];
-  assert.ok(goTo.includes(`'.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]'`), "Scroll to the passage finds the stamped box");
-  const unwrap = SRC.split("export function unwrapMarks(marks: Iterable<Element>): void {")[1].split("\n}\n")[0];
-  assert.match(unwrap, /if \(!isMarkEl\(n\)\) \{ stripBlockPaint\(n\); continue; \}/, "an element that is not a mark is stripped, never unwrapped");
+  assert.ok(goTo.includes(`'.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]' + ', .fc-hl-block[data-ids]'`), "Scroll to the passage finds the stamped box, and a box several comments cover");
+  assert.ok(goTo.includes('.find((m) => this.marks.has(m) && (m.getAttribute("data-id") === id || boxIds(m).includes(id)))'), "...this comment among them (the covering set)");
+  const unwrap = SRC.split("export function unwrapMarks(marks: Iterable<Element>, blockClasses: readonly string[] = BLOCK_PAINT_CLASSES): void {")[1].split("\n}\n")[0];
+  assert.match(unwrap, /if \(!isMarkEl\(n\)\) \{ stripBlockPaint\(n, blockClasses\); continue; \}/, "an element that is not a mark is stripped of the classes named, never unwrapped");
   assert.match(SRC, /const BLOCK_PAINT_CLASSES = \["fc-hl-block", "fc-presel-block"\];/);
-  assert.match(SRC, /n\.classList\.remove\(\.\.\.BLOCK_PAINT_CLASSES, "fc-hl-context"\);\n\s*for \(const a of \["data-act", "data-id", "data-new", "tabindex", "role", "title"\]\) n\.removeAttribute\(a\);/, "the strip: the classes and every attribute the paint and the pass set");
+  assert.match(SRC, /function stripBlockPaint\(n: Element, classes: readonly string\[\] = BLOCK_PAINT_CLASSES\): void \{\n\s*n\.classList\.remove\(\.\.\.classes\);\n\s*if \(n\.classList\.contains\("fc-hl-block"\)\) return;\n\s*n\.classList\.remove\("fc-hl-context"\);\n\s*for \(const a of \["data-act", "data-id", "data-ids", "data-new", "tabindex", "role", "title"\]\) n\.removeAttribute\(a\);/, "the strip: the classes named; the cue and every attribute the paint and the pass set go with the highlight's class");
+  // the covering set's readers: ownMarks by either attribute, the click opening every card the set names
+  assert.ok(SRC.includes(`const sel = '[data-act="' + act + '"][data-id="' + cssId(id) + '"]' + ', [data-act="' + act + '"][data-ids]';`), "ownMarks selects a box by its covering set beside the id");
+  const covering = SRC.split("  private openCovering(x: HTMLElement): void {")[1].split("\n  }\n")[0];
+  assert.match(covering, /^\s*if \(x\.dataset\.act === "fcopen" && this\.marks\.has\(x\)\) for \(const id of boxIds\(x\)\) this\.openCards\.add\(this\.cardKey\(id\)\);/, "a click on a stamped box opens every card its covering set names");
+});
+
+// ── the review's two cases: two comments on one formula; the pending target's unpaint over a shared box ──
+const T0 = 1757145600000;
+const FORMULA_Q = "$$\n\\sum_i i\n$$";
+/** A comment in the host's shape on the note's passage `quote`, `k` its place in time (the pass paints in cards() order, by time). */
+function commentOn(quote: string, k: number): StoreComment {
+  const at = DOC.indexOf(quote); assert.ok(at >= 0, "the note holds " + JSON.stringify(quote));
+  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: "Check this against the spec.", anchor: makeAnchor(DOC, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false } as unknown as StoreComment;
+}
+const withComments = (comments: StoreComment[]): Status => { const s = status(); s.store = { v: 3, path: "docs/report.md", suggestions: [], comments }; return s; };
+/** A pointer's click on `x`: detail 1, as a mouse dispatches it (element.click() dispatches 0; dragClick reads it). */
+const mouse = (x: El): void => { const ev = new Ev("click"); ev.detail = 1; dispatch(x, ev); };
+const card = (w: World, id: string): El => { const k = w.main.querySelector('.fileview-aside .fc-card[data-id="' + id + '"]'); assert.ok(k, "the card " + id); return k!; };
+/** The card: open, offering Scroll (fcgoto) or Reveal (both readable on the OPEN card alone: a folded card renders no actions row). */
+const cardState = (w: World, id: string): { open: boolean; goto: boolean; reveal: boolean } => { const k = card(w, id); return { open: k.classList.contains("open"), goto: !!k.querySelector('[data-act="fcgoto"]'), reveal: !!k.querySelector('[data-act="fcreveal"]') }; };
+
+test("two comments on the `$$` block, served and painted by the pass over the stand-in: the one box wears fc-hl-block once with the LATER comment's id as data-id (in front, as the innermost mark is under an inline overlap) and both ids in data-ids in the pass's order; a pointer's click on the formula's glyphs opens BOTH cards, each offering Scroll; the earlier card's Scroll finds the box and switches no view (before: the later paint's id overwrote the earlier's, the click opened one card, and the earlier card's Scroll fell to Reveal)", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const A = commentOn(FORMULA_Q, 2), B = commentOn(FORMULA_Q, 3);
+  await openPanel(w, withComments([A, B]));
+  const d = display(w);
+  assert.deepEqual(d.classes.slice().sort(), ["fc-hl-block", "katex-display"], "the box stamped once by the two paints: " + JSON.stringify(d.className));
+  assert.deepEqual([d.getAttribute("data-act"), d.getAttribute("data-id")], ["fcopen", B.id], "the later comment in front (before: the same, by overwrite)");
+  assert.equal(d.getAttribute("data-ids"), A.id + " " + B.id, "every covering id on the box, in the pass's order (before: no such attribute)");
+  assert.deepEqual([d.getAttribute("tabindex"), d.getAttribute("role")], ["0", "button"], "a control, as the pass makes every mark");
+  assert.deepEqual(shapeOf(d), ["SPAN.katex"], "KaTeX's root still its one child");
+  assert.deepEqual([cardState(w, A.id).open, cardState(w, B.id).open], [false, false], "both cards folded before the click");
+  const glyph = d.querySelector(".mord"); assert.ok(glyph, "the formula's glyph");
+  mouse(glyph!); await flush();
+  assert.deepEqual(cardState(w, A.id), { open: true, goto: true, reveal: false }, "the earlier comment's card opened by the click, offering Scroll (before: folded, unreachable from the formula)");
+  assert.deepEqual(cardState(w, B.id), { open: true, goto: true, reveal: false }, "...and the later one's");
+  // the earlier card's Scroll: the box is its element (ownMarks reads the covering set), so no view switch
+  const modes: string[] = []; w.ctx.setMode = ((m: unknown) => { modes.push(String(m)); }) as typeof w.ctx.setMode;
+  const goto = card(w, A.id).querySelector('[data-act="fcgoto"]'); assert.ok(goto, "the earlier card's Scroll");
+  goto!.click(); await flush();
+  assert.deepEqual(modes, [], "Scroll on the earlier card found the box and switched no view (before: no element carried its id, so Reveal switched to Raw)");
+});
+
+test("the pending target's unpaint leaves a highlight's stamp on the box the two paints share: unwrapMarks over the box with the target's class alone (the block classes Panel.unpaint passes from its selector) takes fc-presel-block off and keeps fc-hl-block with the highlight's data, its covering set, the control attributes and the arrivals' dot; with the highlight's class the cue and every attribute go too; a box the target alone stamped comes out clean; the default is every block class; and unpaint hands its selector's block classes on (before: the strip took both classes and every attribute whatever the selector named)", async () => {
+  const fc = await import("./file-comments");
+  const d = el("span", "katex-display"); d.appendChild(el("span", "katex"));
+  stampHighlight(d, CID, true); d.setAttribute("data-ids", CID); d.classList.add("fc-presel-block");
+  fc.unwrapMarks([d] as unknown as Element[], ["fc-presel-block"]);
+  assert.deepEqual(stripped(d), { cls: "katex-display fc-hl-block fc-hl-context", act: "fcopen", id: CID, isNew: "1", tab: "0", role: "button", title: "Open the comment on this passage" }, "the target's class off; the highlight's class, cue, data and the pass's attributes untouched");
+  assert.equal(d.getAttribute("data-ids"), CID, "...and its covering set");
+  assert.deepEqual(shapeOf(d), ["SPAN.katex"], "its child in place");
+  // the highlight's class: the cue and the attributes go with it, whatever else stands on the box
+  d.classList.add("fc-presel-block");
+  fc.unwrapMarks([d] as unknown as Element[], ["fc-hl-block"]);
+  assert.deepEqual(stripped(d), { ...CLEAN, cls: "katex-display fc-presel-block" }, "the highlight's class, its cue and every attribute off, the target's class standing");
+  assert.equal(d.getAttribute("data-ids"), null, "the covering set with them");
+  fc.unwrapMarks([d] as unknown as Element[], ["fc-presel-block"]);
+  assert.deepEqual(stripped(d), CLEAN, "the target alone: clean");
+  // the default, every block class (paintAll's unpaint names both; a caller with no list strips whole, as before)
+  stampHighlight(d, CID); d.setAttribute("data-ids", CID); d.classList.add("fc-presel-block");
+  fc.unwrapMarks([d] as unknown as Element[]);
+  assert.deepEqual([stripped(d), d.getAttribute("data-ids")], [CLEAN, null], "no list: everything off");
+  // Panel.unpaint hands the block classes its selector named on, and no other
+  const unpaint = SRC.split("  private unpaint(selector: string): void {")[1].split("\n  }\n")[0];
+  assert.ok(unpaint.includes("unwrapMarks(held, marks.filter((c) => BLOCK_PAINT_CLASSES.includes(c)));"), "the classes the selector named");
+  const repaint = SRC.split("  private repaintPreselPass(): void {")[1].split("\n  }\n")[0];
+  assert.equal((repaint.match(/this\.unpaint\("\.fc-presel, \.fc-presel-block"\);/g) || []).length, 3, "the pending target's three unpaints name its classes alone, so a highlight's stamp on a shared box stands through them");
 });

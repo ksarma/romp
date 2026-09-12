@@ -451,18 +451,42 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
 const BLOCK_PAINT_CLASSES = ["fc-hl-block", "fc-presel-block"];
 const isMarkEl = (n: Element): boolean => n.tagName.toUpperCase() === "MARK";
 const isBlockPaint = (n: Element): boolean => BLOCK_PAINT_CLASSES.some((c) => n.classList.contains(c));
-/** Strip a block-painted element in place: the block classes and the context cue the pass adds beside them (fc-hl-context),
- *  and the attributes the paint and the pass set (data-act, data-id, the arrivals' data-new, tabindex, role, title). Its
- *  children stay where they are. */
-function stripBlockPaint(n: Element): void {
-  n.classList.remove(...BLOCK_PAINT_CLASSES, "fc-hl-context");
-  for (const a of ["data-act", "data-id", "data-new", "tabindex", "role", "title"]) n.removeAttribute(a);
+/** The ids of every comment whose highlight covers a stamped box, from its `data-ids` (coverBox); a mark carries none. */
+const boxIds = (n: Element): string[] => (n.getAttribute("data-ids") || "").split(" ").filter(Boolean);
+/** A stamped box covered by several comments (two comments on one display formula): the box is ONE element where two comments
+ *  over prose nest their marks, and each paint rewrites the paint's data on it (anchor-map.ts stampBlock), so the panel keeps the
+ *  covering set itself, after each paint that returns the box: `data-ids` lists every covering comment's id in the pass's order
+ *  (cards(), the model's order by time) and `data-id` names the last of them, the comment in front, as the innermost mark is under
+ *  an inline overlap. The panel's readers of a comment's elements (ownMarks: the card's Scroll, the arrivals' dot, the focus)
+ *  match a box by either, and a click on the box opens every card the list names (openCovering), the front one the focus.
+ *  Before this, the later paint's id overwrote the earlier's, so the earlier card could not be reached from the formula and its
+ *  Scroll, offered on the card, fell to Reveal (the Slice 8 review, round 1). The strip removes the list with the rest. */
+function coverBox(box: Element, id: string): void {
+  const ids = boxIds(box);
+  if (!ids.includes(id)) ids.push(id);
+  box.setAttribute("data-ids", ids.join(" "));
+  box.setAttribute("data-id", ids[ids.length - 1]);
+}
+/** Strip a block-painted element in place: the block classes named (`classes`; every one by default) come off, and once the
+ *  highlight's class `fc-hl-block` is gone, the context cue the pass adds beside it (fc-hl-context) and the attributes the paint
+ *  and the pass set (data-act, data-id, data-ids, the arrivals' data-new, tabindex, role, title) go with it: they are the
+ *  highlight's, so a box the composer's pending target shares with a standing highlight (both paints stamp the one
+ *  `.katex-display`) keeps the highlight's class and data when the target's class alone is stripped. Before this the strip took
+ *  every class and attribute whatever the selector named, so Cancel on a pending target over a highlighted formula left the
+ *  formula bare and no longer a control until the next full pass (the Slice 8 review, round 1). Its children stay where they are. */
+function stripBlockPaint(n: Element, classes: readonly string[] = BLOCK_PAINT_CLASSES): void {
+  n.classList.remove(...classes);
+  if (n.classList.contains("fc-hl-block")) return;
+  n.classList.remove("fc-hl-context");
+  for (const a of ["data-act", "data-id", "data-ids", "data-new", "tabindex", "role", "title"]) n.removeAttribute(a);
 }
 /** The unpaint step over `marks` (Panel.unpaint over a selector's matches, Panel.unwrap over elements the repaint holds; the
  *  whitespace leg times the panel's unpaint through it, md-config-paint-whitespace-browser.test.ts): each mark's children go back
  *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
  *  section 2 (d)); an element that is not a mark (a display formula's box wearing the block class, Slice 8 item 5) is stripped
- *  in place instead (stripBlockPaint) and normalizes nothing, its text nodes untouched. Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
+ *  in place instead (stripBlockPaint, of the block classes in `blockClasses`, every one by default: Panel.unpaint passes the ones
+ *  its selector named, so the pending target's unpaint leaves a highlight's stamp on a box the two share) and normalizes nothing,
+ *  its text nodes untouched. Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
  *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
  *  normalized once per parent they unwrap in 11 ms. Both figures are for marks the browser has not laid out (the unpaint in the
  *  same task as the paint, or a host outside the document). The panel's unpaint always finds its marks laid out (the pass before
@@ -471,10 +495,10 @@ function stripBlockPaint(n: Element): void {
  *  2.3x, not 40x (the Slice 5 review, round 1, headless Chromium). Nested marks (two comments over one passage) come in document
  *  order, the outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first
  *  (an order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
-export function unwrapMarks(marks: Iterable<Element>): void {
+export function unwrapMarks(marks: Iterable<Element>, blockClasses: readonly string[] = BLOCK_PAINT_CLASSES): void {
   const parents = new Set<Node>();
   for (const n of marks) {
-    if (!isMarkEl(n)) { stripBlockPaint(n); continue; }   // a display formula's stamped box: stripped in place, never unwrapped (stripBlockPaint)
+    if (!isMarkEl(n)) { stripBlockPaint(n, blockClasses); continue; }   // a display formula's stamped box: stripped in place of the classes named, never unwrapped (stripBlockPaint)
     const p = n.parentNode; if (!p) continue;
     while (n.firstChild) p.insertBefore(n.firstChild, n);
     p.removeChild(n); parents.add(p);
@@ -3299,7 +3323,7 @@ class Panel {
       const card = this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]') as HTMLElement | null;
       if (card) delete card.dataset.new;
       const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
-      for (const m of this.ownMarks(act, id)) delete m.dataset.new;
+      for (const m of this.ownMarks(act, id)) if (!boxIds(m).some((o) => o !== id && this.newKeys.has(this.cardKey(o)))) delete m.dataset.new;   // a stamped box shared with a comment still new keeps its dot (coverBox)
     }
     this.reflect();
   }
@@ -3445,8 +3469,11 @@ class Panel {
    *  could not be reached from that text. Every fcopen mark of ours above the clicked one (owns) is a covering comment: its card
    *  opens as a head click would open it (openCards), in the same render as the clicked card, which is the focus (showCard, the
    *  caller's next step). The sheets draw the nest as one wash and one ring (`.fc-hl .fc-hl`); the marks' own attributes
-   *  (data-new, tabIndex, the title) stay per mark. */
+   *  (data-new, tabIndex, the title) stay per mark. A display formula's stamped box has no nest: it is one element for every
+   *  comment covering the formula, their ids on it (coverBox), so each of those opens the same way, the front one (its data-id)
+   *  the focus. */
   private openCovering(x: HTMLElement): void {
+    if (x.dataset.act === "fcopen" && this.marks.has(x)) for (const id of boxIds(x)) this.openCards.add(this.cardKey(id));
     for (let e = x.parentElement; e; e = e.parentElement) {
       if (e.dataset.act === "fcopen" && e.dataset.id && this.marks.has(e)) this.openCards.add(this.cardKey(e.dataset.id));
     }
@@ -3560,6 +3587,7 @@ class Panel {
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
         if (rendered && out) { this.passMarks.push(...out); byCard.push({ id: card.id, marks: out }); }
+        for (const m of out || []) if (!isMarkEl(m)) coverBox(m, card.id);   // a display formula's stamped box: the covering set on it (two comments on one formula share the box)
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
@@ -3762,9 +3790,12 @@ class Panel {
     return undefined;
   }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
-   *  substitution paints a deletion point and then its new text, all with the same action and id. */
+   *  substitution paints a deletion point and then its new text, all with the same action and id. A display formula's stamped
+   *  box that several comments cover carries every covering id (coverBox, data-ids) and the front one's as data-id, so it is the
+   *  subject's element by either; the list is read in the filter (a word-list selector is not in every document the panel runs in). */
   private ownMarks(act: string, id: string): HTMLElement[] {
-    return Array.from(this.ctx.body().querySelectorAll('[data-act="' + act + '"][data-id="' + cssId(id) + '"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+    const sel = '[data-act="' + act + '"][data-id="' + cssId(id) + '"]' + ', [data-act="' + act + '"][data-ids]';
+    return Array.from(this.ctx.body().querySelectorAll(sel)).filter((m) => this.marks.has(m) && (m.getAttribute("data-id") === id || boxIds(m).includes(id))) as HTMLElement[];
   }
   /** The mark of ours that holds the keyboard, by what it is — its action, its id, and its place among the subject's
    *  marks — and the element, so a repaint can tell whether it was unwrapped. Null when the focus is anywhere else. */
@@ -3842,14 +3873,15 @@ class Panel {
   }
   /** Unwrap painted marks: the text nodes go back in place and each parent is normalized, once (unwrapMarks). A framed
    *  picture is stripped of its marks instead, since unwrapping an <img> would remove the picture; a display formula's box wearing
-   *  the block class (selected by `.fc-hl-block` or `.fc-presel-block`) is stripped in place by unwrapMarks itself. */
+   *  the block class (selected by `.fc-hl-block` or `.fc-presel-block`) is stripped in place by unwrapMarks itself, of the block
+   *  classes the selector names and no other: the pending target's unpaint leaves a highlight standing on the same box. */
   private unpaint(selector: string): void {
     const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
     const held: Element[] = [];
     for (const n of Array.from(this.ctx.body().querySelectorAll(selector))) {
       if (n.classList.contains("fc-img")) unframeImage(n as HTMLElement, marks); else held.push(n);
     }
-    unwrapMarks(held);
+    unwrapMarks(held, marks.filter((c) => BLOCK_PAINT_CLASSES.includes(c)));
   }
   /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
    *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
@@ -3985,6 +4017,7 @@ class Panel {
         const out = paintRendered(root, src, a.range, like.className, { act: "fcopen", id: a.id }, { trim: false }) || [];
         this.passMarks.push(...out);
         for (const m of out) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = like.title; if (like.dataset.new) (m as HTMLElement).dataset.new = like.dataset.new; this.mark(m); }
+        for (const m of out) if (!isMark(m)) coverBox(m, a.id);   // a stamped box the repaint returned: its covering set stands, and its front (the re-stamp wrote this comment's id)
       }
       if (changes) this.paintChanges(root, src, true, true);
       this.paintPresel(root, src, true);
@@ -4416,8 +4449,9 @@ class Panel {
     const opened = this.revealMarks(key);              // a fold around the mark opens first, in either layout: the content below it moved
     if (opened && this.margin) this.placeCards(false); // ...and centerOn reads the placement, so the pass runs over the opened fold (a focus change below runs one of its own)
     if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
-    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
-    const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
+    const id = key.startsWith("chg:") ? key.slice(4) : key;
+    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]' + ', .fc-hl-block[data-ids]';   // ...and a stamped box several comments cover, this one among them (coverBox)
+    const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m) && (m.getAttribute("data-id") === id || boxIds(m).includes(id)));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
     this.reveal(key);
   }

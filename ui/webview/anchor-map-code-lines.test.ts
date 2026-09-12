@@ -15,8 +15,10 @@
 // hljs spans, the lines cut into `.cl` rows by the real wrapLinesHtml (code-block.ts) with the line feeds dropped, the Copy
 // button parked in the `<pre>`, and a URL in a row split into an `<a>` as linkifyFileText splits it. The idiom of
 // anchor-map-cells.test.ts. The browser leg, anchor-map-code-lines-browser.test.ts, runs the real viewer and the real panel.
-// Every case that maps here refuses "touches a code block" or "an indented code block" over the tree before this slice.
-// Synthetic values only: an invented note, no real session text.
+// Every case that maps here refuses "touches a code block" or "an indented code block" over the tree before this slice; the
+// case of the Slice 8 review's round 1, a deletion point on a code line that shows no character placed in the line's own row,
+// fails over the build's head cd3a06501 with the point one row down. Synthetic values only: an invented note, no real session
+// text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -183,6 +185,14 @@ function buildRendered(text: string): FakeElement {
   for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
   standInFill(box);
   dressCode(box);
+  return box;
+}
+/** The same body with no fence dressed: a pre no renderer cut into rows, the shape a point on a blank code line falls back on. */
+function undressed(text: string): FakeElement {
+  const doc = new FakeDocument();
+  const box = doc.createElement("div"); box.setAttribute("class", "fileview-md");
+  for (const n of parseHTML(doc, marked.parse(text) as string)) box.appendChild(n);
+  standInFill(box);
   return box;
 }
 const El = (n: FakeNode) => n as unknown as Element;
@@ -508,6 +518,70 @@ test("deletion points on a fence's lines: inside the opener (its second backtick
   assert.deepEqual([rowIndexOf(pointOf(box, "ind-indent")), rowIndexOf(pointOf(box, "ind-in"))], [0, 0]);
   assert.ok(around(find(box, "PRE", "indented = 3"), pointOf(box, "ind-indent"))[1].startsWith("indented = 3"), "before the line's first character");
   unpaintChanges(El(box));
+});
+
+test("a deletion point on a code line that shows no character places in the line's own row (the Slice 8 review, round 1; before: before the next line's first character, one row down, which read as that line changed): a blank line's point goes into its empty text cell, a whitespace-only line's at its column among the spaces, two blank lines in a row each into their own row, a blank line of a nested fence (the item's indent stripped from it or kept on it) and of an indented block into theirs, and a CRLF note's on either byte of its ending; a blank line that ends a fence's text has no row (marked's renderer folds it) and its point sits after the last character as before, and a pre no renderer cut into rows keeps the rule before", () => {
+  const SRC = "Intro.\n\n```python\nfirst = 1\n\nthird = 3\n    \nfifth = 5\n\n\neighth = 8\n\n```\n\nAfter.\n";
+  const ROWS = ["first = 1", "", "third = 3", "    ", "fifth = 5", "", "", "eighth = 8"];
+  const box = buildRendered(SRC);
+  const pre = find(box, "PRE", "first = 1");
+  assert.deepEqual(rowTexts(pre), ROWS, "the viewer's rows: one per line, the trailing blank line folded");
+  const del = (id: string, curFrom: number): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText: "gone", author: "web" });
+  const blank = at(SRC, "first = 1") + "first = 1".length + 1, ws = at(SRC, "\n    \n") + 1, blanks = at(SRC, "fifth = 5") + "fifth = 5".length + 1, trail = at(SRC, "eighth = 8") + "eighth = 8".length + 1;
+  const res = paintChangesRendered(El(box), SRC, [
+    del("blank", blank),          // the blank line after the first
+    del("ws-0", ws),              // the whitespace line, before its spaces
+    del("ws-2", ws + 2),          // between its second and third space
+    del("ws-end", ws + 4),        // its line feed
+    del("blank-a", blanks),       // the first of two blank lines
+    del("blank-b", blanks + 1),   // the second
+    del("trail", trail),          // the blank line that ends the fence's text: no row stands for it
+    del("in-line", at(SRC, "third = 3") + 6),   // the control: inside a line
+  ], () => ({}));
+  assert.deepEqual(res, { painted: ["blank", "ws-0", "ws-2", "ws-end", "blank-a", "blank-b", "trail", "in-line"], unpainted: [] });
+  const rowOf = (id: string): number => rowIndexOf(pointOf(box, id));
+  assert.deepEqual([rowOf("blank"), rowOf("ws-0"), rowOf("ws-2"), rowOf("ws-end"), rowOf("blank-a"), rowOf("blank-b"), rowOf("in-line")], [1, 3, 3, 3, 5, 6, 2], "each point in its line's own row (before: the blank line's in row 2, the whitespace line's three in row 4, the two blank lines' in row 7)");
+  for (const id of ["blank", "blank-a", "blank-b"]) {
+    const pt = pointOf(box, id);
+    assert.ok(hasClass(pt.parentNode!, "ct"), id + ": in the row's text cell");
+    assert.equal((pt.parentNode as FakeElement).childNodes.length, 1, id + ": the empty cell holds the point alone");
+  }
+  const rows = rowsOf(pre);
+  assert.deepEqual([around(rows[3], pointOf(box, "ws-0")), around(rows[3], pointOf(box, "ws-2")), around(rows[3], pointOf(box, "ws-end"))], [["", "    "], ["  ", "  "], ["    ", ""]], "the whitespace line's points at their columns");
+  assert.deepEqual([rowOf("trail"), around(pre, pointOf(box, "trail"))[0].endsWith("eighth = 8")], [7, true], "the folded trailing blank line: after the last character, in the last row, as before");
+  assert.deepEqual(rowTexts(pre), ROWS, "the rows' text is untouched: a point holds none");
+  unpaintChanges(El(box));
+  assert.equal(allOf(box, "SPAN").filter((e) => hasClass(e, "fc-del")).length, 0, "unpainted");
+  assert.deepEqual(rowTexts(pre), ROWS);
+  // a nested fence's blank line, bare or carrying the item's indent, and an indented block's
+  const nested = "- Item:\n\n  ```\n  a = 1\n\n  b = 2\n  ```\n\n  after\n", kept = "- Item:\n\n  ```\n  a = 1\n  \n  b = 2\n  ```\n\n  after\n", ind = "Intro.\n\n    alpha = 1\n\n    beta = 2\n\nAfter.\n";
+  const shapes: Array<[string, number, string]> = [
+    [nested, at(nested, "a = 1") + 6, "a nested fence's bare blank line"],
+    [kept, at(kept, "a = 1") + 6, "a nested fence's indented blank line, at the indent's first space"],
+    [kept, at(kept, "a = 1") + 8, "a nested fence's indented blank line, at its line feed"],
+    [ind, at(ind, "alpha = 1") + 10, "an indented block's blank line"],
+  ];
+  for (const [src, off, label] of shapes) {
+    const b = buildRendered(src);
+    assert.deepEqual(rowTexts(find(b, "PRE", "= 1")).length, 3, label + ": three rows");
+    assert.deepEqual(paintChangesRendered(El(b), src, [del("n", off)], () => ({})), { painted: ["n"], unpainted: [] }, label);
+    const pt = pointOf(b, "n");
+    assert.equal(rowIndexOf(pt), 1, label + ": in the blank line's row");
+    assert.ok(hasClass(pt.parentNode!, "ct") && (pt.parentNode as FakeElement).childNodes.length === 1, label + ": the empty cell holds the point alone");
+  }
+  // CRLF: the blank line's CR and its LF both place in its row
+  const crlf = "Intro.\r\n\r\n```\r\nfirst = 1\r\n\r\nthird = 3\r\n```\r\n";
+  const cb = buildRendered(crlf);
+  const cr = at(crlf, "first = 1") + "first = 1".length + 2;   // the blank line's CR
+  assert.equal(crlf.slice(cr, cr + 2), "\r\n");
+  assert.deepEqual(paintChangesRendered(El(cb), crlf, [del("cr", cr), del("lf", cr + 1)], () => ({})), { painted: ["cr", "lf"], unpainted: [] });
+  assert.deepEqual([rowIndexOf(pointOf(cb, "cr")), rowIndexOf(pointOf(cb, "lf"))], [1, 1], "CRLF: both bytes of the blank line's ending place in its row");
+  // a pre no renderer cut into rows offers no box for the line: the point falls back on the rule before, before the next line's first character
+  const plain = undressed(SRC);
+  assert.equal(rowsOf(find(plain, "PRE", "first = 1")).length, 0, "no rows");
+  assert.deepEqual(paintChangesRendered(El(plain), SRC, [del("blank", blank)], () => ({})), { painted: ["blank"], unpainted: [] });
+  const [before, after] = around(find(plain, "PRE", "first = 1"), pointOf(plain, "blank"));
+  assert.ok(before.endsWith("first = 1\n\n") && after.startsWith("third = 3"), "undressed: before the next line's first character: " + JSON.stringify([before.slice(-4), after.slice(0, 5)]));
 });
 
 // ── the shapes marked accepts ──

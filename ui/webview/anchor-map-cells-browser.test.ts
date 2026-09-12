@@ -12,8 +12,12 @@
 // the cell drag refused as "touches a table" with the Raw view preselecting the cell after the switch, and the two-cell drag
 // refused with no preselect. The table's width is read before and after the cell's mark paints, for the build note (the
 // brief's open question 15). A last leg times the index, one map and forty marks over a 1,000-row table for the build note
-// (the brief's open question 13; diagnostics, not a bound). Skips LOUDLY without a playwright browser (CI installs none), as
-// the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// (the brief's open question 13; diagnostics, not a bound). A leg of the Slice 8 review's round 1 serves a table whose hole cell
+// holds an emoji beside an entity (an astral character the per-cell fallback shows): the served comment and deletion point on
+// later cells land in their own cells and a real drag's Save posts the exact slice, where the build's head, counting a hole's
+// characters by code point, shifted every later cell of the table by one code unit and stored a quote spanning the pipe into
+// the next row. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
+// only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -290,6 +294,60 @@ test("in a browser, the real viewer: a 1,000-row table, the index build plus one
     assert.equal(out.mapped.range.start, big.indexOf("route_500"));
     assert.ok(out.painted === 40 && out.cells === 40, "forty marks in forty cells: " + JSON.stringify([out.painted, out.cells]));
     t.diagnostic("1,000-row table in Chromium: index build plus one map " + out.tMap.toFixed(1) + " ms, forty marks " + out.tPaint.toFixed(1) + " ms");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── the Slice 8 review, round 1: an astral character in a cell the per-cell fallback holds ──
+const ASTRAL = "Status marks.\n\n| E1 | E2 |\n|----|----|\n| \u{1F600} &amp; | ue2 |\n| ue3 | ue4 |\n\nNumeric.\n\n| N1 | N2 |\n|----|----|\n| &#128512; grin | nb2 |\n| nb3 | nb4 |\n\nAfter.\n";
+/** A comment in the host's shape on the passage `quote` of `note`: the exact source slice, its context, its position. */
+function commentIn(note: string, quote: string, k: number): Record<string, unknown> {
+  const at = note.indexOf(quote);
+  assert.ok(at >= 0, "the note holds " + JSON.stringify(quote));
+  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: NOTE, anchor: makeAnchor(note, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
+}
+const UE2 = commentIn(ASTRAL, "ue2", 6);
+const NB2_AT = ASTRAL.indexOf("nb2") + 1;
+/** A session's pending deletion one character into `nb2`, in the shape the kernel's status carries. */
+const NB2_DEL = { id: "d-nb2", author: "web", ts: T0, kind: "del", curFrom: NB2_AT, curTo: NB2_AT, baseFrom: NB2_AT, baseTo: NB2_AT + 1, oldText: "x", newText: "", anchor: null };
+
+test("in a browser, the real viewer and panel on the Files pane over a table whose hole cell holds an emoji beside an entity, and one whose numeric reference decodes to an emoji: a served comment on `ue2` paints one mark inside its own cell (before: `&` in the emoji's cell and `ue` in its own), a served deletion one character into `nb2` sits between `n` and `b2` (before: before the cell), and a REAL drag over `ue3` opens the composer quoting `ue3` with Save, whose click posts the exact slice at the cell's offset (before: the quote `e3 | u`, the pipe and the next row's first letter inside a passage the person did not select, posted with no refusal): a hole's characters are counted per UTF-16 code unit as positioned text is", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    const html = pageHtml("pane", { [REPORT]: ASTRAL }, MT);
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+    await page.goto(ORIGIN + "/");
+    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, { ...withComments([UE2], 6), hunks: [NB2_DEL] }]);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await openPanel(page);
+    await markPainted(page, id(UE2));
+    await page.waitForFunction(() => !!document.querySelector('.fileview-md .fc-del[data-id="d-nb2"]'), null, { timeout: 10000 });
+    await frames(page, 2);
+    const read = await page.evaluate((cid: string) => {
+      const marks = Array.from(document.querySelectorAll('.fileview-md .fc-hl[data-id="' + cid + '"]')) as HTMLElement[];
+      const pt = document.querySelector('.fileview-md .fc-del[data-id="d-nb2"]') as HTMLElement;
+      const cells = Array.from(document.querySelectorAll(".fileview-md td")).map((c) => c.textContent);
+      return { served: marks.map((m) => ({ text: m.textContent, cell: m.closest("td")?.textContent })), point: { cell: pt.closest("td")?.textContent, prev: pt.previousSibling?.textContent ?? null, next: pt.nextSibling?.textContent ?? null }, cells };
+    }, id(UE2));
+    assert.deepEqual(read.cells, ["\u{1F600} &", "ue2", "ue3", "ue4", "\u{1F600} grin", "nb2", "nb3", "nb4"], "the browser shows the entities decoded, the emoji's two code units in one cell");
+    assert.deepEqual(read.served, [{ text: "ue2", cell: "ue2" }], "the served comment on ue2: one mark in its own cell (before: `&` in the emoji's cell and `ue` in ue2's)");
+    assert.deepEqual(read.point, { cell: "nb2", prev: "n", next: "b2" }, "the served deletion one character into nb2: between n and b2 (before: before the cell)");
+    const selected = await dragRendered(page, "ue3", "ue3");
+    assert.equal(selected.trim(), "ue3", "the drag selected the cell's text");
+    await floatShown(page);
+    await page.click(".fc-float");
+    await frames(page, 2);
+    const c = await composerState(page);
+    assert.deepEqual([c.open, c.refused, c.quote, c.save], [true, null, "ue3", true], "the composer quotes the cell with Save (before: the quote `e3 | u`): " + JSON.stringify(c));
+    await page.keyboard.type(NOTE);
+    await page.click('.fileview-aside [data-act="fcsave"]');
+    await frames(page, 4);
+    const writes = (await posted(page)).filter((x: any) => x.type === "fileComments" && x.verb === "comment");
+    assert.deepEqual(writes.map((w: any) => [w.args.anchor.quote, w.args.hintOffset]), [["ue3", ASTRAL.indexOf("ue3")]], "the stored quote is the exact source slice at the cell's offset (before: `e3 | u` one character after)");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

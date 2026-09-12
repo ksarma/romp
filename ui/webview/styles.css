@@ -4762,6 +4762,14 @@ body.filebrowse-open { overflow: hidden; }
 .fc-hl .fc-hl { background: none; box-shadow: none; }
 .fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); color: inherit; border-radius: 5px; padding: 0 2px;
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+/* a mark inside a Rendered code row (plans/markdown-viewer.md Slice 8, item 2; the review's round 1): a fence's rows are monospace
+   columns, and the mark's 2 px side padding pushed the marked characters and every character after them 2 px right (4 px past a
+   mid-line mark), so a commented line stood out of line with the rows above and below it while the comment stood. Inside a fence
+   the horizontal padding goes, on the highlight and on the composer's pending target alike: the mark's box is the marked
+   characters' own cells, as an editor paints a selection, and the wash and ring sit on the columns the person selected. Prose
+   marks keep their padding (the layout-neutral mark stays the owner's call, the Slice 5 note's item 10 (f)); the Raw view's rows
+   are not this rule's. styles-fc-hl-code-row-browser.test.ts measures the columns. */
+.fileview-md pre .fc-hl, .fileview-md pre .fc-presel { padding: 0; }
 /* a display formula under a highlight (plans/markdown-viewer.md Slice 8, item 5; anchor-map.ts paintRendered stamps the class,
    file-comments.ts unwrapMarks strips it): the formula is a block of its own line, and an inline mark around a block box paints
    nothing over it while a mark between .katex-display and its .katex breaks KaTeX's layout, so a covered display formula wears

@@ -18,8 +18,14 @@
 // change (the box the same size stamped and bare), and the pass's unpaint stripping the box in place when the same body is
 // repainted (a filter change repaints from the status already here). The click through the delegate is the first leg's alone:
 // the body's delegate answers the panel's OWN marks (owns, the elements the pass recorded), so a box stamped by hand is not a
-// control until the paint returns it to the pass. Skips LOUDLY without a playwright browser (CI installs none), as the other
-// browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// control until the paint returns it to the pass. Two legs from the Slice 8 review's round 1: two comments on the one formula
+// share the box, so the pass keeps the covering set on it (`data-ids`, the later comment's id in front; file-comments.ts
+// coverBox), a click opens both cards and each card's Scroll finds the box (before: the later paint's id overwrote the
+// earlier's, the click opened one card, the earlier card's Scroll fell to Reveal); and the pending target's unpaint strips its
+// own class alone, so Cancel over a highlighted formula leaves the highlight standing (before: it stripped both classes and
+// every attribute off the shared box, and the formula went bare and dead until the next full pass). Skips LOUDLY without a
+// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note,
+// /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -43,6 +49,7 @@ function comment(quote: string, k: number): Record<string, unknown> {
 }
 const FINAL = comment("Last para.", 1);       // the pass's sentinel: its mark is what the legs wait for (the paint is one pass over every card)
 const FORMULA = comment(FORMULA_Q, 2);
+const FORMULA_B = comment(FORMULA_Q, 3);      // a second comment on the same formula, later by time: the pass paints it after FORMULA, so it is the one in front
 const id = (c: Record<string, unknown>): string => c.id as string;
 /** The kernel's status with `comments` in the store, `n` bumping the store's mtime so each reply reads as a new write. */
 const withComments = (comments: Record<string, unknown>[], n: number): Record<string, unknown> =>
@@ -109,6 +116,11 @@ const composerQuote = (page: any): Promise<{ open: boolean; quote: string | null
   return { open: true, quote: box.querySelector(".fc-quote")?.textContent ?? null, refused: box.querySelector(".fc-refused")?.textContent ?? null, save: save ? !save.disabled : null };
 });
 const squash = (s: string): string => s.replace(/\s+/g, "");
+const sortedClasses = (cls: string): string[] => cls.split(/\s+/).filter(Boolean).sort();
+/** The covering set on the display formula's box (file-comments.ts coverBox): every covering comment's id, in the pass's order. */
+const readIds = (page: any): Promise<string | null> => page.evaluate(() => (document.querySelector(".fileview-md > .katex-display") as HTMLElement | null)?.getAttribute("data-ids") ?? null);
+/** Which view stands: the Rendered root, or the Raw rows (Reveal's switch). */
+const viewState = (page: any): Promise<{ md: boolean; raw: boolean }> => page.evaluate(() => ({ md: !!document.querySelector(".fileview-md"), raw: !!document.querySelector(".fileview-body .fv-cl") }));
 
 test("a comment on `$$ ... $$` served before a fresh open, on the Files pane at 900 and 380 px and in the chat modal: the .katex-display wears fc-hl-block with the paint's data and the pass's control attributes, the panel's wash and ring (computed background not transparent), KaTeX's root still its one child and no mark at the top level or inside; the card offers Scroll and no Reveal once a click on the formula's glyphs opens it; under print media the wash and ring come off; a reload paints the new box the same, stamped once (before: no class, no wash, the card offering Reveal)", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
@@ -257,6 +269,75 @@ test("the panel's half alone, over the box stamped by hand as the paint will sta
     assert.deepEqual([after.act, after.id], [null, null], "...and its data");
     assert.deepEqual([after.katexChild, after.topMarks, after.bg], [true, 0, TRANSPARENT], "KaTeX's root still the box's one child, no mark at the top level, the box bare");
     assert.ok(after.hlMarks >= 1, "the sentinel's highlight painted again by the pass");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("two comments on one `$$ ... $$` block served before a fresh open, on the Files pane at 900 px and in the chat modal: the one box wears fc-hl-block once, the LATER comment's id as data-id (in front, as the innermost mark is under an inline overlap) and both ids in data-ids in the pass's order; a click on the formula's glyphs opens BOTH cards, each offering Scroll; the earlier card's Scroll finds the box and the view stays Rendered; a reload rebuilds the set the same (before: the later paint's id overwrote the earlier's, the click opened one card, and the earlier card's Scroll fell to Reveal and switched to Raw)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      const what = mode + " " + width + "px";
+      const { page, errors } = await openWith(browser, mode, width, false, withComments([FINAL, FORMULA, FORMULA_B], 1));
+      const r = await readBox(page);
+      assert.equal(stampedOnce(r.cls, "fc-hl-block"), true, what + ": the box stamped once by the two paints: " + JSON.stringify(r.cls));
+      assert.deepEqual([r.act, r.id], ["fcopen", id(FORMULA_B)], what + ": the later comment in front");
+      assert.equal(await readIds(page), id(FORMULA) + " " + id(FORMULA_B), what + ": every covering id on the box, in the pass's order (before: no such attribute)");
+      assert.deepEqual([r.katexChild, r.marksInside, r.topMarks], [true, 0, 0], what + ": KaTeX's root the box's one child, no mark inside or at the top level");
+      const before = [await readCard(page, id(FORMULA)), await readCard(page, id(FORMULA_B))];
+      assert.deepEqual(before.map((c) => [c.card, c.open]), [[true, false], [true, false]], what + ": both cards there and folded before the click");
+      await page.locator(".fileview-md .katex-display .katex-html").first().click();
+      await page.waitForFunction((cs: string[]) => cs.every((c) => !!document.querySelector('.fileview-aside .fc-card[data-id="' + c + '"].open')), [id(FORMULA), id(FORMULA_B)], { timeout: 5000 });
+      await frames(page, 2);
+      assert.deepEqual(await readCard(page, id(FORMULA)), { card: true, open: true, goto: true, reveal: false }, what + ": the earlier comment's card opened by the click, offering Scroll (before: folded, unreachable from the formula)");
+      assert.deepEqual(await readCard(page, id(FORMULA_B)), { card: true, open: true, goto: true, reveal: false }, what + ": ...and the later one's");
+      await page.click('.fileview-aside .fc-card[data-id="' + id(FORMULA) + '"] [data-act="fcgoto"]');
+      await frames(page, 3);
+      assert.deepEqual(await viewState(page), { md: true, raw: false }, what + ": Scroll on the earlier card found the box: the view stays Rendered (before: no element carried its id, so Reveal switched to Raw)");
+      // a reload over the same bytes: the new box carries the same set and the same front
+      const paints = await page.evaluate(() => (window as any).__paints as number);
+      await page.evaluate(() => { (window as any).__seam.reload(); });
+      await page.waitForFunction((n: number) => (window as any).__paints > n, paints, { timeout: 10000 });
+      await filled(page);
+      await markPainted(page, id(FINAL));
+      await frames(page, 2);
+      const again = await readBox(page);
+      assert.deepEqual([stampedOnce(again.cls, "fc-hl-block"), again.id, await readIds(page)], [true, id(FORMULA_B), id(FORMULA) + " " + id(FORMULA_B)], what + ": after the reload the same set and the same front");
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("the composer's pending target on a formula a comment already highlights, made in the Raw view (the drag over the three `$$` rows, the float, the composer) and carried into Rendered by the view switch, on the Files pane at 900 px: the one box wears both block classes with the highlight's data under the target; Cancel takes the target's class off and leaves the highlight standing, its class once, its data, the control attributes, its own wash and ring, and a click on the formula opens its card, which offers Scroll (before: the target's unpaint stripped both classes and every attribute off the shared box, so the formula went bare and opened nothing while its card still offered Scroll, until the next full pass)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openWith(browser, "pane", 900, true, withComments([FINAL, FORMULA], 1));
+    const selected = await dragRows(page, "$$", "$$");
+    assert.equal(squash(selected), squash(FORMULA_Q), "the drag selected the block over its three rows: " + JSON.stringify(selected));
+    await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+    await page.click(".fc-float");
+    await frames(page, 2);
+    const c = await composerQuote(page);
+    assert.deepEqual([c.open, c.refused, c.save], [true, null, true], "the composer quotes the block with Save: " + JSON.stringify(c.quote));
+    await page.evaluate(() => { (window as any).__seam.setMode("rendered"); });
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await filled(page);
+    await markPainted(page, id(FINAL));
+    await frames(page, 3);
+    const pending = await readBox(page);
+    assert.deepEqual(sortedClasses(pending.cls), ["fc-hl-block", "fc-presel-block", "katex-display"], "the two paints share the box: " + JSON.stringify(pending.cls));
+    assert.deepEqual([pending.act, pending.id, pending.presel, pending.preselMarks], ["fcopen", id(FORMULA), 1, 0], "the highlight's data stands under the target; the box is the target's one element");
+    await page.click('.fc-composer [data-act="fccancel"]');
+    await frames(page, 3);
+    const after = await readBox(page);
+    assert.equal(stampedOnce(after.cls, "fc-hl-block"), true, "after Cancel the highlight's class stands alone on the box (before: stripped with the target's): " + JSON.stringify(after.cls));
+    assert.deepEqual([after.act, after.id, after.tab, after.role, after.title], ["fcopen", id(FORMULA), "0", "button", OPEN_TITLE], "...with the highlight's data and the pass's control attributes (before: none)");
+    assert.notEqual(after.bg, TRANSPARENT, "the highlight's wash stands (before: transparent)");
+    assert.notEqual(after.bg, pending.bg, "...its own, not the target's accent");
+    assert.notEqual(after.shadow, "none", "...and its ring");
+    assert.deepEqual([after.presel, after.katexChild, after.topMarks], [0, true, 0], "no target left anywhere, KaTeX's root in place, no mark at the top level");
+    await clickFormula(page, id(FORMULA));
+    assert.deepEqual(await readCard(page, id(FORMULA)), { card: true, open: true, goto: true, reveal: false }, "a click on the formula opens its card, which offers Scroll (before: the click opened nothing)");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

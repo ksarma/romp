@@ -186,7 +186,9 @@ const tagNameOf = (n: DElement): string => hasClass(n, IMG_WRAP_CLASS) ? "IMG" :
 // blank and finds the cells apart, Slice 5).
 // The exact mapping of code lines (walkCode, Slice 8 of plans/markdown-viewer.md) reads no row: the rows drop only the
 // newlines, which the walk never emits, so the character count under a `<pre>` is the walk's and descend and nthNonWs see
-// through the rows to the selected character. codeLineAt and codeLineStart, the line of a DOM position and the position
+// through the rows to the selected character. One reader of a row remains, the change points' placement on a code line that
+// shows no character (renderedSpot, blankCodeLineSpot): such a line has no character to sit against, and its row is the box
+// the viewer gives it, so the point goes there (the Slice 8 review, round 1). codeLineAt and codeLineStart, the line of a DOM position and the position
 // where a line starts, were exported here from Slice 3 for that mapping and had no caller in production (reader-place.ts
 // counts the `.cl` row under the body's top edge as its line, one row per line); Slice 8 deleted them, and
 // anchor-map-wrapped-code.test.ts pins that nothing under ui/webview defines or calls them again (the plan's Slice 3 build
@@ -756,6 +758,15 @@ type Cell = { startK: number; endK: number; startN: number; endN: number };
 /** A table's place in its block: its raw's span in N, its characters' range in the block's chars and its cells,
  *  `cells[cellFrom, cellTo)`; a list item or a quote can hold several. */
 type TableSpan = { startN: number; endN: number; startK: number; endK: number; cellFrom: number; cellTo: number };
+/** One text line of a code block the walk positioned (walkCode): the N index of its raw line's first character (`startN`; the
+ *  indent's, inside a list item) and of the line feed that ends it (`endN`; the raw's end for a last line with none), the block's
+ *  `chars` index of its first character (`k`; -1 for a line that shows none) and, for such a line, the N index of each character
+ *  its row shows (`ws`: the line's whitespace, none for a blank line). A change's point on a line that shows no character places
+ *  in the line's own row through these (renderedSpot, blankCodeLineSpot); a line that shows one places against its characters. */
+type CodeLine = { startN: number; endN: number; k: number; ws: number[] | null };
+/** A code block whose lines the walk positioned: its raw's span in N and its text lines in order (CodeLine), one per row the
+ *  viewer cuts (code-block.ts wrapLinesHtml), a trailing blank line aside, whose row marked's renderer folds. */
+type CodeSpan = { startN: number; endN: number; lines: CodeLine[] };
 /** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
 const FORMULA_HOLE = "a formula";
 /** The reasons of a code block's holes and of a table's. Since Slice 8 a code block's lines (walkCode) and a table's cells
@@ -770,13 +781,15 @@ const FENCE_LINE = "a code block's fence line";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a code block or a
  *  table cell the reading could not place, a footnote reference's number, a callout's title). `cells` and
- *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table. */
+ *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table;
+ *  `codes` the code blocks whose lines were positioned (CodeSpan), empty for a block holding none. */
 class Emitter {
   chars = "";
   pos: number[] = [];
   holes: Hole[] = [];
   cells: Cell[] = [];
   tables: TableSpan[] = [];
+  codes: CodeSpan[] = [];
   put(c: string, n: number): void {
     if (isWs(c)) return;
     if (this.pos.length && n >= 0) {
@@ -785,8 +798,15 @@ class Emitter {
     }
     this.chars += c; this.pos.push(n);
   }
+  /** The hole's shown text, counted per UTF-16 code unit as `put` counts positioned text (emitText, walkCode): one `pos` entry
+   *  per character of `chars`, so an astral character (an emoji: two code units) inside a hole leaves every later character of
+   *  the block reading its own position. Iterated by code point, as it was, the hole came out one entry short per such character,
+   *  and since Slice 8 put a hole's characters beside positioned ones (a cell the per-cell fallback holds, walkRow) every later
+   *  cell of that table read the position of the character after it: the quote ran over the pipe and the line feed into the next
+   *  row, the last cell's end was unset, a Raw comment on a later cell painted across two cells and a deletion point in one landed
+   *  a character early, where the base refused the whole table (the Slice 8 review, round 1; anchor-map-cells.test.ts). */
   putHole(text: string, hole: number): void {
-    for (const c of text) if (!isWs(c)) { this.chars += c; this.pos.push(-(hole + 1)); }
+    for (let i = 0; i < text.length; i++) { const c = text[i]; if (!isWs(c)) { this.chars += c; this.pos.push(-(hole + 1)); } }
   }
 }
 
@@ -1124,8 +1144,10 @@ function codeLineStarts(tt: Tokens.Code, cv: View): number[] | null {
  *  line by line, so the emitted characters are the ones putHole gave, positioned; a fence's opener line and its closer, which render
  *  nothing, are zero-text holes either side of them (FENCE_LINE; the closer's from the line feed that ends the last line, and one
  *  hole over the whole raw for a fence with no line to place), so a change's point on a fence line keeps its card while a point in
- *  a line places in its row (renderedSpot); an indented block has no fence lines. A token whose lines the reading cannot place is
- *  the hole it was before this slice, one over the whole raw with the code's reason, its text shown through it. */
+ *  a line places in its row (renderedSpot); an indented block has no fence lines. Each line placed is recorded with its span and
+ *  whether it shows a character (Emitter.codes, CodeSpan), so a point on a line that shows none, a blank line, can go into the
+ *  line's own row (renderedSpot, blankCodeLineSpot). A token whose lines the reading cannot place is the hole it was before this
+ *  slice, one over the whole raw with the code's reason, its text shown through it. */
 function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
   const starts = codeLineStarts(tt, cv);
   if (starts === null) {
@@ -1136,9 +1158,16 @@ function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
   const textLines = tt.text.split("\n"), lines = cv.str.split("\n");
   const fenced = tt.codeBlockStyle !== "indented", contentStart = lines[0].length + 1;
   if (fenced) em.holes.push({ reason: FENCE_LINE, startN: cv.n(0), endN: cv.n(starts.length ? contentStart : cv.str.length) });
+  const span: CodeSpan = { startN: cv.n(0), endN: cv.n(cv.str.length), lines: [] };
+  em.codes.push(span);
+  let ls = fenced ? contentStart : 0;   // the raw line's start: its indent's first character, or the line's own
   for (let i = 0; i < starts.length; i++) {
-    const tl = textLines[i], s = starts[i];
+    const tl = textLines[i], s = starts[i], rl = lines[(fenced ? 1 : 0) + i];
+    const k0 = em.chars.length;
     for (let j = 0; j < tl.length; j++) em.put(tl[j], cv.n(s + j));
+    const shown = em.chars.length > k0;
+    span.lines.push({ startN: cv.n(ls), endN: cv.n(ls + rl.length), k: shown ? k0 : -1, ws: shown ? null : Array.from({ length: tl.length }, (_, j) => cv.n(s + j)) });
+    ls += rl.length + 1;
   }
   if (fenced && starts.length) {
     let closer = contentStart;
@@ -1290,6 +1319,9 @@ type Block = {
   /** the tables the block holds, their cells among its chars (Emitter.cells, Emitter.tables): a top-level table's one entry, or
    *  the tables nested in a list item or a quote; empty for every other block */
   cells: Cell[]; tables: TableSpan[];
+  /** the code blocks whose lines the walk positioned (Emitter.codes, CodeSpan): each line's span in N and whether it shows a
+   *  character, for a change's point on a line that shows none (renderedSpot); empty for a block holding no such code */
+  codes: CodeSpan[];
   refused: string | null;
   dom: DNode[];
   isHtml: boolean;
@@ -2052,7 +2084,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
     // read past, and a closing tag's block ran the resync, which, before a paragraph carrying an inline closer, confirmed at no
     // end and took every node to the document's end: the Slice 5 review, round 2)
     const blank = isHtml && (commentsOnly(t.raw) || (!(tags as TopTag[]).some((tt) => !tt.stray) && htext === ""));
-    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, cells: em.cells, tables: em.tables, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, cells: em.cells, tables: em.tables, codes: em.codes, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
   }
   if (table.lexError !== null) out.length = 0;
   table.walked = out;
@@ -2094,7 +2126,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));
   for (const n of content) nodeText.set(n, textKey(n));
   if (lexError !== null) {
-    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], cells: [], tables: [], refused: `markdown the lexer could not parse (${lexError})`,
+    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], cells: [], tables: [], codes: [], refused: `markdown the lexer could not parse (${lexError})`,
                   dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, ends: [], minted: false, pOpen: false, nested: false, htext: "", wrap: [] });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
@@ -4617,19 +4649,68 @@ function ownRows(idx: RenderedIndex, b: Block): { lo: number; hi: number } {
   return { lo, hi: b.textEndN + 1 === idx.N.length ? hi + 1 : hi };          // …and the end of the file right after it
 }
 
+/** Where a point goes in the Rendered view (renderedSpot): before offset `off` of text node `t`; or, for a point on a code line
+ *  that shows no character (blankCodeLineSpot), at column `col` among the text of the line's row cell `host`, whose text nodes,
+ *  if any, hold the row's whitespace. */
+type Spot = { t: DText; off: number } | { host: DElement; col: number };
+
+/** The row cell of a code line that shows no character, for a point on that line (renderedSpot). The viewer cuts a code block into
+ *  one `.cl` row per line (code-block.ts wrapLinesHtml), a blank line's an empty `.ct`, so the line has a box of its own to hold
+ *  the point, as the Raw view puts a point on a blank line into its row's cell (paintRawPoint). The line is found by the offset
+ *  among the block's positioned code (Block.codes: a line runs from its raw line's first character, its indent's inside a list
+ *  item, through its line ending, both bytes of a CRLF); its row from the nearest line of the same block that shows a character,
+ *  before it else after: that character's text node, the `.cl` row above it, and the rows between counted, the rows standing one
+ *  per line. The column is the count of the line's whitespace before the offset (CodeLine.ws), 0 on a blank line. Null when the
+ *  offset is not on such a line, or the pre offers no row for it: an undressed pre (a stand-in, a renderer that cut no rows), a
+ *  block whose lines all show nothing, or a fence's trailing blank line, whose row marked's renderer folds into the closing line
+ *  feed; the caller's rules then place the point against the nearest character, as they did for every such line before this. */
+function blankCodeLineSpot(idx: RenderedIndex, blk: Block, offset: number): { host: DElement; col: number } | null {
+  for (const cs of blk.codes) {
+    if (!cs.lines.length || offset < nOf(idx, cs.startN) || offset > nOf(idx, cs.endN)) continue;
+    const endOf = (l: CodeLine): number => { const e = nOf(idx, l.endN); return idx.source[e] === "\r" && idx.source[e + 1] === "\n" ? e + 1 : e; };
+    let start = nOf(idx, cs.lines[0].startN);
+    for (let i = 0; i < cs.lines.length; i++) {
+      const ln = cs.lines[i], end = endOf(ln);
+      if (offset > end) { start = end + 1; continue; }
+      if (offset < start || ln.k >= 0) return null;   // before the first line (the opener), or a line that shows a character
+      let ref = -1;
+      for (let q = i - 1; q >= 0 && ref < 0; q--) if (cs.lines[q].k >= 0) ref = q;
+      for (let q = i + 1; q < cs.lines.length && ref < 0; q++) if (cs.lines[q].k >= 0) ref = q;
+      if (ref < 0) return null;
+      const at = nthNonWs(blk.dom[0], cs.lines[ref].k);
+      if (!at) return null;
+      let row: DNode | null = at.t.parentNode;
+      while (row && !hasClass(row, "cl")) row = row.parentNode;
+      if (!row || !row.parentNode) return null;
+      const rows: DNode[] = [];
+      for (let c = 0; c < row.parentNode.childNodes.length; c++) { const n = row.parentNode.childNodes[c]; if (hasClass(n, "cl")) rows.push(n); }
+      const target = rows[rows.indexOf(row) + (i - ref)];
+      if (!target) return null;
+      let host = target as DElement;
+      for (let c = 0; c < target.childNodes.length; c++) { const n = target.childNodes[c]; if (hasClass(n, "ct")) { host = n as DElement; break; } }
+      let col = 0;
+      if (ln.ws) for (const w of ln.ws) if (nOf(idx, w) < offset) col++;
+      return { host, col };
+    }
+    return null;
+  }
+  return null;
+}
+
 /** Where source `offset` falls in the rendered text: the text node and the offset in it BEFORE which a
  *  point at that source position sits. The block is the mapped (not refused) one whose own rows hold the
  *  offset (ownRows: its text lines, the last one's line ending, the end of the file right after it) — no
  *  two blocks' rows overlap, so where one block's raw ends exactly as the next begins the one that begins
  *  there has the offset. Inside the block the point goes before the first emitted character at or past
  *  the offset — or right after the last one before it, when the offset follows that character directly
- *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
- *  Null when no block's rows hold the offset (a blank line between blocks, whichever token's raw carries
- *  it), the block is refused or has no element, or the offset sits inside a hole (a footnote reference's
- *  number, a cell or a code block the reading could not place, a table's source outside its cells, a fence's
- *  opener or closer line): a point there would land beside the wrong words, so the change keeps its card
- *  and Reveal instead. */
-function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
+ *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows. On a
+ *  code line that shows no character (a blank line inside a fence) the point goes into the line's own row
+ *  instead (blankCodeLineSpot), where the pre has one for it. Null when no block's rows hold the offset (a
+ *  blank line between blocks, whichever token's raw carries it), the block is refused or has no element,
+ *  or the offset sits inside a hole (a footnote reference's number, a cell or a code block the reading
+ *  could not place, a table's source outside its cells, a fence's opener or closer line): a point there
+ *  would land beside the wrong words, so the change keeps its card and Reveal instead. */
+function renderedSpot(idx: RenderedIndex, offset: number): Spot | null {
   let blk: Block | null = null;
   for (const b of idx.blocks) {
     const { lo, hi } = ownRows(idx, b);
@@ -4650,6 +4731,12 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
   // is not at). The first position is the edge, placed below beside the text it borders: the opener's first character, and the
   // line feed that ends the last code line before the closer.
   if (blk.holes.some((h) => h.reason === FENCE_LINE && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN))) return null;
+  // On a code line that shows no character (a blank line, or one of whitespace alone; the Slice 8 review, round 1): the point goes
+  // into the line's own row (blankCodeLineSpot), where the rule below put it before the next line's first character, one row down,
+  // which read as that line changed. A pre with no row for the line (undressed, or a fence's trailing blank line, which marked's
+  // renderer folds) leaves the point to the rule below, against the nearest character.
+  const row = blankCodeLineSpot(idx, blk, offset);
+  if (row) return row;
   // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
   // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
   let j = -1, k = -1;
@@ -4692,9 +4779,11 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
  * the position the index map gives source `offset` (renderedSpot), splitting a text node when the offset
  * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
  * as before. At the edge of another change's mark the point sits outside the mark, as in Raw (the
- * boundary rule above insertAfterText). Returns null when the offset cannot be placed (a refused block, a
- * hole, a blank line between blocks — a `space` token's or one a heading's raw swallowed; ownRows): the
- * change stays unpainted and keeps its card.
+ * boundary rule above insertAfterText). A point on a code line that shows no character goes into the
+ * line's own row cell, at its column among the row's whitespace or into the empty cell, as Raw's does
+ * (blankCodeLineSpot). Returns null when the offset cannot be placed (a refused block, a hole, a blank
+ * line between blocks, a `space` token's or one a heading's raw swallowed; ownRows): the change stays
+ * unpainted and keeps its card.
  */
 export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
                                    data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
@@ -4702,6 +4791,10 @@ export function paintRenderedPoint(renderedRoot: Element, source: string, offset
   const spot = renderedSpot(renderedIndex(root, source), offset);
   if (!spot) return null;
   const m = makePoint(root.ownerDocument, className, data, label, styles);
+  if ("host" in spot) {
+    if (!insertPointAt(textNodes(spot.host), spot.col, m)) spot.host.appendChild(m);
+    return m as unknown as Element;
+  }
   const parent = spot.t.parentNode as DElement | null;
   if (!parent) return null;
   if (spot.off <= 0) insertBeforeNode(spot.t, m);

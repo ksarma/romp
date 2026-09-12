@@ -15,9 +15,11 @@
 // configuration (md-config.ts) parsed into the DOM stand-in, which nests the nodes after an unclosed tag as a browser does,
 // KaTeX's fill stood in for; the idiom of anchor-map-obsidian.test.ts and anchor-map-wrappers.test.ts. The browser leg,
 // anchor-map-cells-browser.test.ts, runs the real viewer and the real panel. Every case that maps or names the one-cell rule
-// refuses "touches a table" over the tree before this slice. A last case times the index, one map and forty marks over a
-// 1,000-row table for the build note (the brief's open question 13; diagnostics, not a bound). Synthetic values only: an
-// invented note, no real session text.
+// refuses "touches a table" over the tree before this slice. One case is the Slice 8 review's (round 1): an astral character in
+// a cell the per-cell fallback holds, whose hole was counted by code point and shifted every later cell of the table; it fails
+// over the build's head cd3a06501 with the later cells' offsets shifted, and refuses whole over the base. A last case times the
+// index, one map and forty marks over a 1,000-row table for the build note (the brief's open question 13; diagnostics, not a
+// bound). Synthetic values only: an invented note, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -378,6 +380,45 @@ test("a cell with an HTML entity refuses that cell alone with the entity's sente
   // a Raw comment on the entity's cell still paints, through the fallback (the cell is a hole; its text is the block's)
   const marks = marksOf(box, FIX, rangeOf(FIX, "Fast &amp; simple"));
   assert.deepEqual(textMarks(marks).map((m) => m.textContent), ["Fast & simple"]);
+});
+
+// ── the per-cell fallback beside positioned cells: a hole's characters are counted as every other character is ──
+
+test("an astral character in a cell the per-cell fallback holds (an emoji beside an entity, or a numeric reference that decodes to one) leaves every later cell of the table mapping to its own offsets, painting in its own <td> and taking a deletion point at its own character: a hole's characters are counted per UTF-16 code unit as positioned text is (the Slice 8 review, round 1; before: one position per code point, so every later character read the position of the one after it, `ue2` mapped to `e2 |` plus the line feed and `| u`, the last cell to no end, a Raw comment on `ue2` painted `&` in the emoji's cell and `ue` in its own, and a deletion one character into `ue2` landed before the cell; on the base the table refused whole); the same emoji in a positioned cell and a BMP symbol in a hole cell are the controls", () => {
+  const SRC = "Status marks.\n\n| E1 | E2 |\n|----|----|\n| \u{1F600} &amp; | ue2 |\n| ue3 | ue4 |\n\nNumeric.\n\n| N1 | N2 |\n|----|----|\n| &#128512; grin | nb2 |\n| nb3 | nb4 |\n\nControls.\n\n| C1 | C2 |\n|----|----|\n| \u{1F600} smile | pc2 |\n| pc3 | pc4 |\n\n| A1 | A2 |\n|----|----|\n| ✅ &amp; | ub2 |\n| ub3 | ub4 |\n\nAfter.\n";
+  const ENTITY = "This selection touches prose with an HTML entity; comment on it from the Raw view.";
+  const box = buildRendered(SRC);
+  // the hole cells: each refuses alone with the entity's sentence and the Raw offer at the cell, its character shown decoded
+  for (const [shown, src] of [["\u{1F600} &", "\u{1F600} &amp;"], ["\u{1F600} grin", "&#128512; grin"], ["✅ &", "✅ &amp;"]] as const) {
+    assert.equal(find(box, "TD", shown).textContent, shown, shown + ": the browser shows the entity decoded");
+    const r = bad(mapText(box, SRC, shown), shown);
+    assert.equal(r.reason, ENTITY, shown);
+    assert.equal(r.blockStartOffset, at(SRC, src), shown + ": the Raw offer at the cell");
+  }
+  // every cell beside and below a hole maps to its own offsets (before: ue2 -> `e2 |` + LF + `| u`, ue3 -> `e3 | u`, ue4 -> no end; nb the same)
+  for (const cell of ["ue2", "ue3", "ue4", "nb2", "nb3", "nb4", "ub2", "ub3", "ub4", "pc2", "pc3", "pc4"]) mapsWhole(box, SRC, cell);
+  mapsWhole(box, SRC, "\u{1F600} smile");   // the control: the same emoji positioned, its two code units emitted as two
+  mapsWhole(box, SRC, "After.");
+  // a Raw comment on a later cell paints that cell alone (before: two marks, `&` in the emoji's cell and `ue` in ue2's)
+  for (const cell of ["ue2", "ue3", "nb2", "nb3", "pc2", "ub2"]) {
+    const fresh = buildRendered(SRC);
+    const marks = textMarks(marksOf(fresh, SRC, rangeOf(SRC, cell)));
+    assert.deepEqual(marks.map((m) => m.textContent), [cell], cell + ": one mark over the cell's text");
+    assert.equal(cellOf(marks[0], "TD").el.textContent, cell, cell + ": in its own cell");
+  }
+  // a deletion point one character into a later cell sits between its first and second characters (before: before the cell)
+  for (const cell of ["ue2", "nb2", "ub2", "pc2"]) {
+    const fresh = buildRendered(SRC);
+    const r = paintChangesRendered(El(fresh), SRC, [{ id: "d-" + cell, kind: "del", curFrom: at(SRC, cell) + 1, curTo: at(SRC, cell) + 1, oldText: "x", author: "web" }], () => ({}));
+    assert.deepEqual(r, { painted: ["d-" + cell], unpainted: [] }, cell);
+    const pt = allOf(fresh, "SPAN").find((e) => (e.getAttribute("class") || "") === "fc-del" && e.getAttribute("data-id") === "d-" + cell);
+    assert.ok(pt, cell + ": the point painted");
+    const td = cellOf(pt!, "TD").el;
+    assert.equal(td.textContent, cell, cell + ": in the cell the change is in");
+    const i = td.childNodes.indexOf(pt!);
+    assert.deepEqual([(td.childNodes[i - 1] as FakeText).data, (td.childNodes[i + 1] as FakeText).data], [cell[0], cell.slice(1)], cell + ": between its first and second characters");
+    unpaintChanges(El(fresh));
+  }
 });
 
 // ── item 3: a selection spanning cells is refused with the reason named, the Raw view offered on the exact span ──

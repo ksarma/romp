@@ -28,9 +28,10 @@
 // and a point on a fence's opener or closer line, which renders nothing, keeps its card (renderedSpot's FENCE_LINE
 // rule), except at the lines' edges, where it sits beside the text it borders: a top-level opener's first
 // character places before the code's first character (no text before it in the block), and the line feed that
-// ends the last code line places after that line's last character. A blank code line has no rule of its own: a
-// point on it places before the next line's first character, the nearest positioned one (the empty row holds no
-// text node to sit in). An empty fence is nothing's; an indented block has no fence lines.
+// ends the last code line places after that line's last character. A point on a blank code line goes into the
+// line's own row where the pre has rows (the Slice 8 review, round 1; anchor-map-code-lines.test.ts holds it over
+// the viewer's rows); this stand-in's pre has none, so the rule's fallback places it before the next line's first
+// character, the nearest positioned one. An empty fence is nothing's; an indented block has no fence lines.
 //
 // Fixtures are synthetic (the notes-api world).
 import { test } from "node:test";
@@ -231,7 +232,7 @@ test("Rendered deletion points and a table nested in a list item: inside a cell 
 
 // ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
 
-test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character; at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {
+test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character (this pre has no rows; with the viewer's rows the point goes into the blank line's own row, anchor-map-code-lines.test.ts); at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {
   const source = "Intro.\n\n```python\nfirst = 1\n\nthird = 3\n```\n\nAfter.\n";
   const box = buildRendered(source);
   assert.equal(withTag(box, "PRE").length, 1, "marked lexes the fence");
@@ -256,7 +257,7 @@ test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the
   let [a, b] = aroundIn("f-line-end");
   assert.ok(a.endsWith("first = 1") && b.startsWith("\n\nthird"), "the line's end: after its last character: " + JSON.stringify([a, b.slice(0, 8)]));
   [a, b] = aroundIn("f-blank");
-  assert.ok(a.endsWith("first = 1\n\n") && b.startsWith("third = 3"), "the blank code line: before the next line's first character: " + JSON.stringify([a.slice(-6), b.slice(0, 8)]));
+  assert.ok(a.endsWith("first = 1\n\n") && b.startsWith("third = 3"), "the blank code line in a pre with no rows: before the next line's first character, the fallback: " + JSON.stringify([a.slice(-6), b.slice(0, 8)]));
   [a, b] = aroundIn("f-mid");
   assert.ok(a.endsWith("third ") && b.startsWith("= 3"), "inside a line: on its row: " + JSON.stringify([a.slice(-6), b.slice(0, 4)]));
   [a, b] = aroundIn("f-closer-lf");
