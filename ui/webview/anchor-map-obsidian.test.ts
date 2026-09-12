@@ -1067,9 +1067,14 @@ test("the first obstacle in document order is the one named: a selection from a 
   const box = buildRendered(src);
   const span = (from: string, to: string) => mapRenderedSelection(sel(point(box, from), point(box, to, true)), El(box), src);
   const lineOf = (needle: string) => src.slice(0, src.indexOf(needle)).split("\n").length - 1;
+  // since Slice 8 the cells are positioned and a span from `cell one` covers `cell two` as well, so the table's obstacle is the
+  // one-cell rule, still named ahead of the html block after it, with the Raw view offered on the two cells' exact span (the
+  // Slice 5 shape was "touches a table" with the table's offset)
   let r = bad(span("cell one", "Html block text"), "a table cell to the html block");
-  assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("| Col A")], "the Raw offer is the table's");
+  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| cell one"), src.indexOf("cell one")], "the Raw offer starts at the first covered cell");
+  assert.equal(r.rawHasQuote, true);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "cell one | cell two", "the exact span of the covered cells");
   r = bad(span("code line one", "Html block text"), "a code line across the table to the html block");
   assert.match(r.reason, /a code block/, "the code block comes first (before: an HTML block): " + r.reason);
   assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("```"), src.indexOf("```")], "the Raw offer is the code block's");
@@ -1083,6 +1088,7 @@ test("the first obstacle in document order is the one named: a selection from a 
   assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /a code block/);
   assert.match(bad(span("Intro para.", "code line two"), "prose into the code").reason, /a code block/);
   assert.match(bad(span("cell one", "cell two"), "two cells").reason, /a table/);
+  assert.match(bad(span("cell one", "cell two"), "two cells").reason, /spans more than one cell/, "the one-cell rule (Slice 8)");
   // the whitespace node between the middle paragraph and the table: its start snaps to the table and its end to the paragraph, and
   // the table's text, which the person did not select, is not read for its hole
   const middle = allText(box).find((t) => t.data === "Middle para.")!;

@@ -740,11 +740,11 @@ test("Rendered refusals: code, table, HTML block, entity prose, escaped link lab
   r = bad(mapRenderedSelection(inside(byTag("PRE", 1), 0, 3), El(box), source));
   assert.match(r.reason, /indented code/);
   assert.equal(r.blockStartLine, lineOf("    indented"));
-  // table
-  r = bad(mapRenderedSelection(inside(byTag("TABLE"), 0, 2), El(box), source));
-  assert.match(r.reason, /table/);
-  assert.equal(r.blockStartLine, lineOf("| Route |"));
-  assert.equal(r.rawHasQuote, true, "the cell text occurs in the source");
+  // a table cell MAPS since Slice 8 of plans/markdown-viewer.md (before: refused as a table with the Raw offer, the cell text found
+  // by indexOf); the first two characters of the header's first cell are its own two source characters
+  const cell = ok(mapRenderedSelection(inside(byTag("TABLE"), 0, 2), El(box), source), "a table cell maps (before: refused as a table)");
+  assert.equal(cell.quote, "Ro");
+  assert.deepEqual(cell.range, { start: source.indexOf("Route"), end: source.indexOf("Route") + 2 }, "the cell's own offsets");
   // HTML block
   r = bad(mapRenderedSelection(inside(byTag("DIV"), 0, 3), El(box), source));
   assert.match(r.reason, /HTML block/);
@@ -924,7 +924,7 @@ const firstEl = (root: FakeNode, tag: string, n = 0): FakeElement => {
 const wholeOf = (e: FakeElement) => { const p = nonWsPositions(e); return sel({ node: p[0].t, offset: p[0].off }, { node: p[p.length - 1].t, offset: p[p.length - 1].off + 1 }); };
 const partOf = (e: FakeElement, from: number, to: number) => { const p = nonWsPositions(e); return sel({ node: p[from].t, offset: p[from].off }, { node: p[to - 1].t, offset: p[to - 1].off + 1 }); };
 
-test("Rendered: code and tables nested in list items are holes — the other items still map, the hole refuses with its own line", () => {
+test("Rendered: a code block nested in a list item is a hole, the other items still map and the hole refuses with its own line; a table nested in a list item maps cell by cell since Slice 8 (before: a hole refusing with the table's line)", () => {
   const source = [
     "- Install it:", "", "  ```sh", "  npm install notes-api", "  ```", "", "- Then run the server.", "", "- A table:", "",
     "  | a | b |", "  |---|---|", "  | 1 | 2 |", "", "- After the table.", "",
@@ -939,9 +939,10 @@ test("Rendered: code and tables nested in list items are holes — the other ite
   assert.equal(r.blockStartLine, 2);
   assert.equal(r.rawHasQuote, true);
   assert.equal(source.slice(r.rawRange!.start, r.rawRange!.end), "npm");
-  r = bad(mapRenderedSelection(partOf(firstEl(ul, "TABLE"), 0, 1), El(box), source));
-  assert.match(r.reason, /table/);
-  assert.equal(r.blockStartLine, 10);
+  // the nested table's header cell maps to its own offset (Slice 8; before: refused as a table at line 10)
+  const cell = ok(mapRenderedSelection(partOf(firstEl(ul, "TABLE"), 0, 1), El(box), source), "a nested table's cell maps");
+  assert.equal(cell.quote, "a");
+  assert.equal(cell.range.start, source.indexOf("| a |") + 2);
   // a selection from the prose item into the code touches the hole
   const li0 = nonWsPositions(firstEl(ul, "LI", 0)), pre = nonWsPositions(firstEl(ul, "PRE"));
   r = bad(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: pre[2].t, offset: pre[2].off + 1 }), El(box), source));
@@ -1492,8 +1493,12 @@ test("Rendered deletion points that cannot be placed stay unpainted, never besid
     del("u-blank", at("\n\n```python") + 1),                       // the blank line between the paragraph and the fence
     del("p-prose", at("An aligned paragraph after everything.")),   // the control: a mapped paragraph
   ], stylesFor);
-  assert.deepEqual(res, { painted: ["p-prose"], unpainted: ["u-code", "u-table", "u-html", "u-blank"] });
-  assert.equal(withClass(box, "fc-del").length, 1);
+  // a table's cell places its point since Slice 8 (before: unpainted, the table a hole); the fence, the html block and the blank line stay unplaced
+  assert.deepEqual(res, { painted: ["u-table", "p-prose"], unpainted: ["u-code", "u-html", "u-blank"] });
+  assert.equal(withClass(box, "fc-del").length, 2);
+  const inCell = withClass(box, "fc-del").find((m) => m.getAttribute("data-id") === "u-table")!;
+  assert.equal((inCell.parentNode as FakeElement).tagName, "TD", "the table's point stands inside the changed cell");
+  assert.equal((inCell.parentNode as FakeElement).textContent, "120 ms");
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
   // a list item holding a nested code block: the block is a HOLE the item's own text surrounds. A deletion inside the

@@ -3,11 +3,14 @@
 // the code left every test green. Driven over marked's output under the viewer's configuration, parsed into the
 // structural stand-in anchor-map.test.ts uses (there is no jsdom in this tree).
 //
-//   1. A table nested in a list item is a HOLE with the table's own extent. renderedSpot places a point past a
-//      hole only when the offset is at or after the hole's END (`endN`); with the table's endN mis-set to its
-//      start, a deletion INSIDE the table was painted immediately before the text after it — the wrong-words
-//      placement the plan says a hole must never produce — and no test failed (anchor-map.test.ts covers the
-//      code-fence hole only).
+//   1. A table nested in a list item. Until Slice 8 of plans/markdown-viewer.md it was a HOLE with the table's own
+//      extent: renderedSpot places a point past a hole only when the offset is at or after the hole's END (`endN`);
+//      with the table's endN mis-set to its start, a deletion INSIDE the table was painted immediately before the
+//      text after it, the wrong-words placement the plan says a hole must never produce, and no test failed
+//      (anchor-map.test.ts covers the code-fence hole only). Since Slice 8 the table's cells are positioned, so a
+//      point inside a cell places in that cell, and the same guard holds for the rest of the table's source: a
+//      point on the delimiter row or after the last cell's bar stays unpainted (renderedSpot's table rule), never
+//      beside the words after the table.
 //   2. Where one mapped block ends exactly as the next begins (a heading and the paragraph under it: marked's
 //      heading raw swallows its trailing newlines, so the pair is adjacent with or without a blank line), the
 //      block that BEGINS at the offset holds the point. A deletion of a paragraph's first word otherwise lands
@@ -176,9 +179,12 @@ const stylesFor = (c: ChangePaint): Record<string, string> => (COLORS[c.author] 
 const del = (id: string, curFrom: number, oldText = "gone", author = "web"): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText, author });
 const point = (root: FakeNode, id: string): FakeElement => { const x = withClass(root, "fc-del").find((m) => m.getAttribute("data-id") === id); assert.ok(x, id + " painted"); return x!; };
 
-// ── 1. a nested table is a hole with the table's own extent ────────────────────────────────────────
+// ── 1. a nested table: its cells are positioned (Slice 8), the rest of its source is nothing's ─────────────────────────────
+// Until Slice 8 the table was a hole with the table's own extent and every point inside it was unpainted. Now a point inside a
+// cell places in that cell, and a point in the table's source outside every cell (the delimiter row, the bar after the last
+// cell) stays unpainted, as before: a point there would land in a cell the change is not in.
 
-test("Rendered deletion points and a table nested in a list item: inside the table (a cell, the header, the delimiter row) the change is unpainted; at the text before it and at the text after it the point sits against that text — never beside the words after the table", () => {
+test("Rendered deletion points and a table nested in a list item: inside a cell (a body cell, the header) the point places in that cell (Slice 8; before: unpainted, the table a hole); on the delimiter row and right after the last cell's bar the change stays unpainted; at the text before the table and at the text after it the point sits against that text, never beside the words after the table", () => {
   const source = "- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n\n  after table\n";
   const box = buildRendered(source);
   assert.equal(withTag(box, "TABLE").length, 1, "marked lexes the table inside the item");
@@ -191,9 +197,14 @@ test("Rendered deletion points and a table nested in a list item: inside the tab
     del("t-before", at(source, "Item one") + "Item one".length),
     del("t-after", at(source, "after table")),
   ], stylesFor);
-  assert.deepEqual(r, { painted: ["t-before", "t-after"], unpainted: ["t-in", "t-head", "t-rule", "t-end"] });
-  assert.deepEqual(withClass(box, "fc-del").map((m) => m.getAttribute("data-id")), ["t-before", "t-after"], "the unpainted ones are nowhere in the body");
-  for (const m of withClass(box, "fc-del")) assert.ok(!inside(m, "TABLE"), "no point inside the table");
+  assert.deepEqual(r, { painted: ["t-in", "t-head", "t-before", "t-after"], unpainted: ["t-rule", "t-end"] });
+  assert.deepEqual(withClass(box, "fc-del").map((m) => m.getAttribute("data-id")), ["t-before", "t-head", "t-in", "t-after"], "the painted ones in document order; the unpainted ones are nowhere in the body");
+  for (const id of ["t-in", "t-head"]) {
+    const pt = point(box, id);
+    assert.ok(inside(pt, id === "t-in" ? "TD" : "TH"), id + ": inside its cell");
+    assert.equal((pt.parentNode as FakeElement).textContent, id === "t-in" ? "1" : "a", id + ": the cell the change is in");
+  }
+  for (const m of withClass(box, "fc-del")) if (!["t-in", "t-head"].includes(m.getAttribute("data-id") || "")) assert.ok(!inside(m, "TABLE"), "no other point inside the table");
   let [pre, post] = around(blockOf(box, point(box, "t-before")), point(box, "t-before"));
   assert.ok(pre.endsWith("Item one"), "against the text before the table: " + JSON.stringify(pre.slice(-12)));
   assert.ok(!post.trimStart().startsWith("Item"), JSON.stringify(post.slice(0, 10)));

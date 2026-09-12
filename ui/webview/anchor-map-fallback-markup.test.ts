@@ -439,12 +439,17 @@ test("Rendered fallback, a code hole nested in a list item: the item's prose kee
 });
 
 // ── 4. Slice 5, item 8: a quote across two cells reads its pipe as a blank ──────────────────────────
+// Since Slice 8 (plans/markdown-viewer.md) a table's cells are positioned and these quotes paint through the EXACT path, the
+// fallback's table reading serving the cells the walk could not place (an entity's) alone; the cases stand as controls that the
+// marks are the same, one per cell and none over the pipe, and the delimiter-row case flips: the header cell and the body cell
+// either side of the row paint (the brief's open question 5, the default taken), where the fallback's needle found no rendering
+// of the dashes and painted nothing.
 
 const CELLS = "# Table\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four |\n\nAfter paragraph.\n";
 /** The marks with text of their own (a blank between two cells is a trim candidate in a browser, never the passage). */
 const textMarks = (marks: FakeElement[]): FakeElement[] => marks.filter((m) => m.textContent.trim() !== "");
 
-test("Rendered fallback, a table hole: `cell one | cell two` paints one mark in each of the row's two cells (was null: the needle kept the pipe); one cell still paints one; a quote spanning the delimiter row paints nothing; `\\|` stays the cell's own pipe", () => {
+test("Rendered, a table: `cell one | cell two` paints one mark in each of the row's two cells (was null before Slice 5: the needle kept the pipe; since Slice 8 through the exact path); one cell still paints one; a quote spanning the delimiter row paints the header cell and the body cell either side of it (Slice 8; before: nothing, the card keeping Reveal); `\\|` stays the cell's own pipe", () => {
   let h = highlight(CELLS, rangeOf(CELLS, "cell one | cell two"));
   assert.ok(h.marks && h.marks.length, "painted");
   const tm = textMarks(h.marks!);
@@ -456,12 +461,16 @@ test("Rendered fallback, a table hole: `cell one | cell two` paints one mark in 
   h = highlight(CELLS, rangeOf(CELLS, "cell one"));
   assert.ok(h.marks && textMarks(h.marks!).length === 1);
   assert.equal(h.cell!.index, 0);
-  // across the delimiter row: its dashes stand in no rendered text
+  // across the delimiter row: its dashes stand in no rendered text, and the cells either side of it are positioned (Slice 8), so
+  // the header cell and the body cell paint, one mark each, and nothing between them
   const acrossDelim = { start: CELLS.indexOf("Col B"), end: CELLS.indexOf("cell one") + "cell one".length };
   const box = buildRendered(CELLS);
-  const before = serialize(box);
-  assert.equal(paintRendered(El(box), CELLS, acrossDelim, "fc-hl"), null, "the quote spans the delimiter row: nothing painted, the card keeps Reveal");
-  assert.equal(serialize(box), before);
+  const across = paintRendered(El(box), CELLS, acrossDelim, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(across && across.length, "the quote spans the delimiter row: the cells either side paint (before: nothing, the card keeping Reveal)");
+  const atm = textMarks(across!);
+  assert.deepEqual(atm.map((m) => m.textContent), ["Col B", "cell one"]);
+  assert.deepEqual([cellOf(atm[0], "TH").index, cellOf(atm[1], "TD").index], [1, 0]);
+  assert.equal(across!.length, 2, "no mark over the whitespace between the rows");
   // an escaped pipe is the cell's own character
   const esc = "| a \\| b | c |\n|---|---|\n| d | e |\n";
   h = highlight(esc, rangeOf(esc, "a \\| b"), "TH");

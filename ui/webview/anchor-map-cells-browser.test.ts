@@ -1,0 +1,244 @@
+// A table cell commented from the Rendered view, over the REAL viewer and the REAL Comments panel in headless Chromium
+// (plans/markdown-viewer.md, Slice 8, items 1 and 3; acceptance: a comment on a cell made from Rendered paints in both views
+// after a reload, and a selection spanning two cells is refused with the reason named). The synthetic fixture
+// anchor-map-fixtures/wrappers-plain.md (the Slice 5 probe's, read-only) is opened in the RENDERED view through
+// real-viewer-leg.ts, on the Files pane at 900 and 380 px and in the chat modal, and a REAL mouse drag selects `cell one` in
+// its `<td>`: the panel's mouseup offers the Comment float, its click opens the composer quoting `cell one` with Save, the
+// save posts the exact source slice with the cell's offset as the hint (the anchor the host stores byte for byte), the mark
+// stands inside that `<td>` once the store answers, and a switch to Raw shows the same comment's mark on the table's row.
+// The same comment served before a fresh open paints in both views. Then a drag from `cell one` into `cell two` is refused
+// with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects `cell one | cell two` on the
+// row with the composer quoting it and Save offered. Before this slice the probe (the Slice 5 report's section (j)) recorded
+// the cell drag refused as "touches a table" with the Raw view preselecting the cell after the switch, and the two-cell drag
+// refused with no preselect. The table's width is read before and after the cell's mark paints, for the build note (the
+// brief's open question 15). Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do.
+// Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+import { test } from "node:test";
+import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { inBrowser, openPanel, frames, pageHtml, ORIGIN, REPORT, SID, MT, STATUS, UI, type Mode } from "./real-viewer-leg";
+import { makeAnchor } from "./anchor-map";
+
+const PLAIN = fs.readFileSync(path.join(UI, "anchor-map-fixtures", "wrappers-plain.md"), "utf8");
+const T0 = 1757145600000;
+const NOTE = "Check this cell against the spec.";
+const CELL_Q = "cell one";
+const ROW_Q = "cell one | cell two";
+const FINAL_Q = "Final paragraph here.";
+const ONE_CELL = "This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.";
+
+/** A comment in the host's shape on the fixture's passage `quote`: the exact source slice, its context, its position. */
+function comment(quote: string, k: number): Record<string, unknown> {
+  const at = PLAIN.indexOf(quote);
+  assert.ok(at >= 0, "the fixture holds " + JSON.stringify(quote));
+  return { id: (T0 + k) + "-" + at, author: "you", ts: T0 + k, body: NOTE, anchor: makeAnchor(PLAIN, { start: at, end: at + quote.length }), anchorAt: at, replies: [], resolved: false };
+}
+const FINAL = comment(FINAL_Q, 1);
+const CELL = comment(CELL_Q, 2);
+const id = (c: Record<string, unknown>): string => c.id as string;
+/** The kernel's status with `comments` in the store, `n` bumping the store's mtime so each reply reads as a new write. */
+const withComments = (comments: Record<string, unknown>[], n: number): Record<string, unknown> =>
+  ({ ...STATUS, store: { ...STATUS.store, comments }, storeMtimeNs: "17571456000000000" + (40 + n), unsent: { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null } });
+
+/** The page: the fixture open in the Rendered view, `status` served before the open, the panel open, the sentinel's mark painted. */
+async function openWith(browser: any, mode: Mode, width: number, status: Record<string, unknown>): Promise<{ page: any; errors: string[] }> {
+  const page = await browser.newPage({ viewport: { width, height: 700 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e: Error) => { errors.push(e.message); });
+  const html = pageHtml(mode, { [REPORT]: PLAIN }, MT);
+  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+  await page.goto(ORIGIN + "/");
+  await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+  await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+  await frames(page, 2);
+  await openPanel(page);
+  await markPainted(page, id(FINAL));
+  return { page, errors };
+}
+/** Wait for the comment's highlight in the view's body (the pass painted it). */
+const markPainted = (page: any, cid: string): Promise<unknown> =>
+  page.waitForFunction((c: string) => !!document.querySelector('.fileview-body [data-act="fcopen"][data-id="' + c + '"]'), cid, { timeout: 10000 });
+
+type Points = { sx: number; sy: number; ex: number; ey: number; selected: string };
+/** In the page: the boxes of the passage's first and last characters under `rootSel`, its start scrolled to the body's middle first. */
+function pointsIn(spec: { rootSel: string; start: string; end: string }): Points {
+  const root = document.querySelector(spec.rootSel) as HTMLElement;
+  const texts: Text[] = [];
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) texts.push(t as Text);
+  const si = texts.findIndex((t) => t.data.includes(spec.start));
+  if (si < 0) throw new Error("start not in the view's text: " + spec.start);
+  const sNode = texts[si], sOff = sNode.data.indexOf(spec.start);
+  let eNode: Text | null = null, eOff = -1;
+  for (let i = si; i < texts.length && !eNode; i++) { const j = texts[i].data.indexOf(spec.end, i === si ? sOff : 0); if (j >= 0) { eNode = texts[i]; eOff = j + spec.end.length; } }
+  if (!eNode) throw new Error("end not in the view's text after the start: " + spec.end);
+  (sNode.parentElement as HTMLElement).scrollIntoView({ block: "center" });
+  const rect = (n: Text, off: number) => { const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off + 1); return r.getBoundingClientRect(); };
+  const a = rect(sNode, sOff), b = rect(eNode, eOff - 1);
+  const whole = document.createRange(); whole.setStart(sNode, sOff); whole.setEnd(eNode, eOff);
+  return { sx: a.left + Math.min(1.5, a.width / 3), sy: a.top + a.height / 2, ex: b.right - Math.min(1.5, b.width / 3), ey: b.top + b.height / 2, selected: whole.toString() };
+}
+/** Select the passage in the Rendered view with a real drag over its first and last characters' boxes. */
+async function dragRendered(page: any, start: string, end: string): Promise<string> {
+  await page.evaluate(() => { getSelection()!.removeAllRanges(); });
+  const pts: Points = await page.evaluate(pointsIn, { rootSel: ".fileview-md", start, end });
+  await frames(page, 1);
+  await page.mouse.move(pts.sx, pts.sy);
+  await page.mouse.down();
+  await page.mouse.move((pts.sx + pts.ex) / 2, (pts.sy + pts.ey) / 2, { steps: 3 });
+  await page.mouse.move(pts.ex, pts.ey, { steps: 6 });
+  await page.mouse.up();
+  await frames(page, 2);
+  return page.evaluate(() => String(getSelection()));
+}
+type ComposerState = { open: boolean; refused: string | null; rawTitle: string | null; quote: string | null; save: boolean | null; raw: boolean };
+/** The composer as the panel shows it: the refusal line, the Raw button's title, the quote, whether Save is offered. */
+const composerState = (page: any): Promise<ComposerState> => page.evaluate(() => {
+  const box = document.querySelector(".fc-composer") as HTMLElement | null;
+  if (!box || !document.contains(box) || box.getClientRects().length === 0) return { open: false, refused: null, rawTitle: null, quote: null, save: null, raw: false };
+  const sw = box.querySelector('[data-act="fcraw"]') as HTMLElement | null;
+  const save = box.querySelector('[data-act="fcsave"]') as HTMLButtonElement | null;
+  return { open: true, refused: box.querySelector(".fc-refused")?.textContent ?? null, rawTitle: sw ? sw.title : null, quote: box.querySelector(".fc-quote")?.textContent ?? null, save: save ? !save.disabled : null, raw: !!sw };
+});
+const floatShown = (page: any): Promise<unknown> => page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+/** The float's click, the note typed, the save; the harness answers with `next`, whose new comment's card and mark are awaited. */
+async function saveComment(page: any, c: Record<string, unknown>, next: Record<string, unknown>): Promise<void> {
+  await page.keyboard.type(NOTE);
+  await page.evaluate((st: unknown) => { (window as any).__status = st; }, next);
+  await page.click('.fileview-aside [data-act="fcsave"]');
+  await page.waitForFunction((cid: string) => !!document.querySelector('.fileview-aside .fc-card[data-id="' + cid + '"]'), id(c), { timeout: 10000 });
+  await markPainted(page, id(c));
+  await frames(page, 2);
+}
+const posted = (page: any): Promise<any[]> => page.evaluate(() => (window as any).__posted);
+
+type CellRead = { marks: number; text: string; cell: { tag: string; index: number; row: number } | null; tableWidth: number };
+/** The comment's marks in the Rendered view: their count, their text, the cell and row the first stands in, and the table's width. */
+const readCell = (page: any, cid: string): Promise<CellRead> => page.evaluate((c: string) => {
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const marks = Array.from(md.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + c + '"]')) as HTMLElement[];
+  const m = marks[0];
+  const td = m ? m.closest("td, th") : null;
+  const tr = td ? td.parentElement as HTMLElement : null;
+  const tbody = tr ? tr.parentElement as HTMLElement : null;
+  const table = md.querySelector("table") as HTMLElement;
+  return {
+    marks: marks.length, text: marks.map((x) => x.textContent).join(" ").replace(/\s+/g, " ").trim(),
+    cell: td && tr && tbody ? { tag: td.tagName, index: Array.from(tr.children).indexOf(td), row: Array.from(tbody.children).indexOf(tr) } : null,
+    tableWidth: table ? table.getBoundingClientRect().width : -1,
+  };
+}, cid);
+const tableWidth = (page: any): Promise<number> => page.evaluate(() => { const t = document.querySelector(".fileview-md table") as HTMLElement | null; return t ? t.getBoundingClientRect().width : -1; });
+/** The comment's marks in the Raw view: their count and the text of the row the first stands on. */
+const readRaw = (page: any, cid: string): Promise<{ marks: number; row: string; text: string }> => page.evaluate((c: string) => {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const marks = Array.from(body.querySelectorAll('.fc-hl[data-act="fcopen"][data-id="' + c + '"]')) as HTMLElement[];
+  const row = marks[0] ? marks[0].closest(".fv-cl") : null;
+  return { marks: marks.length, row: row ? (row.textContent || "").trim() : "", text: marks.map((m) => m.textContent).join("") };
+}, cid);
+/** The Raw view's preselection: the marks' text in order and the rows they stand on. */
+const preselRead = (page: any): Promise<{ text: string; rows: number }> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const marks = Array.from(body.querySelectorAll(".fc-presel")) as HTMLElement[];
+  return { text: marks.map((m) => m.textContent).join(""), rows: new Set(marks.map((m) => m.closest(".fv-cl"))).size };
+});
+const squash = (s: string): string => s.replace(/\s+/g, "");
+async function toRaw(page: any): Promise<void> {
+  await page.click('.fileview-acts .fileview-btn:text-is("Raw")');
+  await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+  await frames(page, 3);
+}
+async function toRendered(page: any): Promise<void> {
+  await page.click('.fileview-acts .fileview-btn:text-is("Rendered")');
+  await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+  await frames(page, 3);
+}
+
+test("in a browser, the real viewer and panel on the Files pane at 900 and 380 px and in the chat modal: a REAL drag over `cell one` in Rendered offers the float, the composer quotes the cell with Save (before: the refusal `touches a table` and Switch to Raw), the save posts the exact slice at the cell's offset, the mark stands in the row's first cell, the Raw view shows it on the row; then a drag from `cell one` into `cell two` is refused with the one-cell sentence and Switch to Raw preselects the row's span with the composer quoting it (before: refused with nothing preselected)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["pane", 380], ["chat", 1000]] as [Mode, number][]) {
+      const what = mode + " " + width + "px";
+      const { page, errors } = await openWith(browser, mode, width, withComments([FINAL], 0));
+      const widthBefore = await tableWidth(page);
+      // the cell: a real drag, the float, the composer, the save
+      const selected = await dragRendered(page, "cell one", "cell one");
+      assert.equal(selected.trim(), CELL_Q, what + ": the drag selected the cell's text");
+      await floatShown(page);
+      await page.click(".fc-float");
+      await frames(page, 2);
+      const c1 = await composerState(page);
+      assert.equal(c1.open, true, what + ": the composer opens");
+      assert.equal(c1.refused, null, what + ": no refusal (before: touches a table, with Switch to Raw): " + JSON.stringify(c1));
+      assert.equal(c1.raw, false, what + ": no Switch to Raw");
+      assert.equal(c1.quote, CELL_Q, what + ": the composer quotes the cell");
+      assert.equal(c1.save, true, what + ": Save is offered");
+      assert.equal(await page.evaluate(() => { const i = document.querySelector(".fc-composer .fc-input"); return !!i && document.activeElement === i; }), true, what + ": the composer's box has the focus");
+      await saveComment(page, CELL, withComments([FINAL, CELL], 1));
+      const writes = (await posted(page)).filter((x: any) => x.type === "fileComments" && x.verb === "comment");
+      assert.deepEqual(writes.map((w: any) => [w.args.anchor.quote, w.args.hintOffset]), [[CELL_Q, PLAIN.indexOf(CELL_Q)]], what + ": the stored quote is the exact source slice at the cell's offset");
+      const r = await readCell(page, id(CELL));
+      assert.ok(r.marks >= 1, what + ": the cell's mark painted: " + JSON.stringify(r));
+      assert.equal(r.text, CELL_Q, what + ": the mark reads the cell's text");
+      assert.deepEqual(r.cell, { tag: "TD", index: 0, row: 0 }, what + ": inside the first body row's first cell");
+      t.diagnostic(what + ": table width before the mark " + widthBefore + " px, after " + r.tableWidth + " px (the mark's side padding; the brief's open question 15)");
+      // the Raw view: the same comment's mark on the table's row
+      await toRaw(page);
+      await markPainted(page, id(CELL));
+      const raw = await readRaw(page, id(CELL));
+      assert.ok(raw.marks >= 1, what + ": the Raw view paints the comment: " + JSON.stringify(raw));
+      assert.equal(raw.text, CELL_Q, what + ": over the cell's characters");
+      assert.ok(raw.row.includes("| cell one | cell two |"), what + ": on the table's row: " + JSON.stringify(raw.row));
+      // back in Rendered: two cells
+      await toRendered(page);
+      await markPainted(page, id(CELL));
+      const two = await dragRendered(page, "cell one", "cell two");
+      assert.equal(squash(two), squash(ROW_Q.replace(" | ", " ")), what + ": the drag selected the two cells: " + JSON.stringify(two));
+      await floatShown(page);
+      await page.click(".fc-float");
+      await frames(page, 2);
+      const c2 = await composerState(page);
+      assert.equal(c2.open, true, what + ": the composer opens on the two cells");
+      assert.equal(c2.refused, ONE_CELL, what + ": the one-cell sentence (before: touches a table)");
+      assert.equal(c2.rawTitle, "Raw view, with this passage selected", what + ": the Raw button promises the passage (before: 'scrolled to the block; select the passage there')");
+      assert.equal(c2.save, null, what + ": no Save under the refusal");
+      await page.click('.fc-composer [data-act="fcraw"]');
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+      await frames(page, 3);
+      const p = await preselRead(page);
+      assert.equal(squash(p.text), squash(ROW_Q), what + ": the Raw view preselects the row's span, pipe included (before: nothing): " + JSON.stringify(p));
+      assert.equal(p.rows, 1, what + ": one row");
+      const c3 = await composerState(page);
+      assert.equal(c3.refused, null, what + ": the refusal is answered");
+      assert.equal(c3.quote, ROW_Q, what + ": the composer quotes the span");
+      assert.equal(c3.save, true, what + ": Save is offered from Raw");
+      await page.click('.fc-composer [data-act="fccancel"]');
+      await frames(page, 2);
+      assert.equal((await composerState(page)).open, false, what + ": Cancel closes the box");
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the real viewer and panel: the cell comment served before a fresh open paints in Rendered inside its <td> and in Raw on the table's row (the plan's acceptance: a comment on a cell paints in both views after a reload; a control, green before this slice through the fallback's ordinal and now through the exact path), on the Files pane and in the chat modal", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      const what = mode + " " + width + "px, fresh open";
+      const { page, errors } = await openWith(browser, mode, width, withComments([FINAL, CELL], 3));
+      await markPainted(page, id(CELL));
+      await frames(page, 2);
+      const r = await readCell(page, id(CELL));
+      assert.ok(r.marks >= 1, what + ": painted in Rendered: " + JSON.stringify(r));
+      assert.equal(r.text, CELL_Q, what + ": the cell's text");
+      assert.deepEqual(r.cell, { tag: "TD", index: 0, row: 0 }, what + ": inside the cell");
+      await toRaw(page);
+      await markPainted(page, id(CELL));
+      const raw = await readRaw(page, id(CELL));
+      assert.equal(raw.text, CELL_Q, what + ": painted in Raw over the cell's characters");
+      assert.ok(raw.row.includes("| cell one | cell two |"), what + ": on the row");
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+    }
+  });
+});

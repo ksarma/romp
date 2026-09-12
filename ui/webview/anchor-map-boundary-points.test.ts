@@ -322,7 +322,7 @@ test("change points at one offset keep the order they were painted in, in both v
 
 // ── 4. a substitution's point sits before its tint wherever the tint was found: the fallback path ──
 
-test("Rendered change marks: a substitution inside a code fence or a table cell — blocks the index map refuses, so its tint came through the text-match fallback — still gets its point immediately before the tint and is reported painted; a deletion at the same offset is card-only, which proves the block is refused", () => {
+test("Rendered change marks: a substitution inside a code fence (a block the index map refuses, so its tint comes through the text-match fallback) or a table cell (positioned since Slice 8, so its tint comes through the exact path) gets its point immediately before the tint and is reported painted; a deletion at the same offset is card-only in the fence, which proves the block is refused, and places in the cell (before Slice 8: card-only there too)", () => {
   const cases: [string, string, string, string, string][] = [
     // source, the new text, the old text, the element the tint must be inside, a deletion's label
     ["# Report\n\n```\nrespond(request)\n```\n", "respond", "reply", "PRE", "await "],
@@ -332,8 +332,14 @@ test("Rendered change marks: a substitution inside a code fence or a table cell 
     const box = buildRendered(source);
     const before = serialize(box);
     const off = at(source, newText);
-    // the block IS refused: a bare deletion here cannot be placed through the map
-    assert.deepEqual(paintChangesRendered(El(box), source, [del("x", off, delLabel, "web")], stylesFor), { painted: [], unpainted: ["x"] }, tag + ": the map refuses the block");
+    // the fence IS refused: a bare deletion there cannot be placed through the map; the cell is positioned: the deletion places in it
+    const bare = paintChangesRendered(El(box), source, [del("x", off, delLabel, "web")], stylesFor);
+    if (tag === "PRE") assert.deepEqual(bare, { painted: [], unpainted: ["x"] }, tag + ": the map refuses the block");
+    else {
+      assert.deepEqual(bare, { painted: ["x"], unpainted: [] }, tag + ": the cell is positioned (Slice 8; before: refused)");
+      assert.ok(inside(withClass(box, "fc-del")[0], "TD"), tag + ": the deletion's point stands in the cell");
+      unpaintChanges(El(box));
+    }
     assert.equal(serialize(box), before);
     const s = sub("s", off, newText, oldText, "web");
     assert.deepEqual(paintChangesRendered(El(box), source, [s], stylesFor), { painted: ["s"], unpainted: [] }, tag + ": the substitution is painted");

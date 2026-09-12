@@ -790,17 +790,31 @@ function blockLexView(v: View): View {
 }
 
 type Hole = { reason: string; startN: number; endN: number };
+/** A table cell's emitted characters, `[startK, endK)` of the block's chars, and the cell's own span in N, `[startN, endN)`: the
+ *  row's segment trimmed as marked trims the cell's text (walkRow). Every cell that shows a character has one, a cell the
+ *  per-cell fallback holds (its characters in a hole) too; a padded cell, which shows nothing, has none. Slice 8 of
+ *  plans/markdown-viewer.md: the one-cell rule of the selection map reads them (mapRenderedSelection), and a change's point
+ *  places inside one and nowhere else in the table (renderedSpot). */
+type Cell = { startK: number; endK: number; startN: number; endN: number };
+/** A table's place in its block: its raw's span in N, its characters' range in the block's chars and its cells,
+ *  `cells[cellFrom, cellTo)`; a list item or a quote can hold several. */
+type TableSpan = { startN: number; endN: number; startK: number; endK: number; cellFrom: number; cellTo: number };
 /** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
 const FORMULA_HOLE = "a formula";
-/** The reasons of a code block's and a table's holes (the walk shows their text and refuses to map inside them). */
+/** The reasons of a code block's holes (the walk shows the code's text and refuses to map inside it) and of a table's: since
+ *  Slice 8 a table's cells are positioned (walkTable), and this hole stands for what that reading could not place, a cell whose
+ *  re-cut of the row is not marked's text for it, or a table whose raw does not lay out as marked's token says (tableHole). */
 const CODE_HOLE = "a code block", INDENTED_CODE_HOLE = "an indented code block", TABLE_HOLE = "a table";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
- *  block or table the renderer shows but the mapping refuses). */
+ *  block the renderer shows but the mapping refuses, or a table cell the reading could not place). `cells` and
+ *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table. */
 class Emitter {
   chars = "";
   pos: number[] = [];
   holes: Hole[] = [];
+  cells: Cell[] = [];
+  tables: TableSpan[] = [];
   put(c: string, n: number): void {
     if (isWs(c)) return;
     if (this.pos.length && n >= 0) {
@@ -877,7 +891,9 @@ function emitText(view: View, em: Emitter): void {
   for (let i = 0; i < view.str.length; i++) em.put(view.str[i], view.n(i));
 }
 
-/** Rendered text of inline tokens with no positions (table cells: shown, never mapped). */
+/** Rendered text of inline tokens with no positions: what a table cell the walk cannot place shows (the per-cell fallback,
+ *  walkRow, and the whole-table fallback, tableHole; until Slice 8 every cell went through this). Throws Refusal on an entity
+ *  and on a kind it has no case for, as the positioned walk does. */
 function plainInline(tokens: Token[]): string {
   let out = "";
   for (const t of tokens) {
@@ -986,6 +1002,117 @@ function headingTextOffset(raw: string, text: string): number {
 
 const DEF_RE = (): RegExp => Lexer.rules.block.gfm.def;
 
+// ── tables (Slice 8 of plans/markdown-viewer.md, item 1: a cell maps from Rendered) ────────────────────────────────────────
+// marked lays a table out from its raw line by line: the first line is the header, the second the delimiter row (never
+// rendered), the lines after it the body rows in order, then the blank lines the raw swallowed (the gfm table rule; the
+// tokenizer's `cap[3].replace(/\n[ \t]*$/, "").split("\n")`). It cuts a row with splitCells: at every pipe an EVEN count of
+// backslashes precedes (an odd count is the escape `\|`), a blank first and a blank last segment dropped (the leading and the
+// trailing pipe), a body row cut to the header's width and padded with empty cells, and each cell TRIMMED with `\|` made `|`;
+// the cell's inline tokens are lexed from that text (TableCell: text and tokens, no raw and no position). So a cell's shown
+// text stands over the row's own characters, and the walk below places it there: the cell's inline tokens over a View whose
+// n(i) is the row position of character i of the text, the backslash of every `\|` skipped. The renderer emits the header's
+// cells then each row's left to right, the walk's order, so the block's chars are byte for byte what putHole gave and the
+// `<table>` pairs to its block as before (analyzeRendered); only the positions change. A cell the reading cannot place (the
+// re-cut is not marked's text for it, or its walk refuses: an entity) is a hole of its own, so the cells beside it map (the
+// brief's open question 9); a table whose raw has fewer lines than the token says is the whole-table hole it was (tableHole).
+/** A row's segments as splitCells cuts them, `[start, end)` in the row before the trim; null for a cell marked padded. */
+function rowCells(row: string, count: number | undefined): ({ a: number; b: number } | null)[] {
+  const segs: { a: number; b: number }[] = [];
+  let from = 0;
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] !== "|") continue;
+    let slashes = 0;
+    for (let b = i - 1; b >= 0 && row[b] === "\\"; b--) slashes++;
+    if (slashes % 2) continue;
+    segs.push({ a: from, b: i }); from = i + 1;
+  }
+  segs.push({ a: from, b: row.length });
+  if (segs.length && row.slice(segs[0].a, segs[0].b).trim() === "") segs.shift();
+  if (segs.length && row.slice(segs[segs.length - 1].a, segs[segs.length - 1].b).trim() === "") segs.pop();
+  const out: ({ a: number; b: number } | null)[] = segs;
+  if (count) { if (out.length > count) out.length = count; else while (out.length < count) out.push(null); }
+  return out;
+}
+/** The cell's text (marked's: the segment `[cs, ce)` of the row, `\|` unescaped) over the segment's own characters: character i of
+ *  the text at the row position of the character it shows, the backslash of every `\|` skipped (the source holds it, the text
+ *  does not). Null when the segment read that way is not the text (a shape this reading does not follow). */
+function cellView(row: View, cs: number, ce: number, text: string): View | null {
+  const map: number[] = [];
+  let out = "";
+  for (let i = cs; i < ce; i++) {
+    if (row.str[i] === "\\" && i + 1 < ce && row.str[i + 1] === "|") continue;
+    out += row.str[i]; map.push(row.n(i));
+  }
+  if (out !== text) return null;
+  map.push(row.n(ce));
+  return new View(text, null, map);
+}
+/** One row of a table, `line` at `lv`, against marked's cells for it (`count` the header's width for a body row, none for the
+ *  header): each cell's inline tokens over the cell's own characters (cellView, walkInline), its extent recorded (Emitter.cells);
+ *  a cell the reading cannot place a hole of its own over the cell's span, its shown text put through the hole, with the walk's
+ *  reason where the walk refused (an entity: the sentence the table read before Slice 8) and the table's where the re-cut is not
+ *  marked's text. A padded cell shows nothing; a row's tail past the header's width is not rendered and is left unpositioned.
+ *  Throws Refusal when the row does not cut into the token's cells, and the caller keeps the whole table a hole. */
+function walkRow(line: string, lv: View, cells: Tokens.TableCell[], count: number | undefined, em: Emitter): void {
+  const segs = rowCells(line, count);
+  if (segs.length !== cells.length) throw new Refusal("a table the mapping could not place");
+  for (let c = 0; c < cells.length; c++) {
+    const seg = segs[c];
+    if (!seg) continue;
+    const s = line.slice(seg.a, seg.b);   // trimmed as splitCells trims the cell (String.prototype.trim's alphabet, both ends)
+    const cs = seg.a + (s.length - s.trimStart().length), ce = Math.max(cs, seg.b - (s.length - s.trimEnd().length));
+    const k0 = em.chars.length, pos0 = em.pos.length, h0 = em.holes.length;
+    const cv = cellView(lv, cs, ce, cells[c].text);
+    let reason: string | null = cv ? null : TABLE_HOLE;
+    if (cv) {
+      try { walkInline(cells[c].tokens, cv, em); }
+      catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        em.chars = em.chars.slice(0, k0); em.pos.length = pos0; em.holes.length = h0;   // the cell's own characters, if any went in
+        reason = e.message;
+      }
+    }
+    if (reason !== null) {
+      em.holes.push({ reason, startN: lv.n(cs), endN: lv.n(ce) });
+      let shown: string;
+      try { shown = plainInline(cells[c].tokens); } catch (e) { if (!(e instanceof Refusal)) throw e; shown = plainInlineText(cells[c].tokens, []); }   // an entity: the character it shows
+      em.putHole(shown, em.holes.length - 1);
+    }
+    if (em.chars.length > k0) em.cells.push({ startK: k0, endK: em.chars.length, startN: lv.n(cs), endN: lv.n(ce) });
+  }
+}
+/** The table before Slice 8, kept for a raw the reading cannot lay out: one hole over the whole raw, every cell's shown text through it. */
+function tableHole(tt: Tokens.Table, tv: View, em: Emitter): void {
+  em.holes.push({ reason: TABLE_HOLE, startN: tv.n(0), endN: tv.n(tv.str.length) });
+  const h = em.holes.length - 1;
+  for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
+  for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
+}
+/** A table token over `tv`, the view its raw tiles: the header's cells, then each body row's (walkRow), in the renderer's
+ *  order, and the table's span recorded (Emitter.tables). A raw with fewer lines than the token's rows, or a row that does not
+ *  cut into its cells, is the whole-table hole (tableHole), the table's shape before this slice. */
+function walkTable(tt: Tokens.Table, tv: View, em: Emitter): void {
+  const lines = tv.str.split("\n");
+  const k0 = em.chars.length, pos0 = em.pos.length, h0 = em.holes.length, c0 = em.cells.length;
+  if (lines.length >= 2 + tt.rows.length) {
+    try {
+      let ls = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        if (i === 0) walkRow(ln, tv.sub(ls, ls + ln.length), tt.header, undefined, em);
+        else if (i >= 2 && i - 2 < tt.rows.length) walkRow(ln, tv.sub(ls, ls + ln.length), tt.rows[i - 2], tt.header.length, em);
+        ls += ln.length + 1;
+      }
+      em.tables.push({ startN: tv.n(0), endN: tv.n(tv.str.length), startK: k0, endK: em.chars.length, cellFrom: c0, cellTo: em.cells.length });
+      return;
+    } catch (e) {
+      if (!(e instanceof Refusal)) throw e;
+      em.chars = em.chars.slice(0, k0); em.pos.length = pos0; em.holes.length = h0; em.cells.length = c0;
+    }
+  }
+  tableHole(tt, tv, em);
+}
+
 /** Place `tokens`, which tile `view.str` from `p` (block-level; nested containers recurse). */
 function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
   for (const t of tokens) {
@@ -1057,11 +1184,9 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "table": {
-        const tt = t as Tokens.Table;
-        em.holes.push({ reason: TABLE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
-        const h = em.holes.length - 1;
-        for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
-        for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
+        // every cell positioned over the row's own characters (Slice 8, item 1), the header's cells then each body row's left to
+        // right, the order the renderer emits them in; a cell the reading cannot place is a hole of its own (walkTable)
+        walkTable(t as Tokens.Table, view.sub(p, p + raw.length), em);
         break;
       }
       case "frontMatter": {
@@ -1129,6 +1254,9 @@ type Block = {
    *  newline) — between blocks, not in one (renderedSpot's own-rows rule). */
   textEndN: number;
   chars: string; pos: number[]; holes: Hole[];
+  /** the tables the block holds, their cells among its chars (Emitter.cells, Emitter.tables): a top-level table's one entry, or
+   *  the tables nested in a list item or a quote; empty for every other block */
+  cells: Cell[]; tables: TableSpan[];
   refused: string | null;
   dom: DNode[];
   isHtml: boolean;
@@ -1891,7 +2019,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
     // read past, and a closing tag's block ran the resync, which, before a paragraph carrying an inline closer, confirmed at no
     // end and took every node to the document's end: the Slice 5 review, round 2)
     const blank = isHtml && (commentsOnly(t.raw) || (!(tags as TopTag[]).some((tt) => !tt.stray) && htext === ""));
-    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, cells: em.cells, tables: em.tables, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
   }
   if (table.lexError !== null) out.length = 0;
   table.walked = out;
@@ -1933,7 +2061,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));
   for (const n of content) nodeText.set(n, textKey(n));
   if (lexError !== null) {
-    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
+    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], cells: [], tables: [], refused: `markdown the lexer could not parse (${lexError})`,
                   dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, ends: [], minted: false, pOpen: false, nested: false, htext: "", wrap: [] });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
@@ -2720,6 +2848,25 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     for (let k = from; k < to; k++) {
       const p = blk.pos[k];
       if (p < 0) { const h = blk.holes[-p - 1]; return refuse(`This selection touches ${h.reason}; comment on it from the Raw view.`, blockExtra(blk, h.startN)); }
+    }
+    // The one-cell rule (Slice 8, item 3; the brief's open question 3): the characters the selection covers inside one table must
+    // lie in ONE cell. A quote across two cells would carry the pipe between them, and the row's line feed across two rows, raw
+    // delimiters the person did not select as text (the ruling that declined raw html in a quote for the wrappers), so the
+    // selection is refused with the reason named, and the Raw view is offered on the exact span, the first covered character of
+    // the table through the last (rawRange, with blockStartOffset that start so rawTarget's search begins there and not at an
+    // earlier identical row), where Save works: two body cells, prose before the table into a body cell (the header's cells lie
+    // in the span), the whole table. One cell and the prose after the table maps, the row's closing pipe and line feed inside
+    // the quote as a Raw selection over the same characters mints. Before this slice every cell was a hole and the loop above
+    // refused at the first, "touches a table", the Raw offer an indexOf of the tab-joined selection that found nothing.
+    for (const tb of blk.tables) {
+      const f = Math.max(from, tb.startK), t = Math.min(to, tb.endK);
+      if (f >= t) continue;
+      let hit = 0;
+      for (let c = tb.cellFrom; c < tb.cellTo && hit < 2; c++) { const x = blk.cells[c]; if (x.startK < t && x.endK > f) hit++; }
+      if (hit < 2) continue;
+      const s = nOf(idx, blk.pos[f]), e = nOf(idx, blk.pos[t - 1]) + 1;
+      return refuse("This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.",
+                    { blockStartLine: rawOffsetToLine(source, s), blockStartOffset: s, rawHasQuote: true, rawRange: { start: s, end: e } });
     }
   }
   if (formulaEnd) return refuse(FORMULA_TOUCHED, formulaEnd);
@@ -4401,6 +4548,14 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
     if (lo <= offset && offset < hi) { blk = b; break; }
   }
   if (!blk || blk.refused !== null || !blk.dom.length) return null;
+  // Inside a table (Slice 8) the cells are positioned and nothing else is: an offset in the table's raw places only inside a
+  // cell's span, its first character through the position right after its last, and everywhere else in the table (the
+  // delimiter row, a pipe, a row's line feed, the blank lines the raw swallowed) the change keeps its card, as it did when the
+  // whole table was a hole; a point there would land in a cell the change is not in. The table's first character is the
+  // boundary, the outside's: a point there sits after the text before the table (below), as it did at the hole's edge.
+  const tb = blk.tables.find((t) => nOf(idx, t.startN) <= offset && offset < nOf(idx, t.endN));
+  const cell = tb ? blk.cells.slice(tb.cellFrom, tb.cellTo).find((c) => nOf(idx, c.startN) <= offset && offset <= nOf(idx, c.endN)) : undefined;
+  if (tb && !cell && offset !== nOf(idx, tb.startN)) return null;
   // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
   // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
   let j = -1, k = -1;
@@ -4420,7 +4575,12 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
     else return null;
   } else if (k < 0) after = true;
   else if (j < 0) after = false;
-  else after = nOf(idx, blk.pos[j]) + 1 === offset && nOf(idx, blk.pos[k]) !== offset;
+  else {
+    after = nOf(idx, blk.pos[j]) + 1 === offset && nOf(idx, blk.pos[k]) !== offset;
+    // at or before a table's first character, the table's first cell the next positioned character: the point sits after the
+    // text before the table, never inside its first cell (the hole rule's first branch, kept for a table whose cells are placed)
+    if (!after && !cell) { const tk = blk.tables.find((t) => t.startK === k && t.startK < t.endK); if (tk && offset <= nOf(idx, tk.startN)) after = true; }
+  }
   if (!after) return nthNonWs(blk.dom[0], k);
   const at = nthNonWs(blk.dom[0], j);
   return at ? { t: at.t, off: at.off + 1 } : null;
