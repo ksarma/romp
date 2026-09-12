@@ -9178,6 +9178,15 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
+        # every gate a test left closed opens before the join: the session thread sits in __aenter__ (spawn_gate) or
+        # in a set_permission_mode round trip (mode_gate) behind one, and the addCleanup calls that open the gates
+        # run AFTER this method, so a test that failed inside a spawn window paid the join's whole 10 s and left the
+        # thread alive past it (the 10.0 to 10.4 s call every 3.14t sighting reported was this join, not the race)
+        for gate in list(self._Client.spawn_gate.values()) + list(self._Client.mode_gate.values()):
+            for ev in (gate if isinstance(gate, list) else [gate]):
+                ev.set()
+        for ev in getattr(self, "_parks", ()):   # a test that parks the loop thread on an Event of its own registers
+            ev.set()                              # it here too, so a failure before its release pays no 10 s join
         if self.s.thread.is_alive():
             self.s.shutdown()
         if self.s.thread.ident is not None:
@@ -9200,6 +9209,22 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             time.sleep(0.01)
         self.fail("timed out waiting for %s; clients %d; log tail %r"
                   % (what, len(self._Client.instances), self.lines[-8:]))
+
+    def _settled(self, what):
+        """Block until every callback the kernel thread had queued on the session's loop before this call has run
+        whole: a threading.Event set by a callback queued behind them (the loop runs its ready queue in order, one
+        callback to completion at a time). The exact event for a settle's writes, its log line included, where a
+        _wait on the flag the settle publishes is not: _settle_withdrawal and _retire_arm_for_live_pick write
+        _reconnect under the hold lock and log after releasing it (the lock is never held across a log line), so a
+        poll of the flag can return between the write and the append, and an assertion on the line then reads an
+        empty tail. Under the GIL the loop thread ran from the write through the append before the poller's next
+        turn; free-threaded 3.14t ran both threads at once, and the line assertion failed in 17 of 60 runs on a 3.14t
+        box and on four fork PRs' CI (2026-09-11 to 2026-09-12). The barrier also orders after the loop's CURRENT
+        step: the landing's switch stamps _launched_mode, logs and settles in one synchronous stretch after its await,
+        so a barrier queued once the stamp is seen runs after that stretch's lines too."""
+        done = threading.Event()
+        self.s.loop.call_soon_threadsafe(done.set)
+        self.assertTrue(done.wait(10.0), "timed out waiting for %s; log tail %r" % (what, self.lines[-8:]))
 
     def _uid(self):
         self.n += 1
@@ -9225,6 +9250,11 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         s = self.s
         s.start()
         self._wait(lambda: s.client is not None and s._launched_effort is not None, "the first connect landed")
+        # the predicate is true from _connect_landed's first stamp, inside its lock block, before _launched_mode,
+        # _launched_auth, _launching and _effort_pending are written; the tests read those stamps lock-free right
+        # after this returns, so order the return after the landing's whole step (the same torn read as the
+        # settle's flag and line, on state; the audit for the 3.14t race found it)
+        self._settled("the first connect's landing")
         return self._Client.instances[0]
 
     def _applied(self):
@@ -9367,11 +9397,12 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         c2 = self._Client.instances[1]
         self._wait(lambda: c2 is s.client and s._launching is None and s._launched_mode == "default",
                    "the landing applied the pick live")
+        self._settled("the landing's switch, its lines and its settle")
         self.assertEqual(c2.options.permission_mode, "bypassPermissions", "launched in bypass")
         self.assertEqual(c2.modes, ["default"], "and switched out of it at the landing, before the feeder")
         self.assertTrue(any("mode (web): the pending default pick applied live at the landing, before any queued turn; "
                             "the process launched bypassPermissions" in l for l in self.lines), self.lines)
-        self._wait(lambda: not s._reconnect, "the redundant arm was disarmed by the applied pick's settle")
+        self.assertFalse(s._reconnect, "the redundant arm was disarmed by the applied pick's settle")
         self.assertTrue(any("the mode pick applied live at the landing leaves the connect in progress launching what "
                             "this session asks for; the reconnect armed after it is disarmed" in l for l in self.lines), self.lines)
         time.sleep(0.3)
@@ -9535,7 +9566,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))   # the revert, during the same spawn
         self.assertTrue(any("mode (web): set to bypassPermissions; already applying, no new request" in l for l in self.lines[n0:]),
                         self.lines[n0:])
-        self._wait(lambda: not s._reconnect, "the redundant arm is disarmed")
+        self._settled("the re-pick's settle")
+        self.assertFalse(s._reconnect, "the redundant arm is disarmed")
         self.assertTrue(any("the withdrawn mode pick leaves the connect in progress launching what this session asks for; "
                             "the reconnect armed after it is disarmed" in l for l in self.lines[n0:]), self.lines[n0:])
         gate.set()
@@ -9561,7 +9593,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         n1 = len(self.lines)
         self.assertTrue(self.be.set_effort(self.SID, "max"))             # the revert to the launching value
         self.assertTrue(any("effort (web): set to max; already applying, no new request" in l for l in self.lines[n1:]), self.lines[n1:])
-        self._wait(lambda: not s._reconnect, "disarmed")
+        self._settled("the re-pick's settle")
+        self.assertFalse(s._reconnect, "disarmed")
         # the high pick's own arm had cleared its surface, but its name rode the arm: the re-pick took it off (review
         # round 10), so the settle words it as withdrawn, like a surface still recorded (test_t4); "re-picked" is left
         # for a re-pick that finds nothing anywhere
@@ -9584,7 +9617,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         n2 = len(self.lines)
         self.assertTrue(self.be.set_env(self.SID, {"A": "1"}))
         self.assertTrue(any("env (web): per-session env set (A); already applying, no new request" in l for l in self.lines[n2:]), self.lines[n2:])
-        self._wait(lambda: not s._reconnect, "disarmed")
+        self._settled("the re-pick's settle")
+        self.assertFalse(s._reconnect, "disarmed")
         gate3.set()
         c4 = self._Client.instances[3]
         self._wait(lambda: c4 is s.client and s._launching is None, "the env connect landed")
@@ -9659,7 +9693,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(self.be.set_mode(self.SID, "plan"))
         self._wait(lambda: s._reconnect_when_idle, "the plan pick deferred behind the queued text")
         self.assertTrue(self.be.set_mode(self.SID, "bypassPermissions"))   # the re-pick of what the connect launches
-        self._wait(lambda: not s._reconnect, "the redundant arm is disarmed")
+        self._settled("the re-pick's settle")
+        self.assertFalse(s._reconnect, "the redundant arm is disarmed")
         self.assertFalse(s._reconnect_when_idle, "the deferred request is retired with it")
         self.assertEqual(s._reconnect_surfaces, set())
         gate.set()
@@ -9865,7 +9900,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             self.assertTrue(self.be.set_auth(self.SID, "key"))             # the re-pick of the launching side
             self.assertTrue(any("auth (web): set to key; already applying, no new request" in l for l in self.lines[n0:]),
                             self.lines[n0:])
-            self._wait(lambda: not s._reconnect, "disarmed")
+            self._settled("the re-pick's settle")
+            self.assertFalse(s._reconnect, "disarmed")
             self.assertTrue(any("the withdrawn auth pick leaves the connect in progress launching what this session asks for; "
                                 "the reconnect armed after it is disarmed" in l for l in self.lines[n0:]), self.lines[n0:])
             gate.set()
@@ -9875,6 +9911,47 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             self.assertEqual(len(self._Client.instances), 2, "no relaunch of the identical shape")
             self.assertEqual((s._launched_auth, s.auth), ("key", "key"))
             self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
+
+    def test_a_poll_of_the_disarmed_flag_can_run_ahead_of_the_settles_line_and_the_loop_barrier_orders_the_read(self):
+        # THE LOSING ORDER, FORCED (2026-09-12): _settle_withdrawal writes _reconnect under the hold lock and logs its
+        # line after releasing it, so a kernel-thread poll of the flag can observe the disarm with the line not yet
+        # written. Under the GIL the loop thread ran from the write through the append before the poller's next turn;
+        # free-threaded 3.14t ran both threads at once, and the tests above, which polled the flag and then asserted
+        # the line, failed in 17 of 60 runs on a 3.14t box and on four fork PRs' CI runs (2026-09-11 to 2026-09-12),
+        # always with the re-pick's own line in the tail and the settle's line missing. Here the log callback parks
+        # the loop thread inside the settle, between the write and the append: the flag reads disarmed and the tail
+        # has no line, which is what those runs saw; then the barrier (_settled) orders the read after the settle,
+        # line included. Effort high, max, high during the max spawn, the shape of three of the four sightings
+        s, c1 = self.s, self._connect()
+        parked, release = threading.Event(), threading.Event()
+        self._parks = [release]                 # tearDown opens it before the join (the cleanup below runs after)
+        self.addCleanup(release.set)
+        plain = self.be._log_cb
+        def hold_the_line(m, **k):
+            if "the reconnect armed after it is disarmed" in str(m):
+                parked.set()            # the flag is written and the lock released: the settle is at its line
+                release.wait(10.0)      # which waits here, on the loop thread
+            plain(m, **k)
+        self.be._log_cb = hold_the_line
+        self._Client.spawn_gate[1] = gate = threading.Event()
+        self.addCleanup(gate.set)
+        self.assertTrue(self.be.set_effort(self.SID, "max"))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is None, "the max connect is spawning")
+        self.assertTrue(self.be.set_effort(self.SID, "high"))            # differs from the launching shape: pending
+        self._wait(lambda: s._reconnect, "armed after the connect in progress")
+        n0 = len(self.lines)
+        self.assertTrue(self.be.set_effort(self.SID, "max"))             # the revert to the launching value
+        self.assertTrue(parked.wait(10.0), "the settle reached its line")
+        self.assertFalse(s._reconnect, "the disarm is published before the line")
+        self.assertFalse(any("is disarmed" in l for l in self.lines[n0:]), self.lines[n0:])   # the window the poll landed in
+        release.set()
+        self._settled("the re-pick's settle")
+        self.assertTrue(any("the withdrawn effort pick leaves the connect in progress launching what this session asks for; "
+                            "the reconnect armed after it is disarmed" in l for l in self.lines[n0:]), self.lines[n0:])
+        gate.set()
+        c2 = self._Client.instances[1]
+        self._wait(lambda: c2 is s.client and s._launching is None and s._effort_pending == "", "the max connect landed")
+        self.assertEqual(s._launched_effort, sb.effort_launch_shape("max"))
 
     def test_a_third_mode_picked_during_the_landings_switch_retires_the_superseded_arm_or_rides_it(self):
         # a third, non-bypass mode picked during the landing's live switch left the reconnect the superseded pick had
@@ -9905,7 +9982,9 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         self.assertTrue(self.be.set_mode(self.SID, "acceptEdits"))      # the third mode, live, during the round trip
         self.assertTrue(any("mode (web): set to acceptEdits; applied live" in l for l in self.lines[n0:]), self.lines[n0:])
         plan_gate.set()                                                  # the plan switch confirms
-        self._wait(lambda: c2.modes == ["plan"] and not s._reconnect, "plan confirmed and the superseded arm retired")
+        self._wait(lambda: c2.modes == ["plan"], "plan confirmed")
+        self._settled("the landing's switch and its line")
+        self.assertFalse(s._reconnect, "the superseded arm retired")
         self.assertTrue(any("the pending plan pick applied live at the landing; a newer acceptEdits pick made during the "
                             "switch stands, and its own request applies it; the reconnect armed for the plan pick is "
                             "disarmed, the live switch applies the newer pick" in l for l in self.lines), self.lines)
@@ -10226,7 +10305,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
             self.assertTrue(s.snapshot()["fastPending"])
             n0 = len(self.lines)
             self.assertTrue(self.be.set_fast(self.SID, "off"))          # the revert, inside the same compose
-            self._wait(lambda: not s._reconnect, "the redundant arm is disarmed")
+            self._settled("the revert's settle")
+            self.assertFalse(s._reconnect, "the redundant arm is disarmed")
             self.assertFalse(s.snapshot()["fastPending"], "the flag drops at the withdrawal")
             self.assertEqual(len([l for l in self.lines[n0:] if "fast (web): set to off" in l]), 1, self.lines[n0:])
             self.assertTrue(any("the withdrawn fast pick leaves the connect in progress launching what this session asks for; "
