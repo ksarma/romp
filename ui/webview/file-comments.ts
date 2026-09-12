@@ -439,10 +439,30 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
   img.style.outline = ""; img.style.outlineOffset = "";
   delete img.dataset.act; delete img.dataset.id;
 }
+// The block-level paint (plans/markdown-viewer.md Slice 8, item 5). A display formula covered by a range is a block of its own
+// line, which no inline mark can wrap: a mark around a block box paints nothing over it, and a mark between `.katex-display`
+// and its `.katex` breaks KaTeX's layout (anchor-map.ts isInlineFormula), so paintRendered STAMPS the formula's own
+// `.katex-display` element instead of wrapping it: the block class for the caller's class (`fc-hl-block` for a highlight,
+// `fc-presel-block` for the composer's pending target; the Slice 8 contract line) and the paint's data attributes, and it
+// returns the element among the marks. The panel then treats it as one of its marks (a control that opens the card, tabIndex
+// and role set by the pass, the margin layout's box, the arrivals dot, owns) with one difference: where a mark is unwrapped, the
+// element is stripped in place (stripBlockPaint), since unwrapping it would hoist KaTeX's root into the page as a top-level
+// node the block pairing meets. The sheets dress the classes on the formula's box (styles.css and feed.css, the .fc-hl region).
+const BLOCK_PAINT_CLASSES = ["fc-hl-block", "fc-presel-block"];
+const isMarkEl = (n: Element): boolean => n.tagName.toUpperCase() === "MARK";
+const isBlockPaint = (n: Element): boolean => BLOCK_PAINT_CLASSES.some((c) => n.classList.contains(c));
+/** Strip a block-painted element in place: the block classes and the context cue the pass adds beside them (fc-hl-context),
+ *  and the attributes the paint and the pass set (data-act, data-id, the arrivals' data-new, tabindex, role, title). Its
+ *  children stay where they are. */
+function stripBlockPaint(n: Element): void {
+  n.classList.remove(...BLOCK_PAINT_CLASSES, "fc-hl-context");
+  for (const a of ["data-act", "data-id", "data-new", "tabindex", "role", "title"]) n.removeAttribute(a);
+}
 /** The unpaint step over `marks` (Panel.unpaint over a selector's matches, Panel.unwrap over elements the repaint holds; the
  *  whitespace leg times the panel's unpaint through it, md-config-paint-whitespace-browser.test.ts): each mark's children go back
  *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
- *  section 2 (d)). Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
+ *  section 2 (d)); an element that is not a mark (a display formula's box wearing the block class, Slice 8 item 5) is stripped
+ *  in place instead (stripBlockPaint) and normalizes nothing, its text nodes untouched. Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
  *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
  *  normalized once per parent they unwrap in 11 ms. Both figures are for marks the browser has not laid out (the unpaint in the
  *  same task as the paint, or a host outside the document). The panel's unpaint always finds its marks laid out (the pass before
@@ -454,6 +474,7 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
 export function unwrapMarks(marks: Iterable<Element>): void {
   const parents = new Set<Node>();
   for (const n of marks) {
+    if (!isMarkEl(n)) { stripBlockPaint(n); continue; }   // a display formula's stamped box: stripped in place, never unwrapped (stripBlockPaint)
     const p = n.parentNode; if (!p) continue;
     while (n.firstChild) p.insertBefore(n.firstChild, n);
     p.removeChild(n); parents.add(p);
@@ -3493,7 +3514,7 @@ class Panel {
     // aside's controls, so the mark's own successor takes it back once painted (refocusMark)
     const held = this.heldMark();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
-    this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
+    this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
     const src = this.ctx.text(); const root = this.contentRoot();
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
@@ -3543,7 +3564,9 @@ class Panel {
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
         const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";
-        for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
+        // ...a display formula's stamped box takes the block class alone from the paint (the first class token), so the context
+        // cue the class string carried goes on it here, as the guessed copy's does on every mark (the sheet drops its ring for the dashed outline)
+        for (const m of out || []) { if (unsure || (loc.state === "context" && !isMarkEl(m))) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
           if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
@@ -3816,7 +3839,8 @@ class Panel {
     return out || [];
   }
   /** Unwrap painted marks: the text nodes go back in place and each parent is normalized, once (unwrapMarks). A framed
-   *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
+   *  picture is stripped of its marks instead, since unwrapping an <img> would remove the picture; a display formula's box wearing
+   *  the block class (selected by `.fc-hl-block` or `.fc-presel-block`) is stripped in place by unwrapMarks itself. */
   private unpaint(selector: string): void {
     const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
     const held: Element[] = [];
@@ -3836,8 +3860,10 @@ class Panel {
    *  the cells of the other rows, and the auto layout redistributes the columns when a cell's content grows); the root when none
    *  is found below it. This is the scope of the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is
    *  per call, keyed on the parent: the marks of one passage share a few. A document with no computed style (a stand-in)
-   *  answers the parent. */
+   *  answers the parent. A display formula's stamped box (isBlockPaint) is its own line box: a block of its own line, whose
+   *  paint adds no padding and moves no wrap point, so the climb stops at itself and the repaint's scope is the formula alone. */
   private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {
+    if (isBlockPaint(m)) return m;
     const p = m.parentNode as Element | null;
     if (!p || p === root || p.nodeType !== 1) return root;
     const hit = memo.get(p);
@@ -3910,15 +3936,16 @@ class Panel {
   private repaintPreselPass(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
-      this.unpaint(".fc-presel");
+      this.unpaint(".fc-presel, .fc-presel-block");
       if (src !== null && root) this.paintPresel(root, src, false);
       this.paintRegions();
       return;
     }
-    const isMark = (m: Element): boolean => m.tagName.toUpperCase() === "MARK";
+    const isMark = isMarkEl;
     const memo = new Map<Element, Element>(); const boxes = new Set<Element>();
-    for (const m of Array.from(root.querySelectorAll(".fc-presel"))) if (isMark(m)) boxes.add(this.lineBoxOf(m, root, memo));
-    this.unpaint(".fc-presel");
+    // the standing target's boxes: a mark's line box, or a display formula's stamped box, which is its own (lineBoxOf); a framed picture is neither
+    for (const m of Array.from(root.querySelectorAll(".fc-presel, .fc-presel-block"))) if (isMark(m) || isBlockPaint(m)) boxes.add(this.lineBoxOf(m, root, memo));
+    this.unpaint(".fc-presel, .fc-presel-block");
     for (const m of this.paintPresel(root, src, true)) boxes.add(this.lineBoxOf(m, root, memo));
     if (!boxes.size) { this.paintRegions(); return; }   // no Rendered mark came or went: the layout is the one the last trim measured
     const held = this.heldMark();
@@ -3948,7 +3975,7 @@ class Panel {
       if (loc && loc.range && own.length) again.push({ id, range: loc.range, own });
     }
     if (again.length || changes) {
-      this.unpaint(".fc-presel");
+      this.unpaint(".fc-presel, .fc-presel-block");
       for (const a of again) this.unwrap(a.own);
       if (changes) { unpaintChanges(this.ctx.body()); this.passChanges = []; }
       for (const a of again) {
@@ -4387,7 +4414,7 @@ class Panel {
     const opened = this.revealMarks(key);              // a fold around the mark opens first, in either layout: the content below it moved
     if (opened && this.margin) this.placeCards(false); // ...and centerOn reads the placement, so the pass runs over the opened fold (a focus change below runs one of its own)
     if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
-    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
+    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
     this.reveal(key);

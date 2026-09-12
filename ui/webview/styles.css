@@ -4762,6 +4762,17 @@ body.filebrowse-open { overflow: hidden; }
 .fc-hl .fc-hl { background: none; box-shadow: none; }
 .fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); color: inherit; border-radius: 5px; padding: 0 2px;
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+/* a display formula under a highlight (plans/markdown-viewer.md Slice 8, item 5; anchor-map.ts paintRendered stamps the class,
+   file-comments.ts unwrapMarks strips it): the formula is a block of its own line, and an inline mark around a block box paints
+   nothing over it while a mark between .katex-display and its .katex breaks KaTeX's layout, so a covered display formula wears
+   the highlight's wash and ring as a CLASS on its own box, the composer's pending target the accent the same way. No padding:
+   the box is the layout's and the paint moves nothing, so the pending target's repaint reads the formula alone. The guessed or
+   moved copy's cue (.fc-hl-context, a single-class rule these heads outrank) drops the ring by name so its dashed outline
+   stands alone, as on a mark; the arrivals dot rides the same background layer (its rule below names the block class). */
+.fileview-md .katex-display.fc-hl-block { background: color-mix(in srgb, var(--warn) 14%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warn) 85%, transparent);
+  border-radius: 5px; cursor: pointer; }
+.fileview-md .katex-display.fc-hl-block.fc-hl-context { box-shadow: none; }
+.fileview-md .katex-display.fc-presel-block { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 5px; }
 .fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }
 .fc-float[hidden] { display: none; }
 /* change marks, both views (Slice 2; painted by anchor-map.ts paintChangesRaw / paintChangesRendered): an insertion is
@@ -4794,7 +4805,7 @@ body.filebrowse-open { overflow: hidden; }
 .fc-card[data-new] > .fc-card-head { position: relative; }
 .fc-card[data-new] > .fc-card-head::before { content: ""; position: absolute; left: -9px; top: 50%; width: 6px; height: 6px; margin-top: -3px;
   border-radius: 50%; background: var(--accent); }
-.fc-hl[data-new], .fc-ins[data-new], .fc-del[data-new]::before { background-image: radial-gradient(circle at 3px 3px, var(--accent) 2.5px, transparent 3px);
+.fc-hl[data-new], .fc-ins[data-new], .fc-del[data-new]::before, .fileview-md .katex-display.fc-hl-block[data-new] { background-image: radial-gradient(circle at 3px 3px, var(--accent) 2.5px, transparent 3px);
   background-repeat: no-repeat; background-position: top right; background-size: 6px 6px; }
 /* the editor's marks over pending changes (Slice 5; ui/webview/track-decorations.ts, whose CLS names these classes): while a
    tracked file is edited, CodeMirror draws each change itself — an insertion as a mark over its new text (tc-diff-ins), a
@@ -5080,6 +5091,7 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md .katex-display { overflow: visible; }
   .fileview-md > .katex-display { width: max-content; min-width: 100%; max-width: calc(100cqi - 36px); translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px)); }
   .fileview-body .fc-hl, .fileview-body .fc-hl-context, .fileview-body .fc-presel { background: none; box-shadow: none; outline: none; }
+  .fileview-md .katex-display.fc-hl-block, .fileview-md .katex-display.fc-presel-block { background: none; box-shadow: none; outline: none; }
   .fileview-body img.fc-img { outline: none !important; }
   .fileview-body .fc-overlay { display: none; }
   .fileview-body .fc-ins, .fileview-body .fc-del { border-bottom-color: black; background: none; }
