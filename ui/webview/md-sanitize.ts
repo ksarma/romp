@@ -39,6 +39,10 @@
 //     the textContent) matched the guard from two different children and vanished whole with its prose.
 //     dropCommentChildren below, on the uponSanitizeElement hook, empties an element of its comments first; every
 //     other output is unchanged, since no comment ever survived (Slice 5 review, round 4).
+//   • an HTML `<title>` in the body is dropped with its text: the browser shows a title nowhere outside the page's head,
+//     and DOMPurify's svg profile kept one as a hidden element whose text stood in the DOM. dropBodyTitle below, on the
+//     same hook, removes the element before DOMPurify judges it; an inline svg's own `<title>` stays (Slice 5 review,
+//     round 5).
 //   • the `background` attribute is forbidden outright (FORBID_ATTR): `<td background=URL>` makes the browser
 //     fetch the URL the moment the note renders, a tracking pixel with no click and no gate; DOMPurify's html
 //     list keeps it, GitHub's allowlist does not, and it has no safe value here. `bgcolor` fetches nothing and
@@ -60,7 +64,7 @@
 // (Slice 4 of plans/markdown-viewer.md; before it files.js and feed.js had neither the grammar nor the pass
 // nor the library). A renderer romp itself runs never goes through the sanitizer; only what an author wrote does.
 import DOMPurify from "dompurify";
-import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent } from "dompurify";
+import type { Config, DOMPurify as DOMPurifyInstance, UponSanitizeAttributeHookEvent, UponSanitizeElementHookEvent } from "dompurify";
 
 /** Tags a note may not keep: the style sheet, the dialog, every form-associated element, and the image map. */
 export const MD_FORBID_TAGS: readonly string[] = [
@@ -184,15 +188,27 @@ const HTML_NS = "http://www.w3.org/1999/xhtml";
  *  element: a `<title>` block in a note, one inside a `<div>`, inline in a paragraph or in a table cell rendered nothing while
  *  its text stood in the DOM, in the comment painter's hay and in the fallback reader's text (which read it as shown), so a
  *  comment on that text painted a mark with no box and its card offered Scroll to nothing (the Slice 5 review, round 5). An
- *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. Through the hook's `allowedTags`, the lever
- *  DOMPurify hands a hook (it clones the set for a hook to mutate, and its own custom-element recipe sets a tag there): set for
- *  THIS element right before DOMPurify judges it, `false` has it removed, and `title` is in DOMPurify's FORBID_CONTENTS, so the
- *  content goes with the tag, as a `<style>`'s does, and no unwrapped text is left behind. The viewer and the chat share the
- *  profile, so a chat message's `<title>` goes the same way (it showed nothing there either). Reads the DOM's three names,
- *  `nodeType`, `localName` (through the hook's lower-cased tagName) and `namespaceURI`, and touches the node itself not at all. */
-export function dropBodyTitle(node: Node, data: { tagName: string; allowedTags: Record<string, boolean> }): void {
-  if (data.tagName !== "title" || node.nodeType !== 1 /* Node.ELEMENT_NODE */) return;
-  data.allowedTags.title = (node as Element).namespaceURI !== HTML_NS;
+ *  svg's `<title>`, the drawing's own element in the SVG namespace, stays as it was. The hook removes the element itself, by
+ *  the node's own `remove()`, right before DOMPurify judges it: the content goes with it (a title's content is one text node,
+ *  the parser reading it as RCDATA), so no unwrapped text is left behind, and nothing shared is written. The first cut used
+ *  the lever DOMPurify hands a hook, `allowedTags`, setting `title` off for a body title and on for an svg's; that set is
+ *  DOMPurify's LIVE per-call ALLOWED_TAGS (`_sanitizeElements` passes the variable itself, no copy), so the write stood on every
+ *  later element of the same call, and a hook reading the set after this one saw `title` false on the paragraphs after a body
+ *  title. It reached no later `sanitize` call only because a call with a config rebuilds the set (`_parseConfig` clones the
+ *  config and rebuilds ALLOWED_TAGS under USE_PROFILES), and under `setConfig`, which keeps one set across calls, it would
+ *  have (the PR's review, round 1; md-sanitize-body-title-browser.test.ts pins both over the real DOMPurify). DOMPurify takes
+ *  the removal as it takes its own: its walk's NodeIterator steps over a removed reference node (the DOM's pre-removing steps,
+ *  the path `_forceRemove` relies on), and it goes on to judge the detached title as it goes on with every node it removes
+ *  itself (3.4.10 reads no return value from `_sanitizeElements`), harmlessly: a title's innerHTML is escaped text, so the
+ *  markup guard cannot match it, and an HTML title passes the namespace check under the stand-in parent DOMPurify uses for a
+ *  parentless node, so neither branch reaches `_forceRemove`, which in 3.4.10 THROWS on a node it cannot detach (the browser
+ *  leg sanitizes a title whose text reads as markup for this). `DOMPurify.removed` does not list the title; nothing here reads
+ *  that list. The node's own `remove()` and not the parent's `removeChild`: only a form can be clobbered by a named control,
+ *  so a title's method is the prototype's whatever its parent is. Reads `nodeType`, the hook's lower-cased tagName and
+ *  `namespaceURI`. */
+export function dropBodyTitle(node: Node, data: Pick<UponSanitizeElementHookEvent, "tagName">): void {
+  if (data.tagName !== "title" || node.nodeType !== 1 /* Node.ELEMENT_NODE */ || (node as Element).namespaceURI !== HTML_NS) return;
+  (node as Element).remove();
 }
 
 let hooksInstalled = false;
@@ -204,7 +220,7 @@ export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"
   if (hooksInstalled) return;
   hooksInstalled = true;
   purify.addHook("uponSanitizeAttribute", (_node, ev) => { styleAttributeHook(ev); });
-  purify.addHook("uponSanitizeElement", (node, data) => { dropCommentChildren(node); dropBodyTitle(node, data as { tagName: string; allowedTags: Record<string, boolean> }); });
+  purify.addHook("uponSanitizeElement", (node, data) => { dropCommentChildren(node); dropBodyTitle(node, data); });
 }
 
 /** marked's task checkbox is the one control a note keeps, inert: every other <input> goes, and a

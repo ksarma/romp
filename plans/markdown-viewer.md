@@ -2689,8 +2689,10 @@ re-verifies. Where the code as built departs from the text above, why, and which
    in hideEdges, main's projection case is the fourteenth, the ratchet's allowlist is empty with ALLOWLIST_MAX at 0,
    and 40a4db43a asserts the file's non-empty node lists through sameNodes, by identity; the merge's hand resolve kept
    the rewritten test 10 with main's one sameNodes assertion carried onto its equivalent line),
-   file-view-place-html-browser.test.ts (15; test 13 re-pinned in the review's round 7, the `<p align="center">` row
-   holding the logo and the project's name from the picture 48 px in standing at the `<p>`'s fraction, not the
+   file-view-place-html-browser.test.ts (16; test 16 from the PR review's round 1, the Raw read's whole-block parse
+   counted through DOMParser across twelve scroll frames over a 300-row table, once per block per source; test 13
+   re-pinned in the review's round 7, the `<p align="center">` row holding the logo and the project's name from the
+   picture 48 px in standing at the `<p>`'s fraction, not the
    picture's, and from Raw the `<p>` at its box, red over a git archive of 78c0806ce; tests 3 and 4 exact round trips
    as before: the picture after a `<details>` back at its depth within the Raw row's whole-pixel snap scaled by the
    picture's height over the row's, about 5 px at 900 px; the rule scene moved 2 px below the edge, since
@@ -2735,8 +2737,10 @@ re-verifies. Where the code as built departs from the text above, why, and which
    closed last, never closed and `<details open>` closed at the end lands on its own Raw row and returns within
    1.5 px, and its Raw row 3 px above the edge seats its own `<p>` at the row's depth scaled),
    file-view-place-edits-browser.test.ts (4; test 1 tightened to exact, paragraph 80's own row and back at the same
-   height), file-view-place-closed-details.test.ts (15, the review's rounds 1 to 7: a stand-in whose elements answer
-   checkVisibility as Chromium does and one without the API; the read; the seat's refusal for a place carrying no
+   height), file-view-place-closed-details.test.ts (16, the review's rounds 1 to 7 and the PR review's round 1, whose
+   test 16 counts the Raw read's lex and parse of an html block across scroll frames, once per block per source: a
+   stand-in whose elements answer checkVisibility as Chromium does and one without the API; the read; the seat's
+   refusal for a place carrying no
    block after the fold; the Raw read of closers, comments, the wrapper's rows and the carried blocks, a chain of two
    folds included; the seat standing on a carried block, capped at the summary since round 3; and, round 3, the
    wrapper's own picture read and seated at its fraction; and, round 4, an open fold's summary capping nothing where a
@@ -3341,16 +3345,23 @@ re-verifies. Where the code as built departs from the text above, why, and which
    sat on the second); a card with a position is unaffected wherever it stands, and a unique anchor takes no hint. The
    pins moved: file-comments-anchors.test.ts, tools/file-review-plan.test.mjs,
    tools/file-review-plan-anchors-states.test.mjs (its includes on the unsure line stands).
-   file-comments-hint-order.test.ts (4: three copies a thousand characters apart with two positionless comments on the
-   first and second, one positioned on the third unaffected, a fourth with no copy left back on the first, a unique
-   anchor plain; the hint scoped to an equal anchor; the probe's back-to-back line with a two-character context; the
-   words for each copy on the mark's title, the tag's title and the open card's line, the review's round 1). The
-   branch's second merge of the fork's main (213fde5fa, 2026-09-11) put the host's confirmed copy before both:
-   paintAll's hint is now the copy the host's tie-break confirmed (`placedAt`, the file-review plan's decision 51),
-   else the stored position, else the sequential hint, and the words for a guessed copy name the confirmed place
-   first, then the hinted copy, then the first copy, then the copy nearest the stored position (`hintedCopy` rides on
-   the card as `confirmedAt` does, stamped by renderCard and by paintAll for the mark's title; the four pins moved
-   again with it).
+   file-comments-hint-order.test.ts (4 at the slice's end, 9 since the PR review's round 1, below: three copies a
+   thousand characters apart with two positionless comments on the first and second, one positioned on the third
+   unaffected, a fourth with no copy left back on the first, a unique anchor plain; the hint scoped to an equal
+   anchor; the probe's back-to-back line with a two-character context; the words for each copy on the mark's title,
+   the tag's title and the open card's line, the review's round 1). The branch's second merge of the fork's main
+   (213fde5fa, 2026-09-11) put the host's confirmed copy before both: paintAll's hint is now the copy the host's
+   tie-break confirmed (`placedAt`, the file-review plan's decision 51), else the stored position, else the sequential
+   hint, and the words for a guessed copy name the confirmed place first, then the hinted copy, then the first copy,
+   then the copy nearest the stored position (`hintedCopy` rides on the card as `confirmedAt` does, stamped by
+   renderCard and by paintAll for the mark's title; the four pins moved again with it). The PR review's round 1 found
+   the executed pins unable to fail on that order (the positioned card sat on the copy the hint would have named
+   anyway, and no executed case put a confirmed copy in a pass with a positionless same-anchor card), so
+   file-comments-hint-order.test.ts gained five cases in which each pair disagrees, every one reading the copy off the
+   Raw rows: a stored position on a copy the hint would not pick wins over the hint, and the positionless card after
+   it takes the copy after the positioned one's; the host's confirmed copy wins over a stale position nearest another
+   copy, and over both the position and the hint; a confirmed copy in one pass with a positionless same-anchor card,
+   in both orders, counts as the previous card's copy for the hint and keeps its own against it.
 10. *Item 9, the Comment offer on a keyboard selection* (ruling 6: the listener lives in the panel, not the seam,
    whose onSelect also seeds the quote chip with a fetch of the file per gesture and must not run per keystroke). The
    float rode the seam's mouseup and touchend alone, so a selection made or changed from the keyboard (Shift+Arrow
@@ -3513,51 +3524,58 @@ re-verifies. Where the code as built departs from the text above, why, and which
    new) over the viewer and the chat's sanitizeMd call, md-sanitize.test.ts (15: the hook count, the hook body over a
    fake node, the guide sentence) and docs/guide.md's HTML paragraph gains one sentence, an HTML comment is dropped
    and the text around it is kept. From its round 5 a second change in the sanitizer, on the same hook: a body
-   `<title>` is dropped WITH its content (`dropBodyTitle`, md-sanitize.ts: an HTML-namespace `title` sets
-   `allowedTags.title` false for THIS element right before DOMPurify judges it, `title` being in DOMPurify's
-   FORBID_CONTENTS so the content goes with the tag, and an svg's `title` sets it back on; the browser shows a title
-   nowhere outside the page's head, and DOMPurify's svg profile had kept a body one as an element the UA sheet hides,
-   so its text stood in the DOM, in the paint's hay and in the reader's text, and a comment on it painted a mark with
-   no box whose card offered Scroll to nothing), viewer and chat alike; item 4's reader drops it on its side (`TITLE`
-   in `DROPPED_CONTENT`, an svg's kept); md-sanitize.test.ts (16: the unit test over fake nodes in both namespaces,
-   the hook test reading both bodies, the header), anchor-map-dom-rules-browser.test.ts (1 leg, new, item 4) and
-   docs/guide.md's HTML paragraph gains a second sentence, an HTML `<title>` is dropped with its text, since a browser
-   shows one nowhere outside the page's head, and the `<title>` of an inline `svg`, the drawing's tooltip, stays (the
-   svg clause from the review's round 6, which found the sentence had said every `<title>` is dropped while the same
-   paragraph says an inline `svg` is kept), with its pin in md-sanitize.test.ts over both halves. From its round 6 one
-   change outside the slice's units, in the shared Copy button, pre-existing on main: the execCommand fallback of a
-   fence's Copy (code-block.ts `fallbackCopy`, the path an insecure origin, a denied permission or a refused Clipboard
-   write takes) moved the document's selection into its textarea and left it collapsed outside the passage, and the
-   focus on the body, with no selectionchange the document hears, so a passage's Comment button stood beside a
-   selection that was gone and a click on it opened nothing (the review's fuzz: 27 steps in 5,040 on main, 3 on the
-   slice's tree), and Space on a focused Copy button lost the keyboard's place; the fallback now keeps the selection's
-   two ends, anchor and focus, before the textarea takes the selection and puts them back after with setBaseAndExtent,
-   direction kept, and gives the focus back to the element that held it, as the Clipboard API path leaves both (round
-   7: put back as a cloned Range, which has no direction, a passage selected right to left came back forward, anchor
-   and focus swapped, so the panel, which knows the selection it offered Comment beside by its ends, offered again, at
-   the pane's top edge beside nothing when a scroll had taken the passage off the pane and hidden the button, and the
-   next Shift+ArrowLeft shrank the selection from the other end; the cloned Ranges stay the route for an engine
-   without setBaseAndExtent, a selection of several ranges and a put-back the engine refuses);
-   code-block-copy-keeps-selection.test.ts (7, new) over a stand-in whose selection carries a direction bit and
-   file-comments-copy-fallback-browser.test.ts (2 legs, new) over the real Files pane, whose origin carries no
-   Clipboard API; file-view-place.test.ts's hideFloatOnScroll pin moved with `subjectHeld`. The ledger entry is
-   upstream/2026-09-10-markdown-viewer-slice5.md (tier feature). CONTEXT.md is unchanged: the build coined no term (a
-   wrapper is the Slice 2 note's own word for the element the browser nests markdown into). From the Slice 4 note's
-   item 10, decided with the build: (a) the html-block resync defect, its same-text trigger closed by item 1c's tag
-   test and its sanitizer-shortened trigger by item 1's closed-tag rule, the trim leg's confinement lifted; (b) a hole
-   at a range's edge stays unpainted and the callout title stays text, the rule as it stands with its two pins
-   (anchor-map-obsidian.test.ts: the alert body maps, a nested fold's title inside the range is painted with the
-   rest), since painting a hole at the edge would paint tables and code blocks there too and is Slice 8's
-   neighbourhood; (c) the whitespace alphabet at a selection's edge stays JavaScript's `\s` on every side, since a
-   narrower one is a change to the walk, the matching and the panel's normalize together and nothing here needs it;
-   (d) the unpaint normalizes each parent once: `unwrapMarks(marks)`, exported from file-comments.ts beside
-   unframeImage, collects the parents over the loop and normalizes each after it (the 9,999 marks over the 5,000-link
-   paragraph unwrap in 11 ms against 469 while the browser has not laid them out; the panel's own unpaint always finds
-   them laid out and pays about 340 ms against about 790 there, Chromium's detachment of each mark's layout object
-   being the rest, 2.3x and not 40x: the review's round 1), Panel.unpaint and Panel.unwrap (repaintPresel's step) run
-   it, nested marks coming outer first so the inner's parent is the block by the time it is read (given inner first
-   the detached outer's normalize is a no-op and the block is still normalized once);
-   file-comments-unpaint-normalize.test.ts (2, the normalize counted per element) and
+   `<title>` is dropped WITH its content (`dropBodyTitle`, md-sanitize.ts: the hook removes an HTML-namespace `title`
+   itself, by the node's own `remove()`, right before DOMPurify judges it, its one text node going with it, and leaves
+   an svg's `title` alone; the first cut set `allowedTags.title` false for the element and back on for an svg's, and
+   the PR review's round 1 found that set to be DOMPurify's LIVE per-call ALLOWED_TAGS, `_sanitizeElements` passing
+   the variable itself, so the write stood on every later element of the call, and under `setConfig`, the one mode
+   that keeps a set across calls, would have reached the next call; the hook now writes nothing there; the browser
+   shows a title nowhere outside the page's head, and DOMPurify's svg profile had kept a body one as an element the UA
+   sheet hides, so its text stood in the DOM, in the paint's hay and in the reader's text, and a comment on it painted
+   a mark with no box whose card offered Scroll to nothing), viewer and chat alike; item 4's reader drops it on its
+   side (`TITLE` in `DROPPED_CONTENT`, an svg's kept); md-sanitize.test.ts (16: the unit test over fake nodes in both
+   namespaces, the hook test reading both bodies, the header; 17 since the PR review's round 1: the two bodies read
+   the removal and the set untouched, and the fakes go through the shim's hideEdges, the hook's stubs with them, with
+   a projection test), md-sanitize-body-title-browser.test.ts (2, the PR review's round 1, over the vendored DOMPurify
+   in Chromium: `title` true in the set at every element of a call behind a body title, the drop without a throw of a
+   title whose text reads as markup, and two calls with one config, as an argument and under `setConfig`, the second
+   inheriting nothing), anchor-map-dom-rules-browser.test.ts (1 leg, new, item 4) and docs/guide.md's HTML paragraph
+   gains a second sentence, an HTML `<title>` is dropped with its text, since a browser shows one nowhere outside the
+   page's head, and the `<title>` of an inline `svg`, the drawing's tooltip, stays (the svg clause from the review's
+   round 6, which found the sentence had said every `<title>` is dropped while the same paragraph says an inline `svg`
+   is kept), with its pin in md-sanitize.test.ts over both halves. From its round 6 one change outside the slice's
+   units, in the shared Copy button, pre-existing on main: the execCommand fallback of a fence's Copy (code-block.ts
+   `fallbackCopy`, the path an insecure origin, a denied permission or a refused Clipboard write takes) moved the
+   document's selection into its textarea and left it collapsed outside the passage, and the focus on the body, with
+   no selectionchange the document hears, so a passage's Comment button stood beside a selection that was gone and a
+   click on it opened nothing (the review's fuzz: 27 steps in 5,040 on main, 3 on the slice's tree), and Space on a
+   focused Copy button lost the keyboard's place; the fallback now keeps the selection's two ends, anchor and focus,
+   before the textarea takes the selection and puts them back after with setBaseAndExtent, direction kept, and gives
+   the focus back to the element that held it, as the Clipboard API path leaves both (round 7: put back as a cloned
+   Range, which has no direction, a passage selected right to left came back forward, anchor and focus swapped, so the
+   panel, which knows the selection it offered Comment beside by its ends, offered again, at the pane's top edge
+   beside nothing when a scroll had taken the passage off the pane and hidden the button, and the next Shift+ArrowLeft
+   shrank the selection from the other end; the cloned Ranges stay the route for an engine without setBaseAndExtent, a
+   selection of several ranges and a put-back the engine refuses); code-block-copy-keeps-selection.test.ts (7, new)
+   over a stand-in whose selection carries a direction bit and file-comments-copy-fallback-browser.test.ts (2 legs,
+   new) over the real Files pane, whose origin carries no Clipboard API; file-view-place.test.ts's hideFloatOnScroll
+   pin moved with `subjectHeld`. The ledger entry is upstream/2026-09-10-markdown-viewer-slice5.md (tier feature).
+   CONTEXT.md is unchanged: the build coined no term (a wrapper is the Slice 2 note's own word for the element the
+   browser nests markdown into). From the Slice 4 note's item 10, decided with the build: (a) the html-block resync
+   defect, its same-text trigger closed by item 1c's tag test and its sanitizer-shortened trigger by item 1's
+   closed-tag rule, the trim leg's confinement lifted; (b) a hole at a range's edge stays unpainted and the callout
+   title stays text, the rule as it stands with its two pins (anchor-map-obsidian.test.ts: the alert body maps, a
+   nested fold's title inside the range is painted with the rest), since painting a hole at the edge would paint
+   tables and code blocks there too and is Slice 8's neighbourhood; (c) the whitespace alphabet at a selection's edge
+   stays JavaScript's `\s` on every side, since a narrower one is a change to the walk, the matching and the panel's
+   normalize together and nothing here needs it; (d) the unpaint normalizes each parent once: `unwrapMarks(marks)`,
+   exported from file-comments.ts beside unframeImage, collects the parents over the loop and normalizes each after it
+   (the 9,999 marks over the 5,000-link paragraph unwrap in 11 ms against 469 while the browser has not laid them out;
+   the panel's own unpaint always finds them laid out and pays about 340 ms against about 790 there, Chromium's
+   detachment of each mark's layout object being the rest, 2.3x and not 40x: the review's round 1), Panel.unpaint and
+   Panel.unwrap (repaintPresel's step) run it, nested marks coming outer first so the inner's parent is the block by
+   the time it is read (given inner first the detached outer's normalize is a no-op and the block is still normalized
+   once); file-comments-unpaint-normalize.test.ts (2, the normalize counted per element) and
    md-config-paint-whitespace-browser.test.ts's timing legs re-aimed at the panel's own function in place of their
    private copies; (e) a display formula under a highlight stays bare, decided with Slice 8's block-level paint; (f)
    the layout-neutral mark not applied (item 6); (g) paintPresel untouched, nothing to record; (h) the list layout's
@@ -3586,90 +3604,103 @@ re-verifies. Where the code as built departs from the text above, why, and which
    note's since `blockTopOf` (the review's round 1); the sequential hint costs one engine scan for a positionless
    same-anchor card whose copies are used up and log2(gap over quote) plus one otherwise, paid by such cards alone;
    the descent costs one shape check per level read, not one per top-level child (item 1b); the nested mark rule
-   changes no box the trim or the margin layout reads; the Raw read lexes and parses the top row's block on every
-   scroll frame while that block is an html block, closing tags alone and comments alone excepted (the review's round
-   2): readPlace runs once per scroll frame in Raw (file-view.ts notePlace, one read per animation frame) and runs
-   `readsAsNext` on the top row's block, on each block of a run after it and on each block after a fold the place
-   carries (`foldStands`); `readsAsNext` runs `closesAlone` and `isCommentBlock`, a scan each over the block's text,
-   then `opensWrapper`, which lexes a block opening with `<` alone (`isHtmlBlock`, one Lexer.lex) and parses an html
-   token's block with DOMParser, the block's source with the probe paragraph appended, and nothing of it is kept
-   between frames, so a paragraph's row costs the three tests alone; and the picture's carry (`Place.pic`, item 1b)
-   asks `opensWrapper` of no block a second time since the review's round 5, the `<img` line being looked for in the
-   run `nextShown` already walked (round 4's carry had asked it once more of the top row's block whenever the row read
-   as the block after it and an `<img` tag started at or after the row in that block, a lex and a parse more per
-   frame, counted over the real viewer at 701728eae in round 5, the round 4 recheck and both refuters agreeing: 24
-   lexes and 24 parses in 12 frames with the opener, an `<h1>` or `<p>` lead row, the `<img>` row or the blank before
-   the opener of a centred div holding an `<img` on top, 12 in 12 with an opener whose block held none and with a
-   comment block holding `<img`, 0 in 12 with a plain or nested paragraph, the `</div>` closer or a comment alone;
-   round 3's 12 in 12 for the opener row was of a tree before round 4 widened the carry, and a count is never carried
-   from an earlier tree). Counted over the round's final code with a DOMParser hook, 12 single-pixel scroll steps in
-   Raw at 900, one frame each: 12 parses in 12 frames with any row of a single wrapper's run on top, the banner
-   README's opener row, its `<img>` row, the blank before the opener, a no-picture README's opener, a comment's row
-   before the opener, a `</div>` closer before a second wrapper and the inner opener of a wrapper two deep; one parse
-   per wrapper block in the run, 24 in 12 with the OUTER opener of a wrapper two deep (two wrapper blocks in the run,
-   one parse each by `nextShown`, none by the carry); and 0 with a nested paragraph row; the DOM decode of a character
-   reference outside the table (item 4, `domRefText`) is one `<textarea>` innerHTML per distinct reference, memoized;
-   and the `Place.lead` carry and seat (item 1b) read one box per row of the block's own at the edge, the boxes the
-   picture's carry already read; the fold table (`foldDepths`) is one pass over the blocks per source, kept for the
-   last source read as the anchor map keeps its block table, so a frame over unchanged text reads the table without
-   rebuilding it (the review's round 2); in the fallback (item 4) `renderedBlocks` writes out the scope's blocks once
-   per fallback paint, linear in the scope's source, through the lexer's cached tokens (`sourceTable`), and the whole
-   document once more when the count guard widens (the review's round 3, in place of round 2's bounded emphasis passes
-   over the strip). Tests, by file (every new node test on the shim's stand-ins with hideEdges; every browser leg over
-   headless Chromium and the real bundles, 0 skipped, counted on every run): anchor-map-wrappers (38, four from the
-   review's round 1, five from its round 2, eight from its round 3, seven from its round 4 and four from its round 5,
-   test 27 re-aimed), anchor-map-html-text (7, new in the review's round 4, test 6's inline-title pin re-aimed in its
-   round 5), anchor-map-html-rules (15, six new in the review's round 5, two from its round 6, five from its round 7
-   and two from its round 8), anchor-map-pairing-r6 (20, four new in the review's round 6, two from its round 7, three
-   from its round 8, four from its closing pass, four from its closing pass 2 and three from its closing pass 3),
-   anchor-map-html-text-browser (1 leg, 85 subtests, new in the review's round 5, three shapes from its round 6,
-   sixteen shapes and two recorded entries from its round 7, three shapes and one recorded entry from its round 8),
-   anchor-map-dom-rules-browser (1 leg, new in the review's round 5), anchor-map-wrappers-browser (6, one from the
-   review's round 2, the panel open over a bare `<img>` block, and two from its round 3, the wrappers' leftovers and
-   the open `<p>`, two scenes from its round 6, five from its round 7 and nine notes from its round 8 in the round-3
-   test), anchor-map-fallback-markup (25, six new, main's projection case, two from the review's round 1, four from
-   its round 2, five from its round 3, the corpus among them, and its verdict's pin from its round 4),
-   anchor-map-code-table-paint-browser (4; its cards opened from their heads before Reveal's absence is read, the
-   review's round 1; the round 2 cells, its round 2; the round 3 shapes, its round 3), anchor-map-obsidian (28, five
-   new, the review's round 2's formula-first paragraph and its round 3's whitespace beside a formula),
-   md-config-math-map-browser (6, one new and one from the review's round 2, its real triple-click re-aimed in round
-   3), anchor-map-change-marks (7; its count-guard scene moved off an attribute's text in the review's round 2 and
-   onto a rendering that gained a copy in its round 3), md-config-paint-trim-browser (5, the confinement lifted), the
-   fixtures anchor-map-fixtures/wrappers-plain.md, wrappers-2block.md, wrappers-unclosed.md (new) and
-   blank-scenes.json (its note); file-view-place-blocks (14, two rewritten and main's projection case),
-   file-view-place-html-browser (15, two rewritten, two from the review's round 2, one from its round 3, one from its
-   round 4, five from its round 5, test 13 re-pinned in its round 7), file-view-place-wrapper-end-browser (3, two
-   rewritten), file-view-place-edits-browser (4, one tightened), file-view-place-closed-details (15, five from the
-   review's round 5, tests 4 and 11 re-aimed in its round 6, test 12 re-pinned and test 13 added in its round 7) and
+   changes no box the trim or the margin layout reads; the Raw read asks whether the top row's block reads as the
+   block after it once per block per source, not once per scroll frame (the PR review's round 1, fork PR #749; the
+   review's round 2 had asked on every frame): readPlace runs once per scroll frame in Raw (file-view.ts notePlace,
+   one read per animation frame) and runs `readsAsNext` on the top row's block, on each block of a run after it and on
+   each block after a fold the place carries (`foldStands`); `readsAsNext` keeps its answer per block for the last
+   source read, as `foldDepths` keeps the fold table, the answer being a function of the block's text alone, and fills
+   it on the first ask with `closesAlone` and `isCommentBlock`, a scan each over the block's text, then
+   `opensWrapper`, which lexes a block opening with `<` alone (`isHtmlBlock`, one Lexer.lex) and parses an html
+   token's block with DOMParser, the block's source with the probe paragraph appended, so a frame over the same text
+   costs a table read per block asked, the whole-block lex and parse once per html block over the life of the source,
+   and a paragraph's row its two scans once (before the memo a large html block with any block after it, an .html or
+   .xml file ending in a comment, a note with one big html block, was lexed and parsed whole on every frame, about 15
+   ms of a 16.7 ms frame in headless Chromium, 12 lexes and 12 parses in 12 frames over the stand-in and 12 parses
+   over the real viewer, 20 ms of script over those frames for a 300-row table against 2 with the answer kept, 24 and
+   24 from a fold's row with the block after the fold, whose carry asks it twice; the document's last block is never
+   asked, `nextShown` stopping before it, so a file that is one html block cost nothing either way); and the picture's
+   carry (`Place.pic`, item 1b) asks `opensWrapper` of no block a second time since the review's round 5, the `<img`
+   line being looked for in the run `nextShown` already walked (round 4's carry had asked it once more of the top
+   row's block whenever the row read as the block after it and an `<img` tag started at or after the row in that
+   block, a lex and a parse more per frame, counted over the real viewer at 701728eae in round 5, the round 4 recheck
+   and both refuters agreeing: 24 lexes and 24 parses in 12 frames with the opener, an `<h1>` or `<p>` lead row, the
+   `<img>` row or the blank before the opener of a centred div holding an `<img` on top, 12 in 12 with an opener whose
+   block held none and with a comment block holding `<img`, 0 in 12 with a plain or nested paragraph, the `</div>`
+   closer or a comment alone; round 3's 12 in 12 for the opener row was of a tree before round 4 widened the carry,
+   and a count is never carried from an earlier tree). Counted over the round's final code with a DOMParser hook, 12
+   single-pixel scroll steps in Raw at 900, one frame each, before the memo above kept the answer (since it, one parse
+   per wrapper block per source and none per frame after the first): 12 parses in 12 frames with any row of a single
+   wrapper's run on top, the banner README's opener row, its `<img>` row, the blank before the opener, a no-picture
+   README's opener, a comment's row before the opener, a `</div>` closer before a second wrapper and the inner opener
+   of a wrapper two deep; one parse per wrapper block in the run, 24 in 12 with the OUTER opener of a wrapper two deep
+   (two wrapper blocks in the run, one parse each by `nextShown`, none by the carry); and 0 with a nested paragraph
+   row; the DOM decode of a character reference outside the table (item 4, `domRefText`) is one `<textarea>` innerHTML
+   per distinct reference, memoized; and the `Place.lead` carry and seat (item 1b) read one box per row of the block's
+   own at the edge, the boxes the picture's carry already read; the fold table (`foldDepths`) is one pass over the
+   blocks per source, kept for the last source read as the anchor map keeps its block table, so a frame over unchanged
+   text reads the table without rebuilding it (the review's round 2); in the fallback (item 4) `renderedBlocks` writes
+   out the scope's blocks once per fallback paint, linear in the scope's source, through the lexer's cached tokens
+   (`sourceTable`), and the whole document once more when the count guard widens (the review's round 3, in place of
+   round 2's bounded emphasis passes over the strip). Tests, by file (every new node test on the shim's stand-ins with
+   hideEdges; every browser leg over headless Chromium and the real bundles, 0 skipped, counted on every run):
+   anchor-map-wrappers (38, four from the review's round 1, five from its round 2, eight from its round 3, seven from
+   its round 4 and four from its round 5, test 27 re-aimed), anchor-map-html-text (7, new in the review's round 4,
+   test 6's inline-title pin re-aimed in its round 5), anchor-map-html-rules (15, six new in the review's round 5, two
+   from its round 6, five from its round 7 and two from its round 8), anchor-map-pairing-r6 (20, four new in the
+   review's round 6, two from its round 7, three from its round 8, four from its closing pass, four from its closing
+   pass 2 and three from its closing pass 3), anchor-map-html-text-browser (1 leg, 85 subtests, new in the review's
+   round 5, three shapes from its round 6, sixteen shapes and two recorded entries from its round 7, three shapes and
+   one recorded entry from its round 8), anchor-map-dom-rules-browser (1 leg, new in the review's round 5),
+   anchor-map-wrappers-browser (6, one from the review's round 2, the panel open over a bare `<img>` block, and two
+   from its round 3, the wrappers' leftovers and the open `<p>`, two scenes from its round 6, five from its round 7
+   and nine notes from its round 8 in the round-3 test), anchor-map-fallback-markup (25, six new, main's projection
+   case, two from the review's round 1, four from its round 2, five from its round 3, the corpus among them, and its
+   verdict's pin from its round 4), anchor-map-code-table-paint-browser (4; its cards opened from their heads before
+   Reveal's absence is read, the review's round 1; the round 2 cells, its round 2; the round 3 shapes, its round 3),
+   anchor-map-obsidian (28, five new, the review's round 2's formula-first paragraph and its round 3's whitespace
+   beside a formula), md-config-math-map-browser (6, one new and one from the review's round 2, its real triple-click
+   re-aimed in round 3), anchor-map-change-marks (7; its count-guard scene moved off an attribute's text in the
+   review's round 2 and onto a rendering that gained a copy in its round 3), md-config-paint-trim-browser (5, the
+   confinement lifted), the fixtures anchor-map-fixtures/wrappers-plain.md, wrappers-2block.md, wrappers-unclosed.md
+   (new) and blank-scenes.json (its note); file-view-place-blocks (14, two rewritten and main's projection case),
+   file-view-place-html-browser (16, two rewritten, two from the review's round 2, one from its round 3, one from its
+   round 4, five from its round 5, test 13 re-pinned in its round 7, one from the PR review's round 1),
+   file-view-place-wrapper-end-browser (3, two rewritten), file-view-place-edits-browser (4, one tightened),
+   file-view-place-closed-details (16, five from the review's round 5, tests 4 and 11 re-aimed in its round 6, test 12
+   re-pinned and test 13 added in its round 7, one from the PR review's round 1) and
    file-view-place-closed-details-browser (10, both the review's round 1, extended in its rounds 2 to 4, the node file
    in its round 5 too), file-view-place-picture-line-browser (8, two new in the review's round 6, three from its round
    7 and three from its round 8, its test 6 at 700 too since the closing pass), file-view-place-last-fold-browser (1,
-   new in its round 6); file-comments-overlap (5), file-comments-overlap-browser (1), file-comments-hint-order (4, one
-   from the review's round 1), file-comments-keyboard-offer (10, one from the review's round 4),
-   file-comments-keyboard-offer-browser (3, one from its round 4), file-comments-paint-offer (9) and
-   file-comments-paint-offer-browser (7; the paint-offer pair the review's round 1, all four extended in its round 2,
-   the browser leg's event count asserted in its round 3, one test and one leg added in each of its rounds 5, 6 and 7
-   and two of each in its round 8), file-comments-unpaint-normalize (2), code-block-copy-keeps-selection (7, new in
+   new in its round 6); file-comments-overlap (5), file-comments-overlap-browser (1), file-comments-hint-order (9, one
+   from the review's round 1, five from the PR review's round 1), file-comments-keyboard-offer (10, one from the
+   review's round 4), file-comments-keyboard-offer-browser (3, one from its round 4), file-comments-paint-offer (9)
+   and file-comments-paint-offer-browser (7; the paint-offer pair the review's round 1, all four extended in its round
+   2, the browser leg's event count asserted in its round 3, one test and one leg added in each of its rounds 5, 6 and
+   7 and two of each in its round 8), file-comments-unpaint-normalize (2), code-block-copy-keeps-selection (7, new in
    the review's round 6, three from its round 7) and file-comments-copy-fallback-browser (2, new in its round 6, one
-   leg from its round 7), md-sanitize (16, two and the hook count from the review's round 4, the body title's unit
-   test and the hook test's second body from its round 5) and md-sanitize-comments-browser (2, new in its round 4),
-   fileview-parity (the nested head), file-comments-anchors and md-config-paint-whitespace-browser (re-aimed),
-   file-comments-behavior, file-comments-regions and file-comments-reveal-landing (pins on paintAll's shape re-aimed)
-   and file-comments-about-review2 and file-comments-markclick-controls (their selection fakes read once);
+   leg from its round 7), md-sanitize (17, two and the hook count from the review's round 4, the body title's unit
+   test and the hook test's second body from its round 5, the fakes' projection from the PR review's round 1, which
+   rewrote the title's two bodies), md-sanitize-comments-browser (2, new in its round 4) and
+   md-sanitize-body-title-browser (2, new in the PR review's round 1), fileview-parity (the nested head),
+   file-comments-anchors and md-config-paint-whitespace-browser (re-aimed), file-comments-behavior,
+   file-comments-regions and file-comments-reveal-landing (pins on paintAll's shape re-aimed) and
+   file-comments-about-review2 and file-comments-markclick-controls (their selection fakes read once);
    tools/file-review-plan.test.mjs, tools/file-review-plan-anchors-states.test.mjs and
    tools/file-review-plan-markclick.test.mjs (pins moved); tools/file-comments-host-anchors.test.mjs (14, two new),
    tests/test_file_comments_e2e.py (25, two new), tests/test_guide_files_keyboard_overlap_fold.py (8, new). Every case
    that changes behaviour fails over a `git archive` of a3edbaaf7 (the branch's base), of 40a4db43a for the review
    round 1's, of e5295ffa6 for its round 2's, of b1c6cb303 for its round 3's, or of 50b19bfdb, the second merge of
    main, for its round 4's, or of 701728eae for its round 5's, of 8924fa17e for its round 6's or of 78c0806ce for its
-   round 7's, and says how in its commit; the guards say they are guards. The guarantees the families re-verify:
-   highlights are measured `<mark class="fc-hl">` elements over the range's text nodes with their data-act, id,
-   tabIndex, role and title, the margin layout reading their boxes (the walk, the raw needle and the cell gap change
-   where marks appear, never their shape; the nested rule their paint, not their boxes); the pairing is the one table
-   the reader's place, the change marks and the selection map read; the regions layer's span over a picture is in the
-   index's shape at every depth; PRE and TD stay refused, so the fallback's ordinal keeps marking the changed cell or
-   line under the raw needle and the pipe rule; the float, the composer and the save keep their rules under the
-   keyboard offer and the composer's quote stays the exact source slice; and Slice 8's boundary stands.
+   round 7's, or of 6020e9309, the PR's reviewed head, for the PR review's round 1's, and says how in its commit; the
+   guards say they are guards. The guarantees the families re-verify: highlights are measured `<mark class="fc-hl">`
+   elements over the range's text nodes with their data-act, id, tabIndex, role and title, the margin layout reading
+   their boxes (the walk, the raw needle and the cell gap change where marks appear, never their shape; the nested
+   rule their paint, not their boxes); the pairing is the one table the reader's place, the change marks and the
+   selection map read; the regions layer's span over a picture is in the index's shape at every depth; PRE and TD stay
+   refused, so the fallback's ordinal keeps marking the changed cell or line under the raw needle and the pipe rule;
+   the float, the composer and the save keep their rules under the keyboard offer and the composer's quote stays the
+   exact source slice; and Slice 8's boundary stands.
 
 ### Slice 6: reaching a section without scrolling
 

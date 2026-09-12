@@ -54,6 +54,9 @@
 //     wrapper two deep), the picture at the edge among several on one line, a picture in a row beside text, the shown row of
 //     the wrapper's own kept across a same-view reflow (Place.lead: a wrapping fold title across a pane drag, the aside and a
 //     text-size step), and a commented-out tag counted for no picture.
+//   - the Slice 5 PR's review, round 1 (test 16): the Raw read's whole-block lex and parse of the top row's html block, counted
+//     through DOMParser across twelve single-pixel scroll frames over a 300-row table: once per block per source (the PR's head
+//     paid it on every frame, 12 in 12), and never for the document's last block.
 // A refusal is pinned as what the viewer does, not where the body lands: a setter trap on the body's scrollTop records
 // every script write across the switch, and a refused switch makes none. Where the body lands is then the browser's
 // own: with the sheets' default overflow-anchor Chromium's scroll anchoring re-finds an anchor in the new content and
@@ -959,6 +962,48 @@ test("in a browser, the real module: a commented-out `<img` tag on the line abov
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }
+    }
+  });
+});
+
+// ── the Raw read's cost per scroll frame: readsAsNext kept per block per source (the Slice 5 PR's review, round 1) ────
+/** A large html block: a `<table>` of `n` rows with no blank line inside it, one html block to marked, which closes what it opens. */
+const bigTable = (n: number) => "<table>\n" + Array.from({ length: n }, (_, i) => `<tr><td>row ${i + 1}</td><td>value ${i + 1}</td></tr>`).join("\n") + "\n</table>";
+const TABLE_THEN_COMMENT = "# Report\n\n" + paras(1, 3) + "\n\n" + bigTable(300) + "\n\n<!-- end of the export -->\n";
+const TABLE_LAST = "# Report\n\n" + paras(1, 3) + "\n\n" + bigTable(300) + "\n";
+/** Twelve single-pixel scroll steps of the body, one per animation frame, with DOMParser.parseFromString counted from the first
+ *  step to the frame after the last step's read (the viewer reads the place in the frame after a scroll event: file-view.ts
+ *  notePlace), and the page's script time over the window from CDP's Performance metrics, in ms. */
+async function scrollSteps(page: any, cdp: any): Promise<{ parses: number; scriptMs: number }> {
+  const scriptS = async (): Promise<number> => (await cdp.send("Performance.getMetrics")).metrics.find((m: { name: string }) => m.name === "ScriptDuration").value;
+  const s0 = await scriptS();
+  const parses: number = await page.evaluate(() => new Promise<number>((res) => {
+    const proto = DOMParser.prototype, orig = proto.parseFromString; let n = 0;
+    proto.parseFromString = function (this: DOMParser, s: string, t: DOMParserSupportedType) { n++; return orig.call(this, s, t); };
+    const body = document.querySelector(".fileview-body") as HTMLElement;
+    let i = 0;
+    const step = () => { if (i < 12) { body.scrollTop += 1; i++; requestAnimationFrame(step); } else requestAnimationFrame(() => requestAnimationFrame(() => { proto.parseFromString = orig; res(n); })); };
+    requestAnimationFrame(step);
+  }));
+  const s1 = await scriptS();
+  return { parses, scriptMs: Math.round((s1 - s0) * 10000) / 10 };
+}
+
+test("in a browser, the real module: the Raw read asks whether the top row's block reads as the block after it once per block per source, not per scroll frame (the Slice 5 PR's review, round 1). A 300-row html <table> block followed by a comment block, its rows on top of Raw at 900px, twelve single-pixel scroll steps one frame each: DOMParser.parseFromString runs at most once in the window (before: once per frame, 12, the whole block lexed and parsed each time); the same table as the document's last block: never (nextShown stops before the last block, before and after)", async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [what, doc, most] of [["the table followed by a comment block", TABLE_THEN_COMMENT, 1], ["the table as the document's last block", TABLE_LAST, 0]] as const) {
+      const { page, errors } = await openViewer(browser, "pane", 900, 600, { docs: { [REPORT]: doc }, raw: true });
+      const cdp = await page.context().newCDPSession(page); await cdp.send("Performance.enable");
+      await rowToEdge(page, "<tr><td>row 40</td>", 0); await frames(page, 2);   // a row of the table on top, that scroll's own read done
+      const row0 = await rowAtTop(page);
+      assert.match(row0!.text, /^<tr><td>row 40<\/td>/, what + ": the fixture: a table row is the top Raw row");
+      const { parses, scriptMs } = await scrollSteps(page, cdp);
+      const row1 = await rowAtTop(page);
+      assert.match(row1!.text, /^<tr><td>row 4\d<\/td>/, what + ": the fixture: a table row is still the top row after the steps");
+      t.diagnostic(`${what}: ${parses} DOMParser parses and ${scriptMs} ms of script over twelve single-pixel scroll frames`);
+      assert.ok(parses <= most, what + `: ${parses} parses over twelve frames (at most ${most}; before: 12, a whole-block parse per frame)`);
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
     }
   });
 });

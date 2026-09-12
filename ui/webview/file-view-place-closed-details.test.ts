@@ -36,10 +36,12 @@
 // own picture (Place.pic) and the Raw row kept across a reflow (Place.row); the round-5 tests the picture found through a run
 // of blocks, the picture AT the edge of a line of badges and a logo (the one the edge is inside whose top is nearest it, else
 // the topmost below it, not the first in the DOM), a picture beside text, the Rendered row kept across a reflow (Place.lead)
-// and a commented-out tag, over a layout of any of the round's READMEs (layoutScene). Synthetic fixtures only.
+// and a commented-out tag, over a layout of any of the round's READMEs (layoutScene). The last test (the Slice 5 PR's review,
+// round 1) counts the Raw read's whole-block lex and parse of the top row's html block across scroll frames over the stand-in:
+// once per block per source, where the PR's head paid it on every frame. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { marked } from "marked";
+import { marked, Lexer } from "marked";
 import { readPlace, seatPlace, blockHolding, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockWrappers } from "./anchor-map";
 import { hideEdges, sameNodes } from "../test-dom-shim";
@@ -942,4 +944,68 @@ test("round 5. readPlace: an `<img` tag inside an html comment of the wrapper's 
     const qr = readPlace(H(rawRowDown(doc, k, 5).body), doc)!;
     assert.deepEqual([textOf(doc, qr), qr.pic], ["## Centred title", { ...rowSpanOf(doc, kImg), top: -5 + (kImg - k) * 20, height: 20 }], what + ": the live tag's line carried with its own row (before: the comment's row from the opener and the comment)");
   }
+});
+
+// ── the Raw read's cost per scroll frame: readsAsNext kept per block per source (the Slice 5 PR's review, round 1) ────
+/** A large html block: a `<table>` of `n` rows with no blank line inside it, one html block to marked (an .html file's body, an
+ *  SVG's source, a note's one big html block), which closes what it opens, so it is its own place. */
+const bigTable = (n: number) => "<table>\n" + Array.from({ length: n }, (_, i) => `<tr><td>row ${i + 1}</td><td>value ${i + 1}</td></tr>`).join("\n") + "\n</table>";
+/** `body()` run with the two whole-block costs the Raw read pays for an html block counted, marked's Lexer.lex and the
+ *  installed DOMParser's parseFromString (the one reader-place.ts constructs), both restored after. */
+function counted(body: () => void): { lexes: number; parses: number } {
+  const n = { lexes: 0, parses: 0 };
+  const L = Lexer as unknown as { lex: typeof Lexer.lex }, lex = L.lex;
+  const proto = (globalThis as unknown as { DOMParser: { prototype: { parseFromString: (html: string, type: string) => unknown } } }).DOMParser.prototype, parse = proto.parseFromString;
+  L.lex = function (this: unknown, ...args: Parameters<typeof Lexer.lex>) { n.lexes++; return lex.apply(Lexer, args); };
+  proto.parseFromString = function (this: unknown, html: string, type: string) { n.parses++; return parse.call(this, html, type); };
+  try { body(); } finally { L.lex = lex; proto.parseFromString = parse; }
+  return n;
+}
+/** `frames` reads of the Raw view `r`, the rows moved up `px` after each as a scroll moves them, each read's place handed to `check`. */
+function scrolled(r: ReturnType<typeof raw>, doc: string, frames: number, px: number, check: (q: Place | null, k: number) => void): void {
+  for (let k = 0; k < frames; k++) { check(readPlace(H(r.body), doc), k); shiftBoxes(r.code, -px); r.body.scrollTop += px; }
+}
+
+test("readPlace in Raw: whether the top row's block reads as the block after it is asked once per block per source, not once per scroll frame (the Slice 5 PR's review, round 1). Twelve frames with a 60-row html <table> block's rows on top and a comment block after it: one Lexer.lex and one DOMParser parse of the block in all (before: a whole-block lex and parse per frame, 12 and 12, about 15 ms of a 16.7 ms frame in headless Chromium); a row inside a fold with the table after the fold, whose carry (foldStands) asks the table's block twice per read: one and one (before: 24 and 24); the table as the document's last block: none, before and after (nextShown never asks the last block); a new source is asked afresh", () => {
+  const TABLE = bigTable(60);
+  const ROW5 = "<tr><td>row 5</td><td>value 5</td></tr>";
+  // the table followed by a comment block: the table is not the last block, so nextShown asks readsAsNext of it (closesAlone and
+  // isCommentBlock, two scans; opensWrapper, a lex and a parse of the whole block) and reads it as its own place (a closed table
+  // opens no wrapper); each frame a row further down the table is the top row, a 20px scroll per frame
+  const docA = "# Report\n\n" + paras(1, 2) + "\n\n" + TABLE + "\n\n<!-- end of the export -->\n";
+  const spansA = sourceBlockSpans(docA);   // the block table, built once per source before the count (file-view-place-source-cache.test.ts pins that)
+  assert.equal(docA.slice(spansA[3].start, spansA[3].end), TABLE, "the fixture: the table is block 3, the comment block 4 after it");
+  assert.equal(spansA.length, 5, "the fixture: the heading, two paragraphs, the table, the comment");
+  const a = rawRow(docA, lineOf(docA, ROW5), 5);
+  const nA = counted(() => scrolled(a, docA, 12, 20, (q, k) => {
+    assert.ok(q, `frame ${k}: a place`);
+    assert.deepEqual([textOf(docA, q), q!.line && q!.line.top], [TABLE, -5], `frame ${k}: the table's block, partway in, the top row 5px into the edge`);
+    assert.equal(q!.line!.start, spansA[3].start + TABLE.indexOf(`<tr><td>row ${5 + k}</td>`), `frame ${k}: the line at the edge is table row ${5 + k}`);
+  }));
+  assert.deepEqual(nA, { lexes: 1, parses: 1 }, "twelve frames over the table's rows: the block lexed and parsed once, on the first frame (before: 12 and 12, a whole-block lex and parse per frame)");
+  // a row inside a fold, the table after the fold: foldStands hands the carry the table's block through nextShown and asks
+  // readsAsNext of it once more (a stand that reads as the block after it is no stand), two asks per read; twelve single-pixel
+  // steps with paragraph 3's row on top
+  const docD = "# Report\n\n" + paras(1, 2) + "\n\n<details>\n<summary>Folded one</summary>\n\n" + paras(3, 4) + "\n\n</details>\n\n" + TABLE + "\n\n<!-- end of the export -->\n";
+  const spansD = sourceBlockSpans(docD);
+  assert.ok(spansD.some((sp) => docD.slice(sp.start, sp.end) === TABLE), "the fixture: the table is its own block after the fold");
+  const d = rawAt(docD, PARA(3), 0);
+  const nD = counted(() => scrolled(d, docD, 12, 1, (q, k) => {
+    assert.ok(q, `frame ${k}: a place`);
+    assert.deepEqual([textOf(docD, q), q!.after && q!.after.map((st) => docD.slice(st.start, st.end))], [PARA(3), [TABLE]], `frame ${k}: paragraph 3, carrying the table after the fold`);
+  }));
+  assert.deepEqual(nD, { lexes: 1, parses: 1 }, "twelve frames on a fold's row with the table after the fold: the table's block lexed and parsed once, though every read asks it twice (before: 24 and 24)");
+  // the table as the document's last block: nextShown stops before the last block and never asks it, so the frames cost no lex and
+  // no parse, before this change and after it (an .html file or an SVG's source that is one block costs nothing per frame either way)
+  const docC = "# Report\n\n" + paras(1, 2) + "\n\n" + TABLE + "\n";
+  sourceBlockSpans(docC);
+  const c = rawRow(docC, lineOf(docC, ROW5), 5);
+  const nC = counted(() => scrolled(c, docC, 12, 20, (q, k) => assert.equal(textOf(docC, q), TABLE, `frame ${k}: the table's block`)));
+  assert.deepEqual(nC, { lexes: 0, parses: 0 }, "the last block is never asked: no lex, no parse");
+  // a new source is asked afresh: the same table in a source with another comment after it, one lex and one parse more
+  const docB = docA.replace("<!-- end of the export -->", "<!-- end of the second export -->");
+  sourceBlockSpans(docB);
+  const b = rawRow(docB, lineOf(docB, ROW5), 5);
+  const nB = counted(() => scrolled(b, docB, 3, 20, (q, k) => assert.equal(textOf(docB, q), TABLE, `frame ${k}: the table's block`)));
+  assert.deepEqual(nB, { lexes: 1, parses: 1 }, "another source over the same table: asked afresh, once");
 });

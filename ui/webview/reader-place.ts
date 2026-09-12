@@ -508,13 +508,29 @@ function opensWrapper(source: string, span: SourceRange): boolean {
   const probe = probeIn(body);
   return !!probe && probe.parentNode !== body;
 }
-/** Whether a Raw row of the block reads as the block after it (the header): the block renders nothing of its own (closing
- *  tags alone, comments alone) or is an html block that opens a wrapper, whose own element is never seated. */
-const readsAsNext = (source: string, span: SourceRange): boolean => closesAlone(source, span) || isCommentBlock(source, span) || opensWrapper(source, span);
+/** Whether a Raw row of block `b` reads as the block after it (the header): the block renders nothing of its own (closing
+ *  tags alone, comments alone) or is an html block that opens a wrapper, whose own element is never seated. The answer is
+ *  a function of the block's own text alone (two scans of it, and for a block opening with `<` opensWrapper's lex, and for
+ *  an html token its parse, of the whole block), so it is kept per block for the last source read, as foldDepths keeps the
+ *  fold table: a new source is the one event that changes it, and a scroll frame or a reflow over the same text reads the
+ *  kept answer (the Slice 5 PR's review, round 1: readPlace runs once per scroll frame in Raw and asked this of the top
+ *  row's block on every frame, so a large html block with any block after it, an .html or .xml file ending in a comment,
+ *  a note with one big html block, was lexed and parsed whole per frame with a walk over the parse, about 15 ms of a
+ *  16.7 ms frame in headless Chromium; the document's last block is never asked, nextShown stopping before it, so a file
+ *  that is one html block cost nothing either way). Filled as blocks are asked, not for the whole table at once: one lex
+ *  and one parse per html block whose row tops the view or lies in a run the top row reads past, or that a fold the
+ *  place carries hands to foldStands, over the life of the source. */
+let nextCache: { source: string; next: Int8Array } | null = null;   // per block: -1 not asked yet, 0 false, 1 true
+function readsAsNext(source: string, spans: SourceRange[], b: number): boolean {
+  if (!nextCache || nextCache.source !== source || nextCache.next.length !== spans.length) nextCache = { source, next: new Int8Array(spans.length).fill(-1) };
+  let v = nextCache.next[b];
+  if (v < 0) { v = closesAlone(source, spans[b]) || isCommentBlock(source, spans[b]) || opensWrapper(source, spans[b]) ? 1 : 0; nextCache.next[b] = v; }
+  return v === 1;
+}
 /** The block a Raw row of block `b` reads as: `b` itself, or the first block after it past a run of blocks that read as
  *  the block after them (readsAsNext); the document's last block whatever it is. */
 function nextShown(source: string, spans: SourceRange[], b: number): number {
-  while (b + 1 < spans.length && readsAsNext(source, spans[b])) b++;
+  while (b + 1 < spans.length && readsAsNext(source, spans, b)) b++;
   return b;
 }
 /** For each block, how many `<details>` are open where it starts, from the source alone: the details tags of the blocks
@@ -560,7 +576,7 @@ function foldStands(code: Element, source: string, spans: SourceRange[], b: numb
     while (j < spans.length && depth[j] >= d) j++;
     if (j >= spans.length) break;
     j = nextShown(source, spans, j);
-    if (readsAsNext(source, spans[j])) break;
+    if (readsAsNext(source, spans, j)) break;
     const box = rawBlockBox(code, source, spans[j]);
     if (!box) break;
     out.push({ start: spans[j].start, end: spans[j].end, top: box.top - edge });

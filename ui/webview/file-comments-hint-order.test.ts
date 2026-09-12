@@ -12,7 +12,13 @@
 // character context, the shape of the probe. The words for a guessed copy (copyUnsureWords, unsureMarkTitle: the mark's title, the
 // card's tag title and the open card's line) name the copy: the first for a positionless card the engine placed alone, the copy after
 // the previous comment's for one the hint placed (the Slice 5 review, round 1: the hinted card's words said the first copy while its
-// highlight sat on the second). Driven over the behavior suite's DOM stand-in (the Raw view's rows), the row a mark
+// highlight sat on the second). The merge's order (paintAll: the host's confirmed copy, Status.placed, then the stored position,
+// then the sequential hint) is pinned by executed cases in which each pair DISAGREES (the same review: the first cut's positioned
+// card sat on the copy the hint would have named anyway, so a merge with the hint outranking the position passed it): a stored
+// position naming a copy the hint would not pick wins over the hint; the host's confirmed copy wins over a stale position nearest
+// another copy; a confirmed copy shares a pass with a positionless same-anchor card in both orders, counting as the previous
+// card's copy for the hint and keeping its own copy against it. Each case reads a copy off the rows, so a swap of two lines in the
+// merge moves a highlight here. Driven over the behavior suite's DOM stand-in (the Raw view's rows), the row a mark
 // sits in telling the copies apart. Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures
 // only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
@@ -48,13 +54,24 @@ const N2 = comment(T0 + "-2", T0 + 2000, TIED);
 const S3 = comment(T0 + "-3", T0 + 3000, TIED, THIRD);
 const N4 = comment(T0 + "-4", T0 + 4000, TIED);
 const U5 = comment(T0 + "-5", T0 + 5000, ONCE);
-function status(comments: StoreComment[]): Status {
+// the precedence pins (paintAll's merge: the host's confirmed copy, then the stored position, then the sequential hint): a stale
+// position that names no copy and lies nearest the third (the shape the host's tie-break rules on; the engine breaks a tie by
+// the copy nearest the hint, engine.js pickCandidate), and the host's confirmed verdict for a card (Status.placed, by the
+// ordinal), with the copy fields the host reads for it written beside the comment as the host writes them (the panel never reads
+// them, it takes the verdict)
+const STALE = THIRD + 7;
+assert.ok(![FIRST, SECOND, THIRD].includes(STALE) && locateComment(DOC, TIED, STALE).range!.start === THIRD, "the stale position names no copy and is nearest the third");
+const confirmed = (id: string, at: number): NonNullable<Status["placed"]> => ({ [id]: { at, confirmed: true, by: "ordinal" } });
+const withCopies = (c: StoreComment, ordinal: number): StoreComment => ({ ...c, ordinal, copies: 3 });
+const PLAIN_TITLE = "Open the comment on this passage";
+function status(comments: StoreComment[], placed?: Status["placed"]): Status {
   return {
     verb: "status", root: ROOT, storePath: STORE_PATH, trackedBy: null, agentTooling: "present",
     fileMtimeNs: "1757145600000000001", storeMtimeNs: "1757145600000000002", configMtimeNs: null,
     store: { v: 3, path: "docs/report.md", suggestions: [], comments },
     hunks: [], log: [],
     unsent: { comments: comments.map((c) => c.id), replies: [], accepted: 0, rejected: 0, watermark: null },
+    ...(placed === undefined ? {} : { placed }),
   };
 }
 
@@ -328,7 +345,7 @@ test("two comments without a position on a passage repeated three times, far apa
   const { aside } = await openPanel(w, status([N1, N2, S3, N4, U5]));
   assert.deepEqual(painted(w, aside, N1.id), { row: ROW.first, text: MARKER, dashed: true, tagged: true }, "the first positionless comment: the engine's earliest pick, a guess");
   assert.deepEqual(painted(w, aside, N2.id), { row: ROW.second, text: MARKER, dashed: true, tagged: true }, "the second takes the copy after the first's (before this slice: the first copy again), still a guess: nothing vouches for it");
-  assert.deepEqual(painted(w, aside, S3.id), { row: ROW.third, text: MARKER, dashed: false, tagged: false }, "a stored position names its copy whatever came before it in the order, and is no guess");
+  assert.deepEqual(painted(w, aside, S3.id), { row: ROW.third, text: MARKER, dashed: false, tagged: false }, "a stored position names its copy and is no guess (here the copy the hint would also have named: the position and the hint DISAGREEING is pinned below)");
   assert.deepEqual(painted(w, aside, N4.id), { row: ROW.first, text: MARKER, dashed: true, tagged: true }, "no copy follows the previous card's (the third): the engine's earliest pick stands, as before the hint");
   assert.deepEqual(painted(w, aside, U5.id), { row: ROW.unique, text: UNIQUE, dashed: false, tagged: false }, "a unique anchor: its one copy, no guess");
   // the mark's own words say what the card says: no position stored, so this is a guess and not a confirmed copy
@@ -391,4 +408,53 @@ test("the words name the copy painted: a positionless card the engine placed alo
   const note2 = card2.querySelector(".fc-note")!;
   assert.match(note2.textContent, NEXT_TAG, "the open card's line names the copy after the previous comment's");
   assert.doesNotMatch(note2.textContent, /first copy/);
+});
+
+// ── the merge's order, each pair where it disagrees (the Slice 5 review, round 1: the pins above could not fail on it) ──
+
+test("a stored position beats the sequential hint where they disagree: after two positionless comments on the first two copies, a comment whose position names the FIRST copy paints there, plainly, where the hint alone would have named the third; and the positionless comment after it takes the copy after the positioned one's, the second", async (t: TestContext) => {
+  const a = comment(T0 + "-10", T0 + 1000, TIED), b = comment(T0 + "-11", T0 + 2000, TIED);
+  const p = comment(T0 + "-12", T0 + 3000, TIED, FIRST);   // a stored position on the first copy, behind the hint's pick
+  const d = comment(T0 + "-13", T0 + 4000, TIED);
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([a, b, p, d]));
+  assert.deepEqual([painted(w, aside, a.id).row, painted(w, aside, b.id).row], [ROW.first, ROW.second], "the positionless pair takes the first two copies in turn");
+  assert.deepEqual(painted(w, aside, p.id), { row: ROW.first, text: MARKER, dashed: false, tagged: false }, "the stored position wins over the hint: the first copy, plainly (with the hint outranking it: the third, as a guess)");
+  assert.equal(w.code.querySelector('mark.fc-hl[data-id="' + p.id + '"]')!.title, PLAIN_TITLE, "...with the plain title");
+  assert.deepEqual(painted(w, aside, d.id), { row: ROW.second, text: MARKER, dashed: true, tagged: true }, "the positioned card's copy is the previous same-anchor card's: the positionless one after it takes the copy after the first, the second, as a guess");
+});
+
+test("the host's confirmed copy beats a disagreeing stored position: a comment whose stale position names no copy and lies nearest the third, and whose verdict confirms the SECOND by the ordinal, paints on the second, plainly", async (t: TestContext) => {
+  const c = withCopies(comment(T0 + "-14", T0 + 1000, TIED, STALE), 2);
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([c], confirmed(c.id, SECOND)));
+  assert.deepEqual(painted(w, aside, c.id), { row: ROW.second, text: MARKER, dashed: false, tagged: false }, "the confirmed copy, plainly (with the position outranking it: the copy nearest the stale position, the third, as a guess)");
+  assert.equal(w.code.querySelector('mark.fc-hl[data-id="' + c.id + '"]')!.title, PLAIN_TITLE, "...with the plain title");
+});
+
+test("all three disagree and the confirmed copy leads: after a positionless comment on the first copy, a comment whose stale position lies nearest the third and whose verdict confirms the FIRST paints on the first, plainly; the hint would have named the second and the position the third", async (t: TestContext) => {
+  const a = comment(T0 + "-15", T0 + 1000, TIED);
+  const c = withCopies(comment(T0 + "-16", T0 + 2000, TIED, STALE), 1);
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([a, c], confirmed(c.id, FIRST)));
+  assert.deepEqual(painted(w, aside, a.id), { row: ROW.first, text: MARKER, dashed: true, tagged: true }, "the positionless comment: the engine's earliest pick, a guess");
+  assert.deepEqual(painted(w, aside, c.id), { row: ROW.first, text: MARKER, dashed: false, tagged: false }, "the confirmed copy, plainly: with the hint leading, the second as a guess; with the position leading, the third as a guess");
+});
+
+test("a host-confirmed comment followed by a positionless same-anchor comment: the confirmed one paints on its copy, the second, plainly, and the positionless one takes the copy after it, the THIRD, as a guess (the confirmed card's copy counts as the previous card's, as a positioned card's does)", async (t: TestContext) => {
+  const c = withCopies(comment(T0 + "-17", T0 + 1000, TIED), 2), n = comment(T0 + "-18", T0 + 2000, TIED);
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([c, n], confirmed(c.id, SECOND)));
+  assert.deepEqual(painted(w, aside, c.id), { row: ROW.second, text: MARKER, dashed: false, tagged: false }, "the confirmed copy, plainly");
+  assert.deepEqual(painted(w, aside, n.id), { row: ROW.third, text: MARKER, dashed: true, tagged: true }, "the copy after the confirmed one's, as a guess (a hint that read past confirmed cards would have left it on the first)");
+  assert.match(w.code.querySelector('mark.fc-hl[data-id="' + n.id + '"]')!.title, /so this is the copy after the previous comment's on this passage, not a confirmed one$/, "...and its words name that copy");
+});
+
+test("a positionless comment followed by a host-confirmed same-anchor comment whose verdict names the FIRST copy: both paint on the first, the confirmed one plainly (its verdict, not the hint, names its copy; with the hint outranking it: the second, as a guess)", async (t: TestContext) => {
+  const n = comment(T0 + "-19", T0 + 1000, TIED), c = withCopies(comment(T0 + "-20", T0 + 2000, TIED), 1);
+  const w = world(DOC); t.after(() => w.close());
+  const { aside } = await openPanel(w, status([n, c], confirmed(c.id, FIRST)));
+  assert.deepEqual(painted(w, aside, n.id), { row: ROW.first, text: MARKER, dashed: true, tagged: true }, "the positionless comment: the engine's earliest pick, a guess");
+  assert.deepEqual(painted(w, aside, c.id), { row: ROW.first, text: MARKER, dashed: false, tagged: false }, "the confirmed copy wins over the hint: the first, plainly");
+  assert.equal(w.code.querySelector('mark.fc-hl[data-id="' + c.id + '"]')!.title, PLAIN_TITLE, "...with the plain title");
 });
