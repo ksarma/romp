@@ -15,14 +15,18 @@ session; the expiry term holds while a launch is inside its ceiling, and for a l
 however far the clock runs; the settle reads the wall clock when no pass clock is handed in; a write landing
 during the pass is seen next pass; three sessions with one moved leave placements and nodes byte-identical to
 the ungated passes (two fresh worlds); a parse the cache does not hold is never skipped, nor is an expiry view
-that cannot be computed; a pass that stood down is planned again, not recorded; a rebound root forgets; the counters.
+that cannot be computed; a pass that stood down is planned again, not recorded; a rebound root forgets; the counters,
+and three workers skipping at once count three skips (the free-threaded race: every bump under one lock).
 
 Synthetic sids and text; a temp state root, a temp Claude config root for the task store; the planner's model
 calls are stubs, deterministic, so two worlds agree byte for byte."""
+import ast
 import json
 import os
 import re
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
@@ -123,12 +127,13 @@ class _World(unittest.TestCase):
         jd._discover_cache["fp"] = None
         jd._discover_cache["result"] = None
 
-    def run_pass(self, now=NOW):
-        """One planner pass; returns the gate counters' deltas (planned, skipped, recorded)."""
+    def run_pass(self, now=NOW, concurrency=None):
+        """One planner pass; returns the gate counters' deltas (planned, skipped, recorded). `concurrency` is
+        run_plan's: None reads the judge setting, a number pins the pool's width (the interleaving test)."""
         before = jd.planner_skip_stats()
         jd._discover_cache["fp"] = None
         jd._discover_cache["result"] = None
-        jd.run_plan(now=now)
+        jd.run_plan(now=now, concurrency=concurrency)
         after = jd.planner_skip_stats()
         return tuple(after[k] - before[k] for k in ("planned", "skipped", "recorded"))
 
@@ -145,6 +150,8 @@ class _World(unittest.TestCase):
 
 
 class PlannerSkip(_World):
+    JOIN_S = 10.0     # the cap on every wait in the interleaving test: a missed precondition fails red, never hangs
+
     def test_unchanged_inputs_skip_after_a_pass_that_had_nothing_to_do(self):
         p, s, r = self.run_pass()
         self.assertEqual((p, s), (3, 0), "first pass: every session planned")
@@ -290,6 +297,120 @@ class PlannerSkip(_World):
         self.assertEqual(set(jd.planner_skip_stats()), {"skipped", "planned", "recorded"})
         s = jd.planner_skip_stats(); s["skipped"] = 99
         self.assertNotEqual(jd.planner_skip_stats()["skipped"], 99)
+
+    def test_three_workers_skipping_at_once_count_three_skips(self):
+        # THE FREE-THREADED RACE (CI's 3.14t cell, 2026-09-10 to -12; never under a GIL): a counter bump is a read,
+        # an add and a write, and a pass bumps `skipped` from every planner worker at once. Two workers that read
+        # the same value both write value + 1, and a settled pass counts one skip fewer than its sessions:
+        # (0, 2, 0) for three. Every bump holds _PLANNER_STATS_LOCK now (_planner_stat), so a worker inside its
+        # gap keeps the others out of it. Deterministic, no clock: the pool is three wide (passed to run_plan, not
+        # the judge setting) and a barrier at _plan_session holds each worker until all three are running, so
+        # three threads reach the bump together, and the first to read `skipped` parks in its gap. Serialized,
+        # the other two queue behind it (the lock is held while it parks) and the pass counts three once it
+        # moves. Unserialized, they land in the gap, and the test lets both land (nothing else would stop them)
+        # before it moves the first: the pass counts one. Every wait is capped (JOIN_S) and asserted, and a pass
+        # thread that ends early fails the wait at once, so a missed precondition is named, never a hang.
+        self.settle()
+        go, parked, two_landed = threading.Event(), threading.Event(), threading.Event()
+        first, readers, writes = threading.Lock(), set(), []
+        barrier = threading.Barrier(len(self.SIDS), timeout=self.JOIN_S)
+
+        class Gap(dict):
+            def __getitem__(self, k):
+                v = dict.__getitem__(self, k)
+                if k == "skipped":
+                    readers.add(threading.get_ident())
+                    if first.acquire(blocking=False):          # exactly one reader parks between its read and its write
+                        parked.set()
+                        go.wait()
+                return v
+
+            def __setitem__(self, k, v):
+                dict.__setitem__(self, k, v)
+                if k == "skipped":
+                    writes.append(v)
+                    if len(writes) >= 2:
+                        two_landed.set()
+        counts = []
+        real = jd._plan_session
+
+        def three_in_flight(fsid, path, now):
+            barrier.wait()                                     # no worker bumps until all three are running
+            return real(fsid, path, now)
+
+        def one_pass():
+            try:
+                counts.append(self.run_pass(concurrency=len(self.SIDS)))
+            except BaseException as e:                         # surfaces in the assertions below, not on stderr alone
+                counts.append(e)
+        t = threading.Thread(target=one_pass, name="planner-pass", daemon=True)
+
+        def reached(ev, what):
+            """`ev` set under the cap; a pass thread that ended without setting it fails now, not at the cap."""
+            deadline = time.monotonic() + self.JOIN_S
+            while not ev.wait(timeout=0.05) and t.is_alive() and time.monotonic() < deadline:
+                pass
+            self.assertTrue(ev.is_set(), "%s (pass thread alive: %r, its result: %r)" % (what, t.is_alive(), counts))
+        saved = jd._PLANNER_STATS
+        jd._PLANNER_STATS, jd._plan_session = Gap(saved), three_in_flight
+        failed = True
+        try:
+            t.start()
+            reached(parked, "no worker reached the skipped bump")
+            self.assertTrue(hasattr(jd, "_PLANNER_STATS_LOCK"),
+                            "no _PLANNER_STATS_LOCK: this test and the source pin know the lock by that name")
+            if not jd._PLANNER_STATS_LOCK.locked():            # nothing serializes the bump: the other two land in it
+                reached(two_landed, "the bump is unserialized and the other two workers never landed in the gap")
+            failed = False
+        finally:
+            go.set()
+            if failed:
+                barrier.abort()                                # a worker still held at the barrier raises out, so the
+                #                                                join below returns. Never on the passing path: parked
+                #                                                fires only after the last arrival released every
+                #                                                waiter, and an abort breaks a released waiter that
+                #                                                has not yet stepped out of wait() (under a GIL the
+                #                                                first worker can park and the test reach here first)
+            t.join(timeout=self.JOIN_S)
+            jd._PLANNER_STATS, jd._plan_session = saved, real
+        self.assertFalse(t.is_alive(), "the pass did not finish within the cap: %r" % (counts,))
+        self.assertEqual(len(readers), len(self.SIDS), "three workers, three threads, reached the bump")
+        self.assertEqual(counts, [(0, 3, 0)], "three workers skipped at once: three skips counted")
+
+    def test_every_counter_bump_is_the_locked_helper(self):
+        # The lock is only as wide as the sites that take it: the three bumps in _plan_session go through
+        # _planner_stat, whose one keyed write sits under `with _PLANNER_STATS_LOCK` (the name the interleaving
+        # test looks the lock up by, so a rename moves both), and the module's syntax tree walks clean: every
+        # other store to a key of the dict, in any key form (a quoted key, a variable, a slice), and every other
+        # touch of the dict at all (a method call, a rebind) outside a `with _PLANNER_STATS_LOCK` block fails
+        # here, by line. A text match on one spelling of the subscript would pass a variable key or single quotes.
+        src = Path(BIN, "romp-judge").read_text()
+        for name in ("skipped", "planned", "recorded"):
+            self.assertEqual(src.count('_planner_stat("%s")' % name), 1, "one %s bump, through the helper" % name)
+        tree = ast.parse(src)
+
+        def is_name(node, name):
+            return isinstance(node, ast.Name) and node.id == name
+        helpers = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_planner_stat"]
+        self.assertEqual(len(helpers), 1, "one module-level _planner_stat")
+        held = [n for n in ast.walk(tree) if isinstance(n, ast.With)
+                and any(is_name(item.context_expr, "_PLANNER_STATS_LOCK") for item in n.items)]
+        self.assertTrue(any(w in helpers[0].body for w in held), "the helper's body is a `with _PLANNER_STATS_LOCK`")
+        under_lock = {id(n) for w in held for n in ast.walk(w)}
+        in_helper = {id(n) for n in ast.walk(helpers[0])}
+        definition = {id(t) for n in tree.body if isinstance(n, ast.Assign)
+                      for t in n.targets if is_name(t, "_PLANNER_STATS")}
+        self.assertEqual(len(definition), 1, "one module-level definition of the counters")
+        stores = [n for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.ctx, (ast.Store, ast.Del))
+                  and is_name(n.value, "_PLANNER_STATS")]
+        self.assertEqual(len([n for n in stores if id(n) in in_helper and id(n) in under_lock]), 1,
+                         "the helper's increment is one keyed store under the lock")
+        stray = [n.lineno for n in stores if id(n) not in in_helper]
+        self.assertEqual(stray, [], "a counter written by key outside _planner_stat, at line(s) %r" % stray)
+        touched = [n.lineno for n in ast.walk(tree) if is_name(n, "_PLANNER_STATS")
+                   and id(n) not in under_lock and id(n) not in definition]
+        self.assertEqual(touched, [],
+                         "_PLANNER_STATS touched outside `with _PLANNER_STATS_LOCK`, at line(s) %r" % touched)
 
     def test_a_task_store_change_under_the_forked_leaf_un_skips(self):
         # A is an SDK session that /cleared: its reg names LEAF as the current transcript, so discover hands the

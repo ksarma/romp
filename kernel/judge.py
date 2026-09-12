@@ -2761,11 +2761,25 @@ _COURIER_SEEN = {}         # fsid -> the scan key of its last pass that found no
 # most skips happen there, and this table sees the sessions it let through.
 _PLANNER_SEEN = {}         # fsid -> the plan key of its last pass that had nothing to do
 _PLANNER_STATS = {"skipped": 0, "planned": 0, "recorded": 0}
+_PLANNER_STATS_LOCK = threading.Lock()   # guards the counters' read-modify-write: run_plan's pool bumps them from
+#                                          every planner worker at once, and `d[k] += 1` is a read, an add and a
+#                                          write. Under a GIL the gap between them is a rare switch point; with
+#                                          the GIL off (CI's free-threaded 3.14t cell, 2026-09-10 to -12) two
+#                                          workers read the same value, both write value + 1, and a settled pass
+#                                          counts one skip fewer than its sessions: (0, 2, 0) for three.
+
+
+def _planner_stat(name):
+    """One bump of a planner gate counter (`skipped`, `planned` or `recorded`), serialized across the pass's
+    workers by _PLANNER_STATS_LOCK. Every bump goes through here; tests/test_planner_skip.py pins that."""
+    with _PLANNER_STATS_LOCK:
+        _PLANNER_STATS[name] += 1
 
 
 def planner_skip_stats():
-    """A copy of the planner gate's counters for /perf (memos.plannerSkip)."""
-    return dict(_PLANNER_STATS)
+    """A copy of the planner gate's counters for /perf (memos.plannerSkip), read under their lock."""
+    with _PLANNER_STATS_LOCK:
+        return dict(_PLANNER_STATS)
 
 
 def _task_store_key(fsid):
@@ -10351,9 +10365,9 @@ def _plan_session(fsid, path, now):
     session = parsed_session(fsid, [path], now)
     pkey = _plan_key(fsid, path, session, now)        # BEFORE the store read (the chain-memo rule)
     if pkey is not None and _PLANNER_SEEN.get(fsid) == pkey:
-        _PLANNER_STATS["skipped"] += 1               # nothing moved since a pass that had nothing to do
+        _planner_stat("skipped")                     # nothing moved since a pass that had nothing to do
         return 0
-    _PLANNER_STATS["planned"] += 1
+    _planner_stat("planned")
     _judge_ctx.stage_incomplete = False               # the record rule at the end reads it (the evidence gate's
     #                                                   completeness bit, 2026-09-07): a strict read that failed on
     #                                                   a file that exists (_read_failed) or a deferral without a
@@ -10844,7 +10858,7 @@ def _plan_session(fsid, path, now):
         if placed == 0 and not units and not retired and _store_key(fsid) == pkey[2] \
                 and not getattr(_judge_ctx, "stage_incomplete", False):
             _PLANNER_SEEN[fsid] = pkey               # nothing to do and nothing written: skipped until an input moves
-            _PLANNER_STATS["recorded"] += 1
+            _planner_stat("recorded")
         else:
             _PLANNER_SEEN.pop(fsid, None)            # work done, the store moved, or the pass was INCOMPLETE (the
             #                                          completeness bit the evidence gate reads, _gated: a stand-down
