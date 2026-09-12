@@ -778,7 +778,7 @@ test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer 
   // not for the tail, and it maps since round 6: test 18)
 });
 
-test("a tab after a quote's marker maps: the nested block lexer expands the leading tab run of every line it is handed, and the nested walk runs over that expanded text (blockLexView), so a closing `> \\t` line, a `> \\tsecond` continuation, a `>\\t\\tcode` line, a callout's body line and a list item's `- \\t` are placed; an indented code block a tab opens is a hole at the tab's position", () => {
+test("a tab after a quote's marker maps: the nested block lexer expands the leading tab run of every line it is handed, and the nested walk runs over that expanded text (blockLexView), so a closing `> \\t` line, a `> \\tsecond` continuation, a `>\\t\\tcode` line, a callout's body line and a list item's `- \\t` are placed; an indented code block a tab opens maps its line to the line's own offset since Slice 8 (before: a hole at the tab's position)", () => {
   // (the Slice 4 review, round 6: marked's blockquote strip takes ONE whitespace after the marker, `^ *>[ \t]?`, so a second one stays
   // in the quote's text, and blockTokens expands a leading tab there to four spaces before lexing: the nested paragraph's raw was
   // `first\n    ` over a quote text of `first\n\t`, and the whole quote refused with "a paragraph the mapping could not place";
@@ -809,22 +809,24 @@ test("a tab after a quote's marker maps: the nested block lexer expands the lead
       assert.equal(r.quote, s, why);
     }
   }
-  // a tab right after the marker's space on a line of its own paragraph is indented code in the nested lex: the code block is a
-  // hole at the tab's position (a selection on it refuses as any code block does, in the person's terms), and the quote's other
-  // paragraph and the paragraph after it map; before, the whole quote refused with a reason naming the tab
+  // a tab right after the marker's space on a line of its own paragraph is indented code in the nested lex: since Slice 8 the code's
+  // line maps to its own offset, the tab's four spaces in the nested view carrying the tab's position and never emitted (before
+  // Slice 8 the block was a hole at the tab's position; before the Slice 4 review's round 6 the whole quote refused with a reason
+  // naming the tab), and the quote's other paragraph and the paragraph after it map
   const coded = "> first\n>\n> \tcode here\n\nAfter para.\n";
   const cb = buildRendered(coded);
   assert.match(marked.parse(coded) as string, /<blockquote>[\s\S]*<pre><code>code here/, "the lexer's reading: indented code inside the quote");
-  const hole = bad(mapIn(cb, coded, "code here"), "the code block the tab opened");
-  assert.match(hole.reason, /an indented code block/);
-  assert.equal(hole.blockStartOffset, coded.indexOf("\t"), "the hole stands where the tab does");
+  const code = ok(mapIn(cb, coded, "code here"), "the code block the tab opened");
+  assert.deepEqual(code.range, { start: coded.indexOf("code here"), end: coded.indexOf("code here") + 9 }, "the line's own offset, past the tab");
+  assert.equal(code.quote, "code here");
   for (const s of ["first", "After para."]) assert.deepEqual(ok(mapIn(cb, coded, s), s).range, { start: coded.indexOf(s), end: coded.indexOf(s) + s.length });
   // the same in a list item: `- `, a tab and text is indented code in the item (marked's list tokenizer keeps a tab after the
   // bullet's space, and the item's nested lex expands it); the item after it and the paragraph after the list map
   const listed = "- \tcode here\n- plain item\n\nAfter para.\n";
   const lb = buildRendered(listed);
   assert.match(marked.parse(listed) as string, /<li><pre><code>code here/, "the lexer's reading: indented code inside the item");
-  assert.match(bad(mapIn(lb, listed, "code here"), "the item's code block").reason, /an indented code block/);
+  const item = ok(mapIn(lb, listed, "code here"), "the item's code block");
+  assert.deepEqual(item.range, { start: listed.indexOf("code here"), end: listed.indexOf("code here") + 9 }, "the line's own offset inside the item");
   for (const s of ["plain item", "After para."]) assert.deepEqual(ok(mapIn(lb, listed, s), s).range, { start: listed.indexOf(s), end: listed.indexOf(s) + s.length });
 });
 
@@ -1062,7 +1064,7 @@ test("no refusal names a token type: over every element of the obsidian and refu
 // obstacle it meets, a refused block or a hole; the Raw offer for each refusal is what it was.
 const OBSTACLES = "Intro para.\n\n```\ncode line one\ncode line two\n```\n\nMiddle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
 
-test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it refuses as touching the table, one from a code line across the table into the html block as the code block, each with its own Raw offer (before: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table or starting in the code names them as before, and the whitespace between two blocks is still only whitespace", () => {
+test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it refuses as touching the table, one from a code line across the table into the html block at the table as well (since Slice 8 the code is positioned; before it: the code block), each with the table's Raw offer (before Slice 5: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table names it, one starting in the code and ending in prose maps, and the whitespace between two blocks is still only whitespace", () => {
   const src = OBSTACLES;
   const box = buildRendered(src);
   const span = (from: string, to: string) => mapRenderedSelection(sel(point(box, from), point(box, to, true)), El(box), src);
@@ -1075,18 +1077,20 @@ test("the first obstacle in document order is the one named: a selection from a 
   assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| cell one"), src.indexOf("cell one")], "the Raw offer starts at the first covered cell");
   assert.equal(r.rawHasQuote, true);
   assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "cell one | cell two", "the exact span of the covered cells");
+  // since Slice 8 the code's lines are positioned too, so a span from a code line across the table to the html block meets the
+  // table first: the one-cell rule, with the Raw view offered on the table's covered cells (the Slice 5 shape named the code block)
   r = bad(span("code line one", "Html block text"), "a code line across the table to the html block");
-  assert.match(r.reason, /a code block/, "the code block comes first (before: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("```"), src.indexOf("```")], "the Raw offer is the code block's");
-  assert.equal(r.rawHasQuote, false, "text spanning blocks is not one source passage");
+  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before Slice 8: the code block; before Slice 5: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("Col A")], "the Raw offer starts at the first covered cell");
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two", "the covered cells, first through last");
   // as before: a span with no hole before the html block names it; one ending in the table or starting in the code names them
   r = bad(span("Between para.", "Html block text"), "the paragraph before the html block into it");
   assert.match(r.reason, /an HTML block/, r.reason);
   assert.equal(r.blockStartOffset, src.indexOf("<div"));
   assert.match(bad(span("Middle para.", "Html block text"), "prose across the table to the html block").reason, /a table/, "the table stands between them");
   assert.match(bad(span("Middle para.", "cell two"), "prose into the table").reason, /a table/);
-  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /a code block/);
-  assert.match(bad(span("Intro para.", "code line two"), "prose into the code").reason, /a code block/);
+  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /spans more than one cell/, "the table's rule (before Slice 8: the code block)");
+  assert.equal(ok(span("Intro para.", "code line two"), "prose into the code (before Slice 8: refused as a code block)").quote, "Intro para.\n\n```\ncode line one\ncode line two", "the fence's opener inside the quote, as a Raw selection mints it");
   assert.match(bad(span("cell one", "cell two"), "two cells").reason, /a table/);
   assert.match(bad(span("cell one", "cell two"), "two cells").reason, /spans more than one cell/, "the one-cell rule (Slice 8)");
   // the whitespace node between the middle paragraph and the table: its start snaps to the table and its end to the paragraph, and

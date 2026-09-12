@@ -5,10 +5,11 @@
 // (the fence's own, a list or a quote with one anywhere in it) missed the comparison and was refused as "a block whose rendered
 // text does not match the file". Three consequences, each measured here against the base commit's behaviour: prose in a list
 // or a quote that holds a fence maps again (it was refused from Rendered, the Raw view the only way to comment on it); a
-// selection inside a top-level fence is refused as "a code block", the refusal the design names, not one that blames a stale
-// render; and paintRendered's fallback no longer counts the word Copy in the fence's hay, so a comment on `print("Copy")`'s Copy
-// paints. The fix is anchor-map.ts's: its text walks skip the button. Synthetic note, the harness's paths and sid; skips loudly
-// without a browser, as the other legs do.
+// selection inside a top-level fence maps to the word's own offsets (since Slice 8 of plans/markdown-viewer.md, item 2; the
+// Slice 3 fix had it refused as "a code block", the refusal the design then named, not one that blames a stale render); and
+// paintRendered's fallback no longer counts the word Copy in the fence's hay, so a comment on `print("Copy")`'s Copy paints. The
+// fix is anchor-map.ts's: its text walks skip the button. Synthetic note, the harness's paths and sid; skips loudly without a
+// browser, as the other legs do.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -32,7 +33,7 @@ function anchorMapBundle(): string {
 }
 
 for (const mode of ["pane", "chat"] as Mode[]) {
-  test(`in a browser, the real viewer, ${mode}: prose beside a fence in a list or a quote maps from Rendered; a fence refuses as a code block; the word Copy paints inside a fence`, { timeout: 90000 }, async (t) => {
+  test(`in a browser, the real viewer, ${mode}: prose beside a fence in a list or a quote maps from Rendered; a fence's line maps to its offsets (Slice 8; before: refused as a code block); the word Copy paints inside a fence`, { timeout: 90000 }, async (t) => {
     await inBrowser(t, async (browser) => {
       const { page, errors } = await openViewer(browser, mode, 900, 700, { docs: { [REPORT]: NOTE } });
       await page.addScriptTag({ content: anchorMapBundle() });
@@ -66,9 +67,9 @@ for (const mode of ["pane", "chat"] as Mode[]) {
         assert.equal(r.ok, true, `${mode}: "${name}" maps from Rendered (before the fix: ${r.reason || "refused"})`);
         assert.equal(r.quote, quote, `${mode}: "${name}" quotes its own words`);
       }
-      assert.equal(out.inFence.ok, false, mode + ": a selection inside a fence is refused");
-      assert.match(out.inFence.reason, /touches a code block;/, mode + ": ...as a code block, with the Raw offer (before the fix: a block whose rendered text does not match the file)");
-      assert.equal(out.inFence.rawHasQuote, true, mode + ": ...and the Raw view is offered");
+      assert.equal(out.inFence.ok, true, mode + ": a selection inside a fence maps since Slice 8 (before it: refused as a code block with the Raw offer; before the Slice 3 fix: a block whose rendered text does not match the file): " + JSON.stringify(out.inFence));
+      assert.equal(out.inFence.quote, "print", mode + ": the selected word");
+      assert.equal(out.inFence.range.start, NOTE.indexOf('print("Copy")'), mode + ": its own offset in the fence");
       assert.equal(out.paint.returned, 1, mode + ": the word Copy inside a fence paints one mark (before the fix: null, the button's Copy counted in the hay)");
       assert.deepEqual(out.paint.painted, ["pre:Copy"], mode + ": ...inside the fence");
       await page.close();

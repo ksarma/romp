@@ -789,6 +789,9 @@ function blockLexView(v: View): View {
   return new View(str, null, map);
 }
 
+/** Source the walk shows without positioning: the reason a selection touching it reads (refusalNoun's terms) and its span in N.
+ *  A hole may show no character at all: a formula's (FORMULA_HOLE), whose glyphs are a control, and a fence line's (FENCE_LINE),
+ *  which renders nothing; no selection touches such a hole, and the change points read it (renderedSpot). */
 type Hole = { reason: string; startN: number; endN: number };
 /** A table cell's emitted characters, `[startK, endK)` of the block's chars, and the cell's own span in N, `[startN, endN)`: the
  *  row's segment trimmed as marked trims the cell's text (walkRow). Every cell that shows a character has one, a cell the
@@ -801,13 +804,18 @@ type Cell = { startK: number; endK: number; startN: number; endN: number };
 type TableSpan = { startN: number; endN: number; startK: number; endK: number; cellFrom: number; cellTo: number };
 /** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
 const FORMULA_HOLE = "a formula";
-/** The reasons of a code block's holes (the walk shows the code's text and refuses to map inside it) and of a table's: since
- *  Slice 8 a table's cells are positioned (walkTable), and this hole stands for what that reading could not place, a cell whose
- *  re-cut of the row is not marked's text for it, or a table whose raw does not lay out as marked's token says (tableHole). */
+/** The reasons of a code block's holes and of a table's. Since Slice 8 a code block's lines (walkCode) and a table's cells
+ *  (walkTable) are positioned, and these holes stand for what those readings could not place: a code block whose text lines are
+ *  not its raw's lines less a whitespace prefix, a cell whose re-cut of the row is not marked's text for it, or a table whose raw
+ *  does not lay out as marked's token says (tableHole). */
 const CODE_HOLE = "a code block", INDENTED_CODE_HOLE = "an indented code block", TABLE_HOLE = "a table";
+/** The reason of a fence line's zero-text hole (walkCode): the opener with its info string, and the closer with the line feed that
+ *  ends the last code line before it, render nothing, and a change's point on them keeps its card (renderedSpot). Never read by a
+ *  selection: the hole holds no character. */
+const FENCE_LINE = "a code block's fence line";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
- *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
- *  block the renderer shows but the mapping refuses, or a table cell the reading could not place). `cells` and
+ *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a code block or a
+ *  table cell the reading could not place, a footnote reference's number, a callout's title). `cells` and
  *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table. */
 class Emitter {
   chars = "";
@@ -1113,6 +1121,78 @@ function walkTable(tt: Tokens.Table, tv: View, em: Emitter): void {
   tableHole(tt, tv, em);
 }
 
+// ── code (Slice 8 of plans/markdown-viewer.md, item 2: a code line maps from Rendered) ────────────────────────────────────
+// marked lays a code block out from its raw line by line. A fence's raw is the opener line, the content lines and the closer
+// (none for a fence the note ends inside), plus the one line feed the lexer moves onto a block's raw; its `text` is the content
+// lines, each less the opener's indent when the line has at least that much (indentCodeCompensation, for a BACKTICK opener
+// alone: a tilde fence keeps its lines whole), so content line i of the raw renders text line i. An indented block's raw is its
+// lines with their four or more leading spaces and the blank lines between them; its `text` those lines less one to four leading
+// spaces, the trailing line feeds trimmed. The lexer has already turned each line's leading tab run into four spaces a tab in the
+// view the walk runs over (normalizeSource at the top level, blockLexView one level down), every one of them carrying the tab's
+// own position. The renderer writes the text into `<pre><code>`, and the viewer cuts it into per-line rows whose line feeds are
+// DROPPED (code-block.ts wrapLinesHtml), splits a row's text around the URLs and paths it links (file-view-links.ts) and parks
+// the Copy button in the `<pre>`, a control every walk skips (isControl); a line feed is whitespace and a link's split moves no
+// character, so the characters under the `<pre>` are the text's non-whitespace characters in order, and the walk below emits
+// exactly those: each text line's characters at the raw line's own positions, past the whitespace prefix the text lost, so the
+// block's chars are byte for byte what putHole gave and the `<pre>` pairs to its block as before (analyzeRendered); only the
+// positions change. A selection inside a row then maps to the line's source span (the tab bytes and CRLFs the source holds,
+// since the position is the source's and not a text search's), and one across rows to the span from the first character to the
+// last, the line feeds and a quoted fence's markers inside the quote as a Raw selection over the same characters mints (the
+// brief's open question 2: lines are not cells, and a rule against crossing them would be one the Raw view does not have). A
+// block whose text lines are not its raw's lines less a whitespace prefix (a shape this reading does not follow; marked's
+// tokenizer produces none today) keeps the hole it had, one over the whole raw with the code's reason, so its refusal, its Raw
+// offer and the fallback paint stand for it ("the Raw fallback stays for shapes the map still refuses").
+/** A fence's closing line as marked's rule reads one: up to three spaces, three or more backticks or tildes, more fence characters, spaces. */
+const FENCE_CLOSER_RE = /^ {0,3}(?:`{3,}|~{3,})[`~]* *$/;
+/** Where each text line of a code token begins in `cv.str` (the view its raw tiles): entry i is the index of text line i's first
+ *  character, the raw line being the text line after a whitespace prefix (the opener's indent the compensation took, an indented
+ *  block's one to four spaces, or none). Null when a line is not laid out so, or a raw line past the content is neither blank nor
+ *  a fence's closer. A fence whose text is empty (no content line, or one blank line) has no line to place: []. */
+function codeLineStarts(tt: Tokens.Code, cv: View): number[] | null {
+  if (tt.text === "") return [];
+  const lines = cv.str.split("\n"), textLines = tt.text.split("\n");
+  const fenced = tt.codeBlockStyle !== "indented", first = fenced ? 1 : 0;
+  if (lines.length < first + textLines.length) return null;
+  const starts: number[] = [];
+  let ls = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const rl = lines[i], ti = i - first;
+    if (ti >= 0 && ti < textLines.length) {
+      const tl = textLines[ti], b = rl.length - tl.length;
+      if (b < 0 || !rl.endsWith(tl) || stripWs(rl.slice(0, b)) !== "") return null;
+      starts.push(ls + b);
+    } else if (ti >= textLines.length && stripWs(rl) !== "" && !(fenced && FENCE_CLOSER_RE.test(rl))) return null;   // past the content: the closer, or the line feed the lexer moved onto the raw
+    ls += rl.length + 1;
+  }
+  return starts;
+}
+/** A code token over `cv`, the view its raw tiles: every text line's characters at the raw line's own positions (codeLineStarts),
+ *  line by line, so the emitted characters are the ones putHole gave, positioned; a fence's opener line and its closer, which render
+ *  nothing, are zero-text holes either side of them (FENCE_LINE; the closer's from the line feed that ends the last line, and one
+ *  hole over the whole raw for a fence with no line to place), so a change's point on a fence line keeps its card while a point in
+ *  a line places in its row (renderedSpot); an indented block has no fence lines. A token whose lines the reading cannot place is
+ *  the hole it was before this slice, one over the whole raw with the code's reason, its text shown through it. */
+function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
+  const starts = codeLineStarts(tt, cv);
+  if (starts === null) {
+    em.holes.push({ reason: tt.codeBlockStyle === "indented" ? INDENTED_CODE_HOLE : CODE_HOLE, startN: cv.n(0), endN: cv.n(cv.str.length) });
+    em.putHole(tt.text, em.holes.length - 1);
+    return;
+  }
+  const textLines = tt.text.split("\n"), lines = cv.str.split("\n");
+  const fenced = tt.codeBlockStyle !== "indented", contentStart = lines[0].length + 1;
+  if (fenced) em.holes.push({ reason: FENCE_LINE, startN: cv.n(0), endN: cv.n(starts.length ? contentStart : cv.str.length) });
+  for (let i = 0; i < starts.length; i++) {
+    const tl = textLines[i], s = starts[i];
+    for (let j = 0; j < tl.length; j++) em.put(tl[j], cv.n(s + j));
+  }
+  if (fenced && starts.length) {
+    let closer = contentStart;
+    for (let i = 0; i < starts.length; i++) closer += lines[1 + i].length + 1;
+    if (closer <= cv.str.length) em.holes.push({ reason: FENCE_LINE, startN: cv.n(closer - 1), endN: cv.n(cv.str.length) });
+  }
+}
+
 /** Place `tokens`, which tile `view.str` from `p` (block-level; nested containers recurse). */
 function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
   for (const t of tokens) {
@@ -1177,10 +1257,9 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "code": {
-        // shown by the renderer, refused by the mapping: a hole the selection may not touch
-        const tt = t as Tokens.Code;
-        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? INDENTED_CODE_HOLE : CODE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
-        em.putHole(tt.text, em.holes.length - 1);
+        // every line positioned over the raw line's own characters (Slice 8, item 2), the opener's indent and an indented block's
+        // spaces skipped; a block the reading cannot lay out keeps its hole (walkCode)
+        walkCode(t as Tokens.Code, view.sub(p, p + raw.length), em);
         break;
       }
       case "table": {
@@ -4538,9 +4617,10 @@ function ownRows(idx: RenderedIndex, b: Block): { lo: number; hi: number } {
  *  the offset — or right after the last one before it, when the offset follows that character directly
  *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
  *  Null when no block's rows hold the offset (a blank line between blocks, whichever token's raw carries
- *  it), the block is refused or has no element, or the offset sits inside a hole (a nested code block or
- *  table the renderer shows but the mapping does not place): a point there would land beside the wrong
- *  words, so the change keeps its card and Reveal instead. */
+ *  it), the block is refused or has no element, or the offset sits inside a hole (a footnote reference's
+ *  number, a cell or a code block the reading could not place, a table's source outside its cells, a fence's
+ *  opener or closer line): a point there would land beside the wrong words, so the change keeps its card
+ *  and Reveal instead. */
 function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
   let blk: Block | null = null;
   for (const b of idx.blocks) {
@@ -4556,6 +4636,12 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
   const tb = blk.tables.find((t) => nOf(idx, t.startN) <= offset && offset < nOf(idx, t.endN));
   const cell = tb ? blk.cells.slice(tb.cellFrom, tb.cellTo).find((c) => nOf(idx, c.startN) <= offset && offset <= nOf(idx, c.endN)) : undefined;
   if (tb && !cell && offset !== nOf(idx, tb.startN)) return null;
+  // On a fence's line (Slice 8): the opener with its info string and the closer render nothing and are zero-text holes of their own
+  // (walkCode, FENCE_LINE), so a point past a fence line's first position has no row to sit in and keeps its card, as it did when
+  // the whole block was a hole (placed by the rule below it would land at the first or the last code character, which the change
+  // is not at). The first position is the edge, placed below beside the text it borders: the opener's first character, and the
+  // line feed that ends the last code line before the closer.
+  if (blk.holes.some((h) => h.reason === FENCE_LINE && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN))) return null;
   // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
   // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
   let j = -1, k = -1;
@@ -4580,6 +4666,13 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
     // at or before a table's first character, the table's first cell the next positioned character: the point sits after the
     // text before the table, never inside its first cell (the hole rule's first branch, kept for a table whose cells are placed)
     if (!after && !cell) { const tk = blk.tables.find((t) => t.startK === k && t.startK < t.endK); if (tk && offset <= nOf(idx, tk.startN)) after = true; }
+    // at or before a fence's opener, the fence's first code character the next positioned one, or at the line feed before its
+    // closer, the last code character the previous one: the point sits after the text before the fence, or after that last
+    // character, never inside the fence beside a line the change is not on (the same edge as the table's, FENCE_LINE)
+    if (!after) {
+      const pj = nOf(idx, blk.pos[j]), pk = nOf(idx, blk.pos[k]);
+      if (blk.holes.some((h) => h.reason === FENCE_LINE && pj < nOf(idx, h.startN) && offset <= nOf(idx, h.startN) && nOf(idx, h.endN) <= pk)) after = true;
+    }
   }
   if (!after) return nthNonWs(blk.dom[0], k);
   const at = nthNonWs(blk.dom[0], j);

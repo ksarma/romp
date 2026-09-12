@@ -718,28 +718,27 @@ test("Rendered: a selection spanning two aligned blocks keeps the blank line and
 });
 
 // ── Rendered: refusals ─────────────────────────────────────────────────────────────────────────────
-test("Rendered refusals: code, table, HTML block, entity prose, escaped link label, tab after a marker — each refuses with the note-preserving fields", () => {
+test("Rendered refusals over the refusals fixture: the HTML block, entity prose, the escaped link label and the tab after a list marker each refuse with the note-preserving fields; the fenced code, the indented block, the table cell and the quote's tab-opened code map since Slice 8 (before: refused as a code block, an indented code block, a table)", () => {
   const source = fixture("refusals.md");
   const { box } = buildRendered(source);
   const els = box.childNodes.filter((n) => n.nodeType === 1) as FakeElement[];
   const byTag = (tag: string, n = 0) => els.filter((e) => e.tagName === tag)[n];
   const inside = (e: FakeElement, from: number, to: number) => { const p = nonWsPositions(e); return sel({ node: p[from].t, offset: p[from].off }, { node: p[to - 1].t, offset: p[to - 1].off + 1 }); };
   const lineOf = (needle: string) => source.slice(0, source.indexOf(needle)).split("\n").length - 1;
-  // fenced code (its tab was expanded to spaces by the renderer; the Raw offer still finds it through the map)
+  // fenced code MAPS since Slice 8 of plans/markdown-viewer.md (before: refused as a code block with the Raw offer, the line found by
+  // indexOf): the line's own offsets, and the `return` after the tab the renderer showed as four spaces
   const pre = byTag("PRE", 0);
-  let r = bad(mapRenderedSelection(inside(pre, 0, 20), El(box), source));   // "def handler(request):" has 20 non-whitespace characters
-  assert.match(r.reason, /code block/);
-  assert.equal(r.blockStartLine, lineOf("```python"));
-  assert.equal(r.blockStartOffset, source.indexOf("```python"));
-  assert.equal(r.rawHasQuote, true);
-  assert.equal(source.slice(r.rawRange!.start, r.rawRange!.end), "def handler(request):");
-  r = bad(mapRenderedSelection(inside(pre, 20, 26), El(box), source));          // "return" — after the tab
-  assert.equal(r.rawHasQuote, true);
-  assert.equal(source.slice(r.rawRange!.start, r.rawRange!.end), "return");
-  // indented code
-  r = bad(mapRenderedSelection(inside(byTag("PRE", 1), 0, 3), El(box), source));
-  assert.match(r.reason, /indented code/);
-  assert.equal(r.blockStartLine, lineOf("    indented"));
+  const line = ok(mapRenderedSelection(inside(pre, 0, 20), El(box), source), "a code line maps (before: refused as a code block)");   // "def handler(request):" has 20 non-whitespace characters
+  assert.equal(line.quote, "def handler(request):");
+  assert.deepEqual(line.range, { start: source.indexOf("def handler"), end: source.indexOf("def handler") + "def handler(request):".length }, "the line's own offsets");
+  const ret = ok(mapRenderedSelection(inside(pre, 20, 26), El(box), source), "the word after the tab");          // "return", after the tab
+  assert.equal(ret.quote, "return");
+  assert.equal(ret.range.start, source.indexOf("\treturn") + 1, "the tab is not selected text; the word's own offset");
+  // indented code maps too (before: refused as an indented code block)
+  const ind = ok(mapRenderedSelection(inside(byTag("PRE", 1), 0, 3), El(box), source), "an indented block's line");
+  assert.equal(ind.quote, "ind");
+  assert.equal(ind.range.start, source.indexOf("indented code line"));
+  let r: ReturnType<typeof bad>;
   // a table cell MAPS since Slice 8 of plans/markdown-viewer.md (before: refused as a table with the Raw offer, the cell text found
   // by indexOf); the first two characters of the header's first cell are its own two source characters
   const cell = ok(mapRenderedSelection(inside(byTag("TABLE"), 0, 2), El(box), source), "a table cell maps (before: refused as a table)");
@@ -770,21 +769,27 @@ test("Rendered refusals: code, table, HTML block, entity prose, escaped link lab
   r = bad(mapRenderedSelection(inside(byTag("UL"), 0, 4), El(box), source));
   assert.match(r.reason, /tab after its marker|could not place/);
   assert.equal(r.blockStartLine, lineOf("- Item one"));
-  // blockquote line beginning with a tab after the marker (the lexer turned it into code)
-  r = bad(mapRenderedSelection(inside(byTag("BLOCKQUOTE"), 0, 4), El(box), source));
-  assert.match(r.reason, /code block|tab/);
-  assert.equal(r.blockStartLine, lineOf("> \tquoted"));
+  // blockquote line beginning with a tab after the marker: the lexer turned it into an indented code block inside the quote, whose
+  // line maps since Slice 8 (before: refused as an indented code block at the quote's line)
+  const quoted = ok(mapRenderedSelection(inside(byTag("BLOCKQUOTE"), 0, 4), El(box), source), "the quote's tab-opened code line");
+  assert.equal(quoted.quote, "quot");
+  assert.equal(quoted.range.start, source.indexOf("quoted after a tab"));
   // the aligned paragraphs around them still map, before and after every refused block (alignment resynced)
   const before = ps.find((p) => p.textContent.startsWith("An aligned paragraph before"))!;
   assert.equal(ok(mapRenderedSelection(inside(before, 0, 9), El(box), source)).quote, "An aligned");
   const after = ps.find((p) => p.textContent.startsWith("An aligned paragraph after"))!;
   assert.equal(ok(mapRenderedSelection(inside(after, 2, 9), El(box), source)).quote, "aligned");
   assert.equal(ok(mapRenderedSelection(inside(after, 0, 34), El(box), source)).quote, "An aligned paragraph after everything.");
-  // a selection reaching from an aligned paragraph into a refused block refuses with the block's line
+  // a selection reaching from an aligned paragraph into the fence's first line maps since Slice 8, the opener line inside the quote
+  // as a Raw selection over the same characters mints (before: refused as a code block with no Raw passage); one reaching from
+  // the table's last cell into a refused block (the HTML block) still refuses with that block's line
   const bp = nonWsPositions(before), cp = nonWsPositions(pre);
-  r = bad(mapRenderedSelection(sel({ node: bp[0].t, offset: bp[0].off }, { node: cp[3].t, offset: cp[3].off + 1 }), El(box), source));
-  assert.match(r.reason, /code block/);
-  assert.equal(r.blockStartLine, lineOf("```python"));
+  const intoCode = ok(mapRenderedSelection(sel({ node: bp[0].t, offset: bp[0].off }, { node: cp[3].t, offset: cp[3].off + 1 }), El(box), source), "prose into the fence");
+  assert.equal(intoCode.quote, "An aligned paragraph before the code.\n\n```python\ndef h");
+  const tp = nonWsPositions(byTag("TABLE")), dp = nonWsPositions(byTag("DIV"));
+  r = bad(mapRenderedSelection(sel({ node: tp[17].t, offset: tp[17].off }, { node: dp[2].t, offset: dp[2].off + 1 }), El(box), source));   // "120 ms" starts at the table's 17th non-whitespace character
+  assert.match(r.reason, /HTML block/);
+  assert.equal(r.blockStartLine, lineOf("<div class"));
   assert.equal(r.rawHasQuote, false, "text spanning the two blocks is not one source passage");
 });
 
@@ -924,7 +929,7 @@ const firstEl = (root: FakeNode, tag: string, n = 0): FakeElement => {
 const wholeOf = (e: FakeElement) => { const p = nonWsPositions(e); return sel({ node: p[0].t, offset: p[0].off }, { node: p[p.length - 1].t, offset: p[p.length - 1].off + 1 }); };
 const partOf = (e: FakeElement, from: number, to: number) => { const p = nonWsPositions(e); return sel({ node: p[from].t, offset: p[from].off }, { node: p[to - 1].t, offset: p[to - 1].off + 1 }); };
 
-test("Rendered: a code block nested in a list item is a hole, the other items still map and the hole refuses with its own line; a table nested in a list item maps cell by cell since Slice 8 (before: a hole refusing with the table's line)", () => {
+test("Rendered: a code block nested in a list item maps line by line since Slice 8 (before: a hole refusing with its own line), the other items map as before, a selection from the item's prose into the code and one across the items carry the fence inside the quote; a table nested in a list item maps cell by cell (before: a hole refusing with the table's line)", () => {
   const source = [
     "- Install it:", "", "  ```sh", "  npm install notes-api", "  ```", "", "- Then run the server.", "", "- A table:", "",
     "  | a | b |", "  |---|---|", "  | 1 | 2 |", "", "- After the table.", "",
@@ -934,24 +939,22 @@ test("Rendered: a code block nested in a list item is a hole, the other items st
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(ul, "LI", 1)), El(box), source)).quote, "Then run the server.");
   assert.equal(ok(mapRenderedSelection(wholeOf(firstEl(ul, "LI", 3)), El(box), source)).quote, "After the table.");
   assert.equal(ok(mapRenderedSelection(partOf(firstEl(ul, "LI", 0), 0, 7), El(box), source)).quote, "Install");
-  let r = bad(mapRenderedSelection(partOf(firstEl(ul, "PRE"), 0, 3), El(box), source));
-  assert.match(r.reason, /code block/);
-  assert.equal(r.blockStartLine, 2);
-  assert.equal(r.rawHasQuote, true);
-  assert.equal(source.slice(r.rawRange!.start, r.rawRange!.end), "npm");
+  const npm = ok(mapRenderedSelection(partOf(firstEl(ul, "PRE"), 0, 3), El(box), source), "the nested fence's line (before: refused as a code block at line 2, `npm` the Raw offer)");
+  assert.equal(npm.quote, "npm");
+  assert.equal(npm.range.start, source.indexOf("npm install"), "the line's own offset inside the item");
   // the nested table's header cell maps to its own offset (Slice 8; before: refused as a table at line 10)
   const cell = ok(mapRenderedSelection(partOf(firstEl(ul, "TABLE"), 0, 1), El(box), source), "a nested table's cell maps");
   assert.equal(cell.quote, "a");
   assert.equal(cell.range.start, source.indexOf("| a |") + 2);
-  // a selection from the prose item into the code touches the hole
+  // a selection from the prose item into the code maps, the fence's opener inside the quote (before: touched the hole)
   const li0 = nonWsPositions(firstEl(ul, "LI", 0)), pre = nonWsPositions(firstEl(ul, "PRE"));
-  r = bad(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: pre[2].t, offset: pre[2].off + 1 }), El(box), source));
-  assert.match(r.reason, /code block/);
-  // a selection across the two prose items keeps the code's source between them
+  const into = ok(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: pre[2].t, offset: pre[2].off + 1 }), El(box), source), "the item's prose into its code");
+  assert.equal(into.quote, "Install it:\n\n  ```sh\n  npm");
+  // a selection across the two prose items carries the whole fence between them (before: refused, the hole inside the selection)
   const li1 = nonWsPositions(firstEl(ul, "LI", 1));
-  r = bad(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: li1[3].t, offset: li1[3].off + 1 }), El(box), source));
-  assert.match(r.reason, /code block/, "the hole lies inside the selection");
-  // painting a range inside the hole falls back to the code element's text
+  const across = ok(mapRenderedSelection(sel({ node: li0[0].t, offset: li0[0].off }, { node: li1[3].t, offset: li1[3].off + 1 }), El(box), source), "across the fence");
+  assert.equal(across.quote, "Install it:\n\n  ```sh\n  npm install notes-api\n  ```\n\n- Then");
+  // painting a range inside the fence lands on the line by position (before: through the fallback's text match), the same marks
   const marks = paintRendered(El(box), source, { start: source.indexOf("npm install"), end: source.indexOf("npm install") + 11 }, "fc-hl") as unknown as FakeElement[] | null;
   assert.ok(marks && stripWs(marks.map((m) => m.textContent).join("")) === "npminstall");
 });
@@ -1480,7 +1483,7 @@ test("Rendered deletion points: before the word the offset is on, against the wo
   }
 });
 
-test("Rendered deletion points that cannot be placed stay unpainted, never beside the wrong words: a code fence, a table, an HTML block, a blank line between blocks, a nested code block's inside; either side of a nested block is placed", () => {
+test("Rendered deletion points that cannot be placed stay unpainted, never beside the wrong words: an HTML block, a blank line between blocks; a code fence's line and a table's cell place their points since Slice 8 (before: unpainted, both holes), a nested code block's line too; either side of a nested block is placed", () => {
   const source = fixture("refusals.md");
   const { box } = buildRendered(source);
   const before = serialize(box);
@@ -1493,17 +1496,23 @@ test("Rendered deletion points that cannot be placed stay unpainted, never besid
     del("u-blank", at("\n\n```python") + 1),                       // the blank line between the paragraph and the fence
     del("p-prose", at("An aligned paragraph after everything.")),   // the control: a mapped paragraph
   ], stylesFor);
-  // a table's cell places its point since Slice 8 (before: unpainted, the table a hole); the fence, the html block and the blank line stay unplaced
-  assert.deepEqual(res, { painted: ["u-table", "p-prose"], unpainted: ["u-code", "u-html", "u-blank"] });
-  assert.equal(withClass(box, "fc-del").length, 2);
+  // a table's cell and a fence's line place their points since Slice 8 (before: unpainted, both holes); the html block and the blank line stay unplaced
+  assert.deepEqual(res, { painted: ["u-code", "u-table", "p-prose"], unpainted: ["u-html", "u-blank"] });
+  assert.equal(withClass(box, "fc-del").length, 3);
+  const inCode = withClass(box, "fc-del").find((m) => m.getAttribute("data-id") === "u-code")!;
+  let up: FakeNode | null = inCode, inPre = false;
+  while (up) { if (up.nodeType === 1 && (up as FakeElement).tagName === "PRE") inPre = true; up = up.parentNode; }
+  assert.ok(inPre, "the fence's point stands inside the code");
+  const [cpre, cpost] = around(blockOf(box, inCode), inCode);
+  assert.ok(cpre.endsWith("return ") && cpost.startsWith("respond(request)"), "right before the deleted call, on its line: " + JSON.stringify([cpre.slice(-12), cpost.slice(0, 16)]));
   const inCell = withClass(box, "fc-del").find((m) => m.getAttribute("data-id") === "u-table")!;
   assert.equal((inCell.parentNode as FakeElement).tagName, "TD", "the table's point stands inside the changed cell");
   assert.equal((inCell.parentNode as FakeElement).textContent, "120 ms");
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
-  // a list item holding a nested code block: the block is a HOLE the item's own text surrounds. A deletion inside the
-  // hole is unpainted; one at the end of the text before it sits against that text; one at the start of the text
-  // after it sits before that text
+  // a list item holding a nested code block: since Slice 8 the code's lines are positioned inside the item's block, so a deletion
+  // inside a line places in the code (before: the block was a hole and the point was unpainted); one at the end of the text
+  // before it sits against that text; one at the start of the text after it sits before that text
   const nested = "- Item one\n\n  ```\n  code line\n  ```\n\n  after code\n";
   const { box: nb } = buildRendered(nested);
   const nbefore = serialize(nb);
@@ -1512,8 +1521,12 @@ test("Rendered deletion points that cannot be placed stay unpainted, never besid
     del("n-before", nested.indexOf("Item one") + "Item one".length),
     del("n-after", nested.indexOf("after code")),
   ], stylesFor);
-  assert.deepEqual(r2, { painted: ["n-before", "n-after"], unpainted: ["n-in"] });
+  assert.deepEqual(r2, { painted: ["n-in", "n-before", "n-after"], unpainted: [] });
   const pt = (id: string) => withClass(nb, "fc-del").find((m) => m.getAttribute("data-id") === id)!;
+  let np: FakeNode | null = pt("n-in"), nInPre = false;
+  while (np) { if (np.nodeType === 1 && (np as FakeElement).tagName === "PRE") nInPre = true; np = np.parentNode; }
+  assert.ok(nInPre, "the nested code's point stands inside its pre");
+  assert.ok(around(blockOf(nb, pt("n-in")), pt("n-in"))[1].startsWith("code line"), "before the line's first character");
   let [pre, post] = around(blockOf(nb, pt("n-before")), pt("n-before"));
   assert.ok(pre.endsWith("Item one") && !post.startsWith("Item"), JSON.stringify([pre, post.slice(0, 10)]));
   [pre, post] = around(blockOf(nb, pt("n-after")), pt("n-after"));

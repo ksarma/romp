@@ -69,3 +69,67 @@ After the wrapper.
 Last paragraph here.
 
 [^1]: The footnote definition.
+
+## Handlers
+
+Code lines below, for the code section.
+
+```python
+total = 1
+def handler(request):
+	return respond(request)
+total = 1
+```
+
+A repeated line and a tab-indented line above.
+
+- A list item holding a fence:
+
+  ```sh
+  npm run build
+  ```
+
+  after the item's fence
+
+> A quote holding a fence:
+>
+> ```
+> quoted = 1
+> second = 2
+> ```
+
+    indented = 3
+    next = 4
+
+An indented code block above.
+
+  ```js
+  compensated = 5
+    deeper = 6
+  ```
+
+  ~~~
+  tilde = 7
+  ~~~
+
+A backtick fence with an indented opener and a tilde fence with one.
+
+```
+```
+
+An empty fence above.
+
+```zig
+const unknown = 8;
+```
+
+A fence in a language the highlighter does not know, then a linked address in a code line.
+
+```
+url = "https://notes-api.test/handlers"
+```
+
+Last of all, an unclosed fence:
+
+```
+open = 9

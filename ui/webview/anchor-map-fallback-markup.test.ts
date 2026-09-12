@@ -365,6 +365,10 @@ test("Rendered fallback: the count guard still holds where the rendering shows t
 });
 
 // ── 3. Slice 5, item 2: a quote inside a code block is read raw ────────────────────────────────────
+// Since Slice 8 (item 2) a code block's lines are positioned, so every quote below that holds a code character paints through
+// the EXACT path, by position, and the fallback's raw reading of a code hole serves only a quote with no positioned character (a
+// fence line alone, which renders nothing) or a code block walkCode could not lay out (none marked's tokenizer produces today).
+// The cases stand: the marks they pin are the ones the raw reading gave, now landed by position, and each is titled so.
 
 /** The rendered text before `n` in document order (the code's earlier lines, for a repeated line's ordinal). */
 function textBefore(root: FakeNode, n: FakeNode): string {
@@ -375,7 +379,7 @@ function textBefore(root: FakeNode, n: FakeNode): string {
 const TOTALS = "# Totals\n\nIntro paragraph with several words in it.\n\n```python\ntotal = a * b * 2\nname_ = under_score  # trailing comment\n```\n\nAfter paragraph.\n";
 const FENCED = "# Handler notes\n\nBefore paragraph.\n\n```python\n# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)\n```\n\nAfter paragraph.\n";
 
-test("Rendered fallback, a code hole: `total = a * b * 2` paints inside the pre with the marks' text the raw line (the emphasis rule stripped its asterisks and nothing matched); `name_ = under_score` still paints; `# a comment` paints from its `#`; the whole fence, fence lines included, paints from the `#` too", () => {
+test("Rendered paint of a code quote (Slice 5: the fallback read it raw; since Slice 8 by position through the exact path, the same marks): `total = a * b * 2` paints inside the pre with the marks' text the raw line (the emphasis rule stripped its asterisks and nothing matched before Slice 5); `name_ = under_score` still paints; `# a comment` paints from its `#`; the whole fence, fence lines included, paints from the `#` too", () => {
   let h = highlight(TOTALS, rangeOf(TOTALS, "total = a * b * 2"), "PRE");
   assert.ok(h.marks && h.marks.length, "painted (was null: the needle read `total = a  b  2`)");
   assert.equal(norm(h.text!), "total = a * b * 2");
@@ -395,7 +399,7 @@ test("Rendered fallback, a code hole: `total = a * b * 2` paints inside the pre 
   assert.equal(norm(h.text!), norm("# a comment\ndef f(x):\n    return x + 1  # trailing\n\nvalue = f(2)"));
 });
 
-test("Rendered fallback, a code hole: a line repeated in the fence paints the range's own line by ordinal, the count taken raw on both sides", () => {
+test("Rendered paint of a code quote: a line repeated in the fence paints the range's own line (Slice 5: by ordinal, the count taken raw on both sides; since Slice 8 by position)", () => {
   const src = "```\ntotal = a * b * 2\ntotal = a * b * 2\n```\n";
   const second = src.lastIndexOf("total = a * b * 2"), first = src.indexOf("total = a * b * 2");
   let h = highlight(src, { start: second, end: second + "total = a * b * 2".length }, "PRE");
@@ -406,7 +410,7 @@ test("Rendered fallback, a code hole: a line repeated in the fence paints the ra
   assert.equal(textBefore(h.box, h.marks![0]), "", "the first line");
 });
 
-test("Rendered fallback, a code hole: an indented code block, a fence in a list item and a fence in a blockquote read raw too; a quoted fence's lines shed the quote's markers, so a two-line quote there still paints", () => {
+test("Rendered paint of a code quote: an indented code block, a fence in a list item and a fence in a blockquote paint too (Slice 5: read raw; since Slice 8 by position); a quoted fence's two-line quote carries the quote's marker in its source and paints the two lines", () => {
   const indented = "Intro paragraph.\n\n    total = a * b * 2\n    next = total * 2\n\nAfter paragraph.\n";
   let h = highlight(indented, rangeOf(indented, "total = a * b * 2"), "PRE");
   assert.ok(h.marks && h.marks.length, "indented code (was null)");
@@ -430,7 +434,7 @@ test("Rendered fallback, a code hole: an indented code block, a fence in a list 
   assert.equal(norm(h.text!), "b = 2");
 });
 
-test("Rendered fallback, a code hole nested in a list item: the item's prose keeps the strip while the code reads raw, so a code token the prose repeats in a link's label and URL counts the same on both sides and the code's copy paints (a control: green before too; the raw source alone would count the URL's copy and paint nothing)", () => {
+test("Rendered paint of a code quote nested in a list item: a code token the item's prose repeats in a link's label and URL paints the code's copy (a control, green before Slice 5 and since; Slice 5's raw reading counted it the same on both sides, Slice 8 lands it by position)", () => {
   const src = "- See [make](https://example.invalid/make) first.\n\n      make\n\n- Second item.\n";
   const h = highlight(src, rangeOf(src, "make", src.indexOf("      make")), "PRE");
   assert.ok(h.marks && h.marks.length, "painted");

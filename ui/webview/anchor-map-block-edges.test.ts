@@ -297,26 +297,26 @@ test("Rendered deletion points at the end of a file whose last block is a headin
 
 // ── 2. a deletion at the first character of a nested hole sits after the text before it ───────────
 
-test("Rendered deletion points at the first character of a nested code fence or table inside a list item sit after the item text before the hole (one character earlier, in the indentation, too); one character in, they are inside the hole and unpainted", () => {
+test("Rendered deletion points at the first character of a nested code fence or table inside a list item sit after the item text before the block (one character earlier, in the indentation, too); one character in, they are unpainted: the fence's on its opener line, a zero-text hole since Slice 8 positioned the code's lines (before: the whole block a hole), the table's on the space after its first pipe, outside every cell (Slice 8's table rule)", () => {
   const cases: [string, string, string][] = [
-    // source, the hole's first characters, the text the point sits against
+    // source, the block's first characters, the text the point sits against
     ["- Item one\n\n  ```\n  code line\n  ```\n\n  after code\n", "```", "Item one"],
     ["- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n\n  after table\n", "| a |", "Item one"],
   ];
-  for (const [source, holeStart, text] of cases) {
+  for (const [source, blockStart, text] of cases) {
     const box = buildRendered(source);
     assert.equal(withTag(box, "LI").length, 1, "one item holds the nested block");
     const before = serialize(box);
-    const start = at(source, holeStart);
+    const start = at(source, blockStart);
     const r = paintChangesRendered(El(box), source, [
-      del("h-at", start),                     // the hole's first character: the boundary itself
+      del("h-at", start),                     // the block's first character: the boundary itself
       del("h-indent", start - 1),             // the indentation before it
-      del("h-in", start + 1),                 // one character in: the hole
+      del("h-in", start + 1),                 // one character in: the opener's second backtick, or the space after the table's first pipe
     ], stylesFor);
-    assert.deepEqual(r, { painted: ["h-at", "h-indent"], unpainted: ["h-in"] }, JSON.stringify(holeStart));
+    assert.deepEqual(r, { painted: ["h-at", "h-indent"], unpainted: ["h-in"] }, JSON.stringify(blockStart));
     for (const id of ["h-at", "h-indent"]) {
       const pt = point(box, id);
-      assert.ok(!inside(pt, "PRE") && !inside(pt, "TABLE"), id + ": not inside the hole's element");
+      assert.ok(!inside(pt, "PRE") && !inside(pt, "TABLE"), id + ": not inside the block's element");
       const para = pt.parentNode as FakeElement;
       assert.equal(para.tagName, "P", id + ": in the item's paragraph");
       assert.equal(para.textContent, text, id + ": the paragraph before the hole");

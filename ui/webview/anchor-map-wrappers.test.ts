@@ -293,9 +293,9 @@ test("the plain fixture: every paragraph after and inside a `<div align=\"center
   // its source travels inside the quote as a comment block's does (anchor-map.test.ts, an HTML block that renders none)
   const out = ok(mapRenderedSelection(sel(point(box, "inside the div."), point(box, "div wrapper.", true)), El(box), PLAIN), "across the closing tag");
   assert.equal(out.quote, "inside the div.\n\n</div>\n\nParagraph after the div wrapper.");
-  // controls: the blocks before the wrappers read as ever (the code block a hole; the table's cell maps since Slice 8, where it
-  // refused as a table)
-  assert.match(bad(mapText(box, PLAIN, "total = a"), "code").reason, /a code block/);
+  // controls: the blocks before the wrappers read as ever (the code line and the table's cell map since Slice 8, where they refused
+  // as a code block and a table)
+  mapsWhole(box, PLAIN, "total = a");
   mapsWhole(box, PLAIN, "cell one");
   mapsWhole(box, PLAIN, "Text inside the folded callout.");
   mapsWhole(box, PLAIN, "Repeated line here.", 1);
@@ -342,7 +342,7 @@ test("a div never closed, and one closed by the document's last block: the neste
 });
 
 // ── Slice 5, item 4: the first obstacle in document order, over the wrappers (the slice's probe (d), d10 and d11) ──
-test("the first obstacle in document order is the one named over the plain fixture: a drag from a table cell to the `Click me` summary after it, and one from the math paragraph to the summary, refuse at the table (the probe's d10 and d11; before Slice 5: an HTML block at the details' offset, the refused block named ahead of the table's hole; since Slice 8 the cells are positioned, so the table's obstacle is the one-cell rule, the span covering every cell from the first covered one, and the Raw view is offered on that exact span); from the code line past the div wrapper as the code block; from the paragraph before the div into the div's nested paragraph still as an HTML block, the wrapper's block being the first obstacle", () => {
+test("the first obstacle in document order is the one named over the plain fixture: a drag from a table cell to the `Click me` summary after it, and one from the math paragraph to the summary, refuse at the table (the probe's d10 and d11; before Slice 5: an HTML block at the details' offset, the refused block named ahead of the table's hole; since Slice 8 the cells are positioned, so the table's obstacle is the one-cell rule, the span covering every cell from the first covered one, and the Raw view is offered on that exact span); from the code line past the div wrapper at the table as well (the code positioned since Slice 8; before: the code block); from the paragraph before the div into the div's nested paragraph still as an HTML block, the wrapper's block being the first obstacle", () => {
   const box = buildRendered(PLAIN);
   const lineOf = (needle: string) => PLAIN.slice(0, PLAIN.indexOf(needle)).split("\n").length - 1;
   const CELLS_RULE = /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/;
@@ -353,17 +353,21 @@ test("the first obstacle in document order is the one named over the plain fixtu
     assert.equal(r.rawHasQuote, true, what + ": with the span");
     assert.equal(PLAIN.slice(r.rawRange!.start, r.rawRange!.end), span, what + ": the covered cells, first through last");
   }
+  // since Slice 8 the code's lines are positioned, so the span from the code line past the div wrapper meets the table first: the
+  // one-cell rule, the Raw view offered on every cell (before Slice 8: the code block; before Slice 5: an HTML block)
   const code = bad(mapSpan(box, PLAIN, "total = a", "Paragraph after the div"), "the code line past the div wrapper");
-  assert.match(code.reason, /a code block/, "the code block comes first (before: an HTML block): " + code.reason);
-  assert.equal(code.blockStartOffset, at(PLAIN, "```python"));
+  assert.match(code.reason, CELLS_RULE, "the table comes first (before Slice 8: the code block): " + code.reason);
+  assert.equal(code.blockStartOffset, at(PLAIN, "Col A"));
+  assert.equal(PLAIN.slice(code.rawRange!.start, code.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four");
   const div = bad(mapSpan(box, PLAIN, "Final paragraph", "inside the div."), "the paragraph before the div into its nested paragraph");
   assert.match(div.reason, /an HTML block/, "the wrapper's block is the first obstacle, as before: " + div.reason);
   assert.equal(div.blockStartOffset, at(PLAIN, "<div align"));
-  // a span ending in the table names it (the header's cells and the body cell lie in it: the one-cell rule), one starting in the
-  // code names the code, as before
-  assert.match(bad(mapSpan(box, PLAIN, "Intro paragraph", "cell two"), "the intro into the table").reason, /a code block/, "the code block stands between them");
+  // a span ending in the table names it (the header's cells and the body cell lie in it: the one-cell rule), from the intro past
+  // the code as well since Slice 8 (before: the code block stood between them); one starting in the code and ending in the math
+  // paragraph maps, the fence's closer and the formula's TeX inside the quote (before: refused as a code block)
+  assert.match(bad(mapSpan(box, PLAIN, "Intro paragraph", "cell two"), "the intro into the table").reason, CELLS_RULE, "the table is the first obstacle (before Slice 8: the code block)");
   assert.match(bad(mapSpan(box, PLAIN, "Paragraph with inline math", "cell two"), "the math paragraph into the table").reason, CELLS_RULE);
-  assert.match(bad(mapSpan(box, PLAIN, "total = a", "around it."), "the code into the math paragraph").reason, /a code block/);
+  assert.equal(ok(mapSpan(box, PLAIN, "total = a", "around it."), "the code into the math paragraph").quote, "total = a * b * 2\nname_ = under_score  # trailing comment\n```\n\nParagraph with inline math $E = mc^2$ around it.");
 });
 
 test("two html `<p>` blocks a blank line apart own one element each (before: nothing and both); a closed `<div>x</div>` stays refused with its one element; two sibling tags in one block own both; a `<style>` block the sanitizer dropped owns nothing and the paragraph after it maps; a stray `</p>` is the parser's empty `<p>`; a `<p>` the block leaves open is closed by the next block's tag and is no wrapper", () => {
