@@ -307,6 +307,21 @@ const R3_NOTES: R3Note[] = [
   // paragraph and the one after the wrapper map (before the round: the button was listed by name and read as its text, the picture was
   // left at k unread, the inner wrapper was not found and the nested paragraph was refused as a mismatch)
   { name: "a centred div whose raw holds a <button> around a badge picture before its inner <div> wrapper", src: `<div align="center"><button><img src="badge.svg" alt="b"></button><div>\n\nAlpha para one.\n\n</div></div>\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div align", ["DIV", "IMG", "DIV"]]] },
+  // the review's round 7: an element the parser closes implicitly at the unwrapped element's END tag (a `<p>` left open in a `<form>`,
+  // the `<option>`s of a `<select>` written without their end tags) is listed among the wrapper's kids, so the depth-1 wrapper is found
+  // past it (before the round the kid list held only the children closed by name, the `<p>` stood at k where the inner div was expected,
+  // the nested paragraph was refused as a mismatch and the paragraph after could not be matched; 701728eae mapped both)
+  { name: "a centred div whose raw holds a <form> with an open <p> before its inner <div> wrapper", src: `<div align="center"><form><p>Lead mp1</form><div>\n\nAlpha para one.\n\n</div></div>\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div align", ["DIV", "P", "DIV"]]] },
+  { name: "a centred div whose raw holds a <label> with an open <p> (the parser ignores the label's end tag) before its inner <div> wrapper", src: `<div align="center"><label><p>Lead mp1</label><div>\n\nAlpha para one.\n\n</div></div>\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div align", ["DIV", "P", "DIV"]]] },
+  { name: "a centred div whose raw holds a <select> with two options written without end tags before its inner <div> wrapper", src: `<div align="center"><select><option>a<option>b</select><div>\n\nAlpha para one.\n\n</div></div>\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div align", ["DIV", "DIV"]]] },
+  // the parser's own rule for `</form>`: the form alone is removed from the stack and a `<span>` left open inside it stays open, so the
+  // inner div nests in the span and the opener's block holds three wrappers (before the round the span was read as closed with the form)
+  { name: "a div whose raw holds a <form> closed with a <span> still open before its inner <div> wrapper", src: `<div><form>Lead<span>x</form><div>\n\nAlpha para one.\n\n</div></div>\n\nAfter para two.\n`, passages: ["Alpha para one.", "After para two."], blocks: [["<div>", ["DIV", "SPAN", "DIV"]]] },
+  // the review's round 7: after a `<button>` opener's run and a `</center>` alone, a tail whose SECOND paragraph the sanitizer shortened
+  // (`Weird <style>x{}</style> line.`): the run check's lookahead reads the one mismatch before two confirmations, so the other tail
+  // paragraphs map to their own offsets and the button's block owns the run's four (before the round the swallow ran to the document's
+  // end and every tail paragraph was refused as an HTML block at the button's offset; main mapped the three)
+  { name: "a <button> opener's run, a </center> alone, then a tail whose second paragraph the sanitizer shortened", src: `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\nNovember tango sierra.\n\nLast kilo lima.\n\n</center>\n\nNote tango sierra.\n\nWeird <style>x{}</style> line.\n\nFinal para after tail.\n\nAfter all done.\n`, passages: ["Note tango sierra.", "Final para after tail.", "After all done."], refused: ["November tango sierra.", "Last kilo lima."], blocks: [["<button>", ["P", "P", "P", "P"]]] },
 ];
 type R3Read = { maps: any[]; refusedMaps: any[]; blocks: string[][]; painted: Painted[]; tops: string[] };
 /** In the page: each passage mapped through the probe from a Selection-like over the text nodes holding its head and its tail (a paint

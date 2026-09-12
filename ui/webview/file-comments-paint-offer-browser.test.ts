@@ -22,9 +22,17 @@
 // whitespace refusal closed at once; now afterPaint hides it by the offer's own test (a range with no width and no height is no
 // subject, floatSubjectRect). The review's round 6 added the remnant WITH a box that the paint MOVED from under the button: the same
 // drag carried into the next paragraph's middle leaves the line break and that paragraph's first half, a line or more below the
-// offer's box, and the float stayed where the drag offered it, 74 px above the passage it now offered to comment on, while a scroll
-// that moves the passage a pixel hides it (hideFloatOnScroll); now afterPaint reads the scroll's whole test (subjectHeld: the
-// remnant's top and right edges within a pixel of the offer's), and the float goes with the paint. Legs
+// offer's box, and the float stayed where the drag offered it, 52 px above where the remnant would seat it in leg 4's 900 by 700 px
+// pane (the review's 74 px is its own narrower scene's, the node test's RECT_BELOW; the leg's diagnostic reports each run's own
+// measure), while a scroll that moves the passage a pixel hides it (hideFloatOnScroll); now afterPaint reads the scroll's whole test
+// (subjectHeld: the remnant's top and right edges within a pixel of the offer's), and the float goes with the paint. The review's round 7
+// added the selection the paint moved WHOLE: a peer's comment landing through the poll on the selection's own line, before it, on it or
+// inside it, wraps a mark whose 2 px side padding (.fc-hl) puts the still-selected text 4 px further right with no character cut, and
+// round 6's test hid the offer while the passage stood selected and visible (8924fa17e and main kept it, 4 px off); now afterPaint tells
+// a selection moved whole from a remnant by its text between two ends in the body (the seam's own test of a selection its paint left
+// standing; not the ends by node identity, which the wrap's split of the text node renames) and offers the float again beside the
+// selection's box now, so leg 5's float follows the passage at showFloat's arithmetic for the live range, and a mark landing AFTER the
+// selection on its line moves nothing. Legs
 // await the DOM's own states (the peer's mark appearing, the selectionchange count moving) and frames, never a timer; the poll's own
 // interval is the panel's. Each leg asserts what the browser fired for the paint's move of the selection, its premise: one or more
 // events for the prefix highlight, none for the lone-child mark (the Slice 5 review, round 3: a browser firing one there would hide
@@ -51,12 +59,12 @@ const MARK_A = '.fileview-body mark.fc-hl[data-id="aaaa-1"]', MARK_C = '.filevie
 const STORE_MT_1 = "1757145600000000002", STORE_MT_2 = "1757145600000000777";
 const withComments = (comments: unknown[], storeMtimeNs: string) => ({ ...STATUS, storeMtimeNs, store: { ...STATUS.store, comments }, unsent: { ...STATUS.unsent, comments: comments.map((c: any) => c.id) } });
 
-type Scene = { hidden: boolean; left: number; top: number; selected: string; collapsed: boolean; expectedLeft: number; expectedTop: number; rectTop: number; rectRight: number; selChanges: number; anchorIsP: boolean; pChildren: string; composer: boolean; boxless: boolean; inBody: boolean };
+type Scene = { hidden: boolean; left: number; top: number; selected: string; collapsed: boolean; expectedLeft: number; expectedTop: number; rectTop: number; rectRight: number; selChanges: number; anchorIsP: boolean; pChildren: string; composer: boolean; boxless: boolean; inBody: boolean; marks: number };
 /** The float's state and inline place, the selection's text and whether it is collapsed, where showFloat would put the button for the
  *  selection's last range now and that range's top and right edges (what the subject test compares with the offer's), the count of
  *  selectionchange events the page has seen since the counter was armed, the anchor's paragraph's child nodes when the anchor is
- *  one, whether a composer stands, whether the selection's last range has no box (no width and no height: the offer's own refusal)
- *  and whether both its ends lie in the body. */
+ *  one, whether a composer stands, whether the selection's last range has no box (no width and no height: the offer's own refusal),
+ *  whether both its ends lie in the body, and the count of highlight marks on the body. */
 const scene = (page: any): Promise<Scene> => page.evaluate(() => {
   const w = window as any; const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!; const body = document.querySelector(".fileview-body");
   const r = sel.rangeCount ? sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect() : null;
@@ -66,14 +74,15 @@ const scene = (page: any): Promise<Scene> => page.evaluate(() => {
     rectTop: r ? r.top : NaN, rectRight: r ? r.right : NaN,
     selChanges: w.__selChanges as number, anchorIsP, pChildren: anchorIsP ? Array.from(sel.anchorNode!.childNodes).map((c) => c.nodeName).join(",") : "",
     composer: !!document.querySelector(".fileview-aside .fc-composer .fc-input"),
-    boxless: !r || (!r.width && !r.height), inBody: !!body && !!sel.anchorNode && !!sel.focusNode && body.contains(sel.anchorNode) && body.contains(sel.focusNode) };
+    boxless: !r || (!r.width && !r.height), inBody: !!body && !!sel.anchorNode && !!sel.focusNode && body.contains(sel.anchorNode) && body.contains(sel.focusNode),
+    marks: document.querySelectorAll(".fileview-body mark.fc-hl").length };
 });
 const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) < 0.01, what + ": " + a + " against " + b);
 
 /** The page with `comments` on the note and the panel open: the store's and the config's HEADs answered from a mutable mtime (equal
  *  to the status's the poll is quiet; moved, the next tick refreshes and applyStatus paints), a selectionchange counter; awaited on
- *  the mark `markSel`. */
-async function openWith(browser: any, comments: unknown[], markSel: string): Promise<{ page: any; errors: string[] }> {
+ *  the mark `markSel`, when one is given (null for a note with no comment yet: leg 5's peer's comment is the first to land). */
+async function openWith(browser: any, comments: unknown[], markSel: string | null): Promise<{ page: any; errors: string[] }> {
   const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: NOTE } });
   await page.evaluate(([st, configMt]: [unknown, string]) => {
     const w = window as any; w.__status = st; w.__storeMtime = (st as any).storeMtimeNs;
@@ -88,7 +97,7 @@ async function openWith(browser: any, comments: unknown[], markSel: string): Pro
     w.__selChanges = 0; document.addEventListener("selectionchange", () => { w.__selChanges++; });
   }, [withComments(comments, STORE_MT_1), STATUS.configMtimeNs]);
   await openPanel(page);
-  await page.waitForFunction((s: string) => !!document.querySelector(s), markSel, { timeout: 10000 });
+  if (markSel) await page.waitForFunction((s: string) => !!document.querySelector(s), markSel, { timeout: 10000 });
   await frames(page, 3);
   return { page, errors };
 }
@@ -150,6 +159,28 @@ async function dragIntoMiddle(page: any, markSel: string, from: number, n: numbe
   await page.mouse.move(r.x1, r.y1); await page.mouse.down(); await page.mouse.move(r.x2, r.y2, { steps: 6 }); await page.mouse.up();
   await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
   await frames(page, 2);
+}
+/** A real mouse drag over the text of the note's paragraph `p` (the p-th `<p>` of the rendered note, counted from 0; its first text
+ *  node, no mark in it yet), from its character `from` to its character `to`; the seam's mouseup offers the float. */
+async function dragOver(page: any, p: number, from: number, to: number): Promise<void> {
+  await page.evaluate(() => getSelection()!.removeAllRanges());
+  const r = await page.evaluate(([n, a, b]: [number, number, number]) => {
+    const t = document.querySelectorAll(".fileview-md > p")[n].firstChild as Text;
+    const ra = document.createRange(); ra.setStart(t, a); ra.setEnd(t, a + 1); const x = ra.getBoundingClientRect();
+    const rb = document.createRange(); rb.setStart(t, b - 1); rb.setEnd(t, b); const y = rb.getBoundingClientRect();
+    return { x1: x.left + 1, y1: x.top + x.height / 2, x2: y.right - 1, y2: y.top + y.height / 2 };
+  }, [p, from, to]);
+  await page.mouse.move(r.x1, r.y1); await page.mouse.down(); await page.mouse.move(r.x2, r.y2, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+  await frames(page, 2);
+}
+/** The peer's comment `c`, the note's first, lands through the poll: the status gains it under a moved store mtime, the HEAD reports the
+ *  move, the tick refreshes and paints; awaited on its mark and then frames (the paint's move of the selection fires its selectionchange
+ *  a task later, which the frames cover). */
+async function firstCommentLands(page: any, c: { id: string }): Promise<void> {
+  await page.evaluate(([st]: [unknown]) => { const w = window as any; w.__status = st; w.__storeMtime = (st as any).storeMtimeNs; }, [withComments([c], STORE_MT_2)]);
+  await page.waitForFunction((s: string) => !!document.querySelector(s), `.fileview-body mark.fc-hl[data-id="${c.id}"]`, { timeout: 15000 });
+  await frames(page, 6);
 }
 /** The peer's comment C lands through the poll beside `standing`: the status gains it under a moved store mtime, the HEAD reports the
  *  move, the tick refreshes and paints; awaited on C's mark and then, where the paint's move of the selection fires one
@@ -290,7 +321,7 @@ test("in a browser, the real viewer and panel: a real drag from inside a whole-p
   });
 });
 
-test("in a browser, the real viewer and panel: a real drag from inside a whole-paragraph highlight into the next paragraph's middle, and a peer's comment landing through the poll: the paint moves the anchor to the paragraph's end and leaves the line break and the next paragraph's first half selected, a remnant WITH a box a line or more below the offer's, and the float goes with the paint, by the test the scroll reads (before: it stood where the drag offered it, 74 px above the passage it now offered to comment on, and a click on it opened the composer on that remnant); a fresh drag offers again", { timeout: 180000 }, async (t) => {
+test("in a browser, the real viewer and panel: a real drag from inside a whole-paragraph highlight into the next paragraph's middle, and a peer's comment landing through the poll: the paint moves the anchor to the paragraph's end and leaves the line break and the next paragraph's first half selected, a remnant WITH a box a line or more below the offer's, and the float goes with the paint, by the test the scroll reads (before: it stood where the drag offered it, 52 px above where the remnant would seat it in this leg's 900 by 700 px pane, the review's 74 px being its own narrower scene's, and a click on it opened the composer on that remnant); a fresh drag offers again", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const { page, errors } = await openWith(browser, [W], MARK_W);
     const only = await page.evaluate((s: string) => { const m = document.querySelector(s)!; return Array.from(m.parentNode!.childNodes).map((c) => c.nodeName).join(","); }, MARK_W);
@@ -310,7 +341,8 @@ test("in a browser, the real viewer and panel: a real drag from inside a whole-p
     assert.equal(s.anchorIsP, true, "its anchor the paragraph itself (the mark's text out and in again moved the end to the paragraph)");
     assert.deepEqual([s.collapsed, s.inBody, s.boxless], [false, true, false], "not collapsed, both ends in the body, and a box: a remnant the offer would accept");
     assert.ok(s.rectTop - offered.rectTop >= 1, "the remnant's box sits a pixel or more below the offer's (here " + (s.rectTop - offered.rectTop).toFixed(1) + " px): the subject moved from under the button");
-    assert.equal(s.hidden, true, "the float went with the paint that moved its subject from under it, as it goes on a scroll that moves the passage a pixel (before: shown at the drag's place, " + (s.rectTop - offered.rectTop).toFixed(0) + " px above the remnant, a Comment button for text the person had not chosen)");
+    t.diagnostic("leg 4: the paint moved the offer's subject " + (s.rectTop - offered.rectTop).toFixed(1) + " px down in this 900 by 700 px pane (the title's before-record, 52 px, is this measure on the pre-fix tree)");
+    assert.equal(s.hidden, true, "the float went with the paint that moved its subject from under it, as it goes on a scroll that moves the passage a pixel (before: shown at the drag's place, " + (s.rectTop - offered.rectTop).toFixed(0) + " px above where the remnant would seat it, a Comment button for text the person had not chosen)");
     assert.deepEqual([s.left, s.top], [offered.left, offered.top], "...hidden where it stood: no re-offer beside the remnant");
     assert.equal(s.composer, false, "no composer opened on its own");
     // the person's next gesture, a drag inside the highlight: the seam's mouseup offers again, beside the selection's own box
@@ -320,5 +352,69 @@ test("in a browser, the real viewer and panel: a real drag from inside a whole-p
     near(s.left, s.expectedLeft, "beside the selection's end");
     assert.deepEqual(errors, [], "no script error");
     await page.close();
+  });
+});
+
+type Reseat = { name: string; drag: [number, number]; peer: { id: string }; moves: boolean };
+/** Leg 5's scenes: a real drag over paragraph 2's plain text, then a peer's comment on the same paragraph landing through the poll, its
+ *  mark BEFORE the selection on its line (the review's own scene: comment A on the paragraph's first words), ON the selected words,
+ *  INSIDE them, and, the control, AFTER the selection on its line. The mark's 2 px side padding moves the selection's right edge 4 px in
+ *  the first three (both edges in the first) and nothing in the control. */
+const RESEATS: Reseat[] = [
+  { name: "the peer's mark BEFORE the selection on its line", drag: [40, 70], peer: A, moves: true },
+  { name: "the peer's mark ON the selected words", drag: [13, 40], peer: commentOn("bbbb-2", T0 + 2, "lorem ipsum dolor sit amet", "Paragraph 2: ", " consectetur adipiscing"), moves: true },
+  { name: "the peer's mark INSIDE the selection", drag: [13, 40], peer: commentOn("dddd-4", T0 + 4, "psum dolor", "Paragraph 2: lorem i", " sit amet consectetur"), moves: true },
+  { name: "the control, the peer's mark AFTER the selection on its line", drag: [13, 30], peer: commentOn("eeee-5", T0 + 5, P2.slice(40, 57), P2.slice(20, 40), P2.slice(57, 77)), moves: false },
+];
+
+test("in a browser, the real viewer and panel: a real drag over a plain paragraph's words, and a peer's comment landing through the poll on the same line, before the selection, on it or inside it: the mark's 2 px side padding moves the still-selected text 4 px right with no character cut, and the float follows the passage to its box now (before: hidden by the remnant's test while the passage stood selected and visible, no Comment offer); a mark landing after the selection on its line moves nothing and the float stands; a scroll event that moved nothing keeps the re-seated float, Shift+ArrowRight offers at the grown selection, and a scroll that moves the passage hides as ever", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const c of RESEATS) {
+      const { page, errors } = await openWith(browser, [], null);
+      await dragOver(page, 1, c.drag[0], c.drag[1]);
+      let s = await scene(page);
+      assert.equal(s.selected, P2.slice(c.drag[0], c.drag[1]), c.name + ": the drag selected the passage");
+      assert.deepEqual([s.hidden, s.marks], [false, 0], c.name + ": the drag's mouseup offers the float, no mark on the body yet");
+      const offered = { left: s.left, top: s.top, rectTop: s.rectTop, rectRight: s.rectRight, selected: s.selected };
+      await firstCommentLands(page, c.peer);
+      s = await scene(page);
+      assert.equal(s.marks, 1, c.name + ": the peer's mark landed through the poll");
+      assert.equal(s.selected, offered.selected, c.name + ": the paint left every selected character selected: no remnant, the passage whole");
+      assert.deepEqual([s.collapsed, s.inBody], [false, true], c.name + ": ...not collapsed, both ends in the body");
+      const d = { right: s.rectRight - offered.rectRight, top: s.rectTop - offered.rectTop };
+      t.diagnostic("leg 5, " + c.name + ": the paint moved the selection's right edge " + d.right.toFixed(2) + " px and its top " + d.top.toFixed(2) + " px");
+      if (c.moves) {
+        // the leg's premise: the mark's padding moved the selection's box a pixel or more (4 px, the sheet's 2 px a side), the move
+        // round 6's test reads as the subject gone from under the button
+        assert.ok(Math.abs(d.right) >= 1, c.name + ": the premise: the mark's padding moved the selection's right edge (" + d.right.toFixed(2) + " px)");
+        assert.equal(s.hidden, false, c.name + ": the float follows the passage the paint moved whole (before: hidden by the remnant's test, the passage still selected and visible with no Comment offer)");
+        near(s.left, s.expectedLeft, c.name + ": ...re-seated beside the selection's new right edge, showFloat's arithmetic for the live range");
+        near(s.top, s.expectedTop, c.name + ": ...on its line");
+        // the re-seat re-recorded the offer's place: a scroll event that moved nothing keeps the float (measured from the old place, the
+        // 4 px would hide it)
+        await page.evaluate(() => { document.querySelector(".fileview-body")!.dispatchEvent(new Event("scroll")); });
+        await frames(page, 1);
+        s = await scene(page);
+        assert.equal(s.hidden, false, c.name + ": a scroll event that moved nothing keeps the float: the scroll's test measures from the re-seated place");
+      } else {
+        assert.ok(Math.abs(d.right) < 0.01 && Math.abs(d.top) < 0.01, c.name + ": the control's premise: a mark after the selection moved nothing");
+        assert.equal(s.hidden, false, c.name + ": the float stays shown");
+        assert.deepEqual([s.left, s.top], [offered.left, offered.top], c.name + ": ...where the drag's offer put it: the paint's own event moved nothing");
+      }
+      assert.equal(s.composer, false, c.name + ": no composer opened on its own");
+      // the person's next keyboard change offers, beside the grown selection
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await page.keyboard.down("Shift"); await page.keyboard.press("ArrowRight"); await page.keyboard.up("Shift");
+      await page.waitForFunction((tx: string) => String(getSelection()) === tx, P2.slice(c.drag[0], c.drag[1] + 1), { timeout: 5000 });
+      await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement; const sel = getSelection()!; if (f.hidden || !sel.rangeCount) return false;
+        const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect(); return Math.abs(parseFloat(f.style.left) - Math.min(Math.max(8, r.right + 6), window.innerWidth - 90)) < 0.01; }, null, { timeout: 5000 });
+      s = await scene(page);
+      assert.equal(s.hidden, false, c.name + ": the keyboard's change offers the float"); near(s.left, s.expectedLeft, c.name + ": beside the grown selection's end");
+      // a scroll that moves the passage hides the float, as ever
+      await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop += 40; });
+      await page.waitForFunction(() => (document.querySelector(".fc-float") as HTMLElement).hidden, null, { timeout: 5000 });
+      assert.deepEqual(errors, [], c.name + ": no script error");
+      await page.close();
+    }
   });
 });

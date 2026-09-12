@@ -166,12 +166,49 @@ const SHAPES: Shape[] = [
     quotes: [{ from: "a1</td><br><td>a2", shown: "a1 a2", cells: ["TD0", "TD1"] }] },
   { name: "an HTML element left open inside a foreignObject at the svg's end tag, inline", src: "Intro <svg><foreignObject><b>x</svg> y\n",
     quotes: [{ from: "Intro", to: " y", shown: "Intro" }] },
+  // round 7 (anchor-map-html-rules.test.ts tests 9 to 13, red over a git archive of 78c0806ce): a raw table written without its end tags,
+  // whose implied ends leave the cells adjacent exactly as written end tags do (the blank was put at a part's END tag alone); a dropped
+  // element WITH text between two cells, removed whole and leaving the cells adjacent (its text ended the look past it); a raw-text or
+  // dropped element written `/>`, which the parser opens (read as a leaf); the parser's implied end tags inside a foreignObject, so a
+  // `<p>` closed by the next `<p>` does not keep `</svg>` ignored (every start tag was kept open until its own end tag); and MathML's
+  // integration points and an svg's title read as the foreignObject is (an element left open inside `<annotation-xml>` or `<mtext>`
+  // kept `</math>` ignored in the parser and not in the reader)
+  { name: "a raw table written without its end tags: a quote across two cells and across two rows", whole: "blanks",
+    src: "Intro.\n\n<div><table><tr><td>ri1 a<td>ri2 b<tr><td>ri3 c<td>ri4 d</table></div>\n\npara ri5.\n",
+    quotes: [{ from: "ri1 a<td>ri2 b", shown: "ri1 a ri2 b", cells: ["TD0", "TD1"] }, { from: "ri2 b<tr><td>ri3 c", shown: "ri2 b ri3 c", cells: ["TD1", "TD0"] }, { from: "ri4 d", shown: "ri4 d", cells: ["TD1"] }] },
+  { name: "a README's raw table with the cells' end tags omitted", whole: "blanks", src: "Intro.\n\n<table><tr><td>Flag<td>Meaning</tr></table>\n\npara.\n",
+    quotes: [{ from: "Flag<td>Meaning", shown: "Flag Meaning", cells: ["TD0", "TD1"] }] },
+  { name: "header cells and a body opened without end tags", whole: "blanks", src: "<table><thead><tr><th>H1<th>H2<tbody><tr><td>x1<td>x2</table>\n",
+    quotes: [{ from: "H1<th>H2", shown: "H1 H2", cells: ["TH0", "TH1"] }, { from: "H2<tbody><tr><td>x1", shown: "H2 x1", cells: ["TH1", "TD0"] }, { from: "x1<td>x2", shown: "x1 x2", cells: ["TD0", "TD1"] }] },
+  { name: "a noscript with text between two cells of a minified raw table, removed whole", whole: "blanks", src: "<div><table><tr><td>bf1</td><noscript>js off</noscript><td>bf2</td></tr></table></div>\n",
+    quotes: [{ from: "bf1</td><noscript>js off</noscript><td>bf2", shown: "bf1 bf2", cells: ["TD0", "TD1"] }] },
+  { name: "a math with text between two cells, foster-parented before the table and removed whole", whole: "blanks", src: "<div><table><tr><td>bf1</td><math><mi>x</mi></math><td>bf2</td></tr></table></div>\n",
+    quotes: [{ from: "bf1</td><math><mi>x</mi></math><td>bf2", shown: "bf1 bf2", cells: ["TD0", "TD1"] }] },
+  { name: "an svg whose only content is a foreignObject with text between two cells", whole: "blanks", src: "<div><table><tr><td>bf1</td><svg><foreignObject>fo</foreignObject></svg><td>bf2</td></tr></table></div>\n",
+    quotes: [{ from: "bf1</td><svg><foreignObject>fo</foreignObject></svg><td>bf2", shown: "bf1 bf2", cells: ["TD0", "TD1"] }] },
+  { name: "a textarea written `/>` in an html block opens and shows the raw's rest as its text", src: "<div>lead <textarea/> in <b>bold</b> wrap</div>\n",
+    quotes: [{ from: "in <b>bold</b> wrap", shown: "in <b>bold</b> wrap" }] },
+  { name: "a noscript written `/>` in a paragraph opens and drops the paragraph's rest, closed by the paragraph's end tag", src: "Intro <noscript/> after\n\nPara.\n", quotes: [{ from: "Para.", shown: "Para." }] },
+  { name: "a p closed by the next p inside a foreignObject: the svg closes and the text after it shows", src: "Intro <svg><foreignObject><p>a<p>b</p></foreignObject></svg> y\n",
+    quotes: [{ from: "Intro", to: " y", shown: "Intro y" }, { from: " y", shown: "y" }] },
+  { name: "an li closed by the next li inside a foreignObject", src: "Intro <svg><foreignObject><li>a<li>b</li></foreignObject></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
+  { name: "a p closed by a div inside a foreignObject in an html block", src: "Intro.\n\n<div><svg><foreignObject><p>a<div>b</div></foreignObject></svg> y</div>\n\npara\n", quotes: [{ from: " y", shown: "y" }] },
+  { name: "an HTML element left open inside an annotation-xml with the html encoding: the math's end tag is ignored", src: "ma2 <math><annotation-xml encoding=\"text/html\"><b>x</math> y2\n", quotes: [{ from: "ma2", shown: "ma2" }] },
+  { name: "an HTML element left open inside an mtext", src: "ma5 <math><mtext><b>x</math> y5\n", quotes: [{ from: "ma5", shown: "ma5" }] },
+  { name: "an HTML element closed inside an annotation-xml with the html encoding (a control)", src: "ma6 <math><annotation-xml encoding=\"text/html\"><b>x</b></math> y6\n", quotes: [{ from: "y6", shown: "y6" }] },
+  { name: "an HTML element left open inside an svg title keeps the svg's end tag ignored", src: "Intro <svg><title><b>x</svg> y\n", quotes: [{ from: "Intro", shown: "Intro" }] },
+  { name: "an HTML element closed inside an svg title is the sanitizer's to remove with its text; the svg closes", src: "Intro <svg><title>t<b>x</b>u</title></svg> y\n", quotes: [{ from: " y", shown: "y" }] },
 ];
 
 /** The plan's recorded divergence (plans/markdown-viewer.md, the Slice 5 build note, item 4), pinned on both sides. */
 const RECORDED: Divergence[] = [
   { name: "an inline textarea left open is read to its block's end where the parser reads on", src: "Lead <textarea>open *x* tail\n", dom: "Lead open <em>x</em> tail</p>", reader: "Lead open <em>x</em> tail",
     why: "the parser's textarea runs to the paragraph's end tag, which the DOM then shows as text" },
+  // round 7: the same class for the `/>` forms, which open (both sides read the block's rest as the element's; the parser reads on)
+  { name: "a title written `/>` in a paragraph drops the block's rest, and the parser every later block", src: "Intro.\n\nPara sc1 <title/> after sc2.\n\nPara sc3 more sc4.\n\nend sc5.\n", dom: "Intro. Para sc1", reader: "Intro. Para sc1 Para sc3 more sc4. end sc5.",
+    why: "the parser's title runs to the document's end and the sanitizer drops it whole; the reader drops the block's rest alone" },
+  { name: "a textarea written `/>` in a paragraph shows the block's rest as marked's HTML, and the parser every later block's too", src: "Para se1 <textarea/> after *em* se2.\n\nPara se3.\n", dom: "Para se1 after <em>em</em> se2.</p> <p>Para se3.</p>", reader: "Para se1 after <em>em</em> se2. Para se3.",
+    why: "the parser's textarea runs to the document's end, which the DOM then shows as text; the reader reads the block's rest so" },
 ];
 
 /** marked with the viewer's configuration, the real md-sanitize.ts and the real anchor-map.ts, bundled for a page: __probe

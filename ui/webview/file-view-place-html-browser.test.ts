@@ -803,8 +803,10 @@ test("in a browser, the real module: a README header with three 24px badges and 
   });
 });
 
-test("in a browser, the real module: a README header whose logo sits inside a centred `<p>` beside a line break and the project's name (`<p align=\"center\"><img><br><b>Project</b></p>`) round-trips Rendered to Raw to Rendered with the picture's top at the edge, 2px below it and 48px into it at 900 and 380px, the `<p>`'s tag row the top Raw row at the picture's distance or fraction between, and from Raw the `<p>`'s row at the edge and 9px above it comes back within 1.5px, the picture at the row's fraction between (the review's round 5: the Rendered read refused a row holding text while the Raw read counted every tag, so the nested heading was seated at its distance and the way back seated the picture, 64 to 82px lost at 900; main 144 to 162 off)", { timeout: 300000 }, async (t) => {
+test("in a browser, the real module: a README header whose logo sits inside a centred `<p>` beside a line break and the project's name (`<p align=\"center\"><img><br><b>Project</b></p>`) round-trips Rendered to Raw to Rendered with the picture's top at the edge, 2px below it and 48px into it at 900 and 380px, the `<p>`'s tag row the top Raw row at the `<p>`'s distance or fraction between (the review's round 7: the `<p>`'s box, the picture and the name under it, is what its one Raw row inverts; rounds 5 and 6 seated the row at the picture's fraction, and from the name under the picture the trip lost 32 to 71px), and from Raw the `<p>`'s row at the edge and 9px above it comes back within 1.5px, the `<p>` at the row's fraction between (the review's round 5: the Rendered read refused a row holding text while the Raw read counted every tag, so the nested heading was seated at its distance and the way back seated the picture, 64 to 82px lost at 900; main 144 to 162 off)", { timeout: 300000 }, async (t) => {
   await inBrowser(t, async (browser) => {
+    /** the `<p>` holding the logo and the name: its box from the body's top edge */
+    const pBox = (page: any) => box(page, ".fileview-md div > p", "Project");
     for (const width of [900, 380]) {
       for (const above of [0, -2, 48]) {
         const where = `pane ${width}, the picture's top ${above > 0 ? above + "px above" : above < 0 ? -above + "px below" : "at"} the edge`;
@@ -812,17 +814,20 @@ test("in a browser, the real module: a README header whose logo sits inside a ce
         const parent = await page.evaluate(() => { const i = document.querySelector('.fileview-md img[alt="logo"]')!; return { p: i.parentElement!.tagName, text: (i.parentElement!.textContent || "").trim(), grand: i.parentElement!.parentElement!.tagName }; });
         assert.deepEqual(parent, { p: "P", text: "Project", grand: "DIV" }, where + ": the fixture: the logo is inside the centred <p> with the name, a row of the div's block");
         await imgToEdge(page, "logo", above); await frames(page, 2);
-        const before = await imgByAlt(page, "logo");
+        const before = await imgByAlt(page, "logo"), p0 = (await pBox(page))!;
+        const pH = p0.bottom - p0.top;
         near(before.top, -above, where + ": the scene starts with the picture at its depth", 1);
+        near(p0.top, before.top, where + ": the fixture: the picture is at the <p>'s top", 0.5);
+        assert.ok(pH > before.height + 10, where + `: the fixture: the <p> holds the name's line under the picture (${pH}px against the picture's ${before.height})`);
         await click(page, "Raw");
         const row = (await rowAtTop(page))!;
         assert.ok(row.text.startsWith('<p align="center"><img') || (above < 0 && row.text.startsWith("<div align")), where + `: the <p>'s tag row is the top Raw row, or the opener's tail above it when the picture is below the edge (got ${JSON.stringify(row.text)} at ${row.top}; before: the nested heading where it was, a paragraph before the wrapper or the opener on top)`);
         const pRow = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
         const rowH = pRow.bottom - pRow.top;
-        near(pRow.top, above > 0 ? -above * rowH / before.height : -above, where + `: the row at the picture's ${above > 0 ? "fraction of its height" : "distance"} (the row ${rowH}px tall)`, 1);
+        near(pRow.top, above > 0 ? -above * rowH / pH : -above, where + `: the row at the <p>'s ${above > 0 ? "fraction of its height (rounds 5 and 6: the picture's, " + Math.round(-above * rowH / before.height * 10) / 10 + ")" : "distance"} (the row ${rowH}px tall)`, 1);
         await click(page, "Rendered"); await imagesDone(page);
         const after = await imgByAlt(page, "logo");
-        nearScaled(after.top, before.top, where + `: back in Rendered the picture is where it was (before: ${above > 0 ? "82" : "64 to 65"}px low at 900)`, before.height, rowH);
+        nearScaled(after.top, before.top, where + `: back in Rendered the picture is where it was (before: ${above > 0 ? "82" : "64 to 65"}px low at 900)`, pH, rowH);
         assert.deepEqual(errors, [], where + ": no script error");
         await page.close();
       }
@@ -833,9 +838,10 @@ test("in a browser, the real module: a README header whose logo sits inside a ce
         const row0 = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
         near(row0.top, -above, where + ": the scene starts on the row", 1);
         await click(page, "Rendered"); await imagesDone(page);
-        const pic = await imgByAlt(page, "logo");
-        const rowH = row0.bottom - row0.top;
-        nearScaled(pic.top, -above * pic.height / rowH, where + ": the picture at the row's fraction of its height", pic.height, rowH);
+        const pic = await imgByAlt(page, "logo"), p1 = (await pBox(page))!;
+        const rowH = row0.bottom - row0.top, pH = p1.bottom - p1.top;
+        nearScaled(p1.top, -above * pH / rowH, where + `: the <p> at the row's fraction of its height, the picture at its top (rounds 5 and 6: the picture at the row's fraction of the picture's, ${Math.round(-above * pic.height / rowH * 10) / 10})`, pH, rowH);
+        near(pic.top, p1.top, where + ": the fixture: the picture is at the <p>'s top", 0.5);
         await click(page, "Raw");
         const row1 = (await box(page, "code.hljs .fv-cl", '<p align="center"><img'))!;
         near(row1.top, row0.top, where + `: the row is back where it was (before: ${width === 900 ? "82" : "9 to 11"}px low)`);

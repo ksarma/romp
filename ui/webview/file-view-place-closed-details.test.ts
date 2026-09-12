@@ -772,40 +772,115 @@ test("round 5. readPlace in Rendered / seatPlace: with pictures of different hei
   assert.deepEqual([textOf(doc, readPlace(H(c.body), doc)), readPlace(H(c.body), doc)!.pic], ["## Centred title", undefined], "10px into the heading: nothing carried");
 });
 
-test("round 5. readPlace / seatPlace: a picture inside a row of the wrapper's block's own that also holds text (`<p align=\"center\"><img><br><b>Project</b></p>`, a README's header) is the block's picture to BOTH reads: the Rendered read carries it as the Raw read does (round 3 and 4 refused a row with text in Rendered while the Raw read counted every `<img` tag, so from Rendered the nested heading was seated at its distance and the way back seated the picture, 64 to 82px lost); the round trip is exact in both directions", () => {
+test("round 5. readPlace / seatPlace: a picture inside a row of the wrapper's block's own that also holds text (`<p align=\"center\"><img><br><b>Project</b></p>`, a README's header) is the block's picture to BOTH reads: the Rendered read carries it as the Raw read does (round 3 and 4 refused a row with text in Rendered while the Raw read counted every `<img` tag, so from Rendered the nested heading was seated at its distance and the way back seated the picture, 64 to 82px lost); and, round 7, the box the `<p>`'s one Raw row inverts is the `<p>`'s, not the picture's (Pic, with the picture's own box beside it as Pic.imgs), so the round trip is exact from the picture AND from the caption under it (round 5 and 6 carried nothing from the caption, the union ending above the edge, seated the heading at its distance, and the way back put the picture at the row's fraction, 32 to 71px lost in the browser)", () => {
   const P_IMG = '<p align="center"><img src="logo.svg" alt="logo"><br><b>Project</b></p>';
   const doc = "# Report\n\n" + paras(1, 2) + "\n\n<div align=\"center\">\n" + P_IMG + TAIL;
   const spans = sourceBlockSpans(doc);
   const bDiv = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<div align"));
   const kP = lineOf(doc, P_IMG), kH2 = lineOf(doc, "## Centred title");
   const picLine = rowSpanOf(doc, kP);
+  const P_H = IMG_H + CAPTION;
   const c = layoutScene(doc);
   const p = elOf(c.md, "P", "Project"), img = imgOf(c.md, "logo");
-  assert.deepEqual([renderedBlockIndex(El(c.md), doc, El(p)), p.box!.bottom - p.box!.top, img.box!.top - p.box!.top, img.box!.bottom - img.box!.top], [bDiv, IMG_H + CAPTION, 0, IMG_H], "the fixture: the <p> is a row of the div's block, 140px tall, the picture 120 at its top");
-  // Rendered, the picture's top at the edge and 48px (40%) in: the heading is the place, the picture carried (before: nothing, pictureOf
-  // refusing the <p> for its text), the Raw seat puts the <p>'s tag row at the picture's distance or fraction
-  for (const depth of [0, 48]) {
+  assert.deepEqual([renderedBlockIndex(El(c.md), doc, El(p)), p.box!.bottom - p.box!.top, img.box!.top - p.box!.top, img.box!.bottom - img.box!.top], [bDiv, P_H, 0, IMG_H], "the fixture: the <p> is a row of the div's block, 140px tall, the picture 120 at its top");
+  // Rendered, the picture's top at the edge and 35px (a quarter of the <p>) in: the heading is the place, the picture carried with the <p>'s
+  // box and its own beside it (before round 5: nothing, pictureOf refusing the <p> for its text; rounds 5 and 6: the picture's box alone),
+  // the Raw seat puts the <p>'s tag row at the <p>'s distance or fraction (rounds 5 and 6: the picture's)
+  for (const depth of [0, 35]) {
     toEdge(c.md, img, depth); c.body.scrollTop = 400;
     const q = readPlace(H(c.body), doc)!;
-    assert.deepEqual([textOf(doc, q), q.pic], ["## Centred title", { ...picLine, top: neg(depth), height: IMG_H }], `the picture ${depth}px in: the heading is the place and the <p>'s tag line is carried with the picture's box (before: nothing carried)`);
-    assert.deepEqual(q.lead, { start: spans[bDiv].start, end: spans[bDiv].end, k: 0, top: neg(depth), height: IMG_H + CAPTION }, `the picture ${depth}px in: the <p> is the row carried for a reflow`);
+    assert.deepEqual([textOf(doc, q), q.pic], ["## Centred title", { ...picLine, top: neg(depth), height: P_H, imgs: { top: neg(depth), height: IMG_H } }], `the picture ${depth}px in: the heading is the place and the <p>'s tag line is carried with the <p>'s box, the picture's own beside it (before: nothing carried; rounds 5 and 6: the picture's box)`);
+    assert.deepEqual(q.lead, { start: spans[bDiv].start, end: spans[bDiv].end, k: 0, top: neg(depth), height: P_H }, `the picture ${depth}px in: the <p> is the row carried for a reflow`);
     const r = raw(doc, 0); r.body.scrollTop = 500;
     assert.equal(seatPlace(H(r.body), doc, q), true, `the picture ${depth}px in: seated in Raw`);
-    assert.equal(r.body.scrollTop, 500 + (r.rows[kP].box!.top - EDGE) - (-depth * 20 / IMG_H), `the picture ${depth}px in: the <p>'s row at the picture's fraction (before: the heading's row at its distance, ${IMG_H + CAPTION - depth + GAP}px)`);
-    // the way back: the row at that fraction reads the same line as the picture's and seats the picture at its depth
-    const rr = rawRow(doc, kP, depth * 20 / IMG_H); rr.body.scrollTop = 400;
+    assert.equal(r.body.scrollTop, 500 + ((r.rows[kP].box!.top - EDGE) - (-depth * 20 / P_H)), `the picture ${depth}px in: the <p>'s row at the <p>'s fraction (rounds 5 and 6: the picture's, ${-depth * 20 / IMG_H}; before: the heading's row at its distance, ${P_H - depth + GAP}px)`);
+    // the way back: the row at that fraction reads the same line as the picture's and seats the <p>, and so the picture at its top, at its depth
+    const rr = rawRow(doc, kP, depth * 20 / P_H); rr.body.scrollTop = 400;
     const qr = readPlace(H(rr.body), doc)!;
-    assert.deepEqual([textOf(doc, qr), qr.pic], ["## Centred title", { ...picLine, top: neg(depth * 20 / IMG_H), height: 20 }], `the row ${depth * 20 / IMG_H}px in: the same tag line carried`);
+    assert.deepEqual([textOf(doc, qr), qr.pic], ["## Centred title", { ...picLine, top: neg(depth * 20 / P_H), height: 20 }], `the row ${depth * 20 / P_H}px in: the same tag line carried, the row's box`);
     const c2 = layoutScene(doc); c2.body.scrollTop = 500;
     assert.equal(seatPlace(H(c2.body), doc, qr), true);
     assert.equal(c2.body.scrollTop, 500 + (imgOf(c2.md, "logo").box!.top - EDGE) + depth, `the way back: the picture ${depth}px in, where it was`);
+    // a same-view Rendered reflow holds the picture's own box, not the <p>'s fraction (the text under the picture grows, the picture does not)
+    const c3 = layoutScene(doc); c3.body.scrollTop = 500;
+    const p3 = elOf(c3.md, "P", "Project"), img3 = imgOf(c3.md, "logo");
+    p3.box = { top: p3.box!.top, bottom: p3.box!.bottom + 10 };   // the caption's line grown by 10px; the picture at the <p>'s top stands
+    assert.equal(seatPlace(H(c3.body), doc, q), true, `the picture ${depth}px in: seated in the reflowed Rendered view`);
+    assert.equal(c3.body.scrollTop, 500 + (img3.box!.top - EDGE) + depth, `the picture ${depth}px in: held at its depth across the reflow (the <p>'s fraction would put it ${Math.round(depth * 10 / P_H * 100) / 100}px higher)`);
   }
-  // the edge under the picture, in the caption's line: the picture ends above the edge and nothing is carried, the heading at its distance
-  toEdge(c.md, img, IMG_H + 5);
+  // the edge under the picture, in the caption's line: the <p> straddles the edge, so its box is carried with the picture's own above the
+  // edge beside it (rounds 5 and 6: nothing carried, the union ending above the edge), the heading at its distance; the Raw seat puts the
+  // <p>'s row at the <p>'s fraction and the way back returns the <p> exactly (rounds 5 and 6: the heading's row at its distance, and the
+  // way back put the picture at the row's fraction)
+  toEdge(c.md, img, IMG_H + 6);
   const qc = readPlace(H(c.body), doc)!;
-  assert.deepEqual([textOf(doc, qc), qc.pic, qc.lead], ["## Centred title", undefined, { start: spans[bDiv].start, end: spans[bDiv].end, k: 0, top: -(IMG_H + 5), height: IMG_H + CAPTION }], "the edge in the caption under the picture: nothing carried, the <p> still the row at the edge");
-  assert.equal(qc.top, CAPTION - 5 + GAP, "the heading 23px below the edge");
+  assert.deepEqual([textOf(doc, qc), qc.pic, qc.lead], ["## Centred title", { ...picLine, top: -(IMG_H + 6), height: P_H, imgs: { top: -(IMG_H + 6), height: IMG_H } }, { start: spans[bDiv].start, end: spans[bDiv].end, k: 0, top: -(IMG_H + 6), height: P_H }], "the edge in the caption under the picture: the <p>'s box carried, the picture's own above the edge beside it, the <p> the row at the edge");
+  assert.equal(qc.top, CAPTION - 6 + GAP, "the heading 22px below the edge");
+  const rc = raw(doc, 0); rc.body.scrollTop = 500;
+  assert.equal(seatPlace(H(rc.body), doc, qc), true, "the caption at the edge: seated in Raw");
+  assert.equal(rc.body.scrollTop, 500 + ((rc.rows[kP].box!.top - EDGE) - (-(IMG_H + 6) * 20 / P_H)), "the caption at the edge: the <p>'s row at the <p>'s fraction, 18px in (rounds 5 and 6: the heading's row at its distance, 22px)");
+  const qcr = readPlace(H(rawRowDown(doc, kP, (IMG_H + 6) * 20 / P_H).body), doc)!;
+  assert.deepEqual(qcr.pic, { ...picLine, top: -18, height: 20 }, "the way back from the caption: the <p>'s row 18px in, its line carried");
+  const c4 = layoutScene(doc); c4.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c4.body), doc, qcr), true);
+  assert.equal(c4.body.scrollTop, 500 + (elOf(c4.md, "P", "Project").box!.top - EDGE) + IMG_H + 6, "the way back from the caption: the <p> where it was, the caption at the edge (rounds 5 and 6: the picture at the row's fraction, 126px lower than it was)");
+  // a same-view Rendered reflow from the caption keeps the edge's fraction of the CAPTION's height (the row's parts, rowPartsTop: the
+  // picture does not grow, the text does): 6px into a 20px caption grown to 30 is 9px into it, the picture's bottom 9 above the edge
+  // (the <p>'s fraction moved the name 2.3 to 8.7px per text-size step in the browser; the picture held, 1.5 the other way)
+  const c5 = layoutScene(doc); c5.body.scrollTop = 500;
+  const p5 = elOf(c5.md, "P", "Project"), img5 = imgOf(c5.md, "logo");
+  p5.box = { top: p5.box!.top, bottom: p5.box!.bottom + 10 };
+  assert.equal(seatPlace(H(c5.body), doc, qc), true, "the caption at the edge: seated in the reflowed Rendered view");
+  assert.equal(c5.body.scrollTop, 500 + (img5.box!.top - EDGE) + IMG_H + 6 * 30 / 20, "the caption at the edge: the caption's part keeps the edge's fraction, the picture's bottom 9px above the edge (the <p>'s fraction would put the <p> 6px higher than that; the picture held, 3px lower)");
   assert.ok(kH2 > kP, "the fixture: the heading follows the <p>");
+});
+
+test("round 7. seatPlace: a row of the wrapper's own whose TEXT stands above its picture (`<p align=\"center\"><b>Project</b><br><img></p>`, the name first) with the edge in that text keeps the row's rule across a same-view Rendered reflow, its fraction of the row's height (round 6's picOutranksRow took the picture's rule for any row holding one of the line's pictures, so the logo below the edge was held and the name at the edge rose by the text's growth); and a seat into Raw with the edge in the last pixels of a picture leaves the picture's row two pixels below the edge at least, so the read back takes it as the top row (the picture's fraction alone asked for under a pixel, the browser's snap made it one, and the read passed the row for the blank after it, the picture back 12 to 20px high in the browser)", () => {
+  // the name over the logo: the stand-in lays the picture at the <p>'s top, so the boxes are set by hand, the caption's line first
+  const P_TEXT = '<p align="center"><b>Project</b><br><img src="logo.svg" alt="logo"></p>';
+  const doc = "# Report\n\n" + paras(1, 2) + "\n\n<div align=\"center\">\n" + P_TEXT + TAIL;
+  const spans = sourceBlockSpans(doc);
+  const bDiv = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<div align"));
+  const picLine = rowSpanOf(doc, lineOf(doc, P_TEXT));
+  const P_H = IMG_H + CAPTION;
+  const textFirst = (grown: number) => {
+    const c = layoutScene(doc);
+    const p = elOf(c.md, "P", "Project"), img = imgOf(c.md, "logo");
+    assert.equal(p.box!.bottom - p.box!.top, P_H, "the fixture: the <p> is 140px, the picture and the caption's line");
+    img.box = { top: p.box!.top + CAPTION + grown, bottom: p.box!.top + CAPTION + grown + IMG_H };   // the text's line above the picture, grown by `grown`
+    if (grown) { p.box = { top: p.box!.top, bottom: p.box!.bottom + grown }; }
+    return { ...c, p, img };
+  };
+  const c = textFirst(0);
+  toEdge(c.md, c.p, 8); c.body.scrollTop = 400;
+  const q = readPlace(H(c.body), doc)!;
+  assert.deepEqual([textOf(doc, q), q.pic, q.lead], ["## Centred title", { ...picLine, top: -8, height: P_H, imgs: { top: CAPTION - 8, height: IMG_H } }, { start: spans[bDiv].start, end: spans[bDiv].end, k: 0, top: -8, height: P_H }], "the edge 8px into the name: the <p>'s box carried with the picture's own below the edge beside it, the <p> the row at the edge");
+  // the same Rendered text reflowed, the text's line 10px taller: the <p> at its fraction, 8 of 140 into 150 (round 6: the picture at its
+  // distance, 12px below the edge, so the <p> and its name 10px higher than that)
+  const c1 = textFirst(10); c1.body.scrollTop = 500;
+  assert.equal(seatPlace(H(c1.body), doc, q), true, "seated in the reflowed Rendered view");
+  assert.equal(c1.body.scrollTop, 500 + ((c1.p.box!.top - EDGE) - (-8 * (P_H + 10) / P_H)), "the name over the logo: the <p> at its fraction of its height, the row's rule (round 6: the picture held at 12px, the <p> at -18)");
+  assert.notEqual(c1.body.scrollTop, 500 + (c1.img.box!.top - EDGE) - (CAPTION - 8), "the fixture tells the two rules apart");
+  // the edge 2.5px from a picture's foot (117.5 into the 120px logo of a README's centred div): the fraction asks for the tag row's
+  // top at -19.58 of 20, its bottom 0.42px below the edge, which the read back would pass over; the seat leaves the row 2px below
+  const docI = readmeDoc(IMG_LINE), kImg = lineOf(docI, IMG_LINE);
+  const ci = readmeScene(docI);
+  toEdge(ci.md, imgOf(ci.md, "logo"), 117.5); ci.body.scrollTop = 400;
+  const qi = readPlace(H(ci.body), docI)!;
+  assert.deepEqual(qi.pic, { ...rowSpanOf(docI, kImg), top: -117.5, height: IMG_H }, "the fixture: the picture carried 117.5px in");
+  const r = raw(docI, 0); r.body.scrollTop = 500;
+  assert.equal(seatPlace(H(r.body), docI, qi), true, "seated in Raw");
+  assert.equal(r.body.scrollTop, 500 + ((r.rows[kImg].box!.top - EDGE) - (2 - 20)), "the picture's foot at the edge: the tag row's bottom 2px below the edge, not 0.42 (its fraction, -19.58, which the read back passes over)");
+  const rq = readPlace(H(rawRowDown(docI, kImg, 18).body), docI)!;
+  assert.deepEqual([textOf(docI, rq), rq.pic], ["## Centred title", { ...rowSpanOf(docI, kImg), top: -18, height: 20 }], "the row 18px in, its bottom 2px below the edge: the read back takes it as the top row and carries the line");
+  const rq2 = readPlace(H(rawRowDown(docI, kImg, 19.58).body), docI)!;
+  assert.deepEqual([textOf(docI, rq2), rq2.pic], ["## Centred title", undefined], "the row 19.58px in, its bottom 0.42px below the edge, where the fraction alone put it: the read passes it for the blank after it and carries nothing, so the way back would seat the heading at the blank's distance");
+  // 60px in, the row's bottom 10px below the edge: the fraction stands, unclamped
+  toEdge(ci.md, imgOf(ci.md, "logo"), 60);
+  const q60 = readPlace(H(ci.body), docI)!;
+  const r60 = raw(docI, 0); r60.body.scrollTop = 500;
+  assert.equal(seatPlace(H(r60.body), docI, q60), true);
+  assert.equal(r60.body.scrollTop, 500 + ((r60.rows[kImg].box!.top - EDGE) - (-60 * 20 / IMG_H)), "60px in: the row at the picture's fraction, as before");
 });
 
 test("round 5. readPlace / seatPlace: the shown row of a wrapper's block's own at the top edge in RENDERED (a fold's summary, shut or open) travels with the place (Place.lead: the block, the row's ordinal among the block's own rows, its box), and a seat in the same Rendered text over a reflow that changed the row's height puts the row back where it was, at its fraction of its height when the edge is inside it and at its distance otherwise (round 4 kept the nested block's or the block after the fold's distance, so the row's own growth landed above the edge: a wrapping title 90px above it on a drag from 900 to 380px, 4.5 to 4.9 per text-size step); a view switch and other text leave the row unused", () => {

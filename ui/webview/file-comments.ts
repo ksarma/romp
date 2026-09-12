@@ -2666,7 +2666,8 @@ class Panel {
   }
   /** The float's subject as it sits on screen now: the picture's box, or the live selection's last range (null once the
    *  selection is gone or has no box, or the picture has left the document); what subjectHeld compares with floatAt, on the body's
-   *  scroll (hideFloatOnScroll) and after the panel's own writes (afterPaint: a remnant with no box is no subject). */
+   *  scroll (hideFloatOnScroll) and after the panel's own writes (afterPaint: a remnant with no box is no subject, and the box of a
+   *  selection the writes moved whole is where the float is offered again). */
   private floatSubjectRect(): { top: number; right: number } | null {
     const at = this.floatAt;
     if (!at) return null;
@@ -3580,11 +3581,31 @@ class Panel {
    *  paragraph's first half, a remnant with a box a line or more below the offer's, and the float, which stayed where it was
    *  offered as it did on main, stood 74 px above the passage it now offered to comment on, while a scroll that moves the passage
    *  one pixel from under the button hides it (the same review, round 6); the paint is the event and the subject's rect the test,
-   *  as for the scroll. A picture's stands. */
+   *  as for the scroll. A selection the writes moved WHOLE, not a character cut, follows the passage instead (the same review,
+   *  round 7): a peer's mark landing through the poll on the selection's own line, before it, on it or inside it, wears the
+   *  sheet's 2 px side padding (.fc-hl), so the still-selected text stands 4 px further right, and the remnant's test read that
+   *  displacement as the subject gone from under the button and hid the offer while the passage stood selected and visible
+   *  (8924fa17e and main kept it, 4 px off). The paint is the panel's write, not the person's gesture, so the float is offered
+   *  again at the selection's box as the writes left it (showFloat re-records floatAt, so the scroll's test measures from the new
+   *  place). Intact is read as the seam reads a selection its reflow paint left standing (file-view.ts
+   *  fireRenderedKeepingSelection): both ends in the body and the same text selected, against the record as the last paint left
+   *  it (offeredFor before this read); the writes add no text and take none (a mark wraps text, a deletion mark is a point with no
+   *  text node), so the same text selected is the same characters. Not the ends by node identity: the wrap splits the text node
+   *  the mark lands in (anchor-map.ts wrapSlices, splitText), and a live range's boundary past the split moves into the new node,
+   *  so an intact selection's ends name new nodes after every such paint (the round's probes: an anchor at 40 read 22 in a new
+   *  tail node, the text unchanged) and an ends test reads it as cut. A remnant, the text changed, goes as round 6 rules once it
+   *  has no box or has moved. One more rect read, for a subject that moved and stayed whole alone. A picture's stands. */
   private afterPaint(): void {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const was = this.offeredFor;
     this.offeredFor = sel && sel.rangeCount ? { text: sel.toString(), ...endsOf(sel) } : null;
-    if (sel && this.floatAt && !this.floatAt.img && (this.passageGone(sel) || !this.subjectHeld())) this.hideFloat();
+    if (!sel || !this.floatAt || this.floatAt.img) return;           // no passage's float showing (a picture's stands)
+    if (this.passageGone(sel)) { this.hideFloat(); return; }          // the writes left the float beside no selection
+    if (this.subjectHeld()) return;                                    // the subject sits under the button, cut or whole
+    // moved a pixel or more, or left with no box: a remnant the writes cut goes, as on a scroll; a selection the writes moved whole
+    // (the same text as the record's between two ends in the body) is offered again beside its box now
+    const now = was && this.offeredFor && this.offeredFor.text === was.text ? this.floatSubjectRect() : null;
+    if (now) this.showFloat(now); else this.hideFloat();
   }
   /** The layout-time trim over the pass's standing Rendered marks (anchor-map.ts trimCollapsedMarks: a mark whose text is blank
    *  and lays out at zero width is unwrapped, the sheet's padding around nothing otherwise): once after the pass, over every

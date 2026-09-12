@@ -353,3 +353,87 @@ test("the run check through to the content's end (runFits with toEnd, the resume
   for (const t of [NOTE, FINAL, AFTER]) mapsWhole(boxP, PLAIN, t);
   assert.match(bad(mapText(boxP, PLAIN, "Weird"), "the mismatch").reason, /does not match the file/);
 });
+
+// ── the Slice 5 review, round 7 ──────────────────────────────────────────────────────────────────
+
+test("an element the parser closes implicitly when an unwrapped element's end tag comes is listed among the wrapper's kids (topTags closes every element still open above the named one, each under the one below it, and a `</form>` removes the form alone): a `<p>` left open in a `<form>`, a `<button>`, a `<fieldset>` or a `<label>` (whose `</label>` the parser ignores; the `<div>` then closes the `<p>`, the same DOM), after a lead text and a `<b>`, and the `<option>`s of a `<select>` or its `<optgroup>`s written without their end tags, each before the depth-1 wrapper: the nested paragraph and the paragraph after map to their own offsets, the opener's block holds its two wrappers and the nested paragraph's `<p>` is its own block's; a `<form>` closed with a `<span>` still open leaves the span open, so the inner div nests in it and the opener's block holds three wrappers (the review's round 7, a regression against 701728eae: the flattening listed only the children closed with their own end tag, the `<p>` was discarded by the pop, the DOM held it where the depth-1 wrapper was expected, the holder was dropped, the nested paragraph was refused as a mismatch and the paragraph after could not be matched)", () => {
+  const A = "Alpha para one.", AFTER = "After para two.";
+  const four = (opener: string, closer: string): string => `${opener}\n\n${A}\n\n${closer}\n\n${AFTER}\n`;
+  const SHAPES: Array<[string, string]> = [
+    ["a form whose p its end tag closes", four('<div align="center"><form><p>Lead mp1</form><div>', "</div></div>")],
+    ["a button whose p its end tag closes", four('<div align="center"><button><p>Lead mp1</button><div>', "</div></div>")],
+    ["a fieldset whose p its end tag closes", four('<div align="center"><fieldset><p>Lead mp1</fieldset><div>', "</div></div>")],
+    ["a label whose p the following div closes (the parser ignores the label's end tag)", four('<div align="center"><label><p>Lead mp1</label><div>', "</div></div>")],
+    ["a form holding a lead text, a b and an open p", four('<div align="center"><form>Lead <b>x</b><p>Para mp1</form><div>', "</div></div>")],
+    ["a form holding a lead text and an open p (the finder's shape)", four("<div><form>Lead<p>x</form><div>", "</div></div>")],
+    ["a select whose options have no end tags", four('<div align="center"><select><option>a<option>b</select><div>', "</div></div>")],
+    ["a select whose optgroups and options have no end tags", four('<div align="center"><select><optgroup><option>a<optgroup><option>b</select><div>', "</div></div>")],
+    ["a form whose p is closed by name (round 6's control)", four('<div align="center"><form><p>Lead mp1</p></form><div>', "</div></div>")],
+    ["a kept div whose p its end tag closes (a control)", four('<div align="center"><div><p>Lead mp1</div><div>', "</div></div>")],
+  ];
+  for (const [what, src] of SHAPES) {
+    const box = buildRendered(src);
+    for (const t of [A, AFTER]) mapsWhole(box, src, t);
+    assert.deepEqual(wraps(box, src, 0), ["DIV", "DIV"], what + ": the opener's block holds its two wrappers");
+    assert.equal(owner(box, src, find(box, "P", A)), blockAt(src, A), what + ": the nested paragraph's <p> is its own block's");
+    assert.deepEqual(elems(box, src, blockAt(src, A)), [`P:"${A}"`], what + ": the nested paragraph's block owns its one <p>");
+    assert.equal(owner(box, src, kidsOf(box)[kidsOf(box).length - 1]), blockAt(src, AFTER), what + ": the paragraph after the wrapper is its block's");
+  }
+  // `</form>` with a `<span>` still open: the parser removes the form and leaves the span, so the div opens inside it (a DOM by hand:
+  // the stand-in's parser pops to the form as it does for every honoured end tag)
+  const SPAN = four("<div><form>Lead<span>x</form><div>", "</div></div>");
+  const boxS = domOf(`<div>Lead<span>x<div>\n<p>${A}</p>\n</div></span></div>\n<p>${AFTER}</p>\n`);
+  for (const t of [A, AFTER]) mapsWhole(boxS, SPAN, t);
+  assert.deepEqual(wraps(boxS, SPAN, 0), ["DIV", "SPAN", "DIV"], "the span left open by the form's end tag is the second wrapper");
+  assert.equal(owner(boxS, SPAN, find(boxS, "P", A)), blockAt(SPAN, A));
+});
+
+test("the run check through to the content's end reads ONE block that does not fit before two confirmations as well, when the blocks after it line up from the node after its (runFits with toEnd, the lookahead): after a `<button>` opener's run and a `</center>` alone, a tail whose FIRST or SECOND paragraph the sanitizer shortened has the other tail paragraphs mapping to their own offsets and the shortened one alone refused as a mismatch, the button's block owning the run's four (the review's round 7: the mismatch returned false at every candidate before two confirmations, so the swallow ran to the document's end and all four tail paragraphs were refused as an HTML block, where main mapped the three when the shortened one was second); and nextAnchor's candidate after an html `<p>` block is confirmed the same way when the tail's first block is such a paragraph, so the html block takes its OWN `<p>` and the markdown copy after the shortened paragraph maps from its own (before: no candidate lined up, the first `<p>` from k stood, Alpha's, and every selection in the document was refused as unmatched; with the passage repeated inside the run, a selection in the FIRST rendered copy mapped to the tail copy's offsets); two shortened paragraphs before two confirmations still swallow (recorded)", () => {
+  const NOV = "November tango sierra.", LAST = "Last kilo lima.";
+  const NOTE = "Note tango sierra.", FINAL = "Final para after tail.", WEIRD = "Weird <style>x{}</style> line.", AFTER = "After all done.";
+  const HEAD = `Intro alpha bravo charlie.\n\n<button>\n\n<button>probe xray</button>\n\n${NOV}\n\n${LAST}\n\n</center>\n\n`;
+  const HEAD_DOM = `<p>Intro alpha bravo charlie.</p>\n<p></p>probe xray<p></p>\n<p>${NOV}</p>\n<p>${LAST}</p>\n`;
+  const P = (t: string): string => `<p>${t}</p>\n`;
+  const WEIRD_DOM = P("Weird  line.");
+  const TAILS: Array<[string, string[], string]> = [
+    ["the first tail paragraph shortened", [WEIRD, NOTE, FINAL, AFTER], WEIRD_DOM + P(NOTE) + P(FINAL) + P(AFTER)],
+    ["the second tail paragraph shortened", [NOTE, WEIRD, FINAL, AFTER], P(NOTE) + WEIRD_DOM + P(FINAL) + P(AFTER)],
+    ["the second of two shortened", [NOTE, WEIRD], P(NOTE) + WEIRD_DOM],
+  ];
+  for (const [what, tail, tailDom] of TAILS) {
+    const src = HEAD + tail.join("\n\n") + "\n";
+    const box = domOf(HEAD_DOM + tailDom);
+    for (const t of tail) {
+      if (t === WEIRD) assert.match(bad(mapText(box, src, "Weird"), what + ": the shortened paragraph").reason, /does not match the file/, what + ": the shortened paragraph is refused as a mismatch (before: as an HTML block)");
+      else mapsWhole(box, src, t);
+    }
+    assert.deepEqual(elems(box, src, blockAt(src, "<button>")), ['P:""', 'P:""', `P:"${NOV}"`, `P:"${LAST}"`], what + ": the button block's run ends at the closer (before: at the document's end)");
+    assert.equal(bad(mapText(box, src, "Weird"), what).blockStartOffset, at(src, WEIRD), what + ": the mismatch's refusal carries its own offset");
+    for (const t of [NOV, LAST]) assert.match(bad(mapText(box, src, t), t).reason, /an HTML block/, what + ": " + t + " inside the run");
+  }
+  // two shortened paragraphs before two confirmations: no candidate lines up and the swallow runs to the end (recorded)
+  const TWO = HEAD + [WEIRD, "Weird <style>y{}</style> too.", FINAL, AFTER].join("\n\n") + "\n";
+  const boxT = domOf(HEAD_DOM + WEIRD_DOM + P("Weird  too.") + P(FINAL) + P(AFTER));
+  assert.match(bad(mapText(boxT, TWO, FINAL), "two shortened").reason, /an HTML block/, "recorded: two unconfirmed mismatches in the tail still swallow it");
+  // nextAnchor's candidate after an html `<p>` block, the tail's first block shortened (the finder's S5)
+  const FINAL3 = "Final para three.";
+  const S5 = `<button>\n\nAlpha <button>x</button>\n\nNov para one.\n\n<p>${FINAL3}</p>\n\n${WEIRD}\n\n${FINAL3}\n`;
+  const box5 = domOf(`<p>Alpha </p>x<p></p>\n<p>Nov para one.</p>\n<p>${FINAL3}</p>\n${WEIRD_DOM}<p>${FINAL3}</p>\n`);
+  const htmlCopy = kidsOf(box5)[3], mdCopy = kidsOf(box5)[5];
+  assert.equal(owner(box5, S5, htmlCopy), blockAt(S5, "<p>"), "the html block owns its own <p> (before: Alpha's)");
+  assert.deepEqual(elems(box5, S5, blockAt(S5, "<p>")), [`P:"${FINAL3}"`]);
+  assert.equal(owner(box5, S5, mdCopy), sourceBlockSpans(S5).length - 1, "the markdown copy, the last block, owns its own <p> (before: no block's)");
+  assert.deepEqual(elems(box5, S5, blockAt(S5, "<button>")), ['P:"Alpha"', 'P:""', 'P:"Nov para one."'], "the button block's run ends at the html block's own element");
+  mapsWhole(box5, S5, FINAL3, 1);
+  assert.match(bad(mapText(box5, S5, FINAL3, 0), "the html copy").reason, /an HTML block/);
+  assert.match(bad(mapText(box5, S5, "Weird"), "the shortened paragraph").reason, /does not match the file/);
+  assert.equal(bad(mapText(box5, S5, "Nov para one."), "inside the run").blockStartOffset, at(S5, "<button>"), "the run's refusal carries the swallower's offset");
+  // the passage repeated inside the run: the FIRST rendered copy is the swallower's, refused, and the tail copy maps to its own offsets
+  const NOVP = "Nov para one.";
+  const V1 = `<button>\n\nAlpha <style>q</style>\n\nGo tango.\n\n${NOVP}\n\n<p>${FINAL3}</p>\n\n${WEIRD}\n\n${NOVP}\n`;
+  const boxV = buildRendered(V1);
+  assert.deepEqual(kidsOf(boxV).map((k) => k.tagName + ":" + k.textContent.trim().slice(0, 5)), ["P:Alpha", "P:Go ta", "P:Nov p", "P:Final", "P:Weird", "P:Nov p"], "the stand-in's shape: the button unwrapped, the style dropped");
+  assert.match(bad(mapText(boxV, V1, NOVP, 0), "the first rendered copy").reason, /an HTML block/, "the swallowed copy is refused (before: it mapped to the tail copy's offsets, so a comment made there was stored on the wrong passage)");
+  mapsWhole(boxV, V1, NOVP, 1);
+  assert.deepEqual(elems(boxV, V1, blockAt(V1, "<p>")), [`P:"${FINAL3}"`]);
+});
