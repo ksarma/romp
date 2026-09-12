@@ -9185,6 +9185,8 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         for gate in list(self._Client.spawn_gate.values()) + list(self._Client.mode_gate.values()):
             for ev in (gate if isinstance(gate, list) else [gate]):
                 ev.set()
+        for ev in getattr(self, "_parks", ()):   # a test that parks the loop thread on an Event of its own registers
+            ev.set()                              # it here too, so a failure before its release pays no 10 s join
         if self.s.thread.is_alive():
             self.s.shutdown()
         if self.s.thread.ident is not None:
@@ -9922,6 +9924,7 @@ class SettingsPickThroughTheLoop(unittest.TestCase):
         # line included. Effort high, max, high during the max spawn, the shape of three of the four sightings
         s, c1 = self.s, self._connect()
         parked, release = threading.Event(), threading.Event()
+        self._parks = [release]                 # tearDown opens it before the join (the cleanup below runs after)
         self.addCleanup(release.set)
         plain = self.be._log_cb
         def hold_the_line(m, **k):
