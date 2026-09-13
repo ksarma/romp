@@ -14,9 +14,14 @@
 // passage, the float is offered, no card opened, every mark wears tabindex 0 and role button again, and the innermost pressed mark
 // holds the focus. Then a plain click at the same point opens the card as before, and Tab then Shift+Tab returns to the mark, so
 // it stands in the tab order after the press. Fails over a `git archive` of 2136fa7d2 (the review's round 2 fix commit): the marks
-// keep their tabindex mid-press, the selection is empty at the release, no float, and the card opens. Skips LOUDLY without a
-// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api
-// paths, the placeholder sid.
+// keep their tabindex mid-press, the selection is empty at the release, no float, and the card opens. A second leg, from the
+// landing's review (round 1 over the branch offered as the PR), reaches the bookkeeping's other ends, which no test had: a real
+// press then the window's blur (a release in another window, which this document never hears) or a contextmenu (the browser
+// ended the press itself: ctrl+click on macOS, a long press) puts every pressed mark's tabindex back and moves no focus; and two
+// primary presses with no release heard between, on two marks, reset the first (its attribute back, the second held alone), so
+// the release focuses the second mark. A mutation of either branch (a refocus at the blur; no reset at the second press) turns
+// the leg red where every other suite stayed green. Skips LOUDLY without a playwright browser (CI installs none), as the other
+// browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openPanel, frames, pageHtml, ORIGIN, REPORT, SID, MT, STATUS } from "./real-viewer-leg";
@@ -82,23 +87,37 @@ const CASES: Case[] = [
   { what: "a word in a fence's row", pressed: id(CODE), ids: [id(CODE)], passage: "plain_line" },
 ];
 
+/** The note open in the Rendered view on the Files pane at 900 by 700, the four comments served, the panel open and every
+ *  mark painted, the nest checked (the later comment's mark inside the earlier's). */
+async function openNote(browser: any): Promise<{ page: any; errors: string[] }> {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+  const errors: string[] = [];
+  page.on("pageerror", (e: Error) => { errors.push(e.message); });
+  const html = pageHtml("pane", { [REPORT]: NOTE }, MT);
+  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+  await page.goto(ORIGIN + "/");
+  await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
+  await page.waitForFunction(() => document.querySelectorAll(".fileview-md pre .cl").length === 2, null, { timeout: 10000 });
+  await frames(page, 2);
+  await openPanel(page);
+  for (const c of [PROSE, NEST_A, NEST_B, CODE]) await markPainted(page, id(c));
+  await frames(page, 2);
+  // the nest: the later comment's mark stands inside the earlier's
+  const nested: boolean = await page.evaluate(([a, b]: [string, string]) => { const outer = document.querySelector('.fileview-md mark[data-id="' + a + '"]'); return !!outer && !!outer.querySelector('mark[data-id="' + b + '"]'); }, [id(NEST_A), id(NEST_B)]);
+  assert.ok(nested, "the two comments on one passage nest their marks, the later inside the earlier");
+  return { page, errors };
+}
+/** In the page: a synthetic mouse event of `type` for the primary button on the mark with `cid`, bubbling as the browser's own
+ *  does, so the document's capture listeners hear it. */
+function fireOnMark(spec: { cid: string; type: string }): void {
+  const m = document.querySelector('.fileview-md mark[data-id="' + spec.cid + '"]');
+  if (!m) throw new Error("no mark for " + spec.cid);
+  m.dispatchEvent(new MouseEvent(spec.type, { bubbles: true, cancelable: true, button: 0 }));
+}
+
 test("in a browser, the real viewer and panel on the Files pane: a real drag begun on the leading half of a highlight's first glyph selects the passage and offers Comment with no card opened, in a paragraph, on a nest of two marks and in a fence's row alike (before: nothing selected, no float, the card opened), the marks wear no tabindex for the length of the press and wear it again at the release, when the pressed mark takes the focus; a plain click at the same point still opens the card, and the mark stands in the tab order after it", { timeout: 240000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
-    const errors: string[] = [];
-    page.on("pageerror", (e: Error) => { errors.push(e.message); });
-    const html = pageHtml("pane", { [REPORT]: NOTE }, MT);
-    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
-    await page.goto(ORIGIN + "/");
-    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, status]);
-    await page.waitForFunction(() => document.querySelectorAll(".fileview-md pre .cl").length === 2, null, { timeout: 10000 });
-    await frames(page, 2);
-    await openPanel(page);
-    for (const c of [PROSE, NEST_A, NEST_B, CODE]) await markPainted(page, id(c));
-    await frames(page, 2);
-    // the nest: the later comment's mark stands inside the earlier's
-    const nested: boolean = await page.evaluate(([a, b]: [string, string]) => { const outer = document.querySelector('.fileview-md mark[data-id="' + a + '"]'); return !!outer && !!outer.querySelector('mark[data-id="' + b + '"]'); }, [id(NEST_A), id(NEST_B)]);
-    assert.ok(nested, "the two comments on one passage nest their marks, the later inside the earlier");
+    const { page, errors } = await openNote(browser);
     for (const c of CASES) {
       for (const frac of FRACS) {
         const what = c.what + ", pressed at " + frac + " of the first glyph";
@@ -151,6 +170,60 @@ test("in a browser, the real viewer and panel on the Files pane: a real drag beg
     await frames(page, 1);
     const back: State = await page.evaluate(readState, [id(PROSE)]);
     assert.equal(back.activeId, id(PROSE), "Shift+Tab returns the focus to the mark, a Tab stop after the press: " + back.active);
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
+
+test("in a browser, the real viewer and panel on the Files pane, the press bookkeeping's other ends: a real press on a paragraph highlight's first glyph, then the window's blur (a release in another window this document never hears) puts the mark's tabindex back and moves no focus onto it; a real press on the inner mark of a nest, then a contextmenu the browser fires (ctrl+click on macOS, a long press: the browser ended the press itself) puts both marks' attributes back and focuses neither; two primary presses with no release heard between, on the paragraph's mark and then the fence row's, put the first mark's attribute back at the second press and hold the second alone, and the release focuses the second mark, not the first (before: the blur and contextmenu branch, and the reset of a press whose end was never heard, were reached by no test)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openNote(browser);
+    const tabs = (s: State): Array<string | null> => s.marks.map((m) => m.tabindex);
+    // 1. a real press on the paragraph mark's first glyph, then the window's blur
+    await clearSelection(page); await frames(page, 1);
+    let pts: Points = await page.evaluate(pointsOf, { cid: id(PROSE), frac: FRACS[0] });
+    await page.mouse.move(pts.sx, pts.sy);
+    await page.mouse.down();
+    await frames(page, 1);
+    let mid: State = await page.evaluate(readState, [id(PROSE)]);
+    assert.deepEqual(tabs(mid), [null], "blur: mid-press the pressed mark wears no tabindex");
+    assert.notEqual(mid.activeId, id(PROSE), "blur: mid-press the mark holds no focus: " + mid.active);
+    await page.evaluate(() => { window.dispatchEvent(new Event("blur")); });
+    await frames(page, 1);
+    let ended: State = await page.evaluate(readState, [id(PROSE)]);
+    assert.equal(ended.marks[0].tabindex + " " + ended.marks[0].role, "0 button", "blur: the attribute back at the window's blur, the mark a Tab stop again (before: reached by no test)");
+    assert.notEqual(ended.activeId, id(PROSE), "blur: the press ended in another window, so no focus moved onto the mark: " + ended.active);
+    await page.mouse.up();          // Playwright's button released before the next press; the click this fires is the plain click's, the first leg's
+    await frames(page, 2);
+    // 2. a real press on the nest's inner mark, then a contextmenu: no click follows one
+    await clearSelection(page); await frames(page, 1);
+    pts = await page.evaluate(pointsOf, { cid: id(NEST_B), frac: FRACS[0] });
+    await page.mouse.move(pts.sx, pts.sy);
+    await page.mouse.down();
+    await frames(page, 1);
+    mid = await page.evaluate(readState, [id(NEST_A), id(NEST_B)]);
+    assert.deepEqual(tabs(mid), [null, null], "contextmenu: mid-press both marks of the nest wear no tabindex");
+    await page.evaluate(fireOnMark, { cid: id(NEST_B), type: "contextmenu" });
+    await frames(page, 1);
+    ended = await page.evaluate(readState, [id(NEST_A), id(NEST_B)]);
+    assert.deepEqual(ended.marks.map((m) => m.tabindex + " " + m.role), ["0 button", "0 button"], "contextmenu: both marks wear tabindex 0 and role button again");
+    assert.ok(![id(NEST_A), id(NEST_B)].includes(ended.activeId || ""), "contextmenu: no mark of the nest took the focus: " + ended.active);
+    await page.mouse.up();
+    await frames(page, 2);
+    // 3. two primary presses with no release heard between (synthetic mousedowns: a release the page lost leaves the first press standing)
+    await page.evaluate(fireOnMark, { cid: id(PROSE), type: "mousedown" });
+    await frames(page, 1);
+    mid = await page.evaluate(readState, [id(PROSE), id(CODE)]);
+    assert.deepEqual(tabs(mid), [null, "0"], "two presses: the first press holds its mark, the other untouched");
+    await page.evaluate(fireOnMark, { cid: id(CODE), type: "mousedown" });
+    await frames(page, 1);
+    mid = await page.evaluate(readState, [id(PROSE), id(CODE)]);
+    assert.deepEqual(tabs(mid), ["0", null], "two presses: the second press put the first mark's attribute back and holds the second alone (before: both held)");
+    await page.evaluate(fireOnMark, { cid: id(CODE), type: "mouseup" });
+    await frames(page, 1);
+    ended = await page.evaluate(readState, [id(PROSE), id(CODE)]);
+    assert.deepEqual(tabs(ended), ["0", "0"], "two presses: the release puts the second mark's attribute back");
+    assert.ok(ended.active.startsWith("MARK") && ended.activeId === id(CODE), "two presses: the release focuses the mark of the press it ends, not the first press's: " + ended.active + " #" + ended.activeId);
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

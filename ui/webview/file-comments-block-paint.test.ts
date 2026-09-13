@@ -18,8 +18,14 @@
 // when a status lands is stripped in place, and the strip's removal of its tabindex blurs it (the engine's rule, which the
 // stand-in models in El.removeAttribute; md-config-math-block-paint-browser.test.ts measures it), so the pass gives the focus
 // back to the box it stamps again, as it gives a mark's successor the focus (before: refocusMark stood down on the box's
-// presence in the body, and the keyboard stayed on the body). Nodes hide their edges at construction (hideEdges,
-// ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
+// presence in the body, and the keyboard stayed on the body). Three cases from the landing's review (round 1 over the branch
+// offered as the PR), each a branch no suite reached, so a mutation of it left every suite green: two arrivals covering the one
+// box, one seen at a gesture while the other stands unseen, keep the box's arrivals dot (reflectSeen's covering-set guard;
+// the stand-in's rects place one card on screen and the other below the fold, since entryShown reads them); the press
+// bookkeeping's other ends (pressedMarks: the window's blur or a contextmenu putting the tabindex back with no focus moved, a
+// second press with no release heard between resetting the first); and a repaint during a press, whose release focuses the
+// pressed mark's successor. Nodes hide their edges at construction (hideEdges, ui/test-dom-shim.ts). Synthetic fixtures only:
+// the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -62,7 +68,8 @@ class Ev {
   stopped = false;
   key: string;
   detail = 0;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; hideEdges(this); }
+  button: number;   // a mouse event's button, the primary by default (pressBegan holds a press of the primary button alone)
+  constructor(public type: string, init: { key?: string; button?: number } = {}) { this.key = init.key || ""; this.button = init.button ?? 0; hideEdges(this); }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -569,4 +576,115 @@ test("the keyboard on the stamped box across a status landing (the Slice 8 revie
   await land(w, withComments([P, { ...A, resolved: true } as StoreComment, C1, C2]));
   assert.deepEqual([d.classList.contains("fc-hl-block"), d.getAttribute("tabindex"), d.getAttribute("data-id")], [false, null, null], "the box bare: its comment resolved");
   assert.equal(doc.activeElement, doc.body, "no successor: the focus stays where the engine put it, as for a resolved comment's mark");
+});
+
+// ── the landing's review, round 1: the arrivals dot on a box two arrivals cover; the press bookkeeping's other ends ──
+/** A rect for a card or the panel's root: `top` and `height` in the window, a width of 300 at the aside's place. */
+const placed = (top: number, height: number): El["rect"] => ({ left: 900, top, right: 1200, bottom: top + height, width: 300, height });
+/** A gesture of the person's over the body row: a wheel, which begins a scroll of theirs and presses nothing (the row's capture
+ *  listener, gesture); the pointer press would do the same through the row's hold. */
+const wheel = (w: World): void => { dispatch(w.body, new Ev("wheel")); };
+/** The panel's aside: the root entryShown measures a card's place against in the list layout (the stand-in has no
+ *  getComputedStyle, so marginMode says list). */
+const panelRoot = (w: World): El => { const r = w.main.querySelector(".fileview-aside.fc-panel"); assert.ok(r, "the panel's root"); return r!; };
+const isNew = (e: El | null): string | null => (e ? e.getAttribute("data-new") : "no-element");
+
+test("two comments of the session's on the one `$$` block arriving after the open, beside one on the paragraph after it: the shared box, both its cards and the paragraph's mark wear data-new; a gesture with the EARLIER formula card and the paragraph's card on screen and the later formula card below the fold marks those two seen, takes the dot off their cards and off the paragraph's mark (the control), and the box KEEPS data-new, since the other comment covering it stands unseen; a gesture once the later card is on screen takes the dot off that card and off the box (before: reflectSeen deleted the box's data-new at the first gesture, the dot off a formula still carrying a comment the person had not seen)", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const P = commentOn(BEFORE, 1);
+  await openPanel(w, withComments([P]));
+  const A = peer(FORMULA_Q, 2), B = peer(FORMULA_Q, 3), C = peer(AFTER, 4);
+  await land(w, withComments([P, A, B, C]));
+  const d = display(w);
+  assert.equal(d.getAttribute("data-ids"), A.id + " " + B.id, "the box covered by both arrivals, in the pass's order");
+  const mc = w.md.querySelector('mark.fc-hl[data-id="' + C.id + '"]'); assert.ok(mc, "the paragraph arrival's mark");
+  assert.deepEqual([isNew(d), isNew(mc), isNew(card(w, A.id)), isNew(card(w, B.id)), isNew(card(w, C.id))], ["1", "1", "1", "1", "1"], "the box, the mark and the three cards wear the arrivals' data-new (markNew, renderCard)");
+  assert.equal(isNew(card(w, P.id)), null, "the person's own comment wears none");
+  // the list layout's on-screen test (entryShown): a card whose top lies inside the root's box and the window's, with a height;
+  // the stand-in's rects are zero until set, so A's and C's cards are placed on screen and B's stays below the fold
+  panelRoot(w).rect = placed(0, 700);
+  card(w, A.id).rect = placed(100, 60);
+  card(w, C.id).rect = placed(170, 60);
+  wheel(w);
+  assert.deepEqual([isNew(card(w, A.id)), isNew(card(w, C.id)), isNew(mc)], [null, null, null], "the gesture marked the two cards on screen seen: their dots off, and the paragraph mark's with its card's (the control)");
+  assert.equal(isNew(card(w, B.id)), "1", "the card below the fold stands unseen");
+  assert.equal(isNew(d), "1", "the box keeps its dot while the other comment covering it stands unseen (before: off at this gesture)");
+  assert.equal(d.getAttribute("data-ids"), A.id + " " + B.id, "the covering set untouched");
+  // the later card scrolled on screen: the next gesture marks it seen, and the box's dot goes with the last unseen comment's
+  card(w, B.id).rect = placed(240, 60);
+  wheel(w);
+  assert.deepEqual([isNew(card(w, B.id)), isNew(d)], [null, null], "the later card seen: its dot off, and the box's off with it");
+  assert.deepEqual([d.getAttribute("data-id"), d.getAttribute("data-ids"), d.getAttribute("tabindex")], [B.id, A.id + " " + B.id, "0"], "the box's stamp otherwise as the pass left it");
+});
+
+test("the press bookkeeping on a mark (pressedMarks): a primary press on a paragraph's mark takes its tabindex off; the window's blur while the press stands (a release in another window) puts the attribute back and moves no focus, and a contextmenu (the browser ended the press itself) does the same; a second primary press with no release heard between, on another mark, puts the first mark's attribute back and holds the second alone, and the release then focuses the second, not the first; the control: a press released in the document focuses the pressed mark, and a secondary button's press takes nothing off (before: the blur and contextmenu branch and the reset of a press whose end was never heard were reached by no test)", async (t: TestContext) => {
+  const w = world(); t.after(() => { doc.activeElement = null; w.close(); });
+  const P = commentOn(BEFORE, 1), Q = commentOn(AFTER, 2);
+  await openPanel(w, withComments([P, Q]));
+  const markOf = (id: string): El => { const m = w.md.querySelector('mark.fc-hl[data-id="' + id + '"]'); assert.ok(m, "the mark " + id); return m!; };
+  const mp = markOf(P.id), mq = markOf(Q.id);
+  const tabs = (): Array<string | null> => [mp.getAttribute("tabindex"), mq.getAttribute("tabindex")];
+  doc.activeElement = doc.body;
+  // 1. the window's blur mid-press: a release in another window, which this document never hears
+  dispatch(mp, new Ev("mousedown"));
+  assert.deepEqual(tabs(), [null, "0"], "the press took the pressed mark's tabindex off, the other's untouched");
+  assert.ok(doc.activeElement === doc.body, "mid-press the keyboard stays on the body");
+  win.dispatchEvent(new Event("blur"));
+  assert.deepEqual(tabs(), ["0", "0"], "the blur put the attribute back (before: no test reached it)");
+  assert.ok(doc.activeElement === doc.body, "...and moved no focus onto the mark: the press ended in another window");
+  // 2. a contextmenu mid-press: the browser ended the press itself (ctrl+click on macOS, a long press), no click follows
+  dispatch(mp, new Ev("mousedown"));
+  assert.deepEqual(tabs(), [null, "0"]);
+  dispatch(mp, new Ev("contextmenu"));
+  assert.deepEqual(tabs(), ["0", "0"], "the contextmenu put the attribute back");
+  assert.ok(doc.activeElement === doc.body, "...and moved no focus");
+  // 3. two presses with no release heard between: the first press's end was lost, and the second resets it first
+  dispatch(mp, new Ev("mousedown"));
+  dispatch(mq, new Ev("mousedown"));
+  assert.deepEqual(tabs(), ["0", null], "the second press put the first mark's attribute back and holds the second alone (before: both held)");
+  dispatch(mq, new Ev("mouseup"));
+  assert.deepEqual(tabs(), ["0", "0"], "the release: every attribute back");
+  assert.ok(doc.activeElement === mq, "the release focuses the mark of the press it ends, not the first press's: " + (doc.activeElement && doc.activeElement.getAttribute("data-id")));
+  // 4. the control: a press released in the document focuses the pressed mark, as the press would have
+  doc.activeElement = doc.body;
+  dispatch(mp, new Ev("mousedown")); dispatch(mp, new Ev("mouseup"));
+  assert.deepEqual(tabs(), ["0", "0"]);
+  assert.ok(doc.activeElement === mp, "the released press left the keyboard on the pressed mark");
+  // ...and a secondary button's press holds nothing (the guard on the button; a right press opens the native menu)
+  dispatch(mq, new Ev("mousedown", { button: 2 }));
+  assert.deepEqual(tabs(), ["0", "0"], "a secondary press takes no attribute off");
+  dispatch(mq, new Ev("contextmenu"));
+  assert.ok(doc.activeElement === mp, "...and its contextmenu moves nothing");
+});
+
+test("a repaint during a press on a mark (refocusPressed's successor branch): a primary press on the paragraph's mark, then a peer's comment landing by the poll, whose pass unwraps the pressed mark and paints a new node for the same comment; the release puts the attribute back on the node that left and focuses the SUCCESSOR, our mark for the same comment at the same place, a control with tabindex 0; and a press on the display formula's stamped box across a landing, which strips the box in place and stamps the same element again, focuses the box at the release (before: no test repainted mid-press; with the successor branch gone the keyboard stayed on the body)", async (t: TestContext) => {
+  const w = world(); t.after(() => { doc.activeElement = null; w.close(); });
+  const P = commentOn(BEFORE, 1), A = commentOn(FORMULA_Q, 2);
+  await openPanel(w, withComments([P, A]));
+  const m1 = w.md.querySelector('mark.fc-hl[data-id="' + P.id + '"]'); assert.ok(m1, "the paragraph's mark");
+  doc.activeElement = doc.body;
+  dispatch(m1!, new Ev("mousedown"));
+  assert.equal(m1!.getAttribute("tabindex"), null, "the press took the mark's tabindex off");
+  const C1 = peer(AFTER, 3);
+  await land(w, withComments([P, A, C1]));
+  const m2 = w.md.querySelector('mark.fc-hl[data-id="' + P.id + '"]'); assert.ok(m2, "the mark painted again");
+  assert.ok(m2 !== m1, "the landing's pass wrapped the mark again: a new node");
+  assert.ok(!w.body.contains(m1!), "the pressed node left the body");
+  assert.ok(doc.activeElement === doc.body, "mid-press nothing of ours holds the keyboard (the pass refocuses the mark that HELD it, and none did)");
+  dispatch(m2!, new Ev("mouseup"));
+  assert.ok(doc.activeElement === m2, "the release focuses the successor, our mark for the same comment (before: the body)");
+  assert.equal(m2!.getAttribute("tabindex"), "0", "...a control again");
+  assert.equal(m1!.getAttribute("tabindex"), "0", "the node that left wears its attribute again too: nothing is left half-pressed");
+  // the stamped box: stripped in place and stamped again by the landing, the same element, so the release finds it in the body
+  const d = display(w);
+  assert.deepEqual([d.getAttribute("data-id"), d.getAttribute("tabindex")], [A.id, "0"], "the box a control before the press");
+  doc.activeElement = doc.body;
+  dispatch(d.querySelector(".mord")!, new Ev("mousedown"));
+  assert.equal(d.getAttribute("tabindex"), null, "the press on the formula's glyph took the box's tabindex off (the climb from the glyph reaches the box)");
+  const C2 = peer("Report", 4);
+  await land(w, withComments([P, A, C1, C2]));
+  assert.equal(display(w), d, "the same element, stripped in place and stamped again");
+  assert.equal(d.getAttribute("tabindex"), "0", "the stamp gave it the attribute back before the release");
+  dispatch(d.querySelector(".mord")!, new Ev("mouseup"));
+  assert.ok(doc.activeElement === d, "the release focuses the box, its own successor");
 });

@@ -785,16 +785,18 @@ const FORMULA_HOLE = "a formula";
  *  does not lay out as marked's token says (tableHole). */
 const CODE_HOLE = "a code block", INDENTED_CODE_HOLE = "an indented code block", TABLE_HOLE = "a table";
 /** The reason of a fence line's zero-text hole (walkCode): the opener with its info string, and the closer with the line feed that
- *  ends the last code line before it, render nothing, and a change's point on them keeps its card (renderedSpot). Never read by a
- *  selection: the hole holds no character. */
+ *  ends the last code line before it and its own line feed, render nothing, and a change's point on them keeps its card
+ *  (renderedSpot). Never read by a selection: the hole holds no character. */
 const FENCE_LINE = "a code block's fence line";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a code block or a
  *  table cell the reading could not place, a footnote reference's number, a callout's title). `cells` and
  *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table;
  *  `codes` the code blocks in walk order (CodeSpan; the lines positioned, or none for one the reading could
- *  not place), empty for a block holding none. */
+ *  not place), empty for a block holding none. `N` is the text the walk runs over (walkedBlocks), for a walk that
+ *  reads the character after a token's raw (walkCode: a fence closer's line feed the lexer left off the raw). */
 class Emitter {
+  constructor(readonly N: string) {}
   chars = "";
   pos: number[] = [];
   holes: Hole[] = [];
@@ -1162,10 +1164,21 @@ function codeLineStarts(tt: Tokens.Code, cv: View): number[] | null {
 }
 /** A code token over `cv`, the view its raw tiles: every text line's characters at the raw line's own positions (codeLineStarts),
  *  line by line, so the emitted characters are the ones putHole gave, positioned; a fence's opener line and its closer, which render
- *  nothing, are zero-text holes either side of them (FENCE_LINE; the closer's from the line feed that ends the last line, and one
- *  hole over the whole raw for a fence with no line to place), so a change's point on a fence line keeps its card while a point in
- *  a line places in its row (renderedSpot); an indented block has no fence lines. Each line placed is recorded with its span and
- *  whether it shows a character (Emitter.codes, CodeSpan), so a point on a line that shows none, a blank line, can go into the
+ *  nothing, are zero-text holes either side of them (FENCE_LINE; the closer's from the line feed that ends the last line through
+ *  the closer's own line feed, and one hole over the whole raw for a fence with no line to place), so a change's point on a fence
+ *  line keeps its card while a point in a line places in its row (renderedSpot); an indented block has no fence lines. The
+ *  closer's line feed is the lexer's to place: a lone line feed after a block goes onto the block's raw, so the raw of a fence a
+ *  line follows directly ends with it and the hole's end, the raw's end, is past it; a blank line after the fence is a `space`
+ *  token's, and the line feed that ends a list item's or a quote's last line is trimmed off the container's text, so the raw of
+ *  a fence a blank line follows, or one that ends its item or its quote, ends with the closer's last character and the line feed
+ *  stands at the view's end, one character past the raw in N (Emitter.N). The hole takes it there too, so the same point keeps
+ *  its card in every shape (the Slice 8 PR review's round 1; through the closing pass the hole ended at the raw's end, so
+ *  the point at that line feed fell to renderedSpot's adjacency rule and was painted after the last code character, at the top
+ *  level or in a quote, or before the next item's text when the fence ended its item, where main 929ae86e1 kept the card, the
+ *  fence a hole, or placed it before the next item's text; a fence the note ends inside has no line feed there and no closer
+ *  hole, and a closed fence ending the note with no final line feed keeps its hole at the raw's end). Each line placed is
+ *  recorded with its span and whether it shows a character (Emitter.codes, CodeSpan), so a point on a line that shows none, a
+ *  blank line, can go into the
  *  line's own row (renderedSpot, blankCodeLineSpot). A token whose lines the reading cannot place is the hole it was before this
  *  slice, one over the whole raw with the code's reason, its text shown through it; it is recorded too, with no line, so the
  *  block's k-th record stays its k-th code block, the k-th `<pre>` the renderer emits (blankCodeLineSpot pairs them so for a
@@ -1184,7 +1197,11 @@ function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
   // the indent or the `> ` marker before the first content line, so `cv.n(contentStart)` is that line's first character PAST
   // them, and the bytes of the indent or the marker fell strictly inside the hole and kept their card, while the same bytes
   // before every later line, which no hole holds, place in the line's row (the Slice 8 review, round 4; blankCodeLineSpot)
-  if (fenced) em.holes.push({ reason: FENCE_LINE, startN: cv.n(0), endN: starts.length ? cv.n(lines[0].length) + 1 : cv.n(cv.str.length) });
+  // the closer's own line feed when the lexer left it off the raw (a blank line after the fence, or the fence ending its list
+  // item or its quote): the character after the raw in N, the closer hole's last (the docstring); a raw that ends with the line
+  // feed the lexer moved onto it already holds it, and a fence ending the note has none
+  const rawEnd = cv.n(cv.str.length), closerEnd = !cv.str.endsWith("\n") && em.N[rawEnd] === "\n" ? rawEnd + 1 : rawEnd;
+  if (fenced) em.holes.push({ reason: FENCE_LINE, startN: cv.n(0), endN: starts.length ? cv.n(lines[0].length) + 1 : closerEnd });
   const span: CodeSpan = { startN: cv.n(0), endN: cv.n(cv.str.length), lines: [] };
   em.codes.push(span);
   let ls = fenced ? contentStart : 0;   // the raw line's start: its indent's first character, or the line's own
@@ -1199,7 +1216,7 @@ function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
   if (fenced && starts.length) {
     let closer = contentStart;
     for (let i = 0; i < starts.length; i++) closer += lines[1 + i].length + 1;
-    if (closer <= cv.str.length) em.holes.push({ reason: FENCE_LINE, startN: cv.n(closer - 1), endN: cv.n(cv.str.length) });
+    if (closer <= cv.str.length) em.holes.push({ reason: FENCE_LINE, startN: cv.n(closer - 1), endN: closerEnd });
   }
 }
 
@@ -2054,7 +2071,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
   let pDepth = 0;   // the chain's length when that `<p>` was left open: the elements below it; a closer popping to one of them closes the `<p>`
   const pInScope = (): boolean => !chain.slice(pDepth).some((e) => P_SCOPE_BARRIERS.has(e));   // the parser's "p in button scope"
   for (const { t, startN, endN, textEndN, broken } of table.placed) {
-    const em = new Emitter();
+    const em = new Emitter(table.N);
     let refused: string | null = broken;
     if (refused === null) {
       try { walkBlocks([t], View.identity(table.N, 0), em, startN); }
@@ -4855,15 +4872,18 @@ function sameItem(blk: Block, j: number, k: number): boolean {
  *  character: a formula's glyphs and a picture among them, which the walks skip or which shows no text (a zero-text hole), and a
  *  footnote reference's number, a hole's character. The positioned characters of the container before `el` stand in it exactly when
  *  `jt` does: every positioned character of the container before `el` precedes the offset, else the offset would not be the start
- *  edge's, and the last of them before the offset is `jt`, the characters standing in source order. The start edge's test for a
- *  block that begins neither its item nor its quote (edgeSpot; the Slice 8 review's closing pass). */
+ *  edge's, and the last of them before the offset is `jt`, the characters standing in source order. Where the container holds
+ *  nothing before `el` (the block begins its item or its quote) and is itself inside another item or quote of the block's, that
+ *  one is read the same way, out to the block's node: a sub-item's table under an outer item holding a formula alone begins its
+ *  sub-item, and the outer item's formula stands before it, unpositioned (the Slice 8 PR review's round 1, on the
+ *  maintainer's ruling; the closing pass read the innermost container alone). The block's own node is read only as the direct
+ *  container (an html wrapper's element holding the table), never past an item: a sibling item's content before the block's item
+ *  is not content before the block, so a table that begins the item after another item keeps the item-beginning rule. The start
+ *  edge's test for a block whose container, or a container enclosing it, holds unpositioned content before it (edgeSpot; the
+ *  Slice 8 review's closing pass and the PR review's round 1). */
 function unpositionedBefore(blk: Block, el: DNode, jt: DNode | null): boolean {
   const isItem = (x: DNode): boolean => isElement(x) && (x.tagName.toUpperCase() === "LI" || x.tagName.toUpperCase() === "BLOCKQUOTE");
-  let container: DNode | null = null;
-  for (let x = el.parentNode; x && !container; x = x.parentNode) if (isItem(x) || blk.dom.indexOf(x) >= 0) container = x;
-  if (!container) return false;
   const under = (n: DNode, root: DNode): boolean => { for (let x: DNode | null = n; x; x = x.parentNode) if (x === root) return true; return false; };
-  if (jt && under(jt, container)) return false;
   const contentBefore = (n: DNode): boolean => {
     for (let i = 0; i < n.childNodes.length; i++) {
       const c = n.childNodes[i];
@@ -4873,7 +4893,16 @@ function unpositionedBefore(blk: Block, el: DNode, jt: DNode | null): boolean {
     }
     return false;
   };
-  return contentBefore(container);
+  let pastItem = false;   // whether an item or a quote lies between `el` and the node under inspection
+  for (let x = el.parentNode; x; x = x.parentNode) {
+    const own = blk.dom.indexOf(x) >= 0;
+    if (!isItem(x) && !own) continue;
+    if (jt && under(jt, x)) return false;
+    if ((isItem(x) || !pastItem) && contentBefore(x)) return true;
+    if (own) return false;
+    pastItem = true;
+  }
+  return false;
 }
 /** The n-th element of `tag` under the block's nodes in document order, paired with the n-th of the walk's `count` records of that
  *  kind (a `<table>` per TableSpan, a `<pre>` per CodeSpan: the renderer emits one per token in walk order, the pairing
@@ -4947,7 +4976,14 @@ function lineEndAt(source: string, off: number): number {
  *  and inside a formula's TeX, which the hole rule does not catch, a formula's hole having no character (the review's closing
  *  pass; rounds 2 to 6 placed it before the block's first positioned character, inside the first header cell or the fence's first
  *  row, a cell or a row the change is not in, and in the second item of two, whose text before is the first item's, where main
- *  had placed it after that text); and where that character does not exist, the first header cell showing
+ *  had placed it after that text); the same where the block begins its item or its quote and that container stands inside
+ *  another whose content before it is unpositioned, a sub-item's table or fence under an outer item holding a formula alone, or a
+ *  list item's table in a quote holding a formula alone before the list (the PR review's round 1, on the maintainer's ruling
+ *  over the closing pass's record: the outer line's line feed, the sub-item's indent and its marker and the block's first
+ *  character all sat before the first header cell's first character or the code's first, bytes outside the cell painted inside
+ *  it, where main 929ae86e1 kept the card, the table a hole; a sibling item's content before is not this rule's, so a table
+ *  that begins the item after a formula-alone item keeps round 4's placement); and where that character does not exist, the
+ *  first header cell showing
  *  nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
  *  showing nothing (or the fence empty), the point keeps its card, as a point inside such a cell does (before round 5: before the
  *  block's first positioned character wherever it stood, the second header cell's or the body row's first cell's, a cell the
@@ -5081,7 +5117,11 @@ function renderedSpot(idx: RenderedIndex, offset: number): Spot | null {
   // (walkCode, FENCE_LINE), so a point past a fence line's first position has no row to sit in and keeps its card, as it did when
   // the whole block was a hole (placed by the rule below it would land at the first or the last code character, which the change
   // is not at). The first position is the edge, placed by edgeSpot beside the text it borders: the opener's first character, and
-  // the line feed that ends the last code line before the closer.
+  // the line feed that ends the last code line before the closer. The closer's own line feed is the hole's whichever token's raw
+  // carries it (walkCode's closerEnd): a point there kept its card when the raw held the line feed and, through the review's
+  // closing pass, fell to the rules below when a blank line followed the fence or the fence ended its item or its quote, painted
+  // after the last code character or before the next item's text (the PR review's round 1; main 929ae86e1 kept the card at
+  // the top level and in a quote).
   if (blk.holes.some((h) => h.reason === FENCE_LINE && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN))) return null;
   // On a code line that shows no character (a blank line, or one of whitespace alone; the Slice 8 review, round 1): the point goes
   // into the line's own row (blankCodeLineSpot), where the rule below put it before the next line's first character, one row down,

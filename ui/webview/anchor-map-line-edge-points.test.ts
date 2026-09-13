@@ -24,8 +24,14 @@
 // positioned character, inside the first header cell or the fence's first row (round 6's line-before rule needs a positioned
 // character to place the point after); now the start edge keeps the point on its card, as main 696229f84 kept it, when the block
 // begins neither its item nor its quote and no positioned character of the item's stands before it (edgeSpot's
-// unpositionedBefore). Its cases fail over a git archive of b69116e26, round 6's fix commit. Synthetic values only: invented
-// notes, no real session text.
+// unpositionedBefore). Its cases fail over a git archive of b69116e26, round 6's fix commit. The fifth test is the review's landing
+// round, on the maintainer's ruling over the closing pass's record: a sub-item's table under an outer item holding a formula alone
+// begins its sub-item, so the closing pass's rule, reading the sub-item alone, placed the outer line's line feed, the sub-item's
+// indent and marker and the table's first character before the first header cell's first character, bytes outside the cell
+// painted inside it, where main kept the card; now unpositionedBefore reads the items and quotes enclosing the block's own, out
+// to the block's node, and the point keeps its card. Its cases fail over a git archive of 4a3e18664, the head the landing review
+// read, and the fourth test's control K, which pinned the closing pass's placement, is re-pinned to the card. Synthetic values
+// only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked, type Tokens } from "marked";
@@ -409,7 +415,7 @@ test("a deletion point at the first character of a fenced block the reading coul
 
 // ── items 1 and 4: a block after a line with no positioned character begins neither its item nor its quote ──
 
-test("a deletion point on the line of a formula alone or a picture alone before a nested table or fence, past the hole (its trailing whitespace, the line feed that ends it), on the blank line, at the indent before the block and at the block's first character, keeps its card, as main 696229f84 kept it, its table a hole (the review's closing pass; rounds 2 to 6 placed it before the block's first positioned character, inside the table's first header cell or the fence's first row, a cell or a row the change is not in: the line before has no positioned character to place the point after, and the block begins neither its item nor its quote): an item's `$x$  `, a blank line, then a table; the same with no blank line; an item's picture alone; an item's display formula alone; a quote's formula alone; an item's formula alone then a fence; a second item's formula alone after a text item (rounds 2 to 6: in the second item's header cell; main: after the first item's text); the table with the item's prose after it; a footnote reference alone, a hole with a character and no positioned one, the same rule's; and a point inside the formula's TeX, which the hole rule does not catch, a formula's hole having no character (before: before the block's first character too); the controls, unchanged: a sub-item's table under a formula-alone item (its first character before its own first cell, round 4's rule for a block that begins its item), an item's `lead $x$  ` then a table (after `lead`, the line before's rule and the start edge's), and a top-level formula paragraph then a top-level table (the paragraph's line card-only, the table's first character before its first cell, the top-level rule); with the Files pane's rows and undressed alike", () => {
+test("a deletion point on the line of a formula alone or a picture alone before a nested table or fence, past the hole (its trailing whitespace, the line feed that ends it), on the blank line, at the indent before the block and at the block's first character, keeps its card, as main 696229f84 kept it, its table a hole (the review's closing pass; rounds 2 to 6 placed it before the block's first positioned character, inside the table's first header cell or the fence's first row, a cell or a row the change is not in: the line before has no positioned character to place the point after, and the block begins neither its item nor its quote): an item's `$x$  `, a blank line, then a table; the same with no blank line; an item's picture alone; an item's display formula alone; a quote's formula alone; an item's formula alone then a fence; a second item's formula alone after a text item (rounds 2 to 6: in the second item's header cell; main: after the first item's text); the table with the item's prose after it; a footnote reference alone, a hole with a character and no positioned one, the same rule's; and a point inside the formula's TeX, which the hole rule does not catch, a formula's hole having no character (before: before the block's first character too); a sub-item's table under a formula-alone item, card-only since the PR review's round 1 (the fifth test; the closing pass: its first character before its own first cell, round 4's rule for a block that begins its item); the controls, unchanged: an item's `lead $x$  ` then a table (after `lead`, the line before's rule and the start edge's), and a top-level formula paragraph then a top-level table (the paragraph's line card-only, the table's first character before its first cell, the top-level rule); with the Files pane's rows and undressed alike", () => {
   const scenes: Array<[string, string, string, string]> = [
     // label, source, the hole's source text (its first occurrence), the block's first character's text
     ["A an item's formula alone, a blank line, then a table", "- $x$  \n\n  | a | b |\n  |---|---|\n  | c | d |\n", "$x$", "| a |"],
@@ -451,10 +457,11 @@ test("a deletion point on the line of a formula alone or a picture alone before 
         assert.equal(placeOf(build(src), src, inside), null, label + mode + ": a point inside the formula's TeX keeps its card");
       }
     }
-    // the controls, unchanged: a sub-item's table under a formula-alone item begins its own item, so its first character's point
-    // sits before its own first cell (round 4's rule)
+    // a sub-item's table under a formula-alone item: card-only since the PR review's round 1 (the fifth test), the outer item's formula
+    // unpositioned content before a table that begins its sub-item; the closing pass placed it before its own first cell, round 4's
+    // rule for a block that begins its item, and recorded the shape without a ruling
     const k = "- $x$\n  - | a | b |\n    |---|---|\n", kw = placeOf(build(k), k, at(k, "| a |"));
-    assert.deepEqual([kw!.li, kw!.cell, kw!.after.startsWith("a")], [1, { tag: "TH", col: 0, row: -1 }, true], "K" + mode + " control, a sub-item's table under a formula-alone item: before its own first cell: " + JSON.stringify(kw));
+    assert.equal(kw, null, "K" + mode + ": a sub-item's table under a formula-alone item keeps its card (the closing pass: before its own first cell): " + JSON.stringify(kw));
     // an item's `lead $x$  ` then a table: after `lead`, the line before's rule for the offsets on the line and the start edge's for
     // the blank line and the table's first character, the formula's glyphs after the point
     const l = "- lead $x$  \n\n  | a | b |\n  |---|---|\n";
@@ -468,5 +475,61 @@ test("a deletion point on the line of a formula alone or a picture alone before 
     assert.equal(placeOf(build(m), m, at(m, "$x$") + 3), null, "M" + mode + " control: the top-level formula paragraph's trailing space keeps its card");
     const mw = placeOf(build(m), m, at(m, "| a |"));
     assert.deepEqual([mw!.li, mw!.cell, mw!.after.startsWith("a")], [-1, { tag: "TH", col: 0, row: -1 }, true], "M" + mode + " control: the top-level table's first character before its first cell: " + JSON.stringify(mw));
+  }
+});
+
+// ── items 1 and 4: content of an ENCLOSING item or quote before a block that begins its own ──
+
+test("a deletion point under an OUTER item holding a formula alone, at the outer line's line feed, on the sub-item's indent and its marker, and at the sub-item's table's first character, keeps its card, as main 929ae86e1 kept it, the table a hole (the PR review's round 1, on the maintainer's ruling over the closing pass's record: the closing pass placed every one of them before the first header cell's first character, bytes outside the cell painted inside it, the table beginning its own item and the pass's rule reading that item alone; now the rule reads the items and quotes enclosing the block's own, out to the block's node, so the outer item's formula is unpositioned content before the table): the outer item's `$x$` then a sub-item's table, with a blank line between too, the fence twin (before: before the first code character, in the pre's first row), and a list item's table in a quote holding a formula alone before the list; the controls, unchanged: an outer item's `one` then a sub-item's table (the line feed after `one` sits after `one`; the indent, the marker and the pipe before the first cell's text, round 4's rule for a table that begins its item), a formula-alone item then a table ITEM (a sibling's marker and pipe before the first cell's text, the same rule), and a point inside the cell in the cell; with the Files pane's rows and undressed alike", () => {
+  const scenes: Array<[string, string, string, string, "TH" | "PRE"]> = [
+    // label, source, the hole's source text, the block's first character's text, where the block's first character rendered
+    ["K1 the outer item's `$x$` then a sub-item's table", "- $x$\n  - | ab | cd |\n    |----|----|\n", "$x$", "| ab |", "TH"],
+    ["K2 the same with a blank line between", "- $x$\n\n  - | ab | cd |\n    |----|----|\n", "$x$", "| ab |", "TH"],
+    ["K3 the fence twin", "- $x$\n  - ```\n    code\n    ```\n", "$x$", "```", "PRE"],
+    ["K4 a list item's table in a quote holding a formula alone before the list", "> $x$\n>\n> - | ab | cd |\n>   |----|----|\n", "$x$", "| ab |", "TH"],
+  ];
+  for (const dressed of [true, false]) {
+    const mode = dressed ? " (rows)" : " (undressed)";
+    const build = (src: string): FakeElement => dressed ? buildRendered(src) : undressed(src);
+    for (const [label, src, hole, first, where] of scenes) {
+      const e = at(src, hole) + hole.length, s = at(src, first);
+      assert.ok(e < s, label + ": the hole ends before the block");
+      const box = build(src);
+      const block = allOf(box, where === "PRE" ? "PRE" : "TABLE")[0];
+      assert.ok(block, label + ": the block renders");
+      // the block begins its own item, and the formula's glyphs stand in an item or a quote enclosing that item
+      let item: FakeNode | null = block.parentNode; while (item && !(item instanceof FakeElement && item.tagName === "LI")) item = item.parentNode;
+      assert.ok(item, label + ": the block is in a list item");
+      assert.equal(item!.childNodes.findIndex((c) => c instanceof FakeElement) , item!.childNodes.indexOf(block), label + ": the block is its item's first element");
+      const glyphs = allOf(box, "SPAN").find((n) => hasClass(n, "katex"));
+      assert.ok(glyphs, label + ": the formula renders");
+      let up: FakeNode | null = glyphs!; while (up && up !== item) up = up.parentNode;
+      assert.equal(up, null, label + ": the formula is not in the block's own item");
+      for (let off = e; off <= s; off++) {
+        const tag = label + mode + " at " + JSON.stringify(src[off]) + " (" + (off === e ? "the outer line's line feed" : off === s ? "the block's first character" : "+" + (off - e) + " past the hole") + ")";
+        const w = placeOf(build(src), src, off);
+        assert.equal(w, null, tag + ": card-only (the closing pass: before the block's first positioned character, inside its first header cell or its first row): " + JSON.stringify(w));
+      }
+      // a point inside the cell or the line places in it, the cell's own
+      const inside = at(src, where === "PRE" ? "code" : "ab") + 1, iw = placeOf(build(src), src, inside);
+      assert.ok(iw && (where === "PRE" ? iw.pre >= 0 : iw.cell !== null && iw.cell.tag === "TH" && iw.cell.col === 0), label + mode + ": a point inside the cell or the line places in it: " + JSON.stringify(iw));
+    }
+    // the controls: an outer item's TEXT then a sub-item's table: the line feed after `one` after `one` (the line before's rule),
+    // the indent, the marker and the pipe before `ab` (round 4's rule for a table that begins its item), as before
+    const c1 = "- one\n  - | ab | cd |\n    |----|----|\n", lf = at(c1, "one") + 3;
+    assert.equal(c1[lf], "\n");
+    const lw = placeOf(build(c1), c1, lf);
+    assert.deepEqual([lw!.li, lw!.cell, lw!.before], [0, null, "one"], "C1" + mode + " control, the line feed after `one`: after `one`: " + JSON.stringify(lw));
+    for (const off of [lf + 1, lf + 2, lf + 3, at(c1, "| ab |")]) {
+      const w = placeOf(build(c1), c1, off);
+      assert.deepEqual([w!.li, w!.cell, w!.after.startsWith("ab")], [1, { tag: "TH", col: 0, row: -1 }, true], "C1" + mode + " control at " + JSON.stringify(c1[off]) + ": before the sub-item's first cell's text, round 4's rule: " + JSON.stringify(w));
+    }
+    // a formula-alone item then a table ITEM: a sibling's content is not content before the block, so the item's marker and the
+    // pipe sit before `ab`, round 4's rule, as before
+    const c2 = "- $x$\n- | ab | cd |\n  |----|----|\n", marker = at(c2, "- | ab");
+    for (const off of [marker, marker + 1, marker + 2]) {
+      const w = placeOf(build(c2), c2, off);
+      assert.deepEqual([w!.li, w!.cell, w!.after.startsWith("ab")], [1, { tag: "TH", col: 0, row: -1 }, true], "C2" + mode + " control at " + JSON.stringify(c2[off]) + ": before the sibling table item's first cell's text, round 4's rule: " + JSON.stringify(w));
+    }
   }
 });

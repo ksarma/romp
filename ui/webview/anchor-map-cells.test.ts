@@ -25,7 +25,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
+import { marked, Tokenizer, type Tokens } from "marked";
 import { applyMdConfig } from "./md-config";
 import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, paintChangesRendered, unpaintChanges, type SelLike, type MapResult, type ChangePaint } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
@@ -595,6 +595,54 @@ test("shapes marked accepts map cell by cell: a table with no leading or trailin
   const interrupt = "Intro\n| a | b |\n|---|---|\n| c | d |\n";
   box = buildRendered(interrupt);
   for (const t of ["Intro", "a", "c"]) mapsWhole(box, interrupt, t);
+});
+
+// ── the whole-table fallback: a token that does not lay out over the raw ──
+
+test("the whole-table fallback (tableHole) stands for a table token whose raw does not lay out as the token says, reached through a `table` tokenizer override for a marker header cell (marked's own tokenizer yields no such token; the line-edge-points suite reaches walkCode's hole the same way): a header token with one cell more than the row's pipes cut, walkRow's refusal routed to the hole, and a token with three rows more than the raw has lines, the count before the walk; in both a selection in a cell refuses `touches a table` with the Raw view offered on the selected text and the block's first character, a drag across two cells the same (the one-cell rule never sees a cell), a Raw comment on a cell paints through the fallback's ordinal, a change point inside a cell keeps its card, and the prose around the table maps; the control, the same note with marked's own token, maps cell by cell and places the point in the cell (a guard for the fallback, green before it was needed and red with the tableHole call deleted, checked by mutation)", () => {
+  const ctrl = "Intro para.\n\n| Head | Beside |\n|------|--------|\n| cee | dee |\n\nAfter para.\n";
+  const lexed = JSON.stringify(marked.lexer(ctrl));
+  // the override: a table whose first header cell reads `ghostcell` gets a header cell more than its row cuts, one reading
+  // `ghostrows` three body rows more than its raw has lines; every other table is marked's own token
+  marked.use({ tokenizer: { table(src: string) {
+    const tok = Tokenizer.prototype.table.call(this, src) as Tokens.Table | undefined;
+    if (!tok || (tok.header[0].text !== "ghostcell" && tok.header[0].text !== "ghostrows")) return false as unknown as undefined;
+    const lexer = (this as unknown as { lexer: { inline(text: string, tokens: unknown[]): void } }).lexer;
+    const cell = (text: string): Tokens.TableCell => { const c: Tokens.TableCell = { text, tokens: [] }; lexer.inline(text, c.tokens as unknown[]); return c; };
+    if (tok.header[0].text === "ghostcell") tok.header.push(cell("Ghost"));
+    else for (let i = 1; i <= 3; i++) tok.rows.push([cell("g" + i), cell("h" + i)]);
+    return tok;
+  } } });
+  assert.equal(JSON.stringify(marked.lexer(ctrl)), lexed, "the override leaves a note with no marker cell to marked");
+  const shapes: Array<[string, string, (box: FakeElement) => void]> = [
+    ["a header cell more than the row cuts", ctrl.replace("Head", "ghostcell"), (box) => assert.deepEqual(allOf(box, "TH").map((t) => t.textContent), ["ghostcell", "Beside", "Ghost"], "three header cells rendered over a two-cell row")],
+    ["three rows more than the raw has lines", ctrl.replace("Head", "ghostrows"), (box) => assert.deepEqual(allOf(box, "TD").map((t) => t.textContent), ["cee", "dee", "g1", "h1", "g2", "h2", "g3", "h3"], "four body rows rendered over a one-row raw")],
+  ];
+  for (const [label, src, rendered] of shapes) {
+    const box = buildRendered(src);
+    rendered(box);
+    const tableAt = at(src, "| ghost");
+    for (const text of ["cee", "dee", "Beside"]) {
+      const r = bad(mapText(box, src, text), label + ": " + text);
+      assert.match(r.reason, A_TABLE, label + ": the whole table's sentence for " + text);
+      assert.deepEqual([r.blockStartOffset, r.blockStartLine, r.rawHasQuote, r.rawRange], [tableAt, lineOf(src, "| ghost"), true, rangeOf(src, text)], label + ": the Raw offer at the table's first character, on the selected text: " + JSON.stringify(r));
+    }
+    const two = bad(mapSpan(box, src, "cee", "dee"), label + ": two cells");
+    assert.match(two.reason, A_TABLE, label + ": a drag across two cells reads the whole table's sentence, not the one-cell rule's (no cell is positioned)");
+    const marks = marksOf(box, src, rangeOf(src, "dee"));
+    assert.deepEqual(textMarks(marks).map((m) => m.textContent), ["dee"], label + ": a Raw comment on a cell paints through the fallback's ordinal");
+    unpaintChanges(El(box));
+    const pt = paintChangesRendered(El(box), src, [{ id: "p", kind: "del", curFrom: at(src, "cee") + 1, curTo: at(src, "cee") + 1, oldText: "x", author: "web" }], () => ({}));
+    assert.deepEqual(pt, { painted: [], unpainted: ["p"] }, label + ": a change point inside a cell keeps its card, the table a hole");
+    mapsWhole(box, src, "Intro para.");
+    mapsWhole(box, src, "After para.");
+  }
+  // the control: marked's own token maps cell by cell and places the point in the cell
+  const box = buildRendered(ctrl);
+  for (const text of ["Head", "Beside", "cee", "dee"]) mapsWhole(box, ctrl, text);
+  const pt = paintChangesRendered(El(box), ctrl, [{ id: "p", kind: "del", curFrom: at(ctrl, "cee") + 1, curTo: at(ctrl, "cee") + 1, oldText: "x", author: "web" }], () => ({}));
+  assert.deepEqual(pt, { painted: ["p"], unpainted: [] }, "the control: the point inside `cee` places");
+  assert.ok(allOf(box, "SPAN").some((s) => (s.getAttribute("class") || "").split(" ").includes("fc-del") && cellOf(s, "TD").el.textContent.includes("cee")), "the control: the point stands in `cee`'s cell");
 });
 
 // ── the cost, for the build note (the brief's open question 13; the fence's twin is in anchor-map-code-lines.test.ts) ──

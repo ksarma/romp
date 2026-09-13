@@ -15,7 +15,9 @@
 // hljs spans, the lines cut into `.cl` rows by the real wrapLinesHtml (code-block.ts) with the line feeds dropped, the Copy
 // button parked in the `<pre>`, and a URL in a row split into an `<a>` as linkifyFileText splits it. The idiom of
 // anchor-map-cells.test.ts. The browser leg, anchor-map-code-lines-browser.test.ts, runs the real viewer and the real panel.
-// Every case that maps here refuses "touches a code block" or "an indented code block" over the tree before this slice; the
+// Every case that maps a code character here refuses "touches a code block" or "an indented code block" over the tree before
+// this slice, with one exception: test 8, the empty fence, is a guard, green there by design (nothing to select, the blocks
+// around it map, and a Raw comment on its fence lines paints nothing, before the slice and since); the
 // case of the Slice 8 review's round 1, a deletion point on a code line that shows no character placed in the line's own row,
 // fails over the build's head (c68f52212 since the branch's rebase onto main, cd3a06501 before it) with the point one row down.
 // Synthetic values only: an invented note, no real session text.
@@ -415,7 +417,7 @@ test("a line inside a list item's fence, a quoted fence's line, an indented code
   assert.equal(into.quote, "holding a fence:\n\n  ```sh\n  npm run build");
 });
 
-test("an empty fence: nothing to select, the blocks around it map, and a Raw comment on its two fence lines paints nothing and keeps its card (the fallback: the lines render nothing); a Raw comment on an opener line alone, or on the closer, paints nothing too", () => {
+test("an empty fence: nothing to select, the blocks around it map, and a Raw comment on its two fence lines paints nothing and keeps its card (the fallback: the lines render nothing); a Raw comment on an opener line alone, or on the closer, paints nothing too (a guard: green before the slice, whose fence lines painted nothing then as now)", () => {
   const box = buildRendered(FIX);
   mapsWhole(box, FIX, "A backtick fence with an indented opener and a tilde fence with one.");
   mapsWhole(box, FIX, "An empty fence above.");

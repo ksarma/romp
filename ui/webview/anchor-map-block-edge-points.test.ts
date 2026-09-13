@@ -17,7 +17,11 @@
 // every fence cut into rows as the Files pane cuts it (wrapLinesHtml) or left undressed where the scene says so. Every case that
 // changes behaviour fails over a git archive of 8ae3fda02, round 4's fix commit, at the assertion its title names; the hole
 // cell's pins (test 6) pin round 4's rule, so they are green over 8ae3fda02 by design and fail over one of 90c6ff242, round 3's:
-// the file runs 5 of 6 red over 8ae3fda02, not 6 of 6. Synthetic values only: invented notes, no real session text.
+// the round's six tests run 5 of 6 red over 8ae3fda02, not 6 of 6. The closer's-line-feed test (the third) is the PR review's round 1: a point at a
+// fence closer's own line feed kept its card only where the lexer had moved that line feed onto the fence's raw, and where it had not
+// (a blank line after the fence, the fence ending its item or its quote) fell to the adjacency rule; now the closer's hole takes the
+// line feed wherever the lexer left it. Its cases fail over a git archive of 4a3e18664, the head the landing review read, at the
+// assertion its title names. Synthetic values only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -249,6 +253,45 @@ test("a fence's trailing blank line in a list item followed by another item, whe
   assert.deepEqual([u!.li, u!.pre >= 0, u!.before.endsWith("code")], [0, true, true], "undressed: after `code` in item 1's pre (before: before `Item two`, in item 2): " + JSON.stringify(u));
   const d = placeOf(buildRendered(src), src, off);
   assert.deepEqual([d!.li, d!.pre >= 0, d!.before.endsWith("code")], [0, true, true], "with rows: the end of the pre's last row, after `code`, as before: " + JSON.stringify(d));
+});
+
+test("a deletion point at a fence closer's OWN line feed keeps its card in every shape, that line feed being the closer's and not code (the PR review's round 1; through the closing pass the closer's hole ended at the fence's raw, and when the lexer left that line feed off the raw, a blank line following the fence or the fence ending its list item or its quote, the point fell to the adjacency rule: painted after the last code character at the top level and in a quote, where main 929ae86e1 kept the card, the fence a hole, or before the next item's text when the fence ended its item, where main placed it so too): a top-level fence with a blank line after it, and with two; a quote's fence with a blank line after the quote, and one ending the note; a fence ending a list item with an item after; a fence ending the last item, a blank line, then prose; an empty fence and a fence of one blank line ending an item; the CRLF twin at either byte; the controls, unchanged: a fence a paragraph follows directly, whose raw carries the line feed (card-only on every tree), and the last code line's own line feed, round 5's edge, after the last code character; with the Files pane's rows and undressed alike", () => {
+  const scenes: Array<[string, string, string, number, string | null]> = [
+    // label, source, a needle holding the closer's line ending, the ending's index in the needle, the last code word (null: no code line)
+    ["T a top-level fence, a blank line after it", "Intro.\n\n```\ncode  \n```\n\nAfter.\n", "```\n\nAfter", 3, "code"],
+    ["T2 a top-level fence, two blank lines after it", "Intro.\n\n```\ncode  \n```\n\n\nAfter.\n", "```\n\n\nAfter", 3, "code"],
+    ["Q a quote's fence, a blank line after the quote", "> Quoted:\n> ```\n> code  \n> ```\n\nAfter.\n", "> ```\n\nAfter", 5, "code"],
+    ["Q2 a quote's fence ending the note", "> ```\n> code\n> ```\n", "> code\n> ```\n", 12, "code"],
+    ["I a fence ending a list item, an item after", "- ```\n  code  \n  ```\n- Item two\n", "  ```\n- Item two", 5, "code"],
+    ["L a fence ending the last item, a blank line, then prose", "Intro.\n\n- ```\n  code  \n  ```\n\nAfter.\n", "  ```\n\nAfter", 5, "code"],
+    ["E an empty fence ending an item", "- ```\n  ```\n- Item two\n", "  ```\n- Item two", 5, null],
+    ["B a fence of one blank line ending an item", "- ```\n  \n  ```\n- Item two\n", "  ```\n- Item two", 5, null],
+    ["C the CRLF twin of I", "- ```\r\n  code  \r\n  ```\r\n- Item two\r\n", "  ```\r\n- Item two", 5, "code"],
+  ];
+  for (const dressed of [true, false]) {
+    const mode = dressed ? " (rows)" : " (undressed)";
+    const build = (src: string): FakeElement => dressed ? buildRendered(src) : undressed(src);
+    for (const [label, src, needle, i, word] of scenes) {
+      const lf = at(src, needle) + i;
+      assert.ok(src[lf] === "\n" || src[lf] === "\r", label + ": the offset is the closer's line ending: " + JSON.stringify(src.slice(lf - 3, lf + 1)));
+      const offs = src[lf] === "\r" ? [[lf, "the CR byte"], [lf + 1, "the LF byte"]] : [[lf, "the line feed"]];
+      for (const [off, what] of offs as Array<[number, string]>) {
+        const w = placeOf(build(src), src, off);
+        assert.equal(w, null, label + mode + " at " + what + ": card-only (before: after the last code character, or before the next item's text): " + JSON.stringify(w));
+      }
+      // the last code line's own line feed, round 5's edge: after the last code character, unchanged
+      if (word) {
+        const e = at(src, word) + word.length;
+        let eol = e; while (src[eol] !== "\n" && src[eol] !== "\r") eol++;
+        const w = placeOf(build(src), src, eol);
+        assert.ok(w && w.pre >= 0 && w.before.endsWith(word), label + mode + " control, the last code line's line feed: after the last code character, in the pre: " + JSON.stringify(w));
+      }
+    }
+    // a paragraph right after the closer: the lexer moves the lone line feed onto the fence's raw, so the hole held it on every tree
+    const one = "```\ncode  \n```\nAfter.\n", oneLf = at(one, "```\nAfter") + 3;
+    assert.equal(one[oneLf], "\n");
+    assert.equal(placeOf(build(one), one, oneLf), null, "control" + mode + ": the closer's line feed a paragraph follows directly keeps its card, as before");
+  }
 });
 
 // ── items 1 and 4: the start edge of a table or a fence is that block's own ──
