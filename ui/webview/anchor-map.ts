@@ -4876,29 +4876,56 @@ function sameItem(blk: Block, j: number, k: number): boolean {
  *  nothing before `el` (the block begins its item or its quote) and is itself inside another item or quote of the block's, that
  *  one is read the same way, out to the block's node: a sub-item's table under an outer item holding a formula alone begins its
  *  sub-item, and the outer item's formula stands before it, unpositioned (the Slice 8 PR review's round 1, on the
- *  maintainer's ruling; the closing pass read the innermost container alone). The block's own node is read only as the direct
- *  container (an html wrapper's element holding the table), never past an item: a sibling item's content before the block's item
- *  is not content before the block, so a table that begins the item after another item keeps the item-beginning rule. The start
- *  edge's test for a block whose container, or a container enclosing it, holds unpositioned content before it (edgeSpot; the
- *  Slice 8 review's closing pass and the PR review's round 1). */
+ *  maintainer's ruling; the closing pass read the innermost container alone). The item or quote holding `jt`, the block's own or
+ *  one enclosing it, is read for the content between `jt` and `el` alone: what stands before `jt` is before the text the point
+ *  could follow, not between that text and the block, and what stands after `jt` is unpositioned (the last positioned character
+ *  before the offset is `jt`), so an outer item whose text precedes a formula alone, then a sub-item's table, holds content
+ *  before the table, and the outer item's text then a sub-item's table with nothing between holds none, the table beginning its
+ *  item after that text (round 4's rule; the PR review's round 2: round 1 read no further once an item held `jt`, and the
+ *  formula's bytes, the blank lines and the sub-item's indent and marker took the table's first header cell). A list element
+ *  holding `el` is never descended, whichever container is read: its children before the item holding `el` are sibling items,
+ *  whose content is not content before the block, at every nesting, so a formula-alone item followed by an item that begins with
+ *  a table places the same at the top level, nested in an item and in a quote (round 2; round 1 counted the sibling's formula
+ *  through a nested list's element and kept the card for the nested and the quoted list alone). In the reading between `jt` and
+ *  `el` a table or a code block of the block's is another block, not content: the one holding `jt` shows no positioned character
+ *  after it and one standing after `jt` shows none at all (else `jt` would stand in it), and the start edge after another block's
+ *  characters is round 5's, before the block's own first positioned character (an unplaceable fence, then a placed fence in the
+ *  same item: the placed fence's opener sits before its own code, as round 1 had it). The block's own node is read only as the
+ *  direct container (an html wrapper's element holding the table), never past an item and never for the content past `jt`. The
+ *  rule the reading serves: a placement never carries bytes from outside the block into a cell or a row, and where the
+ *  exact-position arithmetic would put them there the point keeps its card (the start edge's test, edgeSpot; the Slice 8
+ *  review's closing pass and the PR review's rounds 1 and 2). */
 function unpositionedBefore(blk: Block, el: DNode, jt: DNode | null): boolean {
-  const isItem = (x: DNode): boolean => isElement(x) && (x.tagName.toUpperCase() === "LI" || x.tagName.toUpperCase() === "BLOCKQUOTE");
-  const under = (n: DNode, root: DNode): boolean => { for (let x: DNode | null = n; x; x = x.parentNode) if (x === root) return true; return false; };
-  const contentBefore = (n: DNode): boolean => {
+  const tag = (x: DNode): string => isElement(x) ? x.tagName.toUpperCase() : "";
+  const isItem = (x: DNode): boolean => tag(x) === "LI" || tag(x) === "BLOCKQUOTE";
+  const isList = (x: DNode): boolean => tag(x) === "UL" || tag(x) === "OL";
+  const under = (n: DNode | null, root: DNode): boolean => { for (let x: DNode | null = n; x; x = x.parentNode) if (x === root) return true; return false; };
+  let between = false;   // whether the container under inspection holds `jt`, so the reading is of the content between `jt` and `el`
+  let past = true;   // whether the scan has passed `jt`: false in the between reading until `jt` is met
+  // the nodes under `n` before `el` in document order, past `jt`: true when one is content, null when `el` is met with none before
+  // it, false when `el` is not under `n`; a list element holding `el` is not descended, its earlier children sibling items; in the
+  // between reading a table or a code block is another block of the block's, not content (the one holding `jt` shows no positioned
+  // character after it, one after `jt` shows none at all, else `jt` would stand in it), and the start edge after another block's
+  // characters is round 5's, before the block's own first positioned character (an unplaceable fence then a placed fence in one item)
+  const contentBefore = (n: DNode): boolean | null => {
     for (let i = 0; i < n.childNodes.length; i++) {
       const c = n.childNodes[i];
-      if (c === el) return false;
-      if (under(el, c)) return contentBefore(c);
-      if (isElement(c) || (isText(c) && stripWs(c.data) !== "")) return true;
+      if (c === el) return null;
+      if (c === jt) { past = true; continue; }
+      if (between && (tag(c) === "TABLE" || tag(c) === "PRE")) { if (under(jt, c)) past = true; continue; }
+      if (under(el, c)) return isList(c) ? null : contentBefore(c);
+      if (under(jt, c)) { const r = contentBefore(c); if (r !== false) return r; continue; }
+      if (past && (isElement(c) || (isText(c) && stripWs(c.data) !== ""))) return true;
     }
     return false;
   };
+  const read = (x: DNode): boolean => { between = under(jt, x); past = !between; return contentBefore(x) === true; };
   let pastItem = false;   // whether an item or a quote lies between `el` and the node under inspection
   for (let x = el.parentNode; x; x = x.parentNode) {
     const own = blk.dom.indexOf(x) >= 0;
     if (!isItem(x) && !own) continue;
-    if (jt && under(jt, x)) return false;
-    if ((isItem(x) || !pastItem) && contentBefore(x)) return true;
+    if (under(jt, x)) return isItem(x) && read(x);
+    if ((isItem(x) || !pastItem) && read(x)) return true;
     if (own) return false;
     pastItem = true;
   }
@@ -4981,9 +5008,15 @@ function lineEndAt(source: string, off: number): number {
  *  list item's table in a quote holding a formula alone before the list (the PR review's round 1, on the maintainer's ruling
  *  over the closing pass's record: the outer line's line feed, the sub-item's indent and its marker and the block's first
  *  character all sat before the first header cell's first character or the code's first, bytes outside the cell painted inside
- *  it, where main 929ae86e1 kept the card, the table a hole; a sibling item's content before is not this rule's, so a table
- *  that begins the item after a formula-alone item keeps round 4's placement); and where that character does not exist, the
- *  first header cell showing
+ *  it, where main 929ae86e1 kept the card, the table a hole), and where that enclosing item's or quote's own text precedes the
+ *  formula alone, the content between the text and the block read (the PR review's round 2; round 1 read no further once an
+ *  item held that text, and the formula's bytes, the blank lines and the sub-item's indent and marker took the cell, where
+ *  main placed them after the text, never in a cell); a sibling item's content before is not this rule's at any nesting, so a
+ *  table that begins the item after a formula-alone item keeps round 4's placement at the top level, nested in an item and in
+ *  a quote alike (round 2; round 1 counted the sibling's formula through a nested list's element and kept the card for the
+ *  nested and the quoted list alone): the rule these serve is that a placement never carries bytes from outside the block into
+ *  a cell or a row, the card kept wherever the exact-position arithmetic would put them there; and where that character does
+ *  not exist, the first header cell showing
  *  nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
  *  showing nothing (or the fence empty), the point keeps its card, as a point inside such a cell does (before round 5: before the
  *  block's first positioned character wherever it stood, the second header cell's or the body row's first cell's, a cell the

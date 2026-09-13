@@ -3803,8 +3803,17 @@ quote and at an item's end, where rounds 2 to 6 placed it after the last code ch
 text when the fence ended a non-last item; and the outer line's line feed, the sub-item's indent and marker and the
 table's first character, at a sub-item's table under an item holding a formula alone, a shape the closing pass
 recorded and left placing in the first header cell, keep their points on their card, the card kept wherever the
-placement is not the cell's own text exactly. The items below are numbered as the build was planned: 1 the cells, 2
-the code lines, 3 the one-cell rule, 4 the change marks and the deletion points inside a fence or a table, 5 the
+placement is not the cell's own text exactly. The PR review's round 2 (2026-09-13, over the head c4a225379) applied
+that rule to the shape's neighbour and to its sibling case, both recorded under item 4: under an outer item whose
+text precedes a formula alone, a sub-item's table's points from the blank line after the text through the formula's
+bytes, the blank line and the sub-item's indent and marker to the table's first character keep their card, where
+round 1 painted them into the first header cell (its rule read no further once an enclosing item held a positioned
+character before the block) and main placed them after the text, never in a cell; and a formula-alone item followed
+by an item that begins with a table places its marker and pipe before the first cell's text at every nesting, the
+top level, nested in an item and in a quote alike, where round 1 kept the card for the nested and the quoted list
+alone, counting the sibling item's formula through the nested list's element, a sibling item's content being no part
+of the rule. The items below are numbered as the build was planned: 1 the cells, 2 the code lines, 3 the one-cell
+rule, 4 the change marks and the deletion points inside a fence or a table, 5 the
 display formula under a highlight (the Slice 4 note's item 10, routed here through the Slice 5 note's (e)), 6 the
 records; a reference to an item below is to that numbering, and "the brief" is the Slice 8 build brief of 2026-09-11,
 whose fifteen open questions are cited by number with the default the build took. The standing rule for the build:
@@ -4221,7 +4230,7 @@ test family re-verifies. Where the code as built departs from the text above, wh
    fence beginning an item, card-only, the blank line's own point in its row; a formula-first, picture-first, empty or
    entity first header cell's table start, card-only; and a hole cell's own edge points, round 4's rule; and the
    closer's own line feed in every shape, the PR review's round 1) holds the round 5 rules and the closer's.
-   anchor-map-line-edge-points.test.ts (5, new, the review's round 6: the line before a nested fence or
+   anchor-map-line-edge-points.test.ts (6, new, the review's round 6: the line before a nested fence or
    a table at every offset past the prose's last character through the line ending, an item's, a quote's, the CRLF
    twin, a blank line between, a table, a sub-item's fence, an indented block and a footnote reference ending the
    prose, with the start edge's bytes, a sub-item's opener, the blank line before an indented block and a point inside
@@ -4239,8 +4248,15 @@ test family re-verifies. Where the code as built departs from the text above, wh
    first character card-only, with a blank line between too, the fence twin, and a list item's table in a quote
    holding a formula alone before the list, with an outer item's prose then a sub-item's table, a formula-alone item
    then a table item and a point inside the cell as the controls, and the fourth test's control that pinned the
-   closing pass's placement re-pinned to the card; with the Files pane's rows and undressed alike) holds the round 6
-   rules, the closing pass's and the PR review's round 1's. Recorded by the review's round 6 and routed to a
+   closing pass's placement re-pinned to the card; and the PR review's round 2, the sixth test: under an outer item
+   whose text precedes a formula alone, a sub-item's table's points from the blank line after the text through the
+   formula's bytes, the blank line, the sub-item's indent and marker and the table's first character card-only, the
+   tight shape, the picture twin, the fence twin, the quote twin and the formula on the text's own line (that line's
+   offsets after the text), and a formula-alone item then a table item placing before the first cell's text at the
+   top level, nested in an item, in a quote and in a second item alike, with an outer item's text then a sub-item's
+   table, with a blank line between too, an item's text holding the two items and a point inside the cell as the
+   controls; with the Files pane's rows and undressed alike) holds the round 6 rules, the closing pass's and the PR
+   review's rounds 1 and 2. Recorded by the review's round 6 and routed to a
    follow-up, no code change: a paragraph's trailing whitespace at a list item's end, past the first trailing space or
    at the line feed, places its point before the NEXT item's first character, in that item, where the Raw view keeps
    it on the item's row, identical on main 696229f84 and outside this slice's items (prose before prose; the adjacency
@@ -4265,7 +4281,25 @@ test family re-verifies. Where the code as built departs from the text above, wh
    the refusal's side, is kept otherwise, an anchor carrying a character outside the cell being wrong in the unsafe
    direction); anchor-map-line-edge-points.test.ts's fifth test pins the shape card-only, red over a git archive of
    4a3e18664, the PR's reviewed head, with the point in the first header cell, and its fourth test's control that
-   pinned the closing pass's placement is re-pinned to the card.
+   pinned the closing pass's placement is re-pinned to the card. The PR review's round 2 (over the head c4a225379)
+   found round 1's reading stopping at an enclosing item as soon as that item held a positioned character before the
+   block, so the shape's neighbour, an outer item whose text precedes a formula alone, then a sub-item's table, still
+   took the formula's bytes, the blank lines and the sub-item's indent and marker into the first header cell (main
+   placed them after the text, never in a cell), and counting an earlier sibling item's content when the list was
+   nested in an item or a quote (the reading descended the nested list's element), so a formula-alone item followed
+   by an item beginning with a table kept the card nested or quoted and placed before the first cell's text at the
+   top level. Since round 2 the item holding the block's last positioned character before the offset is read for the
+   content between that character and the block alone, another table or code block of the block's standing there
+   being a block and not content (round 5's start edge), and a list element holding the block is never descended, a
+   sibling item's content being no part of the rule at any nesting: the neighbour's points keep their card, and the
+   sibling shape places alike at every nesting, before the first cell's text. The rule, stated in
+   `unpositionedBefore`'s and `edgeSpot`'s docstrings: a placement never carries bytes from outside the block into a
+   cell or a row, and the card is kept wherever the exact-position arithmetic would put them there.
+   anchor-map-line-edge-points.test.ts's sixth test pins the neighbour (the loose and the tight shape, the picture,
+   fence and quote twins, the formula on the text's own line) card-only and the sibling shape's placement at the top
+   level, nested in an item, in a quote and in a second item, red over a git archive of c4a225379 in both, with the
+   outer item's text then a sub-item's table, with a blank line between too, an item's text holding the two items,
+   and the fifth test's controls unchanged.
    A Raw quote spanning the delimiter row paints the header cells and the body cell either side of the row that
    renders nothing, where Slice 5 pinned "paints nothing and the card keeps Reveal" (open question 5, the default: the
    quote covers those cells). The fallback needle's quirks the Slice 5 note left (a `*` opening in one cell and
@@ -4457,7 +4491,7 @@ test family re-verifies. Where the code as built departs from the text above, wh
    (6 legs, new, the sixth the review's round 5), anchor-map-cells-formulas (6,
    new: the review's rounds 4 and 5), anchor-map-block-edge-points (7, new: the review's round 5; the closer's own
    line feed, the PR review's round 1),
-   anchor-map-line-edge-points (5, new: the review's round 6, its closing pass and the PR review's round 1),
+   anchor-map-line-edge-points (6, new: the review's round 6, its closing pass and the PR review's rounds 1 and 2),
    anchor-map-code-lines (16, new; since the PR review's round 1 its header scopes the fails-before claim to the cases
    that map a code character and names the eighth, the empty fence, as the exception, a guard green before the slice),
    anchor-map-code-lines-browser (5 legs, new), anchor-map-blank-fence-points (6, new), anchor-map (38, six re-pinned

@@ -30,8 +30,15 @@
 // indent and marker and the table's first character before the first header cell's first character, bytes outside the cell
 // painted inside it, where main kept the card; now unpositionedBefore reads the items and quotes enclosing the block's own, out
 // to the block's node, and the point keeps its card. Its cases fail over a git archive of 4a3e18664, the head the landing review
-// read, and the fourth test's control K, which pinned the closing pass's placement, is re-pinned to the card. Synthetic values
-// only: invented notes, no real session text.
+// read, and the fourth test's control K, which pinned the closing pass's placement, is re-pinned to the card. The sixth test is
+// the PR review's round 2, the round-1 rule applied consistently: an outer item whose text precedes a formula alone, then a
+// sub-item's table, took the formula's bytes, the blank lines and the sub-item's indent and marker into the first header cell
+// (round 1's rule read no further once an enclosing item held a positioned character before the block); now the item holding
+// the text is read for the content between the text and the block, and the point keeps its card; and a formula-alone item
+// followed by an item beginning with a table placed before the first cell's text at the top level but kept the card nested in
+// an item or in a quote (round 1 counted the sibling's formula through the nested list's element); now a list element holding
+// the block is never descended, and the shape places alike at every nesting. Its cases fail over a git archive of c4a225379,
+// the head round 2 read. Synthetic values only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked, type Tokens } from "marked";
@@ -530,6 +537,108 @@ test("a deletion point under an OUTER item holding a formula alone, at the outer
     for (const off of [marker, marker + 1, marker + 2]) {
       const w = placeOf(build(c2), c2, off);
       assert.deepEqual([w!.li, w!.cell, w!.after.startsWith("ab")], [1, { tag: "TH", col: 0, row: -1 }, true], "C2" + mode + " control at " + JSON.stringify(c2[off]) + ": before the sibling table item's first cell's text, round 4's rule: " + JSON.stringify(w));
+    }
+  }
+});
+
+// ── items 1 and 4: the round-1 rule applied consistently (the PR review's round 2) ──
+
+test("a deletion point under an OUTER item whose text precedes a formula alone, from the blank line after the text through the formula's indent, its TeX and its line feed, the blank line, the sub-item's indent and marker, to the sub-item's table's first character, keeps its card (the PR review's round 2: round 1's rule read no further once an enclosing item held a positioned character before the block, so those bytes painted into the table's first header cell, before `ab`, where main 929ae86e1 placed them after the text and never in a cell; now the item holding the text is read for the content between the text and the block, the formula, and a placement never carries bytes from outside the block into a cell): the loose shape, the tight shape (the formula on the line after the text, one paragraph), the picture twin, the fence twin (before: in the pre's first row), the quote twin (a quote's text, its formula alone, then a list item's table) and the formula on the text's own line (that line's offsets after the text, the line-before rule, unchanged; the sub-item's indent and marker card-only); the line feed that ends the text's line sits after the text, unchanged; and a formula-alone item followed by an item that begins with a table places its line feed, marker and pipe before the first cell's text at EVERY nesting, the top level (the fifth test's control C2), nested in an item, in a quote, and in the second of two items (round 1 kept the card for the nested and the quoted list, counting the sibling item's formula through the nested list's element; a sibling item's content is never this rule's); the controls, unchanged: an outer item's `one` then a sub-item's table, with a blank line between too (the indent, the marker and the pipe before the first cell's text, round 4's rule), an item's `one` holding a formula-alone item then a table item (the same rule), and a point inside the cell or the code in it; with the Files pane's rows and undressed alike", () => {
+  const scenes: Array<[string, string, string, "TH" | "PRE"]> = [
+    // label, source, the block's first character's text, where it rendered; every offset past the line feed that ends `one`'s
+    // line through the block's first character is probed
+    ["N1 the outer item's `one`, a blank line, `$x$` alone, a blank line, then a sub-item's table", "- one\n\n  $x$\n\n  - | ab | cd |\n    |----|----|\n", "| ab |", "TH"],
+    ["N2 the tight shape, `$x$` on the line after `one`", "- one\n  $x$\n  - | ab | cd |\n    |----|----|\n", "| ab |", "TH"],
+    ["N3 the picture twin", "- one\n\n  ![p](a.png)\n\n  - | ab | cd |\n    |----|----|\n", "| ab |", "TH"],
+    ["N4 the fence twin", "- one\n\n  $x$\n\n  - ```\n    code\n    ```\n", "```", "PRE"],
+    ["N5 the quote twin: the quote's `one`, `$x$` alone, then a list item's table", "> one\n>\n> $x$\n>\n> - | ab | cd |\n>   |----|----|\n", "| ab |", "TH"],
+  ];
+  const inCellOrRow = (w: Place | null, where: "TH" | "PRE"): boolean => !!w && (where === "PRE" ? w.pre >= 0 : w.cell !== null && w.cell.tag === "TH" && w.cell.col === 0);
+  const itemOf = (n: FakeNode): FakeElement | null => { let x: FakeNode | null = n.parentNode; while (x && !(x instanceof FakeElement && x.tagName === "LI")) x = x.parentNode; return x as FakeElement | null; };
+  for (const dressed of [true, false]) {
+    const mode = dressed ? " (rows)" : " (undressed)";
+    const build = (src: string): FakeElement => dressed ? buildRendered(src) : undressed(src);
+    for (const [label, src, first, where] of scenes) {
+      const lf = at(src, "one") + 3, s = at(src, first);
+      assert.equal(src[lf], "\n", label + ": `one` ends its line");
+      const box = build(src);
+      const block = allOf(box, where === "PRE" ? "PRE" : "TABLE")[0];
+      assert.ok(block, label + ": the block renders");
+      // the block begins its own item; the text and the hole's rendering (the glyphs or the picture) stand in the item or the quote
+      // enclosing that item, the hole's after the text
+      const item = itemOf(block);
+      assert.ok(item, label + ": the block is in a list item");
+      assert.equal(item!.childNodes.findIndex((c) => c instanceof FakeElement), item!.childNodes.indexOf(block), label + ": the block is its item's first element");
+      const holder = (label.startsWith("N3") ? allOf(box, "IMG")[0] : allOf(box, "SPAN").find((n) => hasClass(n, "katex"))) as FakeElement | undefined;
+      assert.ok(holder, label + ": the hole renders");
+      let container: FakeNode | null = item!.parentNode; while (container && !(container instanceof FakeElement && (container.tagName === "LI" || container.tagName === "BLOCKQUOTE"))) container = container.parentNode;
+      assert.ok(container, label + ": the item is inside an item or a quote");
+      let up: FakeNode | null = holder!; while (up && up !== container && up !== item) up = up.parentNode;
+      assert.equal(up, container, label + ": the hole's rendering is in the enclosing item or quote, not in the block's own item");
+      assert.ok(textAround(container!, holder!)[0].includes("one"), label + ": the text stands before the hole's rendering");
+      // the line feed that ends `one`'s line: after `one`, outside the block, the line-before rule, unchanged
+      const lw = placeOf(build(src), src, lf);
+      assert.deepEqual([lw!.cell, lw!.pre, lw!.before], [null, -1, "one"], label + mode + ", the line feed after `one`: after `one`, outside the block: " + JSON.stringify(lw));
+      // every offset past it through the block's first character: card-only
+      for (let off = lf + 1; off <= s; off++) {
+        const tag = label + mode + " at " + JSON.stringify(src[off]) + " (" + (off === s ? "the block's first character" : "+" + (off - lf) + " past the line feed after `one`") + ")";
+        const w = placeOf(build(src), src, off);
+        assert.equal(w, null, tag + ": card-only (round 1: before the block's first positioned character, inside its first header cell or its first row): " + JSON.stringify(w));
+      }
+      // a point inside the cell or the code places in it, the cell's or the line's own
+      const inside = at(src, where === "PRE" ? "code" : "ab") + 1, iw = placeOf(build(src), src, inside);
+      assert.ok(inCellOrRow(iw, where), label + mode + ": a point inside the cell or the line places in it: " + JSON.stringify(iw));
+    }
+    // the formula on `one`'s own line: the line's offsets, from right after `one` through its line feed, sit after `one` and before
+    // the glyphs (the line-before rule, unchanged); the sub-item's indent, its marker and the pipe keep their card (round 1: before
+    // `ab`, in the first header cell)
+    const n6 = "- one $x$\n  - | ab | cd |\n    |----|----|\n", e6 = at(n6, "one") + 3, lf6 = at(n6, "\n"), s6 = at(n6, "| ab |");
+    for (let off = e6; off <= lf6; off++) {
+      const w = placeOf(build(n6), n6, off);
+      assert.deepEqual([w!.li, w!.cell, w!.before, w!.after.startsWith("<x>")], [0, null, "one", true], "N6" + mode + " at " + JSON.stringify(n6[off]) + " on `one`'s line: after `one`, before the glyphs: " + JSON.stringify(w));
+    }
+    for (let off = lf6 + 1; off <= s6; off++) {
+      const w = placeOf(build(n6), n6, off);
+      assert.equal(w, null, "N6" + mode + " at " + JSON.stringify(n6[off]) + " past the line: card-only (round 1: before `ab`, in the first header cell): " + JSON.stringify(w));
+    }
+    // a formula-alone item then an item beginning with a table, at every nesting: the line feed after the formula (or the picture),
+    // the marker, the space and the pipe sit before `ab`, in the first header cell, as the fifth test's control C2 has them at the
+    // top level (round 1: card-only nested in an item or in a quote, the sibling's formula counted through the nested list's element)
+    const pairs: Array<[string, string, string]> = [
+      // label, source, the hole's text (its end begins the probed offsets)
+      ["S1 the top level (the fifth test's control C2)", "- $x$\n- | ab | cd |\n  |----|----|\n", "$x$"],
+      ["S2 nested in an item", "- - $x$\n  - | ab | cd |\n    |----|----|\n", "$x$"],
+      ["S3 the picture twin, nested in an item", "- - ![p](a.png)\n  - | ab | cd |\n    |----|----|\n", "![p](a.png)"],
+      ["S4 in a quote", "> - $x$\n> - | ab | cd |\n>   |----|----|\n", "$x$"],
+      ["S5 in the second of two items, the first a text item", "- one\n- - $x$\n  - | ab | cd |\n    |----|----|\n", "$x$"],
+      ["S6 control: an item's `one` holding the two items", "- one\n  - $x$\n  - | ab | cd |\n    |----|----|\n", "$x$"],
+    ];
+    for (const [label, src, hole] of pairs) {
+      const e = at(src, hole) + hole.length, s = at(src, "| ab |");
+      const box = build(src);
+      const table = allOf(box, "TABLE")[0], item = itemOf(table);
+      assert.ok(item, label + ": the table is in a list item");
+      const tableItem = allOf(box, "LI").indexOf(item!);
+      // the hole's item is the table item's previous sibling: the two are items of one list
+      const siblings = (item!.parentNode as FakeElement).childNodes.filter((c) => c instanceof FakeElement && c.tagName === "LI") as FakeElement[];
+      const prev = siblings[siblings.indexOf(item!) - 1];
+      assert.ok(prev && (allOf(prev, "IMG").length > 0 || allOf(prev, "SPAN").some((n) => hasClass(n, "katex"))), label + ": the hole's item is the table item's previous sibling");
+      for (let off = e; off <= s; off++) {
+        const w = placeOf(build(src), src, off);
+        assert.deepEqual([w && w.li, w && w.cell, w && w.after.startsWith("ab")], [tableItem, { tag: "TH", col: 0, row: -1 }, true], label + mode + " at " + JSON.stringify(src[off]) + ": before the table item's first cell's text, as at the top level (round 1, nested or quoted: card-only): " + JSON.stringify(w));
+      }
+    }
+    // the controls: an outer item's `one` then a sub-item's table with nothing between, and with a blank line between: the line feed
+    // after `one` after `one`, the rest before `ab`, round 4's rule for a table that begins its item, as before
+    const controls: Array<[string, string]> = [["C1 `one` then a sub-item's table", "- one\n  - | ab | cd |\n    |----|----|\n"], ["C1b the same with a blank line between", "- one\n\n  - | ab | cd |\n    |----|----|\n"]];
+    for (const [label, src] of controls) {
+      const lf = at(src, "one") + 3, s = at(src, "| ab |");
+      const lw = placeOf(build(src), src, lf);
+      assert.deepEqual([lw!.li, lw!.cell, lw!.before], [0, null, "one"], label + mode + " control, the line feed after `one`: after `one`: " + JSON.stringify(lw));
+      for (let off = lf + 1; off <= s; off++) {
+        const w = placeOf(build(src), src, off);
+        assert.deepEqual([w!.li, w!.cell, w!.after.startsWith("ab")], [1, { tag: "TH", col: 0, row: -1 }, true], label + mode + " control at " + JSON.stringify(src[off]) + ": before the sub-item's first cell's text, round 4's rule: " + JSON.stringify(w));
+      }
     }
   }
 });
