@@ -647,7 +647,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /outlineBtn\.type = "button"; outlineBtn\.textContent = OUTLINE_LABEL; outlineBtn\.title = "The file's headings";\n\s*outlineBtn\.setAttribute\("aria-haspopup", "menu"\); outlineBtn\.setAttribute\("aria-expanded", "false"\);/);
   assert.match(openFn, /if \(isMd\) acts\.appendChild\(outlineBtn\);/, "a markdown file's button, like the toggles");
-  assert.match(openFn, /const headingsOf = \(\): HTMLElement\[\] => \{\n\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*return md \? Array\.from\(md\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\] : \[\];/, "the one query, over the rendered box");
+  assert.match(openFn, /const headingsOf = \(\): HTMLElement\[\] => \{\n\s*const md = body\.querySelector\("\.fileview-md"\);\n(?:\s*\/\/[^\n]*\n)*\s*return md \? \(Array\.from\(md\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\]\)\.filter\(\(h\) => !underHidden\(h, md\)\) : \[\];/, "the one query, over the rendered box; a heading under a plain hidden wrapper has no row (review round 3)");
   assert.match(openFn, /const syncOutline = \(\): void => \{ outlineBtn\.hidden = editing \|\| ctx\.mode\(\) !== "rendered" \|\| headingsOf\(\)\.length === 0; \};/);
   assert.match(openFn, /const openOutline = \(\): void => \{\n\s*const heads = headingsOf\(\);/, "the list is read when the popover opens");
   assert.match(openFn, /const pick = \(i: number\): void => \{\n\s*const id = rows\[i\] \? rows\[i\]\.dataset\.id : undefined;\n\s*closeOutline\(\);\n\s*if \(id\) scrollToFragment\(body, id\);\n\s*takeKeyboard\(\);\n\s*\};/, "close, land, keyboard");
@@ -656,7 +656,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /document\.addEventListener\("pointerdown", onDown, true\);\n\s*window\.addEventListener\("resize", closeOutline\);/);
   assert.match(openFn, /pop\.focus\(\{ preventScroll: true \}\);\n\s*\};/, "the popover takes the focus at the open, without moving the body");
   assert.match(openFn, /outlineBtn\.addEventListener\("click", \(\) => \{ flash\(outlineBtn\); if \(outline\) closeOutline\(\); else openOutline\(\); \}\);/, "the press pulse, then the toggle");
-  assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(editing \|\| text === null\) outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover; the paths that paint no text hide the button here (the loader, the editor's entry)");
+  assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n\s*if \(dropReseat\) dropReseat\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(editing \|\| text === null\) outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover and retires a remembered seat's re-seat on the pictures' loads (review round 3); the paths that paint no text hide the button here (the loader, the editor's entry)");
   assert.match(openFn, /stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "…and a text paint decides it inside the paint, after the swap and before the hooks measure and the seat writes (the consolidation: a bar whose height changes between the place read and the seat re-clamped a body at the document's end and lost the held place)");
   assert.doesNotMatch(openFn, /landRemembered\(\);[^\n]*\n\s*\}\);\n\s*syncOutline\(\);/, "never after the seat");
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
@@ -740,4 +740,44 @@ test("a stand-in node enumerates its primitives alone, so a failing assertion's 
   assertHiddenEvent(new Ev("click"), body, heads[0]);
   const r = new El("div"); r.style.setProperty("--fv-ol-depth", "2");
   assert.equal(r.style.getPropertyValue("--fv-ol-depth"), "2", "the style stand-in keeps a set property");
+});
+
+// ── review round 3: a hidden heading has no row; the current row is named for assistive technology; a captioned figure's
+// heading reads its alt text in place; Tab leaves through the button ──────────────────────────────────────────────────
+test("review round 3: a heading inside a plain `hidden` wrapper has no row (its pick would land nowhere and say nothing) while one under hidden=\"until-found\" keeps its row, and a note whose only heading is hidden shows no Outline button; every row has an id and the popover names the current row through aria-activedescendant on the open, ArrowDown and End; a heading holding a picture AND text reads the picture's alt in place; Tab from the popover closes it and puts the keyboard on the Outline button with the key's default left to run, so the browser moves on to the next bar control", async (t) => {
+  const NOTE = "# Title\n\nText.\n\n<div hidden>\n\n## Hidden heading\n\nStashed.\n\n</div>\n\n<div hidden=\"until-found\">\n\n## Findable heading\n\nFound.\n\n</div>\n\n## ![Figure 3: latency](figs/l.png) (detail)\n\nMore.\n\n## ![Only a picture](figs/b.png)\n\nEnd.\n";
+  const o = await open(PLAIN, NOTE, t);
+  const heads = headings(o);
+  assert.equal(heads.length, 5, "the DOM holds every heading, the hidden one among them");
+  const hiddenHead = heads.find((h) => h.textContent === "Hidden heading")!;
+  assert.ok(hiddenHead && hiddenHead.parentNode!.getAttribute("hidden") === "", "the stand-in kept the plain hidden attribute on the wrapper (the sanitizer keeps it too)");
+  const pop = openOutline(o);
+  const rows = rowsOf(pop);
+  assert.deepEqual(rows.map((r) => r.textContent), ["Title", "Findable heading", "Figure 3: latency (detail)", "Only a picture"],
+    "no row for the heading under the plain hidden wrapper (before the fix: listed, and its pick moved nothing); the until-found one is listed, since the landing lifts that attribute; the captioned figure's row reads the alt text where the picture stands (before: \"(detail)\" alone); the image-only row reads its alt as before");
+  assert.deepEqual(rows.map((r) => r.title), rows.map((r) => r.textContent), "the title carries the same words");
+  // ids and the current row for assistive technology
+  assert.ok(rows.every((r) => /^fileview-outline-\d+-\d+$/.test(r.id)), "every row has an id: " + rows.map((r) => r.id).join(","));
+  assert.equal(new Set(rows.map((r) => r.id)).size, rows.length, "…unique");
+  assert.equal(pop.getAttribute("aria-activedescendant"), rows[0].id, "the popover names the first row at the open (before the fix: no aria-activedescendant, and rows with no id)");
+  key(pop, "ArrowDown");
+  assert.equal(pop.getAttribute("aria-activedescendant"), rows[1].id, "…and follows ArrowDown");
+  key(pop, "End");
+  assert.equal(pop.getAttribute("aria-activedescendant"), rows[3].id, "…and End");
+  assert.ok(rows[3].classes.includes("current"), "the class and the attribute name the same row");
+  // Tab: the popover closes, the button holds the keyboard, the key's default runs (the browser's sequential navigation moves on from the button)
+  const tab = key(pop, "Tab");
+  assert.equal(popover(o), null, "Tab closed the popover");
+  assert.ok(doc.activeElement === outlineBtn(o), "…and put the keyboard back on the Outline button (before the fix: the popover, the card's last child, kept it and the browser's Tab left the viewer for the first focusable behind the modal)");
+  assert.ok(!tab.defaultPrevented && !tab.stopped, "the key's own default is left to run, so the focus moves from the button to the next bar control");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false");
+  // a second popover after the Tab: fresh ids of its own, the current row named again
+  const again = openOutline(o);
+  assert.notEqual(rowsOf(again)[0].id, rows[0].id, "a new open mints new ids (the old rows are gone)");
+  assert.equal(again.getAttribute("aria-activedescendant"), rowsOf(again)[0].id);
+  o.fv.closeFileView();
+  // a note whose only heading is under a plain hidden wrapper: no row to offer, so no button
+  const none = await open(PLAIN, "<div hidden>\n\n## Stashed\n\n</div>\n\nJust text.\n", t);
+  assert.equal(headings(none).length, 1, "the DOM holds the hidden heading");
+  assert.equal(outlineBtn(none).hidden, true, "…and the Outline button is hidden, as over a note with no heading");
 });

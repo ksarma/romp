@@ -8,10 +8,13 @@ element); the Outline button above a rendered file lists the file's headings and
 top, a closed fold opened on the way (item 2: the button's label, the pick through the fragment landing); a file
 reopened from the Files pane's Recent list opens at the place it was left (item 3: the row hands its stored place
 back and the pane writes the place the viewer hands it on leaving); a line or a section written after a path in a
-todo's text or detail opens the file there, from the chat's todo card and from the Waiting on you pane alike, and a
-missing section is named in the notice bar (item 4: the walks' targetSuffix option, the relay's `at`, the viewer's
-notice); and a change on disk while the Comments panel is closed raises a line above the text with a Reload that
-keeps the place (item 5: the probe's two events, the bar's words, the button through fetchFile). Each clause is
+todo's text or detail opens the file there, from the chat's todo card and from the Waiting on you pane alike, a
+missing section is named in the notice bar, and under the Raw choice a markdown file opens at its top and lands, or
+says so, when the Rendered button is clicked (item 4: the walks' targetSuffix option, the relay's `at`, the viewer's
+notice, and renderBody's gate, which spends a heading only on a Rendered paint or on a file that is not markdown;
+the review's round 3, where the guide said the notice came at the open whatever the choice); and a change on disk
+while the Comments panel is closed raises a line above the text with a Reload that keeps the place (item 5: the
+probe's two events, the bar's words, the button through fetchFile). Each clause is
 pinned flattened, so a rewrap survives, and cross-checked against the source that keeps it; the clauses other guide
 pins read in the same paragraphs and sections (the chip sentence of tests/test_guide_todo_file_chip.py, the
 hard-wrapped opening lines of tests/test_files_pane.py) are re-read here unchanged, so an edit that moves one fails
@@ -61,8 +64,11 @@ OUTLINE = ("The **Outline** button above a rendered file lists the file's headin
 TODO_TARGET = ("A line or a section written after a path in a todo's text or detail (`docs/report.md:12`, "
                "`docs/report.md#results`) opens the file there too; a section the file does not have leaves the file "
                "at its top, with a notice naming the section.")
+RAW_WAIT = ("The Raw view has no sections, so when you read Markdown in Raw the file opens at its top and lands on the "
+            "section, or shows the notice, once you click **Rendered**.")
 WAITING = ("click it and the file opens in the Files pane, which comes forward if it was closed; a line or a section "
-           "written after the path (`docs/report.md:12`, `docs/report.md#results`) opens the file at it.")
+           "written after the path (`docs/report.md:12`, `docs/report.md#results`) opens the file at it (for a section, "
+           "once the file is in its Rendered view; see Files).")
 
 
 class TheGuideSaysSo(unittest.TestCase):
@@ -99,6 +105,20 @@ class TheGuideSaysSo(unittest.TestCase):
         self.assertLess(self.links.index("scrolls the Raw view to that line"), self.links.index(TODO_TARGET))
         self.assertLess(self.links.index("lands on the last line, with a notice saying so."), self.links.index(TODO_TARGET))
 
+    def test_a_section_target_under_the_raw_choice_waits_for_the_rendered_button(self):
+        # the todo sentence's landing and notice are Rendered-view events (renderBody spends a heading on a Rendered paint,
+        # or on a file that is not markdown); the guide said them unconditionally until the review's round 3, and a
+        # reader of notes in Raw saw a silent open at the top. The clause sits right after that sentence and before the
+        # `[link](target)` rules, so it governs the other-file section link two sentences on as well.
+        self.assertIn(RAW_WAIT, self.links)
+        self.assertLess(self.links.index(TODO_TARGET), self.links.index(RAW_WAIT))
+        self.assertLess(self.links.index(RAW_WAIT), self.links.index("In a Markdown file, a `[link](target)` follows"))
+        self.assertLess(self.links.index(RAW_WAIT), self.links.index("opens that file at the section."))
+        # the line case's own Raw sentence, which this clause mirrors, comes first
+        self.assertLess(self.links.index("since the Rendered view has no lines"), self.links.index(RAW_WAIT))
+        # the button is named as the guide names buttons
+        self.assertIn("**Rendered**", RAW_WAIT)
+
     def test_the_waiting_on_you_section_says_the_same_of_its_links(self):
         self.assertIn(WAITING, self.waiting)
 
@@ -125,12 +145,16 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_the_body_is_a_tab_stop_and_takes_the_keyboard_unless_a_box_holds_it(self):
         self.assertIn("\n  body.tabIndex = 0;\n", self.viewer)
-        self.assertRegex(self.viewer, re.compile(r"^  const takeKeyboard = \(\): void => \{$", re.M))
-        gate = self.viewer[self.viewer.index("const takeKeyboard = (): void => {"):]
+        # the ring argument since the review's round 3: a closer that removes the holder first reads its ring and passes it
+        self.assertRegex(self.viewer, re.compile(r"^  const takeKeyboard = \(ring\?: boolean\): void => \{$", re.M))
+        gate = self.viewer[self.viewer.index("const takeKeyboard = (ring?: boolean): void => {"):]
         gate = gate[:gate.index("\n  };")]
         # the gate: nothing, the document's body or a control in the viewer's own bar yields; a box being typed in keeps it
         self.assertIn("if (a && a !== document.body && !bar.contains(a)) return;", gate)
-        self.assertIn("body.focus({ preventScroll: true });", gate)
+        # the focus call names the ring through focusVisible, read off the holder the body takes the keyboard from (the
+        # review's round 3: Chromium's script-focus heuristic framed the note on every pointer open)
+        self.assertIn("const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? ringOf(a) };", gate)
+        self.assertIn("body.focus(opts);", gate)
         # the open's first landing takes it once; a reload's landing never (keyboardPending is spent)
         self.assertIn("const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };",
                       self.viewer)
@@ -188,6 +212,22 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertEqual(shell.count("at:m.at||null"), 2, "the Files branch and the feed branch forward the target")
         # the viewer's notice for a section the file does not have
         self.assertIn("noteBar('No section named \"' + shown + '\" in this file.');", self.viewer)
+
+    def test_a_heading_is_judged_on_a_rendered_paint_or_a_file_that_is_not_markdown_so_the_raw_view_waits(self):
+        # the guide's Raw clause reads off this gate: a Rendered paint, or the first text paint of a file with no Rendered
+        # toggle, spends the heading; a markdown file's Raw paint holds it for the toggle, and the notice waits with it
+        self.assertIn('    const rendered = isMd && fmt.md === "rendered";\n', self.viewer)
+        self.assertIn("    if ((rendered || !isMd) && pendingHeading !== null) {", self.viewer)
+        gate = self.viewer[self.viewer.index("if ((rendered || !isMd) && pendingHeading !== null) {"):]
+        gate = gate[:gate.index("\n    }\n")]
+        self.assertIn("const h = pendingHeading; pendingHeading = null;", gate, "spent once, on that paint")
+        self.assertIn("if (!wrap.isConnected || scrollToFragment(body, h)) return;", gate)
+        self.assertIn("noteBar('No section named", gate, "the notice is the same frame's other branch")
+        # the seam test that pins the wait itself, so the two records cannot drift apart unnoticed
+        seam = _read("ui", "webview", "file-view-seam.test.ts")
+        self.assertIn('assert.equal(frames.length, 0, "no landing queued from a Raw paint");', seam)
+        self.assertIn('assert.equal(errBar(r.body), null, "and no notice: the Raw view cannot judge");', seam)
+        self.assertIn('assert.equal(frames.length, 1, "the Rendered paint queues the landing");', seam)
 
     def test_the_disk_bar_is_raised_on_the_readers_return_and_its_reload_keeps_the_place(self):
         self.assertIn('export const CHANGED_ON_DISK = "Changed on disk.";', self.viewer)

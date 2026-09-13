@@ -303,7 +303,7 @@ test("in a browser, the real module (review round 1): with the changed-on-disk b
 // stop all the same and takes it on its own gestures, a click on it being the reader's real return, which asks once. Any
 // other holder in the sibling frame (its body after a click on the transcript's text, a focused control) yields as before,
 // so the cross-frame take still fires and the round 1 gate is still what keeps the HEAD count at 0 in those cells.
-type Holder = { name: string; sel: string | null; typing: boolean; cell: string };
+type Holder = { name: string; sel: string | null; typing: boolean; keys?: boolean; cell: string };   // keys false: a typing target whose keystrokes are not read back as text (a dropdown's type-ahead)
 const HOLDERS: Holder[] = [
   { name: "chat-body", sel: "p", typing: false, cell: "the chat frame's body holds the focus (a click on the transcript's text, then a relay open)" },
   { name: "chat-control", sel: "#send", typing: false, cell: "a control in the chat frame holds the focus (a focused button, then a relay open)" },
@@ -311,6 +311,7 @@ const HOLDERS: Holder[] = [
   { name: "composer", sel: "#composer-input", typing: true, cell: "the chat composer holds the focus mid-sentence (a middle-click on a path pill relays the open)" },
   { name: "input", sel: "#search", typing: true, cell: "a text input in the chat frame holds the focus mid-word" },
   { name: "editable", sel: "#note", typing: true, cell: "a contenteditable in the chat frame holds the focus mid-word" },
+  { name: "select", sel: "#pick", typing: true, keys: false, cell: "a dropdown in the chat frame holds the focus (type-ahead is typing too, as the chat's own isTypingTarget reads it; review round 3)" },
 ];
 /** The chat frame's holder as the frame sees it: the active element's tag and id, whether the frame's document has the focus, and the box's text. */
 const readHolder = (fa: any, sel: string | null): Promise<{ tag: string; id: string; hasFocus: boolean; text: string }> => fa.evaluate((s: string | null) => {
@@ -331,10 +332,10 @@ test("in a browser, the real module (review rounds 1 and 2): a relayed open into
   await inBrowser(t, async (browser) => {
     // a shell stand-in: a chat iframe holding a composer, a text input, a contenteditable and a button, and the Files pane's
     // page (real-viewer-leg's, body.fileview-pane) beside it, all on one origin as the dashboard's frames are
-    const chat = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input"></textarea><input id="search" type="text"><div id="note" contenteditable="true" style="min-height:1em;border:1px solid #888"></div><button id="send" type="button">Send</button><p>chat pane stand-in</p></body></html>';
+    const chat = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input"></textarea><input id="search" type="text"><div id="note" contenteditable="true" style="min-height:1em;border:1px solid #888"></div><select id="pick"><option value="alpha">alpha</option><option value="beta" selected>beta</option><option value="zeta">zeta</option></select><button id="send" type="button">Send</button><p>chat pane stand-in</p></body></html>';
     const top = `<!DOCTYPE html><html><body style="margin:0"><div id="shell" style="height:20px">shell stand-in</div><iframe id="a" src="${ORIGIN}/a" style="width:300px;height:560px"></iframe><iframe id="b" src="${ORIGIN}/b" style="width:660px;height:560px"></iframe></body></html>`;
     const files = pageHtml("pane", { [REPORT]: LONG }, MT);
-    for (const { name, sel, typing, cell } of HOLDERS) {
+    for (const { name, sel, typing, keys, cell } of HOLDERS) {
       const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
       const errors: string[] = [];
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -347,13 +348,14 @@ test("in a browser, the real module (review rounds 1 and 2): a relayed open into
       assert.ok(fa && fb, cell + ": both iframes loaded");
       await fb.waitForFunction(() => typeof (window as any).FV !== "undefined", null, { timeout: 10000 });
       // the holder: a click in the chat frame (and, in a typing box, two typed characters), or a click on the Files page
-      if (sel === null) await fb.click("body", { position: { x: 5, y: 5 } }); else await fa.click(sel);
-      if (typing) await page.keyboard.type("ab");
+      // a dropdown is focused, not clicked: a click on a <select> opens Chromium's native picker, which takes the keys until it closes
+      if (sel === null) await fb.click("body", { position: { x: 5, y: 5 } }); else if (keys === false) await fa.focus(sel); else await fa.click(sel);
+      if (typing && keys !== false) await page.keyboard.type("ab");
       const holder = await readHolder(fa, sel);
       if (name === "chat-body") assert.equal(holder.tag, "body", cell + ": the chat document's body is its active element");
       else if (sel !== null) assert.equal(holder.id, sel.slice(1), cell + ": the chat frame's active element is the one the cell names");
       assert.equal(holder.hasFocus, sel !== null, cell + ": the chat document " + (sel !== null ? "holds" : "does not hold") + " the page's focus before the open");
-      if (typing) assert.equal(holder.text, "ab", cell + ": the typed characters landed in the box");
+      if (typing && keys !== false) assert.equal(holder.text, "ab", cell + ": the typed characters landed in the box");
       const before = await fb.evaluate(() => ({ hasFocus: document.hasFocus(), heads: (window as any).__heads }));
       assert.equal(before.hasFocus, sel === null, cell + ": the Files document " + (sel === null ? "holds" : "does not hold") + " the focus before the open");
       assert.equal(before.heads, 0, cell + ": no HEAD before the open");
@@ -372,7 +374,8 @@ test("in a browser, the real module (review rounds 1 and 2): a relayed open into
         assert.equal(chatAfter.id, sel!.slice(1), cell + ": the box still holds the keyboard");
         assert.equal(chatAfter.hasFocus, true, cell + ": …in the chat frame, which holds the page's focus");
         await page.keyboard.type("z");
-        assert.equal((await readHolder(fa, sel)).text, "abz", cell + ": the next keystroke lands in the box (before round 2: on the file's body, and the character was lost)");
+        if (keys === false) assert.equal((await readHolder(fa, sel)).text, "zeta", cell + ": the next keystroke is the dropdown's type-ahead (before round 3: a select was not among the viewer's typing targets, where render.ts's own list has it, so the body took the keyboard from the dropdown and the letter reached the note)");
+        else assert.equal((await readHolder(fa, sel)).text, "abz", cell + ": the next keystroke lands in the box (before round 2: on the file's body, and the character was lost)");
         // the body takes the keyboard on its own gesture: a click on it, the reader's real return to the Files pane, which asks once
         await fb.click(".fileview-body", { position: { x: 30, y: 30 } });
         await fb.waitForFunction(() => (document.activeElement as HTMLElement | null)?.className === "fileview-body", null, { timeout: 5000 });
@@ -390,6 +393,40 @@ test("in a browser, the real module (review rounds 1 and 2): a relayed open into
         assert.equal(await fb.evaluate(() => (window as any).__heads), 1, cell + ": one HEAD for the focus event");
       }
       assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+// A heading target on a picture or a PDF (plans/markdown-viewer.md Slice 6, item 4; the review's round 3). The media branch of
+// renderBody returned before the heading's spend, so `figs/a.svg#layer1` (a todo's section spelling, a sibling link's fragment)
+// opened the picture silently at its top where a text file's first paint names the section it lacks; the spend now sits after
+// the loader's return, at the first paint with bytes, and raises the same notice.
+test("in a browser, the real module (review round 3): a heading target on a picture names the section in the notice bar above the picture, as a text file's first paint does (before: the media branch returned before the spend, and the picture opened silently at its top); pane and chat", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const FIG = "/repo/notes-api/figs/a.svg";
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><g id="layer1"><rect width="10" height="10"/></g></svg>';
+    for (const [mode, w] of [["pane", 900], ["chat", 380]] as Array<["pane" | "chat", number]>) {
+      const page = await browser.newPage({ viewport: { width: w, height: 600 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      const html = pageHtml(mode, { [REPORT]: LONG, [FIG]: SVG }, MT);   // the stub serves a .svg path as image/svg+xml, as the kernel does
+      await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+      await page.goto(ORIGIN + "/");
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, { at: { heading: "layer1" } }); }, [FIG, SID]);
+      await page.waitForFunction(() => { const i = document.querySelector("img.fileview-img") as HTMLImageElement | null; return !!i && i.complete; }, null, { timeout: 10000 });
+      await frames(page, 3);
+      const b: Bar = await page.evaluate(readBar);
+      assert.ok(b.present, mode + ": the notice is up over the picture (before the fix: nothing said the target was not honoured)");
+      assert.equal(b.text, 'No section named "layer1" in this file.', mode + ": in the text branch's words");
+      assert.ok(b.aboveRow && b.inCard && b.inViewport, mode + ": above the body row, in the card, on screen");
+      assert.equal(await page.evaluate(() => !!document.querySelector("img.fileview-img")), true, mode + ": the picture shows under it");
+      // a picture opened with no target says nothing
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.closeFileView(); (window as any).FV.openFileView(p, sid, null); }, [FIG, SID]);
+      await page.waitForFunction(() => { const i = document.querySelector("img.fileview-img") as HTMLImageElement | null; return !!i && i.complete; }, null, { timeout: 10000 });
+      await frames(page, 2);
+      assert.equal((await page.evaluate(readBar) as Bar).present, false, mode + ": no target, no notice");
+      assert.deepEqual(errors, [], mode + ": no page errors");
       await page.close();
     }
   });

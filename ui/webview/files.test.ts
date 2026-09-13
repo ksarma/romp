@@ -351,9 +351,16 @@ test("parseRecent keeps a well-formed place on its row and drops a malformed one
   for (const r of got.slice(1)) assert.equal(r.place, null, r.path + ": a malformed record costs the place, never the row");
   assert.deepEqual(got.map((r) => r.path.slice(-4, -3)), ["a", "b", "c", "d", "e", "f", "g", "h"], "every row kept, in order");
   // the validator alone, and what it never does: widen the record with a field it does not know
-  assert.deepEqual(asPlace({ ...PLACE, source: "lorem ipsum", text: "dolor" }), PLACE, "a stray text field is dropped on read: nothing but the eight fields reaches the store");
+  assert.deepEqual(asPlace({ ...PLACE, source: "lorem ipsum", text: "dolor" }), PLACE, "a stray text field is dropped on read: nothing but the record's fields reaches the store");
   assert.deepEqual(asPlace({ ...PLACE, top: 0, scrollTop: 0, atTop: true, view: "raw" }), { ...PLACE, top: 0, scrollTop: 0, atTop: true, view: "raw" }, "the top of a file in the Raw view is a place too");
   assert.equal(asPlace(null), null); assert.equal(asPlace(PLACE.start), null); assert.equal(asPlace({ ...PLACE, end: Infinity }), null);
+  // the open folds (review round 3): a list of non-negative integers, the ordinals of the Rendered view's open <details>; absent
+  // is fine (a Raw read, a note with no fold, a record an older store wrote); anything else is no place
+  assert.deepEqual(asPlace({ ...PLACE, folds: [0, 2] }), { ...PLACE, folds: [0, 2] }, "the fold ordinals ride along");
+  assert.deepEqual(asPlace({ ...PLACE, folds: [] }), { ...PLACE, folds: [] }, "an empty list: no fold open, which is a state too");
+  assert.equal(Object.prototype.hasOwnProperty.call(asPlace(PLACE)!, "folds"), false, "absent stays absent");
+  for (const bad of [[1.5], [-1], ["0"], "0,2", 2, null, {}]) assert.equal(asPlace({ ...PLACE, folds: bad }), null, "malformed folds " + JSON.stringify(bad) + ": no place");
+  const src = [3]; assert.notEqual(asPlace({ ...PLACE, folds: src })!.folds, src, "a copy of the list, not the stored array");
 });
 
 test("rememberRecent carries the newest record, and a re-open that brings none keeps the row's", () => {
@@ -377,10 +384,14 @@ test("rememberRecent carries the newest record, and a re-open that brings none k
   assert.deepEqual(placed.map((r) => [r.sid, r.place]), [[SID2, PLACE], [SID, later]]);
   assert.deepEqual(placeRecent(list, "/repo/notes-api/zzz.md", SID, PLACE), list, "nothing is invented for a file the pane did not open");
   assert.notEqual(placed, list, "a new list, not a write into the old one");
-  // the record's JSON, as localStorage will hold it: the eight fields and nothing that could hold the file's text
+  // the record's JSON, as localStorage will hold it: the eight fields (nine with the fold ordinals of a Rendered read) and nothing
+  // that could hold the file's text
   const json = JSON.stringify(placed[0]);
   assert.deepEqual(Object.keys(JSON.parse(json).place).sort(), ["atTop", "end", "mtimeNs", "scrollTop", "start", "t", "top", "view"]);
   assert.doesNotMatch(json, /source|text|quote|lorem/, "no text field, no quote");
+  const withFolds = JSON.stringify(placeRecent(list, "/repo/notes-api/a.md", SID2, { ...PLACE, folds: [1, 4] })[0]);
+  assert.deepEqual(Object.keys(JSON.parse(withFolds).place).sort(), ["atTop", "end", "folds", "mtimeNs", "scrollTop", "start", "t", "top", "view"]);
+  assert.deepEqual(JSON.parse(withFolds).place.folds, [1, 4], "the folds are numbers in the store, never text");
 });
 
 // EXECUTED: openHere as files.ts spells it, its body lifted from the source (the signature's types stripped) and run over

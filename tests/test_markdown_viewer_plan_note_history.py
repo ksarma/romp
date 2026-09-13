@@ -13,14 +13,22 @@ files the note says a message claims it for, and what each commit changes among 
 
 The history is read from the repository this file sits in, through `git -C`. The commits are the branch's own and
 the trees are the fork's, so a clone that lacks one of them (a shallow checkout, which CI's default checkout is; a
-repository the note was ported into) skips with the sha named, and a tree that is not a checkout skips too; every
-other git failure is an error, never a skip. The premise test needs no history and fails first if the note's
-phrasing changes so that the reader finds nothing. Synthetic: the repo's own text and history only.
+repository the note was ported into) cannot read the note's account of it. The module therefore holds the facts the
+sentence states (SIX, SCOPE and AMONG below) and checks them from both sides. TheNoteSaysWhatTheModuleHolds reads the
+note against those constants and needs no git, so it runs in every checkout, CI's depth-1 one included, and an edit
+to the sentence that changes a claim goes red there. TheHistoryAgrees reads the note against git; where a sha it
+needs is not in the clone it skips with the sha named and warns first, so the skip stands in the run's warnings
+summary under this module's name even under `-q`, where pytest lists neither skips nor their reasons (the review's
+round 3: the history cases had skipped silently in CI, so the pin ran only in a full local clone). An edit to the
+constants is a claim about the history, which the history half checks in a full clone. A tree that is not a checkout
+skips too; every other git failure is an error, never a skip. The premise test needs no history and fails first if
+the note's phrasing changes so that the reader finds nothing. Synthetic: the repo's own text and history only.
 """
 import os
 import re
 import subprocess
 import unittest
+import warnings
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -39,6 +47,17 @@ SIX_LEAD = re.compile(r"in six of them \(([^)]+)\)")
 NONE_TOUCH = "none of them touching the six"
 HEDGE = "byte-identical"
 EVERY = "every file the commit touches"
+
+# The facts the sentence states, held here so that a checkout without the history (CI's) still pins the note to
+# them: the six files that differ between MAIN_WHILE_BUILDING and CUT_FROM among the files the slice changes; the
+# file each of the three commit messages claims the identity for, or EVERY; and what a commit changes among the six.
+# TheHistoryAgrees checks the note's reading of the same facts against git where the history is reachable.
+SIX = {
+    "docs/guide.md", PLAN, "ui/webview/feed.css", "ui/webview/file-comments.ts",
+    "ui/webview/fileview-parity.test.ts", "ui/webview/styles.css",
+}
+SCOPE = {"579fc2852": "ui/webview/file-view.ts", "0f31a8759": EVERY, "9b1cf0d31": EVERY}
+AMONG = {"579fc2852": {"ui/webview/feed.css", "ui/webview/fileview-parity.test.ts", "ui/webview/styles.css"}}
 
 SHA = r"(?=[0-9a-f]*\d)[0-9a-f]{7,40}"  # a short sha; at least one digit, so a word spelt in a to f is not one
 SHA_LIST = r"%s(?:(?:, | and )%s)*" % (SHA, SHA)
@@ -136,14 +155,24 @@ def _git(*args):
     return proc.stdout
 
 
+class HistoryUnreachable(UserWarning):
+    """A sha the note names is not in this clone, so TheHistoryAgrees skipped. Warned as well as skipped so that
+    the run's warnings summary carries the skip under this module's name where pytest prints no skip list (`-q`,
+    CI's flags); TheNoteSaysWhatTheModuleHolds still runs there."""
+
+
 def _reachable(*shas):
     """Skips when a sha the note names is not in this clone: a shallow checkout, or a repository the note was
-    ported into. Any other failure of git is an error."""
+    ported into. The skip warns first (HistoryUnreachable), so a run that lists no skips still names it in its
+    warnings summary. Any other failure of git is an error."""
     for sha in shas:
         proc = _run("cat-file", "-e", sha + "^{commit}")
         if proc.returncode != 0:
-            raise unittest.SkipTest("%s is not in this clone (shallow, or not the fork), so the note's account of it "
-                                    "cannot be read: %s" % (sha, proc.stderr.strip()))
+            why = ("%s is not in this clone (shallow, or not the fork), so TheHistoryAgrees cannot read the note's "
+                   "account of it and skips; the note is pinned to this module's constants alone here, and the history "
+                   "is checked in a full clone: %s" % (sha, proc.stderr.strip()))
+            warnings.warn(why, HistoryUnreachable, stacklevel=2)
+            raise unittest.SkipTest(why)
 
 
 def _touched(sha):
@@ -179,8 +208,32 @@ class TheNoteSaysEnough(unittest.TestCase):
                         "the sentence says what each commit changes among the six, or that none does")
 
 
+class TheNoteSaysWhatTheModuleHolds(unittest.TestCase):
+    """The half that runs in every checkout, read without git: the sentence's claims are the facts this module
+    holds. CI's depth-1 checkout runs this and skips TheHistoryAgrees, so an edit to the sentence that changes a
+    claim goes red in CI here; an edit to the constants is a claim about the history, checked in a full clone."""
+
+    @classmethod
+    def setUpClass(cls):
+        section = _section(_read(PLAN), NOTE)
+        cls.six = _six(section)
+        cls.scope, cls.among, cls.none_touch = _claims(_sentence(section))
+
+    def test_the_six_files_the_note_names_are_the_six_the_module_holds(self):
+        self.assertEqual(self.six, SIX)
+
+    def test_the_file_the_note_says_each_message_claims_the_identity_for_is_the_module_s(self):
+        self.assertEqual(self.scope, SCOPE)
+
+    def test_what_the_note_says_each_commit_changes_among_the_six_is_the_module_s(self):
+        self.assertEqual(self.among, AMONG)
+        self.assertEqual(self.none_touch, set(),
+                         "the sentence says of no commit that it touches none of the six; %r" % sorted(self.none_touch))
+
+
 class TheHistoryAgrees(unittest.TestCase):
-    """Each claim the sentence makes, checked against git."""
+    """Each claim the sentence makes, checked against git. Skips, with a warning, where the history is not in the
+    clone (see _reachable); TheNoteSaysWhatTheModuleHolds is the half that runs there."""
 
     @classmethod
     def setUpClass(cls):

@@ -29,9 +29,9 @@ class Ev {
   currentTarget: El | null = null;
   defaultPrevented = false;
   stopped = false;
-  key: string; ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) {
-    this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey;
+  key: string; ctrlKey: boolean; metaKey: boolean; button: number;   // button: a pointer event's, 0 the primary (pressHold reads it)
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; button?: number } = {}) {
+    this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; this.button = init.button ?? 0;
     hideEdges(this);
   }
   preventDefault(): void { this.defaultPrevented = true; }
@@ -798,4 +798,73 @@ test("a stand-in node enumerates its primitives alone, so a failing assertion's 
   assert.ok(child.parentNode === root && root.childNodes[0] === child && root.textContent === "alphabeta", "the tree is reachable as before");
   // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
   assertHiddenEvent(new Ev("click"), root, child);
+});
+
+// ── review round 3 ───────────────────────────────────────────────────────────────────────────────────────────────────
+test("changed on disk (review round 3): a failed Reload re-arms its button AFTER the failure pane's paint, so a keyboard the reader put on the old body's content during the flight, which that paint removes, goes back on the re-armed button (before: the re-arm ran first, read the content's element as the holder and stood down, and the paint's removal left the keyboard on the document's body, where PageDown, Space and Enter did nothing until a click)", async (t) => {
+  const { wrap, body } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  const btn = reloadButton(wrap);
+  btn.focus();
+  const slow = heldText("");                                 // the bar's GET: its body read waits on the test, then fails
+  disk[APP] = { bytes: "", type: TEXT, mtimeNs: MT2, text: slow.text };
+  btn.click();
+  assert.equal(btn.disabled, true); assert.equal(doc.activeElement, doc.body, "the disable dropped the click's keyboard");
+  const inner = body.querySelector("code.hljs")!;           // an element of the old body's content (a link, a fold's summary): the reader clicks or tabs to it during the flight
+  inner.focus();
+  assert.equal(doc.activeElement, inner, "the content holds the keyboard mid-flight");
+  slow.fail("network gone"); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "the failure pane replaced the content");
+  assert.equal(inner.isConnected, false, "…and the element the reader held is gone with it");
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.disabled, false, "re-armed");
+  assert.equal(doc.activeElement, btn, "the re-armed button has the keyboard: nothing held it once the paint removed the holder (before the fix: the document's body)");
+  // the round 2 rule stands: a box the reader moved to during the flight keeps it, since the paint does not remove the aside
+  const aside = new El("div"); const box = aside.appendChild(new El("textarea"));
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  btn.click(); await settle();                               // the file is back: the landing clears the bar
+  assert.equal(barOf(wrap), null);
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  focusWindow(); await settle();
+  const btn2 = reloadButton(wrap); btn2.focus();
+  const slow2 = heldText("");
+  disk[APP] = { bytes: "", type: TEXT, mtimeNs: MT3, text: slow2.text };
+  btn2.click();
+  wrap.appendChild(aside); box.focus();
+  slow2.fail("network gone"); await settle();
+  assert.equal(btn2.disabled, false, "re-armed");
+  assert.equal(doc.activeElement, box, "the box keeps the keyboard");
+});
+
+test("changed on disk (review round 3): a HEAD answered while the pointer is pressed on the body parks the bar's raise until the release (a drag begun on the body in a Files frame that did not hold the page's focus is itself the window focus that ran the HEAD, and the bar is a card row above the body: raised mid-press it moved the body under the pointer and the drag's selection ended on other text); the release raises it; a landing during the press stands the parked raise down; a press elsewhere holds nothing", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  body.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // the drag's press on the body
+  focusWindow(); await settle();                               // the focus grant's HEAD: the file moved
+  assert.equal(heads(), 1, "the HEAD ran");
+  assert.equal(barOf(wrap), null, "no bar while the pointer is down (before the fix: raised at once, under the press)");
+  win.dispatchEvent(new Event("pointerup"));                    // the release: the parked raise goes on a zero timer
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "raised at the release");
+  assert.equal(readBar(wrap).disabled, false); assert.equal(heads(), 1, "no second HEAD");
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT2);
+  // a landing during the press (the panel's poll reloaded the moved file, parked by the same press and run first at the release):
+  // the raise's guards re-run at the release and find the file that shows is the moved one
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  body.dispatchEvent(new Ev("pointerdown", { button: 0 }));
+  focusWindow(); await settle();
+  assert.equal(barOf(wrap), null);
+  ctx.reload(); await settle();                                // parked too (the landing's own hold)
+  assert.equal(ctx.mtimeNs(), MT2, "the landing waits for the release as every landing does");
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(ctx.mtimeNs(), MT3, "the landing ran at the release");
+  assert.equal(barOf(wrap), null, "…and the raise stood down: the moved file is what shows");
+  // a press elsewhere (the bar, the aside) holds nothing: a HEAD answered under it raises at once
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
+  wrap.querySelector(".fileview-bar")!.dispatchEvent(new Ev("pointerdown", { button: 0 }));
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "a press outside the body is no drag over the text: raised at once");
+  win.dispatchEvent(new Event("pointerup"));
 });

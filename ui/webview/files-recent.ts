@@ -5,8 +5,9 @@
 // the file was opened, so the row's session chip re-renders without a session list of the pane's own.
 // Since Slice 6 of plans/markdown-viewer.md a row also carries the reader's PLACE in the file, the record
 // the viewer hands its host when the file is left (file-view.ts RememberedPlace, through initFileView's
-// `onLeave`): the top block's source span and pixel offset, the view, the file's mtime and the numeric
-// scrollTop, never a word of the file. The pane hands it back on every open of the path with that session here,
+// `onLeave`): the top block's source span and pixel offset, the view, the file's mtime, the numeric
+// scrollTop and, for a Rendered read, the open folds by ordinal, never a word of the file. The pane hands it back
+// on every open of the path with that session here,
 // the row's click or any other (files.ts openHere, openFileView's `place`), so the note returns to where it was
 // read. The place is used, never shown: the row looks as it did.
 export interface RecentIdentity { name: string; color: { bg: string; fg: string } | null }
@@ -14,8 +15,11 @@ export interface RecentIdentity { name: string; color: { bg: string; fg: string 
  *  the same eight fields, by structure. `start`/`end`: the top block's source span; `top`: its top edge's offset from
  *  the body's top in px (negative when it starts above the edge); `atTop`: the body stood at its very top; `view`: the
  *  view it was read in; `mtimeNs`: the file's mtime string when read; `scrollTop`: the body's, the fallback when the
- *  span is no block of the file any more; `t`: when. No text field, ever: this goes to localStorage. */
-export interface RecentPlace { start: number; end: number; top: number; atTop: boolean; view: "rendered" | "raw"; mtimeNs: string; scrollTop: number; t: number }
+ *  span is no block of the file any more; `t`: when; `folds`, for a Rendered read: the ordinals in document order of the
+ *  `<details>` the reader had open (the review's round 3; absent for a Raw read, a note with no fold and a record an older
+ *  store wrote).
+ *  No text field, ever: this goes to localStorage. */
+export interface RecentPlace { start: number; end: number; top: number; atTop: boolean; view: "rendered" | "raw"; mtimeNs: string; scrollTop: number; t: number; folds?: number[] }
 export interface RecentFile { path: string; sid: string | null; identity: RecentIdentity | null; t: number; place: RecentPlace | null }
 export const RECENT_KEY = "romp:files-recent";
 export const RECENT_MAX = 8;
@@ -34,9 +38,10 @@ export function asIdentity(x: unknown): RecentIdentity | null {
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 /** A stored place, validated field by field to the viewer's record: a span of non-negative offsets in order, finite
  *  pixel offsets (the scrollTop never negative), a boolean, one of the two views, a string mtime and a number for the
- *  time. Anything else is NO place (null): the row it rode on is kept, since a path is worth listing whatever
+ *  time, and, when present, the open folds as a list of non-negative integers (absent is fine: a Raw read, a note with no
+ *  fold, an older store's record). Anything else is NO place (null): the row it rode on is kept, since a path is worth listing whatever
  *  happened to its place, and the viewer then opens the file at its top as it always did. Never widened: a field
- *  this pane does not know is dropped, so nothing but these eight ever reaches the store. */
+ *  this pane does not know is dropped, so nothing but these nine ever reaches the store. */
 export function asPlace(x: unknown): RecentPlace | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
@@ -44,7 +49,12 @@ export function asPlace(x: unknown): RecentPlace | null {
   if (!finite(o.top) || !finite(o.scrollTop) || o.scrollTop < 0 || !finite(o.t)) return null;
   if (typeof o.atTop !== "boolean" || typeof o.mtimeNs !== "string") return null;
   if (o.view !== "rendered" && o.view !== "raw") return null;
-  return { start: o.start, end: o.end, top: o.top, atTop: o.atTop, view: o.view, mtimeNs: o.mtimeNs, scrollTop: o.scrollTop, t: o.t };
+  const place: RecentPlace = { start: o.start, end: o.end, top: o.top, atTop: o.atTop, view: o.view, mtimeNs: o.mtimeNs, scrollTop: o.scrollTop, t: o.t };
+  if (o.folds !== undefined) {
+    if (!Array.isArray(o.folds) || !o.folds.every((k) => typeof k === "number" && Number.isInteger(k) && k >= 0)) return null;
+    place.folds = (o.folds as number[]).slice();
+  }
+  return place;
 }
 
 /** The stored list, tolerant of junk: a corrupt entry costs the list, never the pane; a corrupt place costs the place, never the row. */

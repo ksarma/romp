@@ -1552,8 +1552,13 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
 /* the body is a Tab stop and takes the keyboard after the open's first paint (file-view.ts takeKeyboard; Slice 6 of
    plans/markdown-viewer.md): no ring for the focus a paint gave it (a frame around the whole scroll box on every open would
-   read as an error), the accent ring when the keyboard reached it (a Tab from the bar), inset so the scrollbar keeps its edge.
-   Mirrored in feed.css; fileview-parity.test.ts holds both rules byte-equal. */
+   read as an error), the accent ring when the keyboard reached it (a Tab from the bar, or a hand-over from a control that
+   wore the ring), inset so the scrollbar keeps its edge. :focus-visible alone does not draw that line: Chromium's heuristic
+   for a script focus matches it when nothing focusable was last pressed (a chat pill's press strips its tabindex, a Recent
+   row is a plain div, a relayed open's click is in another frame), so the frame sat around the whole note on the common
+   pointer opens (the review's round 3); takeKeyboard names the ring itself through the focus call's focusVisible option,
+   read off the holder it takes the keyboard from, and this rule paints what it names (file-view-focus-ring-browser.test.ts
+   measures it over real presses). Mirrored in styles.css; fileview-parity.test.ts holds both rules byte-equal. */
 .fileview-body:focus { outline: none; }
 .fileview-body:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,

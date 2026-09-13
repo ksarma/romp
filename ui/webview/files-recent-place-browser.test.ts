@@ -16,7 +16,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { LONG, LONG2, rewritten, MT, MT2 } from "./real-viewer-leg";
+import { LONG, LONG2, rewritten, MT, MT2, PARA } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -58,8 +58,9 @@ let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
 type Top = { text: string; top: number; scrollTop: number } | null;
+type Hold = { on: boolean; wait: Promise<void>; release: () => void };   // a picture's answer held until the test releases it
 type H = {
-  page: any; docs: Record<string, string>; mtime: { v: string };
+  page: any; docs: Record<string, string>; mtime: { v: string }; hold: Hold;
   open: (p: string) => Promise<void>; close: () => Promise<void>; reopen: (base: string) => Promise<void>;
   top: () => Promise<Top>; putAtTop: (t: string) => Promise<void>; recent: () => Promise<any[]>;
 };
@@ -71,12 +72,13 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
   const errors: string[] = [];
   const docs: Record<string, string> = { [REPORT]: LONG, [NOTES]: NOTES_TEXT };
   const mtime = { v: MT };
+  const hold: Hold = { on: false, wait: Promise.resolve(), release: () => { /* nothing held */ } };
   try {
     const filesJs = filesBundle();
     const ctx = await browser.newContext({ viewport: { width: 900, height: 520 } });
     const page = await ctx.newPage();
     page.on("pageerror", (e: Error) => { errors.push(e.message); });
-    await ctx.route("http://romp.test/**", (route: any) => {
+    await ctx.route("http://romp.test/**", async (route: any) => {
       const u = new URL(route.request().url());
       if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
       if (u.pathname === "/dist/files.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: filesJs });
@@ -84,6 +86,10 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
         const p = u.searchParams.get("path") || "";
         const text = docs[p];
         if (text === undefined) return route.fulfill({ status: 404, contentType: "text/plain", body: "no such file: " + p });
+        if (/\.svg$/i.test(p)) {   // a picture a note shows: image/svg+xml with no text header, never cached (the kernel sends no-cache), held while the test says so
+          if (hold.on) await hold.wait;
+          return route.fulfill({ status: 200, contentType: "image/svg+xml", headers: { "X-Romp-Mtime-Ns": mtime.v, "Cache-Control": "no-store" }, body: text });
+        }
         if (route.request().method() === "HEAD") return route.fulfill({ status: 200, headers: { "X-Romp-Mtime-Ns": mtime.v, "Last-Modified": "Sat, 06 Sep 2025 08:00:00 GMT" }, body: "" });
         return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": mtime.v, "X-Romp-Text-Utf8": "1" }, body: text });
       }
@@ -113,7 +119,7 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
     const top = (): Promise<Top> => page.evaluate(() => (window as any).topBlock());
     const putAtTop = async (t: string) => { await page.evaluate((t: string) => (window as any).putAtTop(t), t); await frames(1); };
     const recent = () => page.evaluate(() => JSON.parse(localStorage.getItem("romp:files-recent") || "[]"));
-    await body({ page, docs, mtime, open, close, reopen, top, putAtTop, recent });
+    await body({ page, docs, mtime, hold, open, close, reopen, top, putAtTop, recent });
     assert.deepEqual(errors, [], "no page errors");
     await ctx.close();
   } finally {
@@ -137,7 +143,7 @@ test("in a browser: a note reopened from Recent returns to its block and its scr
     assert.ok(rec && typeof rec.start === "number" && rec.end > rec.start, "a source span: " + JSON.stringify(rec));
     assert.equal(rec.view, "rendered"); assert.equal(rec.mtimeNs, MT); assert.equal(rec.atTop, false);
     assert.ok(near(rec.scrollTop, before.scrollTop), "the numeric scrollTop: " + rec.scrollTop + " vs " + before.scrollTop);
-    assert.deepEqual(Object.keys(rec).sort(), ["atTop", "end", "mtimeNs", "scrollTop", "start", "t", "top", "view"]);
+    assert.deepEqual(Object.keys(rec).sort(), ["atTop", "end", "mtimeNs", "scrollTop", "start", "t", "top", "view"], "the eight fields; a note with no fold records no fold state (the ninth field, `folds`, is a Rendered read's of a note with one: file-view-place-memory-fold-browser.test.ts; review round 3)");
     assert.doesNotMatch(JSON.stringify(rows), /Paragraph|lorem|ipsum/, "no word of the note in the store");
     // ── the acceptance: the row's click returns to the block, scrollTop within a pixel
     await h.reopen("report.md");
@@ -215,6 +221,56 @@ test("in a browser: a second note opened OVER the first writes the first's place
     now = (await h.top())!;
     assert.equal(now.text.slice(0, 13), "Paragraph 40:", "the in-page memory: " + JSON.stringify(now));
     assert.ok(near(now.scrollTop, a.scrollTop));
+    await h.close();
+  });
+});
+
+// A picture above the passage that loads after the seat (review round 3; the round 2 refuter's measurement). After a page reload
+// the note's pictures are fetched anew and have no height at the first paint, so the record's numeric scrollTop, written over the
+// shorter layout, selected the block that sat at that pixel there, and Chromium's scroll anchoring then kept THAT block in view
+// as the picture grew the layout: the body ended a picture's height past the record. The viewer now writes the seat again at the
+// picture's load while the body stands where the seat and the browser's adjustment left it (file-view.ts armReseat).
+test("in a browser (review round 3): a note with a figure above the passage, changed above the passage and reopened from Recent after a page reload with the figure still in flight: the numeric seat lands over the short layout, and the figure's load seats the record's scrollTop again, so the body ends at the record's number with the block that sits there in the full layout (before: a figure's height past the record, the short layout's block carried along by scroll anchoring)", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (h) => {
+    const FIG = ROOT + "/docs/figure.svg";
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400"><rect width="600" height="400" fill="#888"/></svg>';
+    const BODY_PARAS = Array.from({ length: 100 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+    const FIG_DOC = "# Report\n\n![late figure](figure.svg)\n\n" + BODY_PARAS;
+    const FIG_CHANGED = "# Report\n\n" + Array.from({ length: 20 }, (_, i) => `Inserted ${i + 1}: new text a session wrote above the figure and the reader's place, long enough to wrap in the pane.`).join("\n\n") + "\n\n![late figure](figure.svg)\n\n" + BODY_PARAS;
+    h.docs[FIG] = SVG; h.docs[REPORT] = FIG_DOC;
+    const imgDone = () => h.page.waitForFunction(() => { const i = document.querySelector("#romp-fileview .fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalHeight > 0; }, null, { timeout: 10000 });
+    const imgState = (): Promise<{ complete: boolean; height: number; scrollHeight: number }> => h.page.evaluate(() => {
+      const i = document.querySelector("#romp-fileview .fileview-md img") as HTMLImageElement | null; const b = document.querySelector("#romp-fileview .fileview-body") as HTMLElement;
+      return { complete: !!i && i.complete, height: i ? i.getBoundingClientRect().height : -1, scrollHeight: b.scrollHeight };
+    });
+    const twoFrames = () => h.page.evaluate(() => new Promise<null>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
+    await h.open(REPORT); await imgDone();
+    await h.putAtTop("Paragraph 65"); await twoFrames();
+    const before = (await h.top())!;
+    assert.equal(before.text.slice(0, 13), "Paragraph 65:");
+    const full = await imgState(); assert.ok(full.height >= 300, "the figure has its height in the layout the record is read over: " + full.height);
+    await h.close();
+    const rec = (await h.recent())[0].place;
+    assert.ok(rec && near(rec.scrollTop, before.scrollTop), "the record's scrollTop: " + JSON.stringify(rec) + " vs " + before.scrollTop);
+    // a page reload: the pictures are fetched anew; the note changed ABOVE the passage, so the span is no block of the new text and the numeric scrollTop is what seats
+    await h.page.reload();
+    await h.page.waitForFunction(() => (window as any).__posts.some((m: any) => m && m.type === "ready"));
+    await h.page.locator("#files-empty .fs-row").first().waitFor({ timeout: 5000 });
+    h.docs[REPORT] = FIG_CHANGED; h.mtime.v = MT2;
+    h.hold.on = true; h.hold.wait = new Promise<void>((r) => { h.hold.release = r; });
+    await h.reopen("report.md");
+    const landed = (await h.top())!; const short = await imgState();
+    assert.equal(short.complete, false, "the figure is still in flight at the landing");
+    assert.ok(short.height < 50, "…with no height in the layout yet: " + short.height);
+    assert.ok(near(landed.scrollTop, rec.scrollTop), "the numeric seat wrote the record's number over the short layout: " + landed.scrollTop + " vs " + rec.scrollTop);
+    h.hold.on = false; h.hold.release();
+    await imgDone(); await twoFrames();
+    const after = (await h.top())!; const grown = await imgState();
+    assert.ok(grown.scrollHeight > short.scrollHeight + 300, "the figure's load grew the layout: " + short.scrollHeight + " -> " + grown.scrollHeight);
+    assert.ok(near(after.scrollTop, rec.scrollTop), "the body ends at the record's number (before the fix: the number plus the figure's height; read " + after.scrollTop + " for " + rec.scrollTop + ")");
+    const n = (s: string): number => { const m = /Paragraph (\d+)/.exec(s); return m ? Number(m[1]) : 0; };
+    assert.ok(n(after.text) > 0 && n(after.text) < n(landed.text), "the block at that pixel in the full layout comes before the short layout's (before: the short layout's block, carried along by scroll anchoring): " + landed.text + " -> " + after.text);
+    // the reader's own scroll after the landing retires the re-seat: a second figure's load moves nothing (the guard is the body standing where the seat left it)
     await h.close();
   });
 });

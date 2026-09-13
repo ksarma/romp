@@ -324,7 +324,8 @@ session, waking it if it has gone quiet; Dismiss clears the todo without a
 reply. A file path in a todo's text or its detail is a link: click it and the
 file opens in the Files pane, which comes forward if it was closed; a line or a
 section written after the path (`docs/report.md:12`, `docs/report.md#results`)
-opens the file at it. Absolute
+opens the file at it (for a section, once the file is in its Rendered view; see
+Files). Absolute
 paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
 (`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
@@ -372,9 +373,11 @@ has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
 file lands on the last line, with a notice saying so. A line or a section
 written after a path in a todo's text or detail (`docs/report.md:12`,
 `docs/report.md#results`) opens the file there too; a section the file does not
-have leaves the file at its top, with a notice naming the section. In a Markdown
-file, a `[link](target)` follows the same two rules: a web target opens a tab, a
-file target opens the file (a host with a port, `127.0.0.1:3000` or
+have leaves the file at its top, with a notice naming the section. The Raw view
+has no sections, so when you read Markdown in Raw the file opens at its top and
+lands on the section, or shows the notice, once you click **Rendered**. In a
+Markdown file, a `[link](target)` follows the same two rules: a web target opens
+a tab, a file target opens the file (a host with a port, `127.0.0.1:3000` or
 `api.example.com:8443`, is neither, and says so). A link to a section of
 another file (`report.md#results`) opens that file at the section. A link to a
 section of the same document scrolls to it

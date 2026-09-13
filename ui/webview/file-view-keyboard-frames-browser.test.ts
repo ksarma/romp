@@ -10,9 +10,12 @@
 // chat's body after a plain click) yields as the document's body does, so the body still takes the keyboard for the acceptance
 // (PageDown with no prior click). A shell stand-in holds a chat iframe (a textarea composer and a plain paragraph) and the Files
 // pane's page (real-viewer-leg's, body.fileview-pane) beside it; the Files frame's fetch stub is wrapped to hold a GET for the
-// mid-flight scenes (released by the test, never a timer). Before the fix: red at the first composer read over a git archive of
-// c88444f85. Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only: the
-// notes-api world, the placeholder sid, an invented origin.
+// mid-flight scenes (released by the test, never a timer). Before the fix, over a git archive of c88444f85, each scene run on its
+// own: the four that read the composer after a hand-over (the relayed open, the Reload's landing, the failed Reload's re-arm, the
+// Save's ack) are red at that read; the other two are GUARDS, green there too (the plain holder, where the same-document gate
+// already took the keyboard for the body, and the Outline popover closed by a click into the composer, where closeOutlineKeeping
+// already read no holder; round 2 changed that closer's comment alone). Skips LOUDLY without a playwright browser (CI installs
+// none), as the other legs do. Synthetic values only: the notes-api world, the placeholder sid, an invented origin.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, pageHtml, frames, ORIGIN, REPORT, SID, MT, MT2, LONG, LONG2 } from "./real-viewer-leg";
@@ -71,7 +74,7 @@ const barState = (fb: any): Promise<BarState> => fb.evaluate(() => {
 });
 const COMPOSER = "TEXTAREA#composer-input", BODY = "DIV.fileview-body";
 
-test("in a browser (review round 2): a relayed open into the Files iframe while the chat composer in the sibling iframe is being typed in leaves the composer holding the keyboard, the typed letters reaching it (before: the landing's body.focus() pulled the page's focus into the Files frame, the letters landed on the viewer body and Space scrolled the note); a non-typing holder in the chat frame yields, and the body takes the keyboard as designed; the Outline popover closed by a click into the composer leaves the composer holding it", { timeout: 180000 }, async (t) => {
+test("in a browser (review round 2): a relayed open into the Files iframe while the chat composer in the sibling iframe is being typed in leaves the composer holding the keyboard, the typed letters reaching it (before: the landing's body.focus() pulled the page's focus into the Files frame, the letters landed on the viewer body and Space scrolled the note); a non-typing holder in the chat frame yields, and the body takes the keyboard as designed; the Outline popover closed by a click into the composer leaves the composer holding it (those last two scenes are guards, green before the fix too)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     // the composer holds the keyboard: the relayed open leaves it there
     {
@@ -99,7 +102,8 @@ test("in a browser (review round 2): a relayed open into the Files iframe while 
       assert.deepEqual(errors, [], "no page errors (the composer scene)");
       await page.close();
     }
-    // a non-typing holder in the chat frame (a click on its text): the body takes the keyboard, as the design says
+    // a non-typing holder in the chat frame (a click on its text): the body takes the keyboard, as the design says. A guard:
+    // green over the archive of c88444f85 too, where the gate saw this document's body and took the keyboard for the same reason
     {
       const { page, fa, fb, errors } = await mount(browser);
       await fa.click("#plain");
@@ -114,7 +118,10 @@ test("in a browser (review round 2): a relayed open into the Files iframe while 
       await page.close();
     }
     // the Outline popover, open and holding the keyboard: a click into the composer closes it, and the composer keeps the keyboard
-    // (the focusout's relatedTarget is null for a move into another frame, and this document's active element is already its body)
+    // (the focusout's relatedTarget is null for a move into another frame, and this document's active element is already its body,
+    // so closeOutlineKeeping reads no holder and hands nothing over). A GUARD, not a fails-before: green over the archive of
+    // c88444f85 too, whose closer read the holder the same way; round 2 changed that branch's comment alone (file-view.ts, the
+    // popover's focusout closer), and this scene pins the reading the comment records
     {
       const { page, fa, fb, errors } = await mount(browser);
       await fb.click("body", { position: { x: 5, y: 5 } });
