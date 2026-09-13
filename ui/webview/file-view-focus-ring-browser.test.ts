@@ -14,8 +14,17 @@
 // its computed outline is none. The controls in the same runs: a Tab from the bar still earns the ring; a Raw toggle focused
 // after a key and activated by Enter hands the keyboard over WITH the ring and a mouse click on Rendered without it; an
 // Outline pick by End and Enter lands the heading with the ring and a pick by mouse without. Red over a git archive of
-// 27c56fbf7 at the first pill click (fv true, outline solid). Skips LOUDLY without a playwright browser (CI installs none),
-// as the other legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// 27c56fbf7 at the first pill click (fv true, outline solid).
+// The ring after a key (the review's round 4): Chromium keeps the verdict the focus call named for the life of that focus,
+// so at 7fbced030 a body handed the keyboard without the ring showed none after any number of keys, where the heuristic
+// gives a mouse-focused element the ring on its first key. The body's keydown now takes the keyboard again naming the ring
+// on the first key without Ctrl, Alt or Meta held (file-view.ts, beside takeKeyboard). The third leg measures it in the chat
+// modal, the feed modal and the Files pane: after a pill click or a gestureless open the body holds the keyboard ringless,
+// PageDown brings the accent ring and the key's own scroll, a mouse click on A+ hands over ringless again and ArrowDown
+// brings the ring back, and Ctrl+C over a selection inside the body brings none and keeps the selection (the heuristic's
+// own line: a chord is a shortcut). Red over a git archive of 7fbced030 at the first PageDown (fv false, outline none).
+// Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an invented
+// note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "node:path";
@@ -195,5 +204,81 @@ test("in a browser, on the Files pane at 900 and 380 px: an open with no gesture
       assert.deepEqual(errors, [], what + ": no page errors");
       await page.close();
     }
+  });
+});
+
+/** Press `k` and wait two frames (the lift is synchronous in the keydown; the read follows the paint). */
+const pressed = async (page: any, k: string): Promise<void> => { await page.keyboard.press(k); await frames(page, 2); };
+/** The body's scrollTop has grown past `from`: the key's own scroll ran (Chromium animates keyboard scrolls, so the read waits
+ *  for the first moved frame rather than a fixed count). */
+const scrolledPast = (page: any, from: number): Promise<unknown> => page.waitForFunction((f: number) => (document.querySelector(".fileview-body") as HTMLElement).scrollTop > f, from, { timeout: 4000 });
+/** In the page: select fourteen characters of the third paragraph's text, and return them. */
+function selectInBody(): string {
+  const p = document.querySelectorAll(".fileview-md > p")[2] as HTMLElement;
+  const r = document.createRange(); r.setStart(p.firstChild!, 6); r.setEnd(p.firstChild!, 20);
+  const s = document.getSelection()!; s.removeAllRanges(); s.addRange(r);
+  return s.toString();
+}
+/** A mouse click on the bar's A+ (a text-size step: the paint hands the keyboard to the body, reading a mouse-focused holder). */
+async function clickTextUp(page: any): Promise<void> {
+  const b = await paints(page);
+  const at = await page.evaluate(() => { const x = Array.from(document.querySelectorAll(".fileview-bar button")).find((e) => (e.textContent || "").trim() === "A+") as HTMLElement; const r = x.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.click(at.x, at.y);
+  await painted(page, b);
+}
+/** The key scenes over an open that handed the body the keyboard without the ring: PageDown brings the ring and the scroll, a
+ *  mouse click on A+ hands over ringless and ArrowDown brings it back, Ctrl+C over a selection brings none and keeps the selection. */
+async function keyScenes(page: any, what: string): Promise<void> {
+  const r0 = await ringOf(page);
+  noRing(r0, what + ", before any key");
+  await pressed(page, "PageDown");
+  ring(await ringOf(page), what + ", PageDown after a ringless hand-over (at 7fbced030 the focus call's verdict held through every key)");
+  await scrolledPast(page, r0.scrollTop);
+  assert.ok((await ringOf(page)).scrollTop > r0.scrollTop, what + ": PageDown scrolled the body (the lift kept the key's own scroll)");
+  await clickTextUp(page);
+  noRing(await ringOf(page), what + ", a mouse click on A+ (a mouse-focused holder passes no ring)");
+  await pressed(page, "ArrowDown");
+  ring(await ringOf(page), what + ", ArrowDown after the mouse click on A+");
+  // a mouse click on A- hands over ringless again; a Ctrl+C over a selection in the body is a chord and lifts nothing
+  const b = await paints(page);
+  const dn = await page.evaluate(() => { const x = Array.from(document.querySelectorAll(".fileview-bar button")).find((e) => (e.textContent || "").trim() === "A\u2212") as HTMLElement; const r = x.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await page.mouse.click(dn.x, dn.y);
+  await painted(page, b);
+  noRing(await ringOf(page), what + ", a mouse click on A-");
+  const picked = await page.evaluate(selectInBody);
+  assert.equal(picked.length, 14, what + ": fourteen characters selected in the body (read " + JSON.stringify(picked) + ")");
+  await pressed(page, "Control+c");
+  noRing(await ringOf(page), what + ", Ctrl+C over the selection (a chord: the heuristic's own line, no lift)");
+  const kept = await page.evaluate(() => document.getSelection()!.toString());
+  assert.equal(kept, picked, what + ": the selection stands after the chord");
+  await pressed(page, "ArrowDown");
+  const after = await ringOf(page);
+  ring(after, what + ", ArrowDown after the chord");
+  const still = await page.evaluate(() => document.getSelection()!.toString());
+  assert.equal(still, picked, what + ": the selection stands through the lift (no blur of the selection, no selectionchange)");
+}
+
+test("in a browser, in the chat modal, the feed modal and the Files pane at 900 px: after a hand-over without the ring (a pill click, a gestureless open, a mouse click on A+) the first key pressed on the body brings the accent ring and the key's own scroll; Ctrl+C over a selection inside the body brings none and keeps the selection", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const PL = pathLinksBundle();
+    for (const mode of ["chat", "feed"] as Array<"chat" | "feed">) {
+      const what = mode + " 900px, keys";
+      const base = pageHtml(mode, { [REPORT]: NOTE }, MT).replace('<body class="">', () => '<body class=""><div id="content" style="height:200px;overflow:auto"><p id="plain">plain transcript text</p><p>a line with a <span id="pill">docs/report.md</span> pill</p><div style="height:3000px"></div></div>');
+      const wire = "<script>" + PL + "</script><script>PL.markPathLink(document.getElementById('pill'), " + JSON.stringify(REPORT) + ", false, " + JSON.stringify(SID) + ");"
+        + " document.body.addEventListener('click', function (e) { var a = e.target && e.target.closest ? e.target.closest('[data-act=\"openpath\"]') : null; if (a) FV.openFileView(a.dataset.path, a.dataset.sid || null, null); });</script>";
+      const { page, errors } = await pageOf(browser, 900, 700, spliced(base, wire));
+      const b = await paints(page); await page.click("#pill"); await painted(page, b);
+      await keyScenes(page, what);
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+    const what = "pane 900px, keys";
+    const { page, errors } = await pageOf(browser, 900, 700, pageHtml("pane", { [REPORT]: NOTE }, MT));
+    const b = await paints(page);
+    await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+    await painted(page, b);
+    await keyScenes(page, what);
+    assert.deepEqual(errors, [], what + ": no page errors");
+    await page.close();
   });
 });

@@ -8,7 +8,9 @@
 // clamped), a page reload (localStorage survives, and the shell's relay as the FIRST open after it returns to the block
 // and keeps the row's record: the pane reads the row's record for every open, not for the row's click alone; the Slice 6
 // review, round 1), a second note opened OVER the first (the replace path writes the first's place; both rows hold
-// theirs), and a relay re-open with no row (the viewer's own in-page memory). The
+// theirs), and a relay re-open with no row (the viewer's own in-page memory). Leg 3 holds a note's pictures in flight
+// (the route answers an .svg when the test says so) for the seat written again at each picture's load, and for the events
+// that retire it: the reader's own scroll, and the next text paint (the review's rounds 3 and 4). The
 // record holds no text: its JSON in localStorage names no word of the note. Skips LOUDLY without a playwright
 // browser (CI installs none). Synthetic values only: the notes-api world, a placeholder session id, invented notes.
 import { test } from "node:test";
@@ -60,7 +62,7 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
 type Top = { text: string; top: number; scrollTop: number } | null;
 type Hold = { on: boolean; wait: Promise<void>; release: () => void };   // a picture's answer held until the test releases it
 type H = {
-  page: any; docs: Record<string, string>; mtime: { v: string }; hold: Hold;
+  page: any; docs: Record<string, string>; mtime: { v: string }; hold: (p: string) => () => void;   // hold the picture at the path; the return releases it
   open: (p: string) => Promise<void>; close: () => Promise<void>; reopen: (base: string) => Promise<void>;
   top: () => Promise<Top>; putAtTop: (t: string) => Promise<void>; recent: () => Promise<any[]>;
 };
@@ -72,7 +74,14 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
   const errors: string[] = [];
   const docs: Record<string, string> = { [REPORT]: LONG, [NOTES]: NOTES_TEXT };
   const mtime = { v: MT };
-  const hold: Hold = { on: false, wait: Promise.resolve(), release: () => { /* nothing held */ } };
+  const holds: Record<string, Hold> = {};   // by the picture's path: a leg holds two figures and releases them one at a time
+  const hold = (p: string): (() => void) => {
+    let release = (): void => { /* set by the promise */ };
+    const wait = new Promise<void>((r) => { release = r; });
+    const hd: Hold = { on: true, wait, release };
+    holds[p] = hd;
+    return () => { hd.on = false; hd.release(); };
+  };
   try {
     const filesJs = filesBundle();
     const ctx = await browser.newContext({ viewport: { width: 900, height: 520 } });
@@ -87,7 +96,7 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
         const text = docs[p];
         if (text === undefined) return route.fulfill({ status: 404, contentType: "text/plain", body: "no such file: " + p });
         if (/\.svg$/i.test(p)) {   // a picture a note shows: image/svg+xml with no text header, never cached (the kernel sends no-cache), held while the test says so
-          if (hold.on) await hold.wait;
+          const hd = holds[p]; if (hd && hd.on) await hd.wait;
           return route.fulfill({ status: 200, contentType: "image/svg+xml", headers: { "X-Romp-Mtime-Ns": mtime.v, "Cache-Control": "no-store" }, body: text });
         }
         if (route.request().method() === "HEAD") return route.fulfill({ status: 200, headers: { "X-Romp-Mtime-Ns": mtime.v, "Last-Modified": "Sat, 06 Sep 2025 08:00:00 GMT" }, body: "" });
@@ -229,48 +238,102 @@ test("in a browser: a second note opened OVER the first writes the first's place
 // the note's pictures are fetched anew and have no height at the first paint, so the record's numeric scrollTop, written over the
 // shorter layout, selected the block that sat at that pixel there, and Chromium's scroll anchoring then kept THAT block in view
 // as the picture grew the layout: the body ended a picture's height past the record. The viewer now writes the seat again at the
-// picture's load while the body stands where the seat and the browser's adjustment left it (file-view.ts armReseat).
-test("in a browser (review round 3): a note with a figure above the passage, changed above the passage and reopened from Recent after a page reload with the figure still in flight: the numeric seat lands over the short layout, and the figure's load seats the record's scrollTop again, so the body ends at the record's number with the block that sits there in the full layout (before: a figure's height past the record, the short layout's block carried along by scroll anchoring)", { timeout: 120000 }, async (t) => {
+// picture's load while the body stands where the seat and the browser's adjustment left it (file-view.ts armReseat). The re-seat
+// is retired by the reader's own scroll (the guard: the body no longer stands where the seat left it), by the next text paint and
+// by the close (review round 4: the two the page can show, a second figure released after the reader scrolled on and after a
+// Rendered/Raw round trip, each leaving the block at the top where it was and the record's number written back nowhere; the
+// close discards the body with the listener, so nothing of it can show).
+test("in a browser (review round 3): a note with two figures above the passage, changed above the passage and reopened from Recent after a page reload with the figures still in flight: the numeric seat lands over the short layout, and the first figure's load seats the record's scrollTop again, so the body ends at the record's number with the block that sits there in the full layout (before: a figure's height past the record, the short layout's block carried along by scroll anchoring); (review round 4) the reader then scrolls on, and the second figure's load moves nothing: the reader's block stays at the top and the record's number is not written back; after a second reload the figures held again, a Rendered/Raw round trip before their loads ends the re-seat: the paint's own seat stands and the record's number is not written back", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (h) => {
-    const FIG = ROOT + "/docs/figure.svg";
+    const FIG = ROOT + "/docs/figure.svg", FIG2 = ROOT + "/docs/figure2.svg";
     const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400" viewBox="0 0 600 400"><rect width="600" height="400" fill="#888"/></svg>';
-    const BODY_PARAS = Array.from({ length: 100 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
-    const FIG_DOC = "# Report\n\n![late figure](figure.svg)\n\n" + BODY_PARAS;
-    const FIG_CHANGED = "# Report\n\n" + Array.from({ length: 20 }, (_, i) => `Inserted ${i + 1}: new text a session wrote above the figure and the reader's place, long enough to wrap in the pane.`).join("\n\n") + "\n\n![late figure](figure.svg)\n\n" + BODY_PARAS;
-    h.docs[FIG] = SVG; h.docs[REPORT] = FIG_DOC;
-    const imgDone = () => h.page.waitForFunction(() => { const i = document.querySelector("#romp-fileview .fileview-md img") as HTMLImageElement | null; return !!i && i.complete && i.naturalHeight > 0; }, null, { timeout: 10000 });
-    const imgState = (): Promise<{ complete: boolean; height: number; scrollHeight: number }> => h.page.evaluate(() => {
-      const i = document.querySelector("#romp-fileview .fileview-md img") as HTMLImageElement | null; const b = document.querySelector("#romp-fileview .fileview-body") as HTMLElement;
-      return { complete: !!i && i.complete, height: i ? i.getBoundingClientRect().height : -1, scrollHeight: b.scrollHeight };
+    const BODY_PARAS = Array.from({ length: 140 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+    const FIGS = "![late figure](figure.svg)\n\n![second late figure](figure2.svg)\n\n";
+    const inserted = (n: number): string => Array.from({ length: n }, (_, i) => `Inserted ${i + 1}: new text a session wrote above the figures and the reader's place, long enough to wrap in the pane.`).join("\n\n") + "\n\n";
+    const FIG_DOC = "# Report\n\n" + FIGS + BODY_PARAS;
+    const FIG_CHANGED = "# Report\n\n" + inserted(20) + FIGS + BODY_PARAS;
+    const FIG_CHANGED2 = "# Report\n\n" + inserted(5) + FIGS + BODY_PARAS;   // fewer above the passage than the record's twenty and two figures: the block at the record's pixel is a later one
+    const MT3 = "1757145600000000021";
+    h.docs[FIG] = SVG; h.docs[FIG2] = SVG; h.docs[REPORT] = FIG_DOC;
+    const imgsDone = (n: number) => h.page.waitForFunction((k: number) => {
+      const is = Array.from(document.querySelectorAll("#romp-fileview .fileview-md img")) as HTMLImageElement[];
+      return is.length === 2 && is.filter((i) => i.complete && i.naturalHeight > 0).length === k;
+    }, n, { timeout: 10000 });
+    const imgState = (): Promise<{ complete: boolean[]; heights: number[]; scrollHeight: number }> => h.page.evaluate(() => {
+      const is = Array.from(document.querySelectorAll("#romp-fileview .fileview-md img")) as HTMLImageElement[]; const b = document.querySelector("#romp-fileview .fileview-body") as HTMLElement;
+      return { complete: is.map((i) => i.complete), heights: is.map((i) => i.getBoundingClientRect().height), scrollHeight: b.scrollHeight };
     });
     const twoFrames = () => h.page.evaluate(() => new Promise<null>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null)))));
-    await h.open(REPORT); await imgDone();
+    const reloaded = async () => {
+      await h.page.reload();
+      await h.page.waitForFunction(() => (window as any).__posts.some((m: any) => m && m.type === "ready"));
+      await h.page.locator("#files-empty .fs-row").first().waitFor({ timeout: 5000 });
+    };
+    const n = (s: string): number => { const m = /Paragraph (\d+)/.exec(s); return m ? Number(m[1]) : 0; };
+    await h.open(REPORT); await imgsDone(2);
     await h.putAtTop("Paragraph 65"); await twoFrames();
     const before = (await h.top())!;
     assert.equal(before.text.slice(0, 13), "Paragraph 65:");
-    const full = await imgState(); assert.ok(full.height >= 300, "the figure has its height in the layout the record is read over: " + full.height);
+    const full = await imgState(); assert.ok(full.heights.every((x) => x >= 300), "the figures have their height in the layout the record is read over: " + full.heights);
     await h.close();
     const rec = (await h.recent())[0].place;
     assert.ok(rec && near(rec.scrollTop, before.scrollTop), "the record's scrollTop: " + JSON.stringify(rec) + " vs " + before.scrollTop);
     // a page reload: the pictures are fetched anew; the note changed ABOVE the passage, so the span is no block of the new text and the numeric scrollTop is what seats
-    await h.page.reload();
-    await h.page.waitForFunction(() => (window as any).__posts.some((m: any) => m && m.type === "ready"));
-    await h.page.locator("#files-empty .fs-row").first().waitFor({ timeout: 5000 });
+    await reloaded();
     h.docs[REPORT] = FIG_CHANGED; h.mtime.v = MT2;
-    h.hold.on = true; h.hold.wait = new Promise<void>((r) => { h.hold.release = r; });
+    const release1 = h.hold(FIG), release2 = h.hold(FIG2);
     await h.reopen("report.md");
     const landed = (await h.top())!; const short = await imgState();
-    assert.equal(short.complete, false, "the figure is still in flight at the landing");
-    assert.ok(short.height < 50, "…with no height in the layout yet: " + short.height);
+    assert.deepEqual(short.complete, [false, false], "the figures are still in flight at the landing");
+    assert.ok(short.heights.every((x) => x < 50), "…with no height in the layout yet: " + short.heights);
     assert.ok(near(landed.scrollTop, rec.scrollTop), "the numeric seat wrote the record's number over the short layout: " + landed.scrollTop + " vs " + rec.scrollTop);
-    h.hold.on = false; h.hold.release();
-    await imgDone(); await twoFrames();
+    release1();
+    await imgsDone(1); await twoFrames();
     const after = (await h.top())!; const grown = await imgState();
-    assert.ok(grown.scrollHeight > short.scrollHeight + 300, "the figure's load grew the layout: " + short.scrollHeight + " -> " + grown.scrollHeight);
+    assert.ok(grown.scrollHeight > short.scrollHeight + 300, "the first figure's load grew the layout: " + short.scrollHeight + " -> " + grown.scrollHeight);
     assert.ok(near(after.scrollTop, rec.scrollTop), "the body ends at the record's number (before the fix: the number plus the figure's height; read " + after.scrollTop + " for " + rec.scrollTop + ")");
-    const n = (s: string): number => { const m = /Paragraph (\d+)/.exec(s); return m ? Number(m[1]) : 0; };
     assert.ok(n(after.text) > 0 && n(after.text) < n(landed.text), "the block at that pixel in the full layout comes before the short layout's (before: the short layout's block, carried along by scroll anchoring): " + landed.text + " -> " + after.text);
-    // the reader's own scroll after the landing retires the re-seat: a second figure's load moves nothing (the guard is the body standing where the seat left it)
+    // ── (review round 4) the reader's own scroll retires the re-seat: the second figure's load, with the body no longer standing where
+    // the seat left it, writes nothing; the block the reader put at the top stays there (the browser's anchoring carries it as the
+    // figure grows the layout above), and the record's number is not written back
+    await h.page.evaluate(() => { (document.querySelector("#romp-fileview .fileview-body") as HTMLElement).scrollTop += 400; }); await twoFrames();
+    const moved = (await h.top())!;
+    assert.ok(moved.scrollTop > rec.scrollTop + 300 && moved.text !== after.text, "the premise: the reader's scroll took the body off the seat: " + JSON.stringify(moved) + " from " + JSON.stringify(after));
+    release2();
+    await imgsDone(2); await twoFrames();
+    const stayed = (await h.top())!; const grown2 = await imgState();
+    assert.ok(grown2.scrollHeight > grown.scrollHeight + 300, "the second figure's load grew the layout: " + grown.scrollHeight + " -> " + grown2.scrollHeight);
+    assert.equal(stayed.text, moved.text, "the block the reader put at the top is still there after the second figure's load (a re-seat the scroll did not retire writes the record's number back and shows the block at that pixel; scrollTop " + stayed.scrollTop + ", the record's " + rec.scrollTop + ")");
+    assert.ok(!near(stayed.scrollTop, rec.scrollTop, 2), "the record's scrollTop was not written back over the reader's scroll: " + stayed.scrollTop + " vs " + rec.scrollTop);
+    await h.close();
+    const rec2 = (await h.recent())[0].place;
+    assert.equal(rec2.mtimeNs, MT2, "the leave wrote the reader's place at the changed note's mtime");
+    assert.ok(near(rec2.scrollTop, stayed.scrollTop), "…where the reader left it: " + rec2.scrollTop + " vs " + stayed.scrollTop);
+    // ── (review round 4) the next text paint retires it: a second reload, the note changed above the passage again (five inserted
+    // paragraphs for twenty: the span is no block of the new text, the numeric scrollTop seats, a later block at the top), both
+    // figures held; a Rendered/Raw round trip before their loads is two paints, each with its own seat (the same block back at the
+    // top edge); the figures' loads then leave that block where the paint put it, the record's number written back nowhere
+    await reloaded();
+    h.docs[REPORT] = FIG_CHANGED2; h.mtime.v = MT3;
+    const release3 = h.hold(FIG), release4 = h.hold(FIG2);
+    await h.reopen("report.md");
+    const landed2 = (await h.top())!; const short2 = await imgState();
+    assert.deepEqual(short2.complete, [false, false], "the figures are in flight at the second landing");
+    assert.ok(near(landed2.scrollTop, rec2.scrollTop), "the numeric seat again: " + landed2.scrollTop + " vs " + rec2.scrollTop);
+    assert.ok(n(landed2.text) > n(stayed.text) + 5, "the premise: the record's block is no block of the new text, so the pixel selects a later block over the shorter layout: " + landed2.text + " for " + stayed.text);
+    await h.page.locator("#romp-fileview .fileview-btn", { hasText: "Raw" }).click();
+    await h.page.locator("#romp-fileview .fileview-body code.hljs").waitFor({ timeout: 10000 }); await twoFrames();
+    await h.page.locator("#romp-fileview .fileview-btn", { hasText: "Rendered" }).click();
+    await h.page.locator("#romp-fileview .fileview-md > p").first().waitFor({ timeout: 10000 }); await twoFrames();
+    const tripped = (await h.top())!; const short3 = await imgState();
+    assert.equal(tripped.text, landed2.text, "the round trip's own place-keeping: the block at the top before it is at the top after it: " + JSON.stringify(tripped) + " for " + JSON.stringify(landed2));
+    assert.deepEqual(short3.complete, [false, false], "the round trip's new pictures are still in flight");
+    release3(); release4();
+    await imgsDone(2); await twoFrames();
+    const settled = (await h.top())!; const grown3 = await imgState();
+    assert.ok(grown3.scrollHeight > short3.scrollHeight + 700, "both figures' loads grew the layout: " + short3.scrollHeight + " -> " + grown3.scrollHeight);
+    assert.equal(settled.text, tripped.text, "the paint retired the re-seat: the figures' loads leave the block the paint seated at the top (a re-seat the paint did not retire writes the record's number back and shows an earlier block; scrollTop " + settled.scrollTop + ", the record's " + rec2.scrollTop + ")");
+    assert.ok(!near(settled.scrollTop, rec2.scrollTop, 2), "the record's scrollTop is not written back after the round trip: " + settled.scrollTop + " vs " + rec2.scrollTop);
     await h.close();
   });
 });

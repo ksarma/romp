@@ -19,16 +19,21 @@ note against those constants and needs no git, so it runs in every checkout, CI'
 to the sentence that changes a claim goes red there. TheHistoryAgrees reads the note against git; where a sha it
 needs is not in the clone it skips with the sha named and warns first, so the skip stands in the run's warnings
 summary under this module's name even under `-q`, where pytest lists neither skips nor their reasons (the review's
-round 3: the history cases had skipped silently in CI, so the pin ran only in a full local clone). An edit to the
-constants is a claim about the history, which the history half checks in a full clone. A tree that is not a checkout
-skips too; every other git failure is an error, never a skip. The premise test needs no history and fails first if
-the note's phrasing changes so that the reader finds nothing. Synthetic: the repo's own text and history only.
+round 3: the history cases had skipped silently in CI, so the pin ran only in a full local clone). A run whose
+filters make warnings errors (`-W error`) raises the notice instead of showing it; `_reachable` catches its own
+notice there and skips all the same, so the skip stands under every filter and its reason carries the same text
+(`-rs` lists it) (the review's round 4: under `-W error` in a shallow clone the four history cases had errored in
+setUpClass instead of skipping). An edit to the constants is a claim about the history, which the history half
+checks in a full clone. A tree that is not a checkout skips too; every other git failure is an error, never a skip.
+The premise test needs no history and fails first if the note's phrasing changes so that the reader finds nothing.
+Synthetic: the repo's own text and history only.
 """
 import os
 import re
 import subprocess
 import unittest
 import warnings
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -158,20 +163,27 @@ def _git(*args):
 class HistoryUnreachable(UserWarning):
     """A sha the note names is not in this clone, so TheHistoryAgrees skipped. Warned as well as skipped so that
     the run's warnings summary carries the skip under this module's name where pytest prints no skip list (`-q`,
-    CI's flags); TheNoteSaysWhatTheModuleHolds still runs there."""
+    CI's flags); TheNoteSaysWhatTheModuleHolds still runs there. Where the run's filters make warnings errors
+    (`-W error`) the notice is the exception they raise; _reachable catches it, and the skip stands alone."""
 
 
 def _reachable(*shas):
     """Skips when a sha the note names is not in this clone: a shallow checkout, or a repository the note was
     ported into. The skip warns first (HistoryUnreachable), so a run that lists no skips still names it in its
-    warnings summary. Any other failure of git is an error."""
+    warnings summary; where the run's filters make warnings errors (`-W error`), the notice is the exception
+    warnings.warn raises, caught here so that the skip stands there too, with the same text as its reason (the
+    review's round 4: the four history cases had errored in setUpClass under `-W error` in a shallow clone). Any
+    other failure of git is an error."""
     for sha in shas:
         proc = _run("cat-file", "-e", sha + "^{commit}")
         if proc.returncode != 0:
             why = ("%s is not in this clone (shallow, or not the fork), so TheHistoryAgrees cannot read the note's "
                    "account of it and skips; the note is pinned to this module's constants alone here, and the history "
                    "is checked in a full clone: %s" % (sha, proc.stderr.strip()))
-            warnings.warn(why, HistoryUnreachable, stacklevel=2)
+            try:
+                warnings.warn(why, HistoryUnreachable, stacklevel=2)
+            except HistoryUnreachable:
+                pass  # the run makes warnings errors; the skip below carries the text the notice would have shown
             raise unittest.SkipTest(why)
 
 
@@ -229,6 +241,38 @@ class TheNoteSaysWhatTheModuleHolds(unittest.TestCase):
         self.assertEqual(self.among, AMONG)
         self.assertEqual(self.none_touch, set(),
                          "the sentence says of no commit that it touches none of the six; %r" % sorted(self.none_touch))
+
+
+ABSENT = "1111111"  # a sha the stub below answers as git answers one the clone lacks; never looked up
+
+
+def _absent(*args):
+    """`git cat-file -e <sha>^{commit}` as git answers it for a sha the clone lacks: exit 128, the name on stderr.
+    A stub for _run, so that the skip's mechanics are checked without a clone that lacks a commit."""
+    return subprocess.CompletedProcess(["git", *args], 128, "", "fatal: Not a valid object name %s\n" % args[-1])
+
+
+class TheSkipStandsUnderEveryFilter(unittest.TestCase):
+    """_reachable skips, never errors, whatever the run's warning filters: where warnings are shown it warns first
+    (round 3's notice); where they are errors (`-W error`) it catches its own notice and skips all the same (the
+    review's round 4: the four history cases had errored in setUpClass under `-W error` in a shallow clone). git is
+    stubbed to answer as it does for a sha the clone lacks, so the cases run in every checkout."""
+
+    def test_an_absent_sha_skips_where_warnings_are_errors(self):
+        with mock.patch(__name__ + "._run", _absent), warnings.catch_warnings():
+            warnings.simplefilter("error")
+            with self.assertRaises(unittest.SkipTest) as cm:
+                _reachable(ABSENT)
+        self.assertIn(ABSENT, str(cm.exception))
+        self.assertIn("Not a valid object name", str(cm.exception))
+
+    def test_an_absent_sha_warns_then_skips_where_warnings_are_shown(self):
+        with mock.patch(__name__ + "._run", _absent), warnings.catch_warnings(record=True) as log:
+            warnings.simplefilter("always")
+            with self.assertRaises(unittest.SkipTest) as cm:
+                _reachable(ABSENT)
+        self.assertEqual([w.category for w in log], [HistoryUnreachable])
+        self.assertEqual(str(log[0].message), str(cm.exception), "the notice and the skip carry the same text")
 
 
 class TheHistoryAgrees(unittest.TestCase):

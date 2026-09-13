@@ -589,7 +589,10 @@ test("the keyboard on the popover: ArrowDown twice then Enter picks the third he
 
 test("closers: a press outside the popover closes it and a press on the button does not (the button's click is the toggle); every paint of the body closes it (a reload keeps the button, the Raw toggle hides it); the viewer's close drops its document listener; the popover is built afresh per open", async (t) => {
   const o = await open(REPORT, OUTLINE_NOTE, t);
-  const downs = () => doc.listeners.filter((l) => l.type === "pointerdown" && l.capture).length;
+  // initFileView installs one capture-phase pointerdown listener of its own on the document (watchInputKind, the kind of the last
+  // press for the keyboard hand-over's ring; the review's round 4), so the popover's is counted over that base
+  const base = doc.listeners.filter((l) => l.type === "pointerdown" && l.capture).length;
+  const downs = () => doc.listeners.filter((l) => l.type === "pointerdown" && l.capture).length - base;
   assert.equal(downs(), 0, "no outside-press listener before the popover opens");
   let pop = openOutline(o);
   assert.equal(downs(), 1, "one capture-phase pointerdown listener on the document while it is open");

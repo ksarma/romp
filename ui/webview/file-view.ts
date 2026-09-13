@@ -426,6 +426,42 @@ function typingInPeerFrame(): boolean {
     return a !== null && isTypingTarget(a);
   } catch { return false; }
 }
+/** Whether `a` wears the focus ring (`:focus-visible`): no holder, or the document's body, wears none, and a matches() without
+ *  the selector (the test stand-ins) reads none. Read off a holder before a hand-over, it names the ring for the body
+ *  (openFileView's takeKeyboard). Module-level since the review's round 4: the replace path reads it before the old card goes. */
+function ringOf(a: Element | null): boolean {
+  if (a === null || a === document.body) return false;
+  try { return a.matches(":focus-visible"); } catch { return false; }
+}
+/** The ring of the keyboard's holder INSIDE `old` (the viewer a replace-open is about to remove: a Tab-focused path link in the
+ *  note, activated by Enter), read before the removal for the landing's hand-over; null when the holder is elsewhere or there
+ *  is none, so the landing reads its own (the review's round 4: the link was gone at the landing and the new body got no ring). */
+function ringInOld(old: Element | null): boolean | null {
+  const a = document.activeElement;
+  return old && a && old.contains(a) ? ringOf(a) : null;
+}
+// The last input's kind, for a hand-over with NO holder to read the ring from (the review's round 4). Chromium's :focus-visible
+// heuristic for a script focus is "a key was pressed since the last mouse press", which is right, plus "nothing focusable was
+// last pressed", the misfire round 3 closed by naming the ring off the holder and passing none when there was none. That also
+// cost the ring at a keyboard-driven open whose opener is no element, or is gone at the landing: Enter on the file browser's
+// active row (the rows are not focusable, the document's body holds the keyboard throughout) and Enter on a Tab-focused path
+// link inside the note (the replace path removes the old viewer with the link before the fetch lands; ringInOld reads that one).
+// So the document records the kind of its last press, a key that is not a modifier alone or a pointer, on the two events
+// themselves, and a hand-over with no holder passes that while this document holds the page's focus (a relayed open's click was
+// in another frame, which this document's record knows nothing of, and the frame's own record is stale then): the browser's
+// rule for the case, read from the gestures, without its misfire. Installed once by initFileView beside the module's other
+// document listeners; a document that never called it, or one whose last press was a pointer, passes none, as round 3 did.
+let lastInputKey = false;
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock", "Fn", "NumLock", "ScrollLock"]);
+function watchInputKind(): void {
+  document.addEventListener("keydown", (e: KeyboardEvent) => { if (!MODIFIER_KEYS.has(e.key)) lastInputKey = true; }, true);
+  document.addEventListener("pointerdown", () => { lastInputKey = false; }, true);
+}
+/** The ring for a hand-over with no holder: the last press in this document was a key, and this document holds the page's focus. */
+function ringWithNoHolder(): boolean {
+  if (!lastInputKey) return false;
+  try { return typeof document.hasFocus !== "function" || document.hasFocus(); } catch { return false; }
+}
 // Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
 // reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
 // pane's openHere, so the file enters its Recent list and names its session), else the shared viewer in place,
@@ -923,6 +959,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
   closeGuard = null;
   closeAsks = [];
+  const priorRing = ringInOld(document.getElementById("romp-fileview"));   // the ring of a holder inside the old card (a Tab-focused path link activated by Enter), read before anything below moves the focus or removes the card, for the landing's hand-over (takeKeyboard)
   runLeave();                                          // …and the same leave write: the old file's place, before its body goes
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
@@ -1441,18 +1478,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // which is right, and ALSO when nothing focusable was last pressed (a fresh page, a click on plain text or on a chat pill
   // whose press strips its tabindex, a Recent row that is a plain div, a relayed open whose click was in another frame),
   // which framed the whole note in the accent on the common pointer opens. So the hand-over names the ring through the focus
-  // call's focusVisible option, read off the holder the body takes the keyboard from (ringOf): a holder wearing the ring (a
-  // Tab-focused toggle activated by Enter, the Outline popover after its arrow keys) passes it on; no holder, or a
-  // mouse-focused control, passes none. A Tab into the body is a native focus and earns the ring on its own, and the first
-  // key pressed on the body afterwards shows it, as the heuristic does for any focused element. A caller that removes the
-  // holder before the hand-over reads the ring first and passes it (the Outline's closers; the disk bar's Reload records it
-  // at the click, before the disable drops the focus). Chromium honours the option and a browser without it ignores it;
-  // lib.dom's FocusOptions lacks the field, so the options object is typed here (file-view-focus-ring-browser.test.ts
-  // measures the ring over real presses on every surface; file-view.test.ts pins the call's shape).
-  const ringOf = (a: Element | null): boolean => {
-    if (a === null || a === document.body) return false;
-    try { return a.matches(":focus-visible"); } catch { return false; }   // a matches() without the selector (the test stand-ins) reads no ring
-  };
+  // call's focusVisible option, read off the holder the body takes the keyboard from (ringOf, module-level): a holder wearing
+  // the ring (a Tab-focused toggle activated by Enter, the Outline popover after its arrow keys) passes it on; a mouse-focused
+  // control passes none; and with no holder (the document's body holds the keyboard) the kind of this document's last press
+  // decides, a key passing the ring and a pointer none (ringWithNoHolder, the review's round 4: round 3 passed none for every
+  // holderless hand-over, and Enter on the file browser's active row, whose rows are not focusable, lost the ring the browser
+  // had drawn for that keyboard user). A Tab into the body is a native focus and earns the ring on its own (a verdict passed
+  // here is sticky for that focus, so the body's keydown below lifts it on the first plain key after a ringless hand-over). A
+  // caller that removes the holder before the hand-over reads the ring first and passes it (the Outline's closers;
+  // the disk bar's Reload records it at the click, before the disable drops the focus; the replace path reads a holder inside
+  // the old card before the removal, ringInOld, and the open's first landing passes it). Chromium honours the option and a
+  // browser without it ignores it; lib.dom's FocusOptions lacks the field, so the options object is typed here
+  // (file-view-focus-ring-browser.test.ts and file-view-focus-ring-openers-browser.test.ts measure the ring over real presses
+  // on every surface; file-view.test.ts pins the call's shape).
   let takingKeyboard = false;
   const takeKeyboard = (ring?: boolean): void => {
     if (editing || !wrap.isConnected) return;
@@ -1460,14 +1498,30 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (a && a !== document.body && !bar.contains(a)) return;
     if (typingInPeerFrame()) return;
     takingKeyboard = true;
-    const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? ringOf(a) };
+    const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };
     try { body.focus(opts); } finally { takingKeyboard = false; }
   };
+  // The ring after a key (the review's round 4). Chromium keeps the verdict a focus call named for the life of that focus, so a
+  // body handed the keyboard without the ring (a pointer open, a mouse click on a toggle or a text-size step) showed none after
+  // any number of keys, where the heuristic gives a mouse-focused element the ring on its first key. The body's own keydown
+  // lifts it: the first key that is not a modifier alone and carries no Ctrl, Alt or Meta (a chord is a shortcut: Ctrl+C over a
+  // selection in the body copies and shows no ring, as the heuristic has it) takes the keyboard again naming the ring, when the
+  // body holds it without one. A re-focus of the element that already holds the focus changes nothing in Chromium (measured:
+  // the verdict stands), so the body is blurred first and focused again in the same handler; the key's default runs after it
+  // (nothing is prevented, so PageDown scrolls as it did), the selection stands (it is the document's, and a blur moves none
+  // of it), and the focusout and focusin the pair fires stay on the body, which nothing in the viewer or the panel listens to
+  // (the panel's press bookkeeping reads the window's blur alone). The probe's gate stands aside as for every own focus call.
+  body.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || MODIFIER_KEYS.has(e.key) || editing) return;
+    if (document.activeElement !== body || ringOf(body)) return;
+    takingKeyboard = true;
+    try { body.blur(); body.focus({ preventScroll: true, focusVisible: true } as FocusOptions & { focusVisible: boolean }); } finally { takingKeyboard = false; }
+  });
   /** Nothing holds the keyboard: this document's activeElement is null or its body, and no box in a sibling frame is being typed
    *  in (the disable's drop and a click elsewhere both land the focus on a document's body; the bar's re-armed Reload reads this). */
   const keyboardIdle = (): boolean => { const a = document.activeElement; return (a === null || a === document.body) && !typingInPeerFrame(); };
   let keyboardPending = true;                          // the open's first landing takes the keyboard; a reload's does not
-  const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };
+  const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(priorRing ?? undefined); };   // with the ring of the holder the replace path removed, when it had one
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
   // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
   // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
@@ -1678,11 +1732,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the seat is then the exact one; a depth inside the summary's own height says nothing, since the summary straddles the edge
   // the same open or shut, and the fold stays as authored (the review's round 2: a shut callout whose summary straddled the
   // edge came back open, thirty paragraphs taller). A record read in the other view (a Raw row inside a fold Rendered shuts)
-  // opens the fold too, and shows the passage the reader had. Since the review's round 3 the record carries the Rendered
-  // view's open folds by ordinal (restoreFolds, below), so at the record's mtime every fold comes back as the reader left
-  // it before any of this runs (an open fold whose summary sat at or just above the edge, a fold read at another pane
-  // width), and the rules here are the fallback: a changed file, a record with no fold state.
-  const revealRemembered = (p: Place, depth: number, otherView: boolean): void => {
+  // opens the fold too, and shows the passage the reader had, when the record's block began at or above the edge (its `top`
+  // at most 0: the edge lay on or inside the block's rows; a Raw record left at the file's very top, the front matter's block
+  // starting UNDER the edge, names rows the reader never saw and leaves the fold shut; the review's round 4: round 3's rule
+  // had read no sign, and every Rendered reopen after a Raw leave at the top unfolded the front matter). Since the review's
+  // round 3 the record carries the Rendered view's open folds by ordinal (restoreFolds, below), so at the record's mtime every
+  // fold comes back as the reader left it before any of this runs (an open fold whose summary sat at or just above the edge,
+  // a fold read at another pane width), and the rules here are the fallback: a changed file, a record with no fold state;
+  // when the record's folds WERE put back, the block's own fold stands as they say and the depth rule does not run over it
+  // (the review's round 4: a fold left SHUT at 380 px with the edge 50 px into its two-line shut box, reopened at 900 where
+  // the box is one line, met a depth past the shut box and came back open, the reverse face of the width window round 3
+  // closed; restoreFolds says whether it applied, and revealRemembered takes that).
+  const revealRemembered = (p: Place, depth: number, otherView: boolean, restored: boolean): void => {
     const md = body.querySelector(".fileview-md");
     if (!md || shownText === null) return;
     const b = blockIndexAt(sourceBlockSpans(shownText), p.start);
@@ -1690,29 +1751,53 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     for (const e of renderedBlockElements(md, shownText, b)) {
       revealFragmentTarget(e);
       // the fold's own shut box (its summary) shows the same open or shut, so only a depth past it says the content was showing;
-      // a record read in the other view, Raw, where every row shows, names the fold's rows whatever the depth (the review's
-      // round 3: a Raw record inside a folded callout reopened under the Rendered preference seated the shut summary at the edge)
-      if (e.localName === "details" && !e.hasAttribute("open") && (otherView || (depth > 0 && depth >= e.getBoundingClientRect().height - 0.5))) e.setAttribute("open", "");
+      // a record read in the other view, Raw, where every row shows, names the fold's rows when its block began at or above the
+      // edge (the review's round 3: a Raw record inside a folded callout reopened under the Rendered preference seated the shut
+      // summary at the edge; round 4: a Raw record at the file's top, the block below the edge, had opened the front matter);
+      // a fold the record's own state put back (restored) is as the reader left it, and neither rule runs over it
+      if (e.localName === "details" && !e.hasAttribute("open") && !restored && (otherView ? p.top <= 0 : depth > 0 && depth >= e.getBoundingClientRect().height - 0.5)) e.setAttribute("open", "");
     }
   };
   // The record's folds (RememberedPlace.folds), put back before the seat: every `<details>` of the Rendered body open or shut as
   // the reader left it, by ordinal, when the file's mtime is the record's (the same bytes render the same folds, so the
   // ordinals are exact; a changed file keeps the rules above, which read the block and its depth). A record with no fold
-  // state (a Raw read, a note with no fold, an older store's record) changes nothing here.
-  const restoreFolds = (rec: RememberedPlace): void => {
-    if (!rec.folds || rec.mtimeNs !== mtimeNs || ctx.mode() !== "rendered") return;
+  // state (a Raw read, a note with no fold, an older store's record) changes nothing here. Returns whether it applied, so the
+  // rules above stand down over a fold it put back (the review's round 4).
+  const restoreFolds = (rec: RememberedPlace): boolean => {
+    if (!rec.folds || rec.mtimeNs !== mtimeNs || ctx.mode() !== "rendered") return false;
     const md = body.querySelector(".fileview-md");
-    if (!md) return;
+    if (!md) return false;
     const open = new Set(rec.folds);
     Array.from(md.querySelectorAll("details")).forEach((d, i) => { if (open.has(i)) d.setAttribute("open", ""); else d.removeAttribute("open"); });
+    return true;
   };
+  // A record's folds met by a RAW first paint (Edit saves the Raw preference, so the reopen after a close from the editor paints
+  // Raw over a Rendered record; the preference switched elsewhere between the leave and the reopen the same) are held here for
+  // the open's first Rendered paint, the toggle, and put back there at the record's mtime before that paint's seat
+  // (renderBody, right after foldKeeper's restore, whose only note in such an open was taken over the Raw body and holds no
+  // fold). The review's round 4: restoreFolds stood down over the Raw paint, landRemembered spent the record, and the toggle
+  // painted every fold as authored, so the fold the reader had open came back shut with its summary at the edge over the
+  // passage the Raw row had named (the same sequence with a Rendered first paint restores it exactly). Spent once; a changed
+  // mtime by then leaves the folds as authored (restoreFolds' own gate). The same shape as pendingHeading, item 4's target held
+  // for the Rendered toggle under the Raw preference.
+  let pendingFolds: RememberedPlace | null = null;
+  const restoreHeldFolds = (): void => { if (!pendingFolds || ctx.mode() !== "rendered") return; const r = pendingFolds; pendingFolds = null; restoreFolds(r); };
+  /** The body has no box (its pane's document is display:none): nothing reads or seats until it shows (landRemembered). */
+  const unmeasurable = (): boolean => typeof body.getClientRects === "function" && body.getClientRects().length === 0;
   const landRemembered = () => {
     if (pendingPlace === null || shownText === null) return;
+    // A first text paint under a body with no box (the Files pane hidden while the fetch was in flight, a phone's tab swap, the
+    // pane toggled off): every rect reads zero, so the span seat finds nothing and the numeric write is a no-op on a zero-height
+    // scroller. The record stays pending for the next paint over a body that has a box: the width hook's repaint at the show
+    // (the ResizeObserver's report of the width moving from 0, below) calls this again (the review's round 4: the note stood at
+    // its top once the pane showed, the record spent under the hidden layout).
+    if (unmeasurable()) return;
     const rec = pendingPlace; pendingPlace = null;
-    restoreFolds(rec);
+    const restored = restoreFolds(rec);
+    if (!restored && rec.folds && rec.mtimeNs === mtimeNs && ctx.mode() !== "rendered") pendingFolds = rec;   // a Raw first paint: held for the first Rendered paint (pendingFolds)
     const kept = placeFromRemembered(rec, shownText);
     const depth = kept && kept.top < 0 && ctx.mode() === rec.view ? -kept.top : 0;
-    if (kept) revealRemembered(kept, depth, ctx.mode() !== rec.view);
+    if (kept) revealRemembered(kept, depth, ctx.mode() !== rec.view, restored);
     const seated = kept ? seatPlaceOutcome(body, shownText, depth ? { ...kept, top: 0 } : kept).seated : false;
     if (seated) { if (depth) body.scrollTop += depth; }
     else body.scrollTop = rec.scrollTop;
@@ -1815,7 +1900,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     frame = 0;
     if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
     paintedWidth = seenWidth;
-    if (textShowing()) { fireRenderedKeepingSelection(); seat(place); }   // the place read before the width moved (see notePlace)
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(place); landRemembered(); }   // the place read before the width moved (see notePlace); then a remembered place a first paint under a boxless body left pending (landRemembered)
   };
   const stampBodyWidth = watchBodyWidth(body, (w) => {
     if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }   // the first report describes the size at observe(), not a change
@@ -1989,7 +2074,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
       body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
-      folds.restore();                        // each fold as the person left it, before the hooks measure and the seat reads the heights (a Raw paint has none)
+      folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
       fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
@@ -2694,7 +2779,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // refuses a stale save and offers its own Reload) and the editor's entry takes the bar with every other notice.
   // The listeners leave with the viewer by both exits (probeLive, dropProbe: the onKey idiom). Exact events throughout:
   // the reader's return, the answer, the landing.
-  const raiseHold = pressHold(body);           // the bar's raise waits out a press on the body (the probe's answer, below): its own hold, since the landing's parks one run at a time
+  // The bar's raise waits out a press on the body ROW (the probe's answer, below): `main`, the row the bar is inserted above
+  // (noteBar), so a raise moves the body AND the Comments aside beside or below it, and a press on either is held (the
+  // review's round 4: round 3 held the body alone, and a press on a card's head, on Resolve or a drag in the reply box in the
+  // aside while the HEAD landed had the control move out from under the pointer; the click was lost and the drag selected
+  // nothing). Its own hold, since the landing's (`hold`, on the body) parks one run at a time and a raise must never
+  // displace a parked landing.
+  const raiseHold = pressHold(main);
   let probeOut = false;                        // a HEAD is out: the next event is folded into it
   let probeStopped = false;                    // a 413/415 retired the probe for this open
   let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number; held: boolean; ring: boolean } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch, whether the bar held the keyboard at its Reload's click and whether with the ring
@@ -2767,10 +2858,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (v.kind !== "value" || editing || !mtimeNs || !wrap.isConnected) return;   // an unknown answer, or the world moved while the HEAD was out
       const moved = v.value;
       if (!mtimeMoved(mtimeNs, moved)) return;
-      // The raise waits out a press on the body (raiseHold). The mousedown that begins a drag in a Files iframe that did not hold
-      // the page's focus is itself the window focus that ran this HEAD, and the bar is a row of the card above the body, so a
-      // raise while the pointer was down moved the body under the press and the drag's selection ended on other text (the
-      // review's round 3: with the Comments panel open the composer quoted the wrong passage). The guards re-run at the
+      // The raise waits out a press on the body row (raiseHold: the body and the aside). The mousedown that begins a drag in a
+      // Files iframe that did not hold the page's focus is itself the window focus that ran this HEAD, and the bar is a row of
+      // the card above that row, so a raise while the pointer was down moved the body under the press and the drag's selection
+      // ended on other text (the review's round 3: with the Comments panel open the composer quoted the wrong passage; round 4:
+      // a press in the aside was not held, and the card head under it moved before the release). The guards re-run at the
       // release for what moved while the raise was parked: a landing that brought the file, the editor's entry, the close.
       raiseHold.defer(() => { if (!editing && mtimeNs && wrap.isConnected && mtimeMoved(mtimeNs, moved)) raiseDiskBar(); });
     }).catch(() => { /* a network failure: nothing the reader sees has changed; the next event asks again */ })
@@ -3931,6 +4023,7 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
   // the write is not retired (a page restored from the back-forward cache still shows the viewer, and its close writes
   // again). The chat's persistScrollForReload (render.ts) keeps its own place the same way.
   window.addEventListener("pagehide", () => { if (leaveLive) leaveLive(); });
+  watchInputKind();   // the kind of the document's last press, for a hand-over of the keyboard with no holder to read the ring from (ringWithNoHolder)
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

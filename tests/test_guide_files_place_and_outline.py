@@ -152,12 +152,15 @@ class TheViewerDoesIt(unittest.TestCase):
         # the gate: nothing, the document's body or a control in the viewer's own bar yields; a box being typed in keeps it
         self.assertIn("if (a && a !== document.body && !bar.contains(a)) return;", gate)
         # the focus call names the ring through focusVisible, read off the holder the body takes the keyboard from (the
-        # review's round 3: Chromium's script-focus heuristic framed the note on every pointer open)
-        self.assertIn("const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, focusVisible: ring ?? ringOf(a) };", gate)
+        # review's round 3: Chromium's script-focus heuristic framed the note on every pointer open) or, with no holder, off
+        # the kind of the document's last press (round 4: Enter on a file browser row, whose rows are not focusable, lost it)
+        self.assertIn("const opts: FocusOptions & { focusVisible: boolean } = { preventScroll: true, "
+                      "focusVisible: ring ?? (a === null || a === document.body ? ringWithNoHolder() : ringOf(a)) };", gate)
         self.assertIn("body.focus(opts);", gate)
-        # the open's first landing takes it once; a reload's landing never (keyboardPending is spent)
-        self.assertIn("const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };",
-                      self.viewer)
+        # the open's first landing takes it once, with the ring of a holder the replace path removed when it had one (round 4);
+        # a reload's landing never (keyboardPending is spent)
+        self.assertIn("const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; "
+                      "takeKeyboard(priorRing ?? undefined); };", self.viewer)
         for sheet in ("styles.css", "feed.css"):
             css = _read("ui", "webview", sheet)
             self.assertIn("\n.fileview-body:focus { outline: none; }\n", css, sheet)

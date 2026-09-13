@@ -24,12 +24,21 @@
 // summary wraps and the shut box the round 2 gate measured is taller), a `[!tip]+` callout the reader closed comes back closed,
 // and a changed mtime falls back to the round 2 rules; a Raw record inside a folded callout reopened under the Rendered
 // preference opens the callout, the fold being the record's block; and an offset in a comment right after a shut callout,
-// which stands aside for the callout's element, leaves the callout as authored (each red over a git archive of 27c56fbf7). Skips LOUDLY
-// without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an invented report,
-// /repo/notes-api paths, the placeholder sid.
+// which stands aside for the callout's element, leaves the callout as authored (each red over a git archive of 27c56fbf7). The
+// review's round 4 (the seventh to tenth tests, each red over a git archive of 7fbced030): a fold the record's own state put
+// back is left as it says, so a callout left SHUT at 380 px with the edge 50 px into its two-line shut box, reopened at 900
+// where the box is one line, stays shut (the depth rule had re-opened it, the reverse face of the width window round 3 closed);
+// a Raw record left at the file's very top, the front matter's block starting under the edge, leaves the front matter shut on
+// a Rendered reopen (round 3's other-view rule had read no sign; a Raw record inside the front matter's rows, and one with the
+// callout's first row at the edge, still open the fold); a record's folds met by a Raw first paint (Edit saves the Raw
+// preference) are held for the open's first Rendered paint, so the toggle after the reopen shows the fold open with the
+// reader's passage (before: every fold as authored, the summary at the edge over the hidden passage); and a first paint under a
+// body with no box (the pane's document display:none) keeps the record for the width hook's repaint at the show, where the
+// note had stood at its top. Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Synthetic
+// values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, frames, paintsReach, PARA, REPORT, SID, MT2 } from "./real-viewer-leg";
+import { inBrowser, openViewer, frames, paintsReach, PARA, REPORT, SID, MT2, LONG, topBlock } from "./real-viewer-leg";
 
 const paras = (a: number, b: number): string => Array.from({ length: b - a + 1 }, (_, i) => PARA(a + i)).join("\n\n");
 /** Paragraphs 1 to 10, an author's closed <details> holding 11 to 40, then 41 to 70. */
@@ -489,6 +498,210 @@ test("in a browser, at 900 and 380 px (review round 3): an open at an offset ins
         assert.deepEqual(errors, [], what + " (trailing blank line): no page errors");
         await page.close();
       }
+    }
+  });
+});
+
+/** In the page: the first Raw row (`.fv-cl`) whose box ends below the body's edge, its first characters and its top. */
+function rawTop(): { text: string; top: number; scrollTop: number } | null {
+  const body = document.querySelector(".fileview-body") as HTMLElement; const br = body.getBoundingClientRect();
+  for (const e of Array.from(body.querySelectorAll("code.hljs .fv-cl")) as HTMLElement[]) {
+    const r = e.getBoundingClientRect();
+    if (r.bottom > br.top + 0.5) return { text: (e.textContent || "").trim().slice(0, 14), top: Math.round((r.top - br.top) * 10) / 10, scrollTop: body.scrollTop };
+  }
+  return null;
+}
+/** In the page: scroll the body so the Raw row starting with `text` has its top `above` px above the body's edge. */
+function putRowAbove([text, above]: [string, number]): void {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const row = (Array.from(body.querySelectorAll("code.hljs .fv-cl")) as HTMLElement[]).find((e) => (e.textContent || "").indexOf(text) === 0)!;
+  body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top + above;
+}
+/** In the page: every `<details>` of the Rendered body, open or shut, in document order. */
+const foldsOpen = (page: any): Promise<boolean[]> => page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md details")).map((d) => d.hasAttribute("open")));
+/** Click the bar button labelled `label` and wait for the paint it asks for. */
+async function clickBar(page: any, label: string): Promise<void> {
+  const before: number = await page.evaluate(() => (window as any).__paints);
+  await page.evaluate((l: string) => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === l) as HTMLElement; b.click(); }, label);
+  await paintsReach(page, before + 1);
+  await frames(page, 3);
+}
+
+test("in a browser (review round 4): a fold the record's own state put back is left as it says, so a callout left SHUT at 380 px with the edge 50 px into its two-line shut box (and 40 px, inside the wrapped summary), reopened at 900 px where the shut box is one line, stays shut with the shut layout's height (before the fix: the depth rule, measuring the one-line box against the 380 px depth, re-opened the fold restoreFolds had just put back shut, thirty paragraphs back); the 380 to 380 control stays shut; and the round 3 face, the callout read OPEN at 900 with the edge 50 px in and reopened at 380, still comes back open", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const CALLOUT = ".fileview-md details.md-callout";
+    for (const D of [50, 40]) for (const [leaveW, reopenW] of [[380, 900], [380, 380]] as Array<[number, number]>) {
+      const what = "D=" + D + " leave@" + leaveW + " reopen@" + reopenW;
+      const { page, errors } = await openViewer(browser, "pane", leaveW, 520, { docs: { [REPORT]: WRAP_NOTE } });
+      await hookLeaves(page);
+      await page.evaluate(putFoldAbove, [CALLOUT, D]); await frames(page, 2);
+      const before: FoldRead = await page.evaluate(readFold, CALLOUT);
+      assert.equal(before.open, false, what + ": the callout is shut as authored at the leave");
+      assert.ok(before.top < 0 && before.bottom > 0, what + ": the edge is inside its shut box (top " + before.top + ", bottom " + before.bottom + ")");
+      assert.ok(before.summaryBottom - before.summaryTop > 30, what + ": the summary wraps to two lines at 380 px (" + (before.summaryBottom - before.summaryTop) + " px)");
+      await reopenAfter(page, async () => { if (reopenW !== leaveW) { await page.setViewportSize({ width: reopenW, height: 520 }); await frames(page, 3); } });
+      const rec = await lastLeave(page);
+      assert.ok(rec && rec.view === "rendered" && Array.isArray(rec.folds) && rec.folds.length === 0, what + ": the record is Rendered with no open fold (folds " + JSON.stringify(rec && rec.folds) + ")");
+      const after: FoldRead = await page.evaluate(readFold, CALLOUT);
+      assert.equal(after.open, false, what + ": the fold the reader had SHUT stays shut (before the fix at a width change: open, the depth of " + D + " px past the one-line shut box, and Paragraph 11 shown under the edge)");
+      assert.equal(await page.evaluate(paraShown, "Paragraph 11"), false, what + ": the callout's content stays hidden");
+      if (reopenW === leaveW) assert.equal(after.scrollHeight, before.scrollHeight, what + ": the same document height");
+      else assert.ok(after.scrollHeight < before.scrollHeight, what + ": the shut layout at 900 px is shorter than the shut layout at 380 (" + after.scrollHeight + " against " + before.scrollHeight + "), not the open one");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+    // the round 3 face: read OPEN at 900 with the edge 50 px in (past the one-line summary), reopened at 380 where the title wraps
+    {
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: WRAP_NOTE } });
+      await hookLeaves(page);
+      await page.click(CALLOUT + " > summary"); await frames(page, 2);
+      await page.evaluate(putFoldAbove, [CALLOUT, 50]); await frames(page, 2);
+      const before: FoldRead = await page.evaluate(readFold, CALLOUT);
+      assert.equal(before.open, true, "round 3 face: open at the leave"); assert.ok(before.summaryBottom < 0, "round 3 face: the one-line summary is above the edge");
+      await reopenAfter(page, async () => { await page.setViewportSize({ width: 380, height: 520 }); await frames(page, 3); });
+      const rec = await lastLeave(page);
+      assert.deepEqual(rec.folds, [0], "round 3 face: the record names the open fold");
+      const after: FoldRead = await page.evaluate(readFold, CALLOUT);
+      assert.equal(after.open, true, "round 3 face: the fold the reader had OPEN comes back open at the other width (the record's state, not the depth rule)");
+      assert.equal(await page.evaluate(shownPara), "Paragraph 11", "round 3 face: the content is under the edge again");
+      assert.deepEqual(errors, [], "round 3 face: no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, at 900 and 380 px (review round 4): a Raw record left at the file's very top, the front matter's block STARTING under the edge (top +10), reopened under the Rendered preference leaves the front matter shut, as a Rendered leave at the top does (before the fix: the other-view rule read no sign, and the `Front matter` fold came back open on every Rendered reopen after a Raw leave at the top, the state an Edit leaves a reader in); a Raw record inside the front matter's rows (the `tags:` row at the edge, top at most 0) still opens it, and a Raw record with the callout's first row at the edge (top 0) still opens the callout", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const FM = ".fileview-md details.md-frontmatter", CALLOUT = ".fileview-md details.md-callout";
+    for (const w of [900, 380]) {
+      const what = "pane " + w + "px";
+      // the finding: Raw, at the very top
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, 520, { docs: { [REPORT]: FM_NOTE }, raw: true });
+        await hookLeaves(page);
+        const rawBefore = await page.evaluate(rawTop);
+        assert.ok(rawBefore && rawBefore.text.startsWith("---") && rawBefore.scrollTop === 0, what + " (top): the Raw view stands at the file's top, the `---` row first (" + JSON.stringify(rawBefore) + ")");
+        await reopen(page, { rendered: true });
+        const rec = await lastLeave(page);
+        assert.ok(rec && rec.view === "raw" && rec.start === 0 && rec.top > 0 && rec.atTop === true, what + " (top): the record is the Raw view's at the top with the block's top under the edge (" + JSON.stringify(rec) + ")");
+        assert.equal(await page.evaluate(() => !!document.querySelector(".fileview-md > p")), true, what + " (top): the reopen painted the Rendered view");
+        assert.deepEqual(await foldsOpen(page), [false, false], what + " (top): the front matter and the callout stay shut (before the fix: [true, false], the front matter's lines unfolded over a block the reader's edge never reached)");
+        const fm: FoldRead = await page.evaluate(readFold, FM);
+        assert.ok(fm.bottom - fm.top < 60, what + " (top): the front matter's box is its summary alone (" + (fm.bottom - fm.top) + " px)");
+        assert.deepEqual(errors, [], what + " (top): no page errors");
+        await page.close();
+      }
+      // the control the rule keeps: Raw with the `tags:` row (the front matter's third row) at the edge, the edge inside the block's rows
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, 520, { docs: { [REPORT]: FM_NOTE }, raw: true });
+        await hookLeaves(page);
+        await page.evaluate(putRowAbove, ["tags:", 0]); await frames(page, 2);
+        await reopen(page, { rendered: true });
+        const rec = await lastLeave(page);
+        assert.ok(rec && rec.view === "raw" && rec.start === 0 && rec.top <= 0, what + " (inside): the record's block is the front matter with the edge inside its rows (" + JSON.stringify(rec) + ")");
+        assert.equal((await foldsOpen(page))[0], true, what + " (inside): a Raw record inside the fold's rows opens it (the round 3 rule)");
+        assert.deepEqual(errors, [], what + " (inside): no page errors");
+        await page.close();
+      }
+      // the boundary the plan records: the callout's first row exactly at the edge (top 0) opens the callout
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, 520, { docs: { [REPORT]: CALLOUT_NOTE }, raw: true });
+        await hookLeaves(page);
+        await page.evaluate(putRowAbove, ["> [!note]-", 0]); await frames(page, 2);
+        await reopen(page, { rendered: true });
+        const rec = await lastLeave(page);
+        assert.ok(rec && rec.view === "raw" && Math.abs(rec.top) < 0.5, what + " (first row): the record's top is 0 (" + JSON.stringify(rec) + ")");
+        const c: FoldRead = await page.evaluate(readFold, CALLOUT);
+        assert.equal(c.open, true, what + " (first row): the callout opens for a Raw record whose first row was at the edge");
+        assert.deepEqual(errors, [], what + " (first row): no page errors");
+        await page.close();
+      }
+    }
+  });
+});
+
+test("in a browser, at 900 and 380 px (review round 4): a record's folds met by a RAW first paint are held for the open's first Rendered paint: the reader opens the author's <details>, reads Paragraph 25 twenty px in, clicks Edit (the Raw preference saved), closes from the editor, reopens (Raw paints, Paragraph 25's row at the edge) and clicks Rendered: the fold is open, Paragraph 25 shown and the scrollTop back within a pixel (before the fix: every fold as authored, the summary `Closed one` at the edge over the hidden passage, the record's folds [0] lost); the same without Edit when the preference changed to Raw between the leave and the reopen; and a Rendered reopen of the same leave restores it exactly", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const DET = ".fileview-md details";
+    for (const w of [900, 380]) for (const via of ["edit", "preference"] as const) {
+      const what = "pane " + w + "px, " + via;
+      const { page, errors } = await openViewer(browser, "pane", w, 520, { docs: { [REPORT]: DETAILS_NOTE } });
+      await hookLeaves(page);
+      await page.click(DET + " > summary"); await frames(page, 2);
+      await page.evaluate(putAbove, ["Paragraph 25", 20]); await frames(page, 2);
+      const before: FoldRead = await page.evaluate(readFold, DET);
+      assert.equal(before.open, true, what + ": the fold is open at the leave");
+      assert.equal(await page.evaluate(paraShown, "Paragraph 25"), true, what + ": Paragraph 25 shows");
+      if (via === "edit") {
+        await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+        await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
+        assert.equal(await page.evaluate(() => localStorage.getItem("romp:fileviewFmt")), JSON.stringify({ md: "raw" }), what + ": Edit saved the Raw preference");
+      }
+      // the leave (a clean buffer closes without an ask), the preference Raw, the reopen's first paint Raw
+      const p0: number = await page.evaluate(() => (window as any).__paints);
+      await page.evaluate(() => { (window as any).FV.closeFileView(); });
+      if (via === "preference") await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
+      const rec = await lastLeave(page);
+      assert.ok(rec && rec.view === "rendered" && Array.isArray(rec.folds) && rec.folds[0] === 0 && rec.top < 0, what + ": the leave's record is the Rendered read with the fold open (" + JSON.stringify(rec) + ")");
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+      await paintsReach(page, p0 + 1); await frames(page, 3);
+      const raw = await page.evaluate(rawTop);
+      assert.ok(raw && raw.text.startsWith("Paragraph 25"), what + ": the Raw first paint seats the block's first row at the edge (" + JSON.stringify(raw) + ")");
+      // the toggle: the held folds go back before the seat
+      await clickBar(page, "Rendered");
+      const after: FoldRead = await page.evaluate(readFold, DET);
+      assert.equal(after.open, true, what + ": the fold the reader had open is open after the Rendered toggle (before the fix: shut, painted as authored, with `Closed one` at the edge)");
+      assert.equal(await page.evaluate(paraShown, "Paragraph 25"), true, what + ": Paragraph 25 is shown again (before: hidden under the shut summary)");
+      assert.equal(after.scrollHeight, before.scrollHeight, what + ": the open layout's height");
+      near(after.scrollTop, before.scrollTop, what + ": the scrollTop is back (the Raw row's place seats the block at the edge in the other view, the depth staying behind: Paragraph 25's top at the edge, 20 px from the leave's)", 21);
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+    // the control: the same Edit leave with the preference put back to Rendered before the reopen restores the fold exactly
+    {
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: DETAILS_NOTE } });
+      await page.click(DET + " > summary"); await frames(page, 2);
+      await page.evaluate(putAbove, ["Paragraph 25", 20]); await frames(page, 2);
+      const before: FoldRead = await page.evaluate(readFold, DET);
+      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
+      await reopen(page, { rendered: true });
+      const after: FoldRead = await page.evaluate(readFold, DET);
+      assert.equal(after.open, true, "control: a Rendered first paint restores the fold"); near(after.scrollTop, before.scrollTop, "control: the scrollTop is back");
+      assert.deepEqual(errors, [], "control: no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, at 900 px (review round 4): a reopen whose first text paint happens while the viewer has no box (the pane's document display:none while the fetch was in flight, a phone's tab swap) keeps the remembered place pending, and the width hook's repaint at the show seats it: Paragraph 40 back at the same edge with the scrollTop within a pixel (before the fix: the record spent under the zero layout, its numeric write a no-op on a zero-height scroller, and the note stood at its top once the pane showed); the control with the viewer visible throughout lands the same", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const hidden of [false, true]) {
+      const what = hidden ? "hidden at the paint" : "visible throughout";
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG } });
+      await page.evaluate(() => { const st = document.createElement("style"); st.textContent = "body.fv-pane-hidden #romp-fileview { display: none !important; }"; document.head.appendChild(st); });
+      await page.evaluate(putAbove, ["Paragraph 40", 30]); await frames(page, 2);
+      const before = await topBlock(page);
+      assert.ok(before && before.text.startsWith("Paragraph 40") && before.top < -29 && before.top > -31, what + ": Paragraph 40 read 30 px in (" + JSON.stringify(before) + ")");
+      const p0: number = await page.evaluate(() => (window as any).__paints);
+      await page.evaluate(() => { (window as any).FV.closeFileView(); });
+      if (hidden) await page.evaluate(() => { document.body.classList.add("fv-pane-hidden"); });
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+      await paintsReach(page, p0 + 1); await frames(page, 3);
+      if (hidden) {
+        const boxless = await page.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; return { rects: b.getClientRects().length, clientHeight: b.clientHeight, scrollTop: b.scrollTop, painted: !!document.querySelector(".fileview-md > p") }; });
+        assert.deepEqual(boxless, { rects: 0, clientHeight: 0, scrollTop: 0, painted: true }, what + ": the text painted under a body with no box");
+        const p1: number = await page.evaluate(() => (window as any).__paints);
+        await page.evaluate(() => { document.body.classList.remove("fv-pane-hidden"); });
+        await paintsReach(page, p1 + 1);   // the width hook's repaint at the show (the ResizeObserver's report, one reflow paint)
+        await frames(page, 3);
+      }
+      const after = await topBlock(page);
+      assert.ok(after && after.text.startsWith("Paragraph 40"), what + ": Paragraph 40 is the top block again (read " + JSON.stringify(after) + "; before the fix, hidden: `Report` at scrollTop 0)");
+      near(after!.scrollTop, before!.scrollTop, what + ": the scrollTop is back");
+      near(after!.top, before!.top, what + ": the same edge");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
     }
   });
 });

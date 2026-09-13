@@ -306,6 +306,7 @@ const MT = "1757145600000000001";
 const MT2 = "1757145600000000007";
 const MT3 = "1757145600000000008";
 const MT4 = "1757145600000000009";
+const MT5 = "1757145600000000010";
 
 // ── the probe: an action whose only job is to keep the ctx the viewer hands it ──────────────────────
 let seam: FileViewActionCtx | null = null;
@@ -836,7 +837,7 @@ test("changed on disk (review round 3): a failed Reload re-arms its button AFTER
   assert.equal(doc.activeElement, box, "the box keeps the keyboard");
 });
 
-test("changed on disk (review round 3): a HEAD answered while the pointer is pressed on the body parks the bar's raise until the release (a drag begun on the body in a Files frame that did not hold the page's focus is itself the window focus that ran the HEAD, and the bar is a card row above the body: raised mid-press it moved the body under the pointer and the drag's selection ended on other text); the release raises it; a landing during the press stands the parked raise down; a press elsewhere holds nothing", async (t) => {
+test("changed on disk (review round 3): a HEAD answered while the pointer is pressed on the body parks the bar's raise until the release (a drag begun on the body in a Files frame that did not hold the page's focus is itself the window focus that ran the HEAD, and the bar is a card row above the body: raised mid-press it moved the body under the pointer and the drag's selection ended on other text); the release raises it; a landing during the press stands the parked raise down; a press on the bar holds nothing; and (review round 4) a press in the Comments ASIDE, the other column of the row the bar is inserted above, parks the raise too (before: held on the body alone, a press on a card's head or a drag in the reply box had the bar land under it, the click lost)", async (t) => {
   const { wrap, ctx, body } = await open(APP, t);
   disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
   body.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // the drag's press on the body
@@ -861,10 +862,29 @@ test("changed on disk (review round 3): a HEAD answered while the pointer is pre
   await new Promise<void>((r) => setTimeout(r, 2)); await settle();
   assert.equal(ctx.mtimeNs(), MT3, "the landing ran at the release");
   assert.equal(barOf(wrap), null, "…and the raise stood down: the moved file is what shows");
-  // a press elsewhere (the bar, the aside) holds nothing: a HEAD answered under it raises at once
+  // a press on the bar (the title and actions row ABOVE the notice, which a raise never moves) holds nothing: a HEAD answered
+  // under it raises at once
   disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
   wrap.querySelector(".fileview-bar")!.dispatchEvent(new Ev("pointerdown", { button: 0 }));
   focusWindow(); await settle();
-  assert.equal(readBar(wrap).text, CHANGED, "a press outside the body is no drag over the text: raised at once");
+  assert.equal(readBar(wrap).text, CHANGED, "a press on the bar is over nothing the raise moves: raised at once");
+  win.dispatchEvent(new Event("pointerup"));
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT4);
+  // a press in the ASIDE (the Comments panel's column, mounted beside the body in the row the bar is inserted above; a card's
+  // head, Resolve, the reply box): the raise moves that column too, so the press is held and the release raises (the review's
+  // round 4: held on the body alone, the bar landed under the press and the card head moved out from under the pointer)
+  const aside = new El("div"); const head = aside.appendChild(new El("div")); head.className = "fc-card-head";
+  ctx.aside(aside as unknown as HTMLElement);
+  assert.equal(wrap.querySelector(".fileview-main")!.contains(aside), true, "the aside is mounted in the body row");
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT5 };
+  head.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // the press on a card's head
+  focusWindow(); await settle();
+  assert.equal(heads(), 4, "the HEAD ran");
+  assert.equal(barOf(wrap), null, "no bar while the pointer is down in the aside (before the fix: raised at once, and the aside dropped under the press)");
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "raised at the release");
+  assert.equal(heads(), 4, "no second HEAD");
   win.dispatchEvent(new Event("pointerup"));
 });
