@@ -439,10 +439,56 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
   img.style.outline = ""; img.style.outlineOffset = "";
   delete img.dataset.act; delete img.dataset.id;
 }
+// The block-level paint (plans/markdown-viewer.md Slice 8, item 5). A display formula covered by a range is a block of its own
+// line, which no inline mark can wrap: a mark around a block box paints nothing over it, and a mark between `.katex-display`
+// and its `.katex` breaks KaTeX's layout (anchor-map.ts isInlineFormula), so paintRendered STAMPS the formula's own
+// `.katex-display` element instead of wrapping it: the block class for the caller's class (`fc-hl-block` for a highlight,
+// `fc-presel-block` for the composer's pending target; the Slice 8 contract line) and the paint's data attributes, and it
+// returns the element among the marks. The panel then treats it as one of its marks (a control that opens the card, tabIndex
+// and role set by the pass, the margin layout's box, the arrivals dot, owns) with one difference: where a mark is unwrapped, the
+// element is stripped in place (stripBlockPaint), since unwrapping it would hoist KaTeX's root into the page as a top-level
+// node the block pairing meets; the strip takes its tabindex, which blurs a box holding the keyboard, so the pass gives the
+// focus back to the box it stamps again as it gives a mark's successor the focus (refocusMark reads the focus, not the node).
+// The sheets dress the classes on the formula's box (styles.css and feed.css, the .fc-hl region).
+const BLOCK_PAINT_CLASSES = ["fc-hl-block", "fc-presel-block"];
+const isMarkEl = (n: Element): boolean => n.tagName.toUpperCase() === "MARK";
+const isBlockPaint = (n: Element): boolean => BLOCK_PAINT_CLASSES.some((c) => n.classList.contains(c));
+/** The ids of every comment whose highlight covers a stamped box, from its `data-ids` (coverBox); a mark carries none. */
+const boxIds = (n: Element): string[] => (n.getAttribute("data-ids") || "").split(" ").filter(Boolean);
+/** A stamped box covered by several comments (two comments on one display formula): the box is ONE element where two comments
+ *  over prose nest their marks, and each paint rewrites the paint's data on it (anchor-map.ts stampBlock), so the panel keeps the
+ *  covering set itself, after each paint that returns the box: `data-ids` lists every covering comment's id in the pass's order
+ *  (cards(), the model's order by time) and `data-id` names the last of them, the comment in front, as the innermost mark is under
+ *  an inline overlap. The panel's readers of a comment's elements (ownMarks: the card's Scroll, the arrivals' dot, the focus)
+ *  match a box by either, and a click on the box opens every card the list names (openCovering), the front one the focus.
+ *  Before this, the later paint's id overwrote the earlier's, so the earlier card could not be reached from the formula and its
+ *  Scroll, offered on the card, fell to Reveal (the Slice 8 review, round 1). The strip removes the list with the rest. */
+function coverBox(box: Element, id: string): void {
+  const ids = boxIds(box);
+  if (!ids.includes(id)) ids.push(id);
+  box.setAttribute("data-ids", ids.join(" "));
+  box.setAttribute("data-id", ids[ids.length - 1]);
+}
+/** Strip a block-painted element in place: the block classes named (`classes`; every one by default) come off, and once the
+ *  highlight's class `fc-hl-block` is gone, the context cue the pass adds beside it (fc-hl-context) and the attributes the paint
+ *  and the pass set (data-act, data-id, data-ids, the arrivals' data-new, tabindex, role, title) go with it: they are the
+ *  highlight's, so a box the composer's pending target shares with a standing highlight (both paints stamp the one
+ *  `.katex-display`) keeps the highlight's class and data when the target's class alone is stripped. Before this the strip took
+ *  every class and attribute whatever the selector named, so Cancel on a pending target over a highlighted formula left the
+ *  formula bare and no longer a control until the next full pass (the Slice 8 review, round 1). Its children stay where they are. */
+function stripBlockPaint(n: Element, classes: readonly string[] = BLOCK_PAINT_CLASSES): void {
+  n.classList.remove(...classes);
+  if (n.classList.contains("fc-hl-block")) return;
+  n.classList.remove("fc-hl-context");
+  for (const a of ["data-act", "data-id", "data-ids", "data-new", "tabindex", "role", "title"]) n.removeAttribute(a);
+}
 /** The unpaint step over `marks` (Panel.unpaint over a selector's matches, Panel.unwrap over elements the repaint holds; the
  *  whitespace leg times the panel's unpaint through it, md-config-paint-whitespace-browser.test.ts): each mark's children go back
  *  in its place and the mark comes out, then each parent is normalized ONCE, after the loop (plans/markdown-viewer.md Slice 5,
- *  section 2 (d)). Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
+ *  section 2 (d)); an element that is not a mark (a display formula's box wearing the block class, Slice 8 item 5) is stripped
+ *  in place instead (stripBlockPaint, of the block classes in `blockClasses`, every one by default: Panel.unpaint passes the ones
+ *  its selector named, so the pending target's unpaint leaves a highlight's stamp on a box the two share) and normalizes nothing,
+ *  its text nodes untouched. Normalizing the parent per mark cost the square of a paragraph's inline children where the paint costs their
  *  count: 9,999 marks over a paragraph of 5,000 links painted in 33 ms and unwrapped in 469 (the Slice 4 review, round 9);
  *  normalized once per parent they unwrap in 11 ms. Both figures are for marks the browser has not laid out (the unpaint in the
  *  same task as the paint, or a host outside the document). The panel's unpaint always finds its marks laid out (the pass before
@@ -451,9 +497,10 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
  *  2.3x, not 40x (the Slice 5 review, round 1, headless Chromium). Nested marks (two comments over one passage) come in document
  *  order, the outer first, so the inner's parent is read after the outer went and the set holds the block once; given inner first
  *  (an order a caller might hold), the inner's parent is the outer, detached by then, and its normalize is a no-op. */
-export function unwrapMarks(marks: Iterable<Element>): void {
+export function unwrapMarks(marks: Iterable<Element>, blockClasses: readonly string[] = BLOCK_PAINT_CLASSES): void {
   const parents = new Set<Node>();
   for (const n of marks) {
+    if (!isMarkEl(n)) { stripBlockPaint(n, blockClasses); continue; }   // a display formula's stamped box: stripped in place of the classes named, never unwrapped (stripBlockPaint)
     const p = n.parentNode; if (!p) continue;
     while (n.firstChild) p.insertBefore(n.firstChild, n);
     p.removeChild(n); parents.add(p);
@@ -1228,8 +1275,48 @@ class Panel {
    *  macOS, a long press on a touch screen, no click following), and the window's blur that a release in another frame never
    *  reaches this one. A touch press has no button and is held as before. */
   pointerHeld = false;
-  pressBegan = (ev: Event): void => { if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return; this.pointerHeld = true; };
-  pressEnded = (): void => { this.pointerHeld = false; };
+  /** The marks of ours a primary-button press began on (the pressed mark and every mark of ours around it, since two comments
+   *  over one passage nest their marks), each with the tabindex the paint gave it, taken off for the press (pressBegan) and put
+   *  back at its end (pressEnded). A highlight is a control with a tabindex, so a press on one moved the browser's focus onto it
+   *  before the press placed its caret, and Chromium then never extends a selection anchored outside the element the press
+   *  focused: a press on the leading half of a mark's first glyph anchors the caret at the end of the text node BEFORE the mark
+   *  (the same caret, another node), so a drag begun there, the natural place to re-select a highlighted passage, selected
+   *  nothing, offered no Comment, and its release opened the card instead, while a drag begun one glyph in, or in the text
+   *  before the mark, selected as usual (the Slice 8 review's round 3, measured in headless Chromium over the real panel, in a
+   *  paragraph and in a code row alike; the same on main, so the slice's code lines only widened where it showed). With no
+   *  tabindex the mark is no focus target, the press leaves the focus where a press on plain text would, and the drag selects
+   *  the words under it. The attribute goes back at the press's end, so the mark stays a Tab stop, and the mark takes the focus
+   *  then (the innermost pressed one, or its successor when a repaint replaced it mid-press, found as refocusMark finds it), as
+   *  the press would have given it: a click leaves the keyboard on the mark whose card it opened, as before. A press the browser
+   *  ended itself (a contextmenu) or a release in another window (blur) puts the attribute back and moves no focus. */
+  pressedMarks: Array<{ el: HTMLElement; tabindex: string; held: { act: string; id: string; k: number; at: Element } | null }> = [];
+  pressBegan = (ev: Event): void => {
+    if (ev.type === "mousedown" && (ev as MouseEvent).button !== 0) return;
+    this.pointerHeld = true;
+    if (ev.type === "mousedown") this.unfocusForPress(ev.target as Element | null);
+  };
+  pressEnded = (ev?: Event): void => { this.pointerHeld = false; this.refocusPressed(!ev || (ev.type !== "blur" && ev.type !== "contextmenu")); };
+  /** A press began on `t`: every mark of ours from it up to the body wears no tabindex until the press ends (pressedMarks). */
+  private unfocusForPress(t: Element | null): void {
+    if (this.pressedMarks.length) this.refocusPressed(false);   // a press whose end was never heard: its attributes back first
+    for (let n: Element | null = t; n; n = n.parentElement) {
+      if (!this.marks.has(n) || typeof n.getAttribute !== "function") continue;
+      const tabindex = n.getAttribute("tabindex");
+      if (tabindex === null) continue;
+      this.pressedMarks.push({ el: n as HTMLElement, tabindex, held: this.markRecord(n as HTMLElement) });
+      n.removeAttribute("tabindex");
+    }
+  }
+  /** The press ended: the attributes back, and, for a release (`focus`), the keyboard onto the innermost pressed mark, or onto its
+   *  successor when a repaint replaced it during the press (refocusMark), without scrolling. */
+  private refocusPressed(focus: boolean): void {
+    const pressed = this.pressedMarks; this.pressedMarks = [];
+    for (const p of pressed) if (!p.el.hasAttribute("tabindex")) p.el.setAttribute("tabindex", p.tabindex);
+    const first = pressed[0];
+    if (!focus || !first) return;
+    if (this.ctx.body().contains(first.el)) first.el.focus({ preventScroll: true });
+    else if (first.held) this.refocusMark(first.held);
+  }
   /** The document's selection changed (plans/markdown-viewer.md Slice 5, item 9): a selection made or changed from the KEYBOARD
    *  (Shift+Arrow over a selection a drag began, caret browsing, assistive technology) reaches no mouseup, so the seam's onSelect
    *  never ran for it, the float stayed where a drag had left it while the selection shrank under it, and a keyboard selection
@@ -2874,7 +2961,7 @@ class Panel {
    *  text under user-select none, so a selection over it alone holds no text of the file (the mapping refuses or maps an
    *  empty range), and the change it marks is what the person selected. Several marks, or none, is nothing to claim.
    *  Nor is a selection that HOLDS text of the file (its string, which generated text never enters): the mapping refused
-   *  it for a reason of its own — it reaches outside the file text, it touches a table in Rendered — and that refusal,
+   *  it for a reason of its own (it reaches outside the file text, it spans two cells of a table in Rendered), and that refusal,
    *  with its Switch to Raw, is the answer; a deletion mark under such a selection is not what the person selected, and
    *  a comment about it in the refusal's place answered a selected passage with a change (the review, 2026-09-10).
    *  The mark the range crosses, or the one it ends against (deletionMarksIn, touching): a drag from the text before the
@@ -3278,7 +3365,7 @@ class Panel {
       const card = this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]') as HTMLElement | null;
       if (card) delete card.dataset.new;
       const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
-      for (const m of this.ownMarks(act, id)) delete m.dataset.new;
+      for (const m of this.ownMarks(act, id)) if (!boxIds(m).some((o) => o !== id && this.newKeys.has(this.cardKey(o)))) delete m.dataset.new;   // a stamped box shared with a comment still new keeps its dot (coverBox)
     }
     this.reflect();
   }
@@ -3424,8 +3511,11 @@ class Panel {
    *  could not be reached from that text. Every fcopen mark of ours above the clicked one (owns) is a covering comment: its card
    *  opens as a head click would open it (openCards), in the same render as the clicked card, which is the focus (showCard, the
    *  caller's next step). The sheets draw the nest as one wash and one ring (`.fc-hl .fc-hl`); the marks' own attributes
-   *  (data-new, tabIndex, the title) stay per mark. */
+   *  (data-new, tabIndex, the title) stay per mark. A display formula's stamped box has no nest: it is one element for every
+   *  comment covering the formula, their ids on it (coverBox), so each of those opens the same way, the front one (its data-id)
+   *  the focus. */
   private openCovering(x: HTMLElement): void {
+    if (x.dataset.act === "fcopen" && this.marks.has(x)) for (const id of boxIds(x)) this.openCards.add(this.cardKey(id));
     for (let e = x.parentElement; e; e = e.parentElement) {
       if (e.dataset.act === "fcopen" && e.dataset.id && this.marks.has(e)) this.openCards.add(this.cardKey(e.dataset.id));
     }
@@ -3490,10 +3580,12 @@ class Panel {
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
-    // aside's controls, so the mark's own successor takes it back once painted (refocusMark)
+    // aside's controls, so the mark's own successor takes it back once painted (refocusMark). A display formula's
+    // stamped box is stripped in place instead, and the strip's removal of its tabindex drops the focus the same way,
+    // so refocusMark reads the focus, not the element's presence, and the box, stamped again, takes it back too
     const held = this.heldMark();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
-    this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
+    this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
     const src = this.ctx.text(); const root = this.contentRoot();
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
@@ -3539,10 +3631,16 @@ class Panel {
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
         if (rendered && out) { this.passMarks.push(...out); byCard.push({ id: card.id, marks: out }); }
-        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
+        for (const m of out || []) if (!isMarkEl(m)) coverBox(m, card.id);   // a display formula's stamped box: the covering set on it (two comments on one formula share the box)
+        // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), its tabindex off for
+        // the length of a press on it so a drag begun on its first glyph selects (pressedMarks), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
         const title = unsure ? unsureMarkTitle({ ...card, hintedCopy: hinted }) : "Open the comment on this passage";
+        // ...a display formula's stamped box takes the block class alone from the paint (the first class token), so the context
+        // state's cue the class string carried goes on it here (the sheet drops its ring for the dashed outline); the guessed
+        // copy's cue goes on every element in the loop below
+        if (loc.state === "context") for (const m of out || []) if (!isMarkEl(m)) m.classList.add("fc-hl-context");
         for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
@@ -3737,22 +3835,37 @@ class Panel {
     return undefined;
   }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
-   *  substitution paints a deletion point and then its new text, all with the same action and id. */
+   *  substitution paints a deletion point and then its new text, all with the same action and id. A display formula's stamped
+   *  box that several comments cover carries every covering id (coverBox, data-ids) and the front one's as data-id, so it is the
+   *  subject's element by either; the list is read in the filter (a word-list selector is not in every document the panel runs in). */
   private ownMarks(act: string, id: string): HTMLElement[] {
-    return Array.from(this.ctx.body().querySelectorAll('[data-act="' + act + '"][data-id="' + cssId(id) + '"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+    const sel = '[data-act="' + act + '"][data-id="' + cssId(id) + '"]' + ', [data-act="' + act + '"][data-ids]';
+    return Array.from(this.ctx.body().querySelectorAll(sel)).filter((m) => this.marks.has(m) && (m.getAttribute("data-id") === id || boxIds(m).includes(id))) as HTMLElement[];
   }
   /** The mark of ours that holds the keyboard, by what it is — its action, its id, and its place among the subject's
    *  marks — and the element, so a repaint can tell whether it was unwrapped. Null when the focus is anywhere else. */
   private heldMark(): { act: string; id: string; k: number; at: Element } | null {
     const a = document.activeElement as HTMLElement | null;
-    if (!a || !this.marks.has(a) || !a.dataset || !a.dataset.act || !a.dataset.id) return null;
+    return a && this.marks.has(a) ? this.markRecord(a) : null;
+  }
+  /** A mark of ours by what it is: its action, the id of its subject, its place among the subject's marks, and the element
+   *  (heldMark: the one holding the keyboard; pressedMarks: the one a press began on). Null for an element with no action or id. */
+  private markRecord(a: HTMLElement): { act: string; id: string; k: number; at: Element } | null {
+    if (!a.dataset || !a.dataset.act || !a.dataset.id) return null;
     return { act: a.dataset.act, id: a.dataset.id, k: this.ownMarks(a.dataset.act, a.dataset.id).indexOf(a), at: a };
   }
-  /** After a repaint: the held mark left the body, so its successor — our mark for the same subject at the same
-   *  place — takes the focus, without scrolling. A mark that stayed (nothing repainted it) keeps it; a subject the
-   *  repaint no longer paints (the change was decided, the comment resolved) leaves the focus where the browser put it. */
+  /** After a repaint: the held mark lost the keyboard, so its successor, our mark for the same subject at the same place,
+   *  takes the focus, without scrolling. A mark that stayed and kept the focus (nothing repainted it) is left alone; a subject
+   *  the repaint no longer paints (the change was decided, the comment resolved) leaves the focus where the browser put it. The
+   *  test is the focus itself, not the element's presence in the body: a mark is unwrapped and painted again, a new node, so
+   *  the held element's absence would say it; a display formula's stamped box (Slice 8, item 5) is stripped in place and
+   *  stamped again, the SAME element, and the strip's removal of its tabindex drops the focus to the body at once (Chromium
+   *  blurs an element a tabindex change makes unfocusable, synchronously, and the attribute set again focuses nothing), so its
+   *  successor is itself. Before this the box's presence stood for its focus, and a peer's comment landing by the poll left
+   *  the keyboard on the body, Enter opening nothing, while the box kept its Tab stop (the Slice 8 review, round 4;
+   *  md-config-math-block-paint-browser.test.ts measures the blur, file-comments-block-paint.test.ts models it). */
   private refocusMark(held: { act: string; id: string; k: number; at: Element }): void {
-    if (this.ctx.body().contains(held.at)) return;
+    if (this.ctx.body().contains(held.at) && document.activeElement === held.at) return;
     const next = this.ownMarks(held.act, held.id);
     if (next.length) next[Math.min(Math.max(held.k, 0), next.length - 1)].focus({ preventScroll: true });
   }
@@ -3816,14 +3929,16 @@ class Panel {
     return out || [];
   }
   /** Unwrap painted marks: the text nodes go back in place and each parent is normalized, once (unwrapMarks). A framed
-   *  picture is stripped of its marks instead — unwrapping an <img> would remove the picture. */
+   *  picture is stripped of its marks instead, since unwrapping an <img> would remove the picture; a display formula's box wearing
+   *  the block class (selected by `.fc-hl-block` or `.fc-presel-block`) is stripped in place by unwrapMarks itself, of the block
+   *  classes the selector names and no other: the pending target's unpaint leaves a highlight standing on the same box. */
   private unpaint(selector: string): void {
     const marks = selector.split(",").map((s) => s.trim().replace(/^\./, ""));
     const held: Element[] = [];
     for (const n of Array.from(this.ctx.body().querySelectorAll(selector))) {
       if (n.classList.contains("fc-img")) unframeImage(n as HTMLElement, marks); else held.push(n);
     }
-    unwrapMarks(held);
+    unwrapMarks(held, marks.filter((c) => BLOCK_PAINT_CLASSES.includes(c)));
   }
   /** The box whose line boxes hold `m`: its nearest ancestor whose width does not follow its content, so that a mark's 2 px side
    *  padding inside it moves the wrap points of that box's lines and of no other box's. That is a block (the paragraph, the list
@@ -3836,8 +3951,10 @@ class Panel {
    *  the cells of the other rows, and the auto layout redistributes the columns when a cell's content grows); the root when none
    *  is found below it. This is the scope of the repaint the pending target's paint and unpaint run (repaintPresel). `memo` is
    *  per call, keyed on the parent: the marks of one passage share a few. A document with no computed style (a stand-in)
-   *  answers the parent. */
+   *  answers the parent. A display formula's stamped box (isBlockPaint) is its own line box: a block of its own line, whose
+   *  paint adds no padding and moves no wrap point, so the climb stops at itself and the repaint's scope is the formula alone. */
   private lineBoxOf(m: Element, root: Element, memo: Map<Element, Element>): Element {
+    if (isBlockPaint(m)) return m;
     const p = m.parentNode as Element | null;
     if (!p || p === root || p.nodeType !== 1) return root;
     const hit = memo.get(p);
@@ -3910,15 +4027,16 @@ class Panel {
   private repaintPreselPass(): void {
     const src = this.ctx.text(); const root = this.contentRoot();
     if (src === null || !root || this.ctx.mode() !== "rendered") {   // a media body, or the Raw view (a row mark, no layout-time trim)
-      this.unpaint(".fc-presel");
+      this.unpaint(".fc-presel, .fc-presel-block");
       if (src !== null && root) this.paintPresel(root, src, false);
       this.paintRegions();
       return;
     }
-    const isMark = (m: Element): boolean => m.tagName.toUpperCase() === "MARK";
+    const isMark = isMarkEl;
     const memo = new Map<Element, Element>(); const boxes = new Set<Element>();
-    for (const m of Array.from(root.querySelectorAll(".fc-presel"))) if (isMark(m)) boxes.add(this.lineBoxOf(m, root, memo));
-    this.unpaint(".fc-presel");
+    // the standing target's boxes: a mark's line box, or a display formula's stamped box, which is its own (lineBoxOf); a framed picture is neither
+    for (const m of Array.from(root.querySelectorAll(".fc-presel, .fc-presel-block"))) if (isMark(m) || isBlockPaint(m)) boxes.add(this.lineBoxOf(m, root, memo));
+    this.unpaint(".fc-presel, .fc-presel-block");
     for (const m of this.paintPresel(root, src, true)) boxes.add(this.lineBoxOf(m, root, memo));
     if (!boxes.size) { this.paintRegions(); return; }   // no Rendered mark came or went: the layout is the one the last trim measured
     const held = this.heldMark();
@@ -3948,7 +4066,7 @@ class Panel {
       if (loc && loc.range && own.length) again.push({ id, range: loc.range, own });
     }
     if (again.length || changes) {
-      this.unpaint(".fc-presel");
+      this.unpaint(".fc-presel, .fc-presel-block");
       for (const a of again) this.unwrap(a.own);
       if (changes) { unpaintChanges(this.ctx.body()); this.passChanges = []; }
       for (const a of again) {
@@ -3956,6 +4074,7 @@ class Panel {
         const out = paintRendered(root, src, a.range, like.className, { act: "fcopen", id: a.id }, { trim: false }) || [];
         this.passMarks.push(...out);
         for (const m of out) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = like.title; if (like.dataset.new) (m as HTMLElement).dataset.new = like.dataset.new; this.mark(m); }
+        for (const m of out) if (!isMark(m)) coverBox(m, a.id);   // a stamped box the repaint returned: its covering set stands, and its front (the re-stamp wrote this comment's id)
       }
       if (changes) this.paintChanges(root, src, true, true);
       this.paintPresel(root, src, true);
@@ -4387,8 +4506,9 @@ class Panel {
     const opened = this.revealMarks(key);              // a fold around the mark opens first, in either layout: the content below it moved
     if (opened && this.margin) this.placeCards(false); // ...and centerOn reads the placement, so the pass runs over the opened fold (a focus change below runs one of its own)
     if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
-    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
-    const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
+    const id = key.startsWith("chg:") ? key.slice(4) : key;
+    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-hl-block[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]' + ', .fc-hl-block[data-ids]';   // ...and a stamped box several comments cover, this one among them (coverBox)
+    const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m) && (m.getAttribute("data-id") === id || boxIds(m).includes(id)));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
     this.reveal(key);
   }

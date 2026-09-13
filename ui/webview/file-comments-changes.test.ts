@@ -298,7 +298,7 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   // each line is asserted PRESENT before its place is compared: a bare indexOf gives -1 for a missing line, and
   // -1 sorts before everything, so an ordering pin alone would pass with the unpaint deleted
   const pos = (s: string) => { const i = paint.indexOf(s); assert.ok(i >= 0, "paintAll has: " + s); return i; };
-  assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel");'), "unpaint the changes before anything is repainted");
+  assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");'), "unpaint the changes before anything is repainted");
   assert.ok(pos("this.located.set(card.id, { ...loc, painted });") < pos("this.paintChanges(root, src, rendered, true);"), "changes after the comment highlights");
   assert.ok(pos("this.paintChanges(root, src, rendered, true);") < pos("this.paintPresel(root, src, rendered);"), "…and before the composer's target");
   // every painter of the pass defers its trim of collapsed blanks (paintChanges's `true`; paintPresel always does, since its other

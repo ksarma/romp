@@ -793,8 +793,8 @@ export function codeOf(source: string, span: SourceRange, els: Element[]): Code 
 const codeRows = (code: Element): Element[] => elementsOf(code).filter((c) => typeof c.getAttribute === "function" && (" " + (c.getAttribute("class") || "") + " ").indexOf(" cl ") >= 0);
 /** The code line under the body's top edge in a Rendered code block, when the code's text starts above the edge, as
  *  its source span and its top. The code's rows are read as the Raw rows are: the first row whose box ends below the
- *  edge is the line, its index among the rows its line number (one row per line, so it agrees with anchor-map's
- *  codeLineAt for a position in the row), and its box's top is the line's top. Not a hit test and not a character's
+ *  edge is the line, its index among the rows its line number (one row per line), and its box's top is the line's top.
+ *  Not a hit test and not a character's
  *  box: a blank line's row holds no character (the hit on its empty `.ct` measured nothing and the line was dropped),
  *  and a text row's glyph top sits under the row's top by the half-leading, while the Raw seat puts a row's TOP there,
  *  so the row above showed at the Raw edge and the way back kept that one (the Slice 3 review, round 2). A code

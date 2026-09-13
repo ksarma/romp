@@ -99,8 +99,10 @@ test("styles.css: the marks' dot is one per LINE BOX of a wrapped mark, and the 
     assert.ok(m, "the rule for " + sel);
     assert.match(m![1], /box-decoration-break: clone/, sel + " paints each of its line boxes whole — the ring around every wrapped line is the design, and the dot rides on the same paint");
   }
-  const dot = /\n\.fc-hl\[data-new\], \.fc-ins\[data-new\], \.fc-del\[data-new\]::before \{([^}]*)\}/.exec(block);
-  assert.ok(dot, "the data-new rule over the three marks");
+  // the head names the three marks and, since Slice 8 of plans/markdown-viewer.md (item 5), the display formula's stamped
+  // `.katex-display` box, whose block rule's background shorthand would otherwise outrank the dot's layer
+  const dot = /\n\.fc-hl\[data-new\], \.fc-ins\[data-new\], \.fc-del\[data-new\]::before, \.fileview-md \.katex-display\.fc-hl-block\[data-new\] \{([^}]*)\}/.exec(block);
+  assert.ok(dot, "the data-new rule over the three marks and the stamped display formula");
   assert.match(dot![1], /background-image: radial-gradient/, "a background layer, so a dot coming off moves no layout under a pointer");
   assert.match(dot![1], /background-repeat: no-repeat;\s*background-position: top right/, "once per box it paints, at the top right");
   const comment = block.slice(block.indexOf("/* the arrivals notice"), block.indexOf("*/", block.indexOf("/* the arrivals notice")));

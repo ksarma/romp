@@ -3,11 +3,14 @@
 // the code left every test green. Driven over marked's output under the viewer's configuration, parsed into the
 // structural stand-in anchor-map.test.ts uses (there is no jsdom in this tree).
 //
-//   1. A table nested in a list item is a HOLE with the table's own extent. renderedSpot places a point past a
-//      hole only when the offset is at or after the hole's END (`endN`); with the table's endN mis-set to its
-//      start, a deletion INSIDE the table was painted immediately before the text after it — the wrong-words
-//      placement the plan says a hole must never produce — and no test failed (anchor-map.test.ts covers the
-//      code-fence hole only).
+//   1. A table nested in a list item. Until Slice 8 of plans/markdown-viewer.md it was a HOLE with the table's own
+//      extent: renderedSpot places a point past a hole only when the offset is at or after the hole's END (`endN`);
+//      with the table's endN mis-set to its start, a deletion INSIDE the table was painted immediately before the
+//      text after it, the wrong-words placement the plan says a hole must never produce, and no test failed
+//      (anchor-map.test.ts covers the code-fence hole only). Since Slice 8 the table's cells are positioned, so a
+//      point inside a cell places in that cell, and the same guard holds for the rest of the table's source: a
+//      point on the delimiter row or after the last cell's bar stays unpainted (renderedSpot's table rule), never
+//      beside the words after the table.
 //   2. Where one mapped block ends exactly as the next begins (a heading and the paragraph under it: marked's
 //      heading raw swallows its trailing newlines, so the pair is adjacent with or without a blank line), the
 //      block that BEGINS at the offset holds the point. A deletion of a paragraph's first word otherwise lands
@@ -19,6 +22,16 @@
 //      or tap, while the painter reported it shown and its card offered a scroll to it. The point now carries
 //      the rows' white-space when its label has no visible character; a label with one keeps the block's, which
 //      folds a multi-line label onto its line. anchor-map-whitespace-point-browser.test.ts measures the result.
+//
+// And Slice 8's item 4 (the change points inside a fence), pinned with the table's rule above: the code's lines
+// are positioned, so a point inside a line places in its row, before or after the nearest character of the line,
+// and a point on a fence's opener or closer line, which renders nothing, keeps its card (renderedSpot's FENCE_LINE
+// rule), except at the lines' edges, where it sits beside the text it borders: a top-level opener's first
+// character places before the code's first character (no text before it in the block), and the line feed that
+// ends the last code line places after that line's last character. A point on a blank code line goes into the
+// line's own row where the pre has rows (the Slice 8 review, round 1; anchor-map-code-lines.test.ts holds it over
+// the viewer's rows); this stand-in's pre has none, so the rule's fallback places it before the next line's first
+// character, the nearest positioned one. An empty fence is nothing's; an indented block has no fence lines.
 //
 // Fixtures are synthetic (the notes-api world).
 import { test } from "node:test";
@@ -176,9 +189,12 @@ const stylesFor = (c: ChangePaint): Record<string, string> => (COLORS[c.author] 
 const del = (id: string, curFrom: number, oldText = "gone", author = "web"): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText, author });
 const point = (root: FakeNode, id: string): FakeElement => { const x = withClass(root, "fc-del").find((m) => m.getAttribute("data-id") === id); assert.ok(x, id + " painted"); return x!; };
 
-// ── 1. a nested table is a hole with the table's own extent ────────────────────────────────────────
+// ── 1. a nested table: its cells are positioned (Slice 8), the rest of its source is nothing's ─────────────────────────────
+// Until Slice 8 the table was a hole with the table's own extent and every point inside it was unpainted. Now a point inside a
+// cell places in that cell, and a point in the table's source outside every cell (the delimiter row, the bar after the last
+// cell) stays unpainted, as before: a point there would land in a cell the change is not in.
 
-test("Rendered deletion points and a table nested in a list item: inside the table (a cell, the header, the delimiter row) the change is unpainted; at the text before it and at the text after it the point sits against that text — never beside the words after the table", () => {
+test("Rendered deletion points and a table nested in a list item: inside a cell (a body cell, the header) the point places in that cell (Slice 8; before: unpainted, the table a hole); on the delimiter row and right after the last cell's bar the change stays unpainted; at the text before the table and at the text after it the point sits against that text, never beside the words after the table; at the table's first character it sits after the item's text before the table, and at a TOP-LEVEL table's, whose block holds no text before it, before the first header cell's first character, the block's edge (the Slice 8 review, round 2, recorded)", () => {
   const source = "- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n\n  after table\n";
   const box = buildRendered(source);
   assert.equal(withTag(box, "TABLE").length, 1, "marked lexes the table inside the item");
@@ -191,9 +207,14 @@ test("Rendered deletion points and a table nested in a list item: inside the tab
     del("t-before", at(source, "Item one") + "Item one".length),
     del("t-after", at(source, "after table")),
   ], stylesFor);
-  assert.deepEqual(r, { painted: ["t-before", "t-after"], unpainted: ["t-in", "t-head", "t-rule", "t-end"] });
-  assert.deepEqual(withClass(box, "fc-del").map((m) => m.getAttribute("data-id")), ["t-before", "t-after"], "the unpainted ones are nowhere in the body");
-  for (const m of withClass(box, "fc-del")) assert.ok(!inside(m, "TABLE"), "no point inside the table");
+  assert.deepEqual(r, { painted: ["t-in", "t-head", "t-before", "t-after"], unpainted: ["t-rule", "t-end"] });
+  assert.deepEqual(withClass(box, "fc-del").map((m) => m.getAttribute("data-id")), ["t-before", "t-head", "t-in", "t-after"], "the painted ones in document order; the unpainted ones are nowhere in the body");
+  for (const id of ["t-in", "t-head"]) {
+    const pt = point(box, id);
+    assert.ok(inside(pt, id === "t-in" ? "TD" : "TH"), id + ": inside its cell");
+    assert.equal((pt.parentNode as FakeElement).textContent, id === "t-in" ? "1" : "a", id + ": the cell the change is in");
+  }
+  for (const m of withClass(box, "fc-del")) if (!["t-in", "t-head"].includes(m.getAttribute("data-id") || "")) assert.ok(!inside(m, "TABLE"), "no other point inside the table");
   let [pre, post] = around(blockOf(box, point(box, "t-before")), point(box, "t-before"));
   assert.ok(pre.endsWith("Item one"), "against the text before the table: " + JSON.stringify(pre.slice(-12)));
   assert.ok(!post.trimStart().startsWith("Item"), JSON.stringify(post.slice(0, 10)));
@@ -207,6 +228,213 @@ test("Rendered deletion points and a table nested in a list item: inside the tab
   assert.deepEqual(withClass(afterPara, "fc-del").map((m) => m.getAttribute("data-id")), ["t-after"]);
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
+  // the table's first character (its leading pipe), the boundary: after the text before the table when the block holds such text
+  // (the item's), and, for a TOP-LEVEL table, whose block holds nothing before it, before the first header cell's first character,
+  // the block's edge, as a top-level fence's opener sits before the code's first character (test 1b); the blank line before a
+  // top-level table is nothing's, and a point one character into its leading pipe's row, between the pipe and the cell, is the
+  // table's source outside every cell (the Slice 8 review, round 2, recorded; before Slice 8 both tables' first characters were
+  // unpainted, the table a hole)
+  const r2 = paintChangesRendered(El(box), source, [del("t-first", at(source, "| a |"))], stylesFor);
+  assert.deepEqual(r2, { painted: ["t-first"], unpainted: [] });
+  assert.ok(!inside(point(box, "t-first"), "TABLE"), "the nested table's first character: not inside the table");
+  [pre, post] = around(blockOf(box, point(box, "t-first")), point(box, "t-first"));
+  assert.ok(pre.endsWith("Item one"), "...after the text before the table: " + JSON.stringify(pre.slice(-12)));
+  assert.ok(post.replace(/\s+/g, "").startsWith("ab12"), JSON.stringify(post.slice(0, 12)));
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  const top = "Para before.\n\n| Route | p95 |\n|-------|-----|\n| GET /notes | 120 ms |\n\nAfter.\n";
+  const tb = buildRendered(top);
+  assert.equal(withTag(tb, "TABLE").length, 1, "marked lexes the top-level table");
+  const tFirst = at(top, "| Route");
+  const rt = paintChangesRendered(El(tb), top, [del("tt-first", tFirst), del("tt-blank", tFirst - 1), del("tt-in", tFirst + 1), del("tt-cell", tFirst + 2)], stylesFor);
+  assert.deepEqual(rt, { painted: ["tt-first", "tt-cell"], unpainted: ["tt-blank", "tt-in"] }, "the table's first character and a cell's place; the blank line before and the pipe's row outside the cell do not");
+  const first = point(tb, "tt-first");
+  assert.ok(inside(first, "TH"), "a top-level table's first character: inside the first header cell (no text before it in the block)");
+  assert.equal(around(withTag(tb, "TABLE")[0], first)[0].trim(), "", "...before the table's first character (marked's whitespace between the table's tags aside)");
+  assert.ok(around(withTag(tb, "TABLE")[0], first)[1].startsWith("Route"), "...the header cell's first character right after it");
+  assert.equal(withClass(tb, "fc-del").filter((m) => !inside(m, "TABLE")).length, 0, "no point outside the table: the paragraph before it holds none");
+  unpaintChanges(El(tb));
+});
+
+test("Rendered deletion points at a table's END where its raw ends with the last row's last character and not with the row's line feed (the Slice 8 review, round 3): a table that ends its blockquote, one that ends its list item, and one that ends the note with no final line feed: the point at the row's end, the row's line feed or the end of the file, keeps its card like a point on any row's line feed (before: the table's end was exclusive of that offset, so the table was not found there and the point sat after the last rendered cell's text, in a cell the change is not in; with a truncated row `| b | c d |` a deletion at the unrendered tail's end landed after `b`); the tail's inside keeps its card as before and the position right after `b` is the cell's; a table followed by a blank line keeps the row's line feed card-only as before; the end of the file after a table's final line feed sits after the last cell's character, the block's end, as after a paragraph's", () => {
+  const scenes: Array<[string, string, string]> = [
+    ["a quote-ending truncated table, the note continuing", "# T\n\nPara before.\n\n> Quote lead.\n>\n> | a |\n> |---|\n> | b | c d |\n\nAfter.\n", "| b | c d |"],
+    ["a quote-ending truncated table, end of file with no line feed", "# T\n\n> | a |\n> |---|\n> | b | c d |", "| b | c d |"],
+    ["a list-item-ending truncated table, the note continuing", "- Item\n\n  | a |\n  |---|\n  | b | c d |\n\nAfter.\n", "| b | c d |"],
+    ["a top-level truncated table, end of file with no line feed", "Para.\n\n| a |\n|---|\n| b | c d |", "| b | c d |"],
+    ["a top-level well-formed table, end of file with no line feed", "Para.\n\n| a |\n|---|\n| b |", "| b |"],
+    ["a quote-ending well-formed table, the note continuing", "> Lead.\n>\n> | a |\n> |---|\n> | b |\n\nAfter.\n", "| b |"],
+  ];
+  for (const [label, source, row] of scenes) {
+    const box = buildRendered(source);
+    assert.equal(withTag(box, "TABLE").length, 1, label + ": marked lexes the table");
+    assert.equal(withTag(box, "TD").length, 1, label + ": one body cell rendered (a truncated row's tail is not)");
+    const rowEnd = at(source, row) + row.length;
+    assert.ok(rowEnd === source.length || source[rowEnd] === "\n", label + ": the row's end is the row's line feed or the end of the file");
+    const truncated = row.length > 5;
+    const pts = [del("end", rowEnd), del("after-b", at(source, "| b") + 3)];
+    if (truncated) pts.push(del("tail", rowEnd - 3));   // inside the unrendered tail `c d |`
+    const r = paintChangesRendered(El(box), source, pts, stylesFor);
+    assert.deepEqual(r, { painted: ["after-b"], unpainted: truncated ? ["end", "tail"] : ["end"] }, label + ": the row's end keeps its card (before: after `b`), the tail's inside too, the position after `b` places");
+    const pt = point(box, "after-b");
+    assert.ok(inside(pt, "TD"), label + ": right after `b`, inside the cell");
+    assert.ok(around(withTag(box, "TABLE")[0], pt)[0].replace(/\s+/g, "").endsWith("ab"), label + ": after the cell's character");
+    unpaintChanges(El(box));
+  }
+  // a blank line after the table: the raw ends with the row's line feed, which keeps its card as before, and the prose after places
+  const blankAfter = "Para.\n\n| a |\n|---|\n| b | c d |\n\nAfter.\n";
+  const cb = buildRendered(blankAfter);
+  const rowEnd = at(blankAfter, "| b | c d |") + "| b | c d |".length;
+  assert.deepEqual(paintChangesRendered(El(cb), blankAfter, [del("lf", rowEnd), del("tail", rowEnd - 3), del("after", at(blankAfter, "After."))], stylesFor), { painted: ["after"], unpainted: ["lf", "tail"] }, "a blank line after: the row's line feed and the tail keep their cards, the prose after places");
+  unpaintChanges(El(cb));
+  // the end of the file after the table's final line feed: the block's end (ownRows), after the last cell's character, as after a
+  // paragraph's or a fence's last character; the row's line feed before it keeps its card
+  const lfEof = "Para.\n\n| a |\n|---|\n| b |\n";
+  const eb = buildRendered(lfEof);
+  assert.deepEqual(paintChangesRendered(El(eb), lfEof, [del("row-lf", lfEof.length - 1), del("eof", lfEof.length)], stylesFor), { painted: ["eof"], unpainted: ["row-lf"] }, "the row's line feed card-only, the end of the file after it placed");
+  assert.ok(inside(point(eb, "eof"), "TD") && around(withTag(eb, "TABLE")[0], point(eb, "eof"))[0].replace(/\s+/g, "").endsWith("ab"), "...after `b`, the block's last character");
+  unpaintChanges(El(eb));
+});
+
+// ── 1c. a table or a fence that BEGINS a list item: the text before it is the previous item's, not the item's own ──────────────
+
+test("Rendered deletion points at the first character of a table or a fence that BEGINS a list item (the review's round 4): a list is one block, so the text before the block is the PREVIOUS item's, and the point sits before the block's first character, inside the item's own table's first header cell (or before the code's first character), as at a top-level table's or fence's; before, it sat after the previous item's text, inside that item's table's last cell when that item was a table too, a cell the change is not in (main 696229f84: card-only there, the table a hole), and after `Item one` for a prose item before an item that is a table or a fence, or after `Parent` for a sub-item that begins with a table; a table in the outer item after a nested list, whose text before is the sub-item's, sits before its first cell too; a table after its own item's text keeps round 2's rule, the control", () => {
+  const liOf = (n: FakeNode): FakeElement | null => { let p = n.parentNode; while (p && !(p.nodeType === 1 && (p as FakeElement).tagName === "LI")) p = p.parentNode; return p as FakeElement | null; };
+  const scenes: Array<[string, string, string, string, string]> = [
+    // label, source, the block's first characters, the text right after the point, the element the point stands in
+    ["two items each a table", "- | a |\n  |---|\n  | b |\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a table (tight)", "- Item one\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a table (loose)", "- Item one\n\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a parent item's text, then a sub-item that is a table", "- Parent\n  - | c |\n    |---|\n    | d |\n", "| c |", "c", "TH"],
+    ["a sub-item's text, then a table in the outer item", "- Outer\n  - sub\n\n  | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a fence", "- Item one\n- ```\n  code\n  ```\n", "```", "code", "PRE"],
+  ];
+  for (const [label, source, first, next, tag] of scenes) {
+    const box = buildRendered(source);
+    const lis = withTag(box, "LI");
+    assert.equal(lis.length, 2, label + ": two items");
+    assert.equal(withTag(box, tag === "PRE" ? "PRE" : "TABLE").length, label.startsWith("two items") ? 2 : 1, label + ": the block is lexed");
+    const r = paintChangesRendered(El(box), source, [del("first", at(source, first)), del("in", at(source, first) + 1)], stylesFor);
+    assert.deepEqual(r, { painted: ["first"], unpainted: ["in"] }, label + ": the block's first character places, one character in keeps its card (the pipe's row outside every cell, the opener's backticks)");
+    const pt = point(box, "first");
+    assert.ok(inside(pt, tag), label + ": inside the block's own " + tag + " (before: " + (label.startsWith("two items") ? "inside the previous item's table's last cell, after `b`" : "after the previous item's text") + ")");
+    const li = liOf(pt);
+    assert.ok(li, label + ": inside an item");
+    const blockLi = tag === "TH" ? liOf(withTag(box, "TH").find((h) => h.textContent === next)!) : liOf(withTag(box, "PRE")[0]);
+    assert.equal(li, blockLi, label + ": in the item that holds the block, not the item whose text stands before it");
+    assert.notEqual(li, lis.find((l) => l !== blockLi), label + ": not in the other item");
+    const post = around(blockOf(box, pt), pt)[1];
+    assert.ok(post.startsWith(next), label + ": right before the block's first character: " + JSON.stringify(post.slice(0, 8)));
+    assert.equal(withClass(box, "fc-del").length, 1, label + ": one point in the body");
+    unpaintChanges(El(box));
+  }
+  // the control: a table after its own item's text sits after that text (round 2's rule, test 1)
+  const own = "- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n";
+  const ob = buildRendered(own);
+  assert.deepEqual(paintChangesRendered(El(ob), own, [del("own", at(own, "| a |"))], stylesFor), { painted: ["own"], unpainted: [] });
+  assert.ok(!inside(point(ob, "own"), "TABLE") && around(blockOf(ob, point(ob, "own")), point(ob, "own"))[0].endsWith("Item one"), "after the item's own text before the table");
+  unpaintChanges(El(ob));
+});
+
+// ── 1d. a CRLF ending's two bytes are one position outside code too ─────────────────────────────────────────────────────────────
+
+test("Rendered deletion points at either byte of a CRLF line ending outside code (the review's round 4, pinning round 3's rule, which normalizes the LF byte to the CR's position at the top of renderedSpot, for every block; before round 3 the CR byte sat after the line's last character while the LF byte sat before the NEXT line's first character, in the next list item for an item's ending): a paragraph's soft break, a quote's soft break, an unordered item's ending and an ordered item's ending each put both bytes after the line's last character, in the line's own block or item; a heading's ending, a blank line's two bytes (unpainted) and the end of the file are the controls", () => {
+  const liOf = (n: FakeNode): FakeElement | null => { let p = n.parentNode; while (p && !(p.nodeType === 1 && (p as FakeElement).tagName === "LI")) p = p.parentNode; return p as FakeElement | null; };
+  /** The offset of the CR right after `s` in `src`, which must be followed by CRLF. */
+  const crAfter = (src: string, s: string): number => { const i = at(src, s) + s.length; assert.equal(src.slice(i, i + 2), "\r\n", s + ": followed by CRLF"); return i; };
+  const C1 = "Para one\r\nline two.\r\n\r\nNext para.\r\n\r\n- item one\r\n- item two\r\n";
+  const b1 = buildRendered(C1);
+  const pCr = crAfter(C1, "Para one"), iCr = crAfter(C1, "item one"), blankCr = crAfter(C1, "line two.") + 2;
+  assert.equal(C1.slice(blankCr, blankCr + 2), "\r\n", "the blank line's two bytes");
+  const r1 = paintChangesRendered(El(b1), C1, [del("para-cr", pCr), del("para-lf", pCr + 1), del("item1-cr", iCr), del("item1-lf", iCr + 1), del("blank-cr", blankCr), del("blank-lf", blankCr + 1), del("eof", C1.length)], stylesFor);
+  assert.deepEqual(r1, { painted: ["para-cr", "para-lf", "item1-cr", "item1-lf", "eof"], unpainted: ["blank-cr", "blank-lf"] }, "the endings' bytes place, the blank line's do not");
+  for (const id of ["para-cr", "para-lf"]) {
+    const pt = point(b1, id);
+    assert.equal((pt.parentNode as FakeElement).tagName, "P", id + ": in the paragraph");
+    assert.deepEqual(around(pt.parentNode!, pt), ["Para one", "\nline two."], id + ": after the line's last character (before round 3, the LF byte: before `line two.`)");
+  }
+  const lis = withTag(b1, "LI");
+  for (const id of ["item1-cr", "item1-lf"]) {
+    const pt = point(b1, id);
+    assert.equal(liOf(pt), lis[0], id + ": in the first item (before round 3, the LF byte: in the second, before `item two`)");
+    assert.deepEqual(around(lis[0], pt), ["item one", ""], id + ": after the item's last character");
+  }
+  assert.equal(liOf(point(b1, "eof")), lis[1], "the end of the file: after the last item's text, the block's end");
+  unpaintChanges(El(b1));
+  const C2 = "# Head\r\n\r\n> q one\r\n> q two\r\n\r\n1. first\r\n2. second\r\n";
+  const b2 = buildRendered(C2);
+  const hCr = crAfter(C2, "Head"), qCr = crAfter(C2, "q one"), oCr = crAfter(C2, "first");
+  const r2 = paintChangesRendered(El(b2), C2, [del("head-cr", hCr), del("head-lf", hCr + 1), del("q-cr", qCr), del("q-lf", qCr + 1), del("ol-cr", oCr), del("ol-lf", oCr + 1)], stylesFor);
+  assert.deepEqual(r2, { painted: ["head-cr", "head-lf", "q-cr", "q-lf", "ol-cr", "ol-lf"], unpainted: [] });
+  for (const id of ["head-cr", "head-lf"]) assert.deepEqual([(point(b2, id).parentNode as FakeElement).tagName, around(point(b2, id).parentNode!, point(b2, id))], ["H1", ["Head", ""]], id + ": the control, after the title on both trees");
+  for (const id of ["q-cr", "q-lf"]) {
+    const pt = point(b2, id);
+    assert.ok(inside(pt, "BLOCKQUOTE") && (pt.parentNode as FakeElement).tagName === "P", id + ": in the quote's paragraph");
+    assert.deepEqual(around(pt.parentNode!, pt), ["q one", "\nq two"], id + ": after the line's last character (before round 3, the LF byte: before `q two`)");
+  }
+  const ols = withTag(b2, "LI");
+  for (const id of ["ol-cr", "ol-lf"]) {
+    const pt = point(b2, id);
+    assert.equal(liOf(pt), ols[0], id + ": in the first item (before round 3, the LF byte: in the second, before `second`)");
+    assert.deepEqual(around(ols[0], pt), ["first", ""], id + ": after the item's last character");
+  }
+  unpaintChanges(El(b2));
+});
+
+// ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
+
+test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character (this pre has no rows; with the viewer's rows the point goes into the blank line's own row, anchor-map-code-lines.test.ts); at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {
+  const source = "Intro.\n\n```python\nfirst = 1\n\nthird = 3\n```\n\nAfter.\n";
+  const box = buildRendered(source);
+  assert.equal(withTag(box, "PRE").length, 1, "marked lexes the fence");
+  const before = serialize(box);
+  const open = at(source, "```python"), lastLine = at(source, "third = 3"), closer = at(source, "```\n\nAfter");
+  const r = paintChangesRendered(El(box), source, [
+    del("f-open", open),                                    // the opener's first backtick: the block's edge
+    del("f-info", at(source, "python")),                    // inside the opener line: renders nothing
+    del("f-line-end", at(source, "first = 1") + "first = 1".length),   // the line feed ending the first line
+    del("f-blank", at(source, "first = 1") + "first = 1".length + 1),  // the blank code line
+    del("f-mid", lastLine + "third ".length),               // inside the last line
+    del("f-closer-lf", lastLine + "third = 3".length),      // the line feed before the closer
+    del("f-closer", closer),                                // the closer's first backtick
+    del("f-after", closer + 4),                             // the blank line after the block
+    del("f-prose", at(source, "After.")),                   // the control
+  ], stylesFor);
+  assert.deepEqual(r, { painted: ["f-open", "f-line-end", "f-blank", "f-mid", "f-closer-lf", "f-prose"], unpainted: ["f-info", "f-closer", "f-after"] });
+  const pre = withTag(box, "PRE")[0];
+  for (const id of ["f-open", "f-line-end", "f-blank", "f-mid", "f-closer-lf"]) assert.ok(inside(point(box, id), "PRE"), id + ": inside the code");
+  const aroundIn = (id: string) => around(pre, point(box, id));
+  assert.deepEqual(aroundIn("f-open"), ["", "first = 1\n\nthird = 3\n"], "the opener's first character: before the code's first character (no text before it in the block)");
+  let [a, b] = aroundIn("f-line-end");
+  assert.ok(a.endsWith("first = 1") && b.startsWith("\n\nthird"), "the line's end: after its last character: " + JSON.stringify([a, b.slice(0, 8)]));
+  [a, b] = aroundIn("f-blank");
+  assert.ok(a.endsWith("first = 1\n\n") && b.startsWith("third = 3"), "the blank code line in a pre with no rows: before the next line's first character, the fallback: " + JSON.stringify([a.slice(-6), b.slice(0, 8)]));
+  [a, b] = aroundIn("f-mid");
+  assert.ok(a.endsWith("third ") && b.startsWith("= 3"), "inside a line: on its row: " + JSON.stringify([a.slice(-6), b.slice(0, 4)]));
+  [a, b] = aroundIn("f-closer-lf");
+  assert.ok(a.endsWith("third = 3") && b === "\n", "the line feed before the closer: after the last code character: " + JSON.stringify([a.slice(-9), b]));
+  assert.deepEqual(withClass(box, "fc-del").filter((m) => !inside(m, "PRE")).map((m) => m.getAttribute("data-id")), ["f-prose"], "one point outside the code: the control's");
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  // an empty fence: no line to place, one hole over the whole block; a point anywhere in it keeps its card
+  const empty = "Intro.\n\n```\n```\n\nAfter.\n";
+  const eb = buildRendered(empty);
+  const re = paintChangesRendered(El(eb), empty, [del("e-open", at(empty, "```")), del("e-in", at(empty, "```") + 1), del("e-close", at(empty, "```\n\nAfter")), del("e-prose", at(empty, "After."))], stylesFor);
+  assert.deepEqual(re, { painted: ["e-prose"], unpainted: ["e-open", "e-in", "e-close"] });
+  unpaintChanges(El(eb));
+  // an indented code block: no fence lines; a point at a line's indent places before the line's first character
+  const ind = "Intro.\n\n    alpha = 1\n    beta = 2\n\nAfter.\n";
+  const ib = buildRendered(ind);
+  assert.equal(withTag(ib, "PRE").length, 1, "marked lexes the indented block");
+  const ri = paintChangesRendered(El(ib), ind, [del("i-first", at(ind, "    alpha")), del("i-second", at(ind, "    beta")), del("i-in", at(ind, "beta = ") + "beta = ".length)], stylesFor);
+  assert.deepEqual(ri, { painted: ["i-first", "i-second", "i-in"], unpainted: [] });
+  const ipre = withTag(ib, "PRE")[0];
+  assert.deepEqual(around(ipre, point(ib, "i-first")), ["", "alpha = 1\nbeta = 2\n"], "the first line's indent: before its first character");
+  [a, b] = around(ipre, point(ib, "i-second"));
+  assert.ok(a.endsWith("alpha = 1\n") && b.startsWith("beta"), "the second line's indent: before its first character: " + JSON.stringify([a, b.slice(0, 4)]));
+  [a, b] = around(ipre, point(ib, "i-in"));
+  assert.ok(a.endsWith("beta = ") && b.startsWith("2"), JSON.stringify([a.slice(-7), b.slice(0, 1)]));
+  unpaintChanges(El(ib));
 });
 
 // ── 2. the block that begins at the offset wins the tie ────────────────────────────────────────────

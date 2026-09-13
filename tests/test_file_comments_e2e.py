@@ -562,28 +562,34 @@ PAINTED = ("# Painted\n\nIntro paragraph one with several words in it.\n\n"
            "Final paragraph here.\n")
 
 
-def _passage_comment(world, fp, quote, body, fence=None, hint=True):
-    """A passage comment on the one occurrence of `quote` in PAINTED, saved through the real host over the wire:
-    the stored comment (from the reply and from disk, which agree), checked against the source slice."""
-    assert PAINTED.count(quote) == 1, "the fixture holds the passage once"
-    start = PAINTED.index(quote)
+def _passage_comment_in(world, fp, text, heading, quote, body, fence=None, hint=True):
+    """A passage comment on the one occurrence of `quote` in `text` (the file's content, under its one `heading`),
+    saved through the real host over the wire: the stored comment (from the reply and from disk, which agree),
+    checked against the source slice."""
+    assert text.count(quote) == 1, "the fixture holds the passage once"
+    start = text.index(quote)
     end = start + len(quote)
-    anchor = make_anchor(PAINTED, start, end)
+    anchor = make_anchor(text, start, end)
     assert anchor["quote"] == quote, "the browser's anchor quotes the source slice as it is"
     r = world.comment(fp, body, fence=fence, anchor=anchor, hint=start if hint else None)
     c = r["store"]["comments"][-1]
     assert set(c) == set(KEEP) | {"anchor", "anchorAt", "ordinal", "copies", "section"}, "the shape of every passage comment: KEEP plus anchor, anchorAt and the copy fields (the tie-break, 2026-09-11)"
-    assert (c["ordinal"], c["copies"], c["section"]) == (1, 1, "Painted"), "the copy fields: 1 of 1 under the note's one heading (the fixture holds the passage once; the fence's `# trailing comment` is code, not a heading)"
+    assert (c["ordinal"], c["copies"], c["section"]) == (1, 1, heading), "the copy fields: 1 of 1 under the note's one heading (the fixture holds the passage once; a `#` inside a fence is code, not a heading)"
     assert c["anchor"]["quote"] == quote, "the stored quote is the exact source slice"
     assert c["anchor"] == anchor, "unique at 24 characters: stored as the browser sent it"
     assert (c["anchorAt"], c["id"]) == (start, "%d-%d" % (c["ts"], start))
-    assert PAINTED[c["anchorAt"]:c["anchorAt"] + len(c["anchor"]["quote"])] == quote, "the position names the slice"
+    assert text[c["anchorAt"]:c["anchorAt"] + len(c["anchor"]["quote"])] == quote, "the position names the slice"
     disk = json.loads(Path(r["storePath"]).read_text())["comments"][-1]
     assert disk == c, "the reply is what the next load sees"
-    assert locate_anchor(PAINTED, c["anchor"], c["anchorAt"]) == {"from": start, "to": end}, "the painter's locate lands on the line"
-    assert locate_anchor(PAINTED, c["anchor"])["from"] == start, "and so does a reader with no position"
-    assert fp.read_text() == PAINTED, "a comment never touches the file"
+    assert locate_anchor(text, c["anchor"], c["anchorAt"]) == {"from": start, "to": end}, "the painter's locate lands on the line"
+    assert locate_anchor(text, c["anchor"])["from"] == start, "and so does a reader with no position"
+    assert fp.read_text() == text, "a comment never touches the file"
     return r, c
+
+
+def _passage_comment(world, fp, quote, body, fence=None, hint=True):
+    """A passage comment on the one occurrence of `quote` in PAINTED (the Slice 5 guards' fixture)."""
+    return _passage_comment_in(world, fp, PAINTED, "Painted", quote, body, fence=fence, hint=hint)
 
 
 def test_a_passage_comment_on_a_code_line_holding_asterisks_stores_the_exact_source_slice(world):
@@ -625,6 +631,64 @@ def test_a_passage_comment_across_two_table_cells_stores_the_slice_with_its_pipe
     # and one cell alone, beside them
     r3, c3 = _passage_comment(world, fp, "cell three", "Which three?", fence=world.fence_of(r2))
     assert [x["anchor"]["quote"] for x in r3["store"]["comments"]] == [quote, quote, "cell three"]
+
+
+# A cell holding an escaped pipe and a tab-indented line inside a fence: two quotes Slice 8 of plans/markdown-viewer.md
+# (items 1 and 2) makes from the Rendered view, where a cell and a code line were refused before. The exact mapping
+# takes the quote from the source's own positions, so the backslash before a pipe (the rendered cell shows `tag=a|b`)
+# and the tab the rendered rows show as four spaces reach the store as bytes. The host has stored the exact slice and
+# located it byte for byte since the anchors follow-on, so the two cases below did not fail before the slice; they pin
+# the contract over the kernel wire, as the Slice 5 guards above do. Synthetic: the shapes of the painter's own fixture
+# (ui/webview/anchor-map-fixtures/cells.md), each held once in a note of its own, so no hint settles anything.
+CELLS = ("# Cells\n\nThe notes-api filters and one handler.\n\n"
+         "| Filter | Example |\n|--------|---------|\n| by tag | `tag=a\\|b` and `\\|` alone |\n| by owner | the web session |\n\n"
+         "```python\ndef handler(request):\n\treturn respond(request)\n```\n\n"
+         "Final paragraph here.\n")
+
+
+def test_a_passage_comment_on_a_cell_holding_an_escaped_pipe_stores_the_backslash_and_the_pipe(world):
+    """Slice 8, item 1 (a regression guard: green before the slice). A comment made from the Rendered view on a cell
+    written `tag=a\\|b` quotes the cell's source text, backslash and pipe included, where the rendered cell shows
+    `tag=a|b`; the host stores that slice byte for byte with anchorAt beside it, and the engine lands on the cell with
+    or without the position. A selection inside the cell's markup, the second code span alone, is a slice too."""
+    fp = world.root / "docs" / "cells.md"
+    fp.write_text(CELLS)
+    quote = "`tag=a\\|b` and `\\|` alone"
+    at = CELLS.index(quote)
+    row = CELLS[CELLS.rindex("\n", 0, at) + 1:CELLS.index("\n", at)]
+    assert row == "| by tag | `tag=a\\|b` and `\\|` alone |", "the fixture: the quote is the cell's trimmed source text"
+    assert "|" not in quote.replace("\\|", ""), "the fixture: every pipe inside the cell is escaped"
+    r, c = _passage_comment_in(world, fp, CELLS, "Cells", quote, "Escape the pipe in the docs.")
+    assert c["anchor"]["quote"].count("\\|") == 2, "both escapes are stored as written"
+    # the same passage with no position sent: it occurs once, so the host locates it without one
+    r2, c2 = _passage_comment_in(world, fp, CELLS, "Cells", quote, "Still the same cell.", fence=world.fence_of(r), hint=False)
+    assert c2["anchorAt"] == c["anchorAt"]
+    # the second code span alone, a selection inside the cell's markup
+    r3, c3 = _passage_comment_in(world, fp, CELLS, "Cells", "`\\|` alone", "Alone.", fence=world.fence_of(r2))
+    assert c3["anchorAt"] == at + quote.index("`\\|` alone")
+    assert [x["anchor"]["quote"] for x in r3["store"]["comments"]] == [quote, quote, "`\\|` alone"]
+
+
+def test_a_passage_comment_over_a_tab_indented_code_line_stores_the_tab_byte(world):
+    """Slice 8, item 2 (a regression guard: green before the slice). A comment made from the Rendered view over
+    `def handler(request):` and the tab-indented line under it quotes the source's line feed and TAB where the
+    rendered rows show the tab as four spaces; the host stores the bytes with anchorAt, and the engine lands on the
+    lines with or without the position. A selection begun in the indent snaps to the first glyph, so the one-line
+    quote carries no tab and its position is the byte after it."""
+    fp = world.root / "docs" / "cells.md"
+    fp.write_text(CELLS)
+    quote = "def handler(request):\n\treturn respond(request)"
+    assert CELLS.count("\treturn") == 1, "the fixture: one tab-indented line"
+    fence_open = CELLS.index("```python")
+    fence_close = CELLS.index("```", fence_open + 3)
+    assert fence_open < CELLS.index(quote) < fence_close, "the fixture: the lines sit inside the fence"
+    r, c = _passage_comment_in(world, fp, CELLS, "Cells", quote, "Two lines, one comment.")
+    assert "\n\t" in c["anchor"]["quote"], "the line feed and the tab are stored as bytes"
+    line = "return respond(request)"
+    r2, c2 = _passage_comment_in(world, fp, CELLS, "Cells", line, "One line, no tab.", fence=world.fence_of(r))
+    assert "\t" not in c2["anchor"]["quote"]
+    assert c2["anchorAt"] == CELLS.index("\t" + line) + 1, "the snapped quote starts after the tab"
+    assert [x["anchor"]["quote"] for x in r2["store"]["comments"]] == [quote, line]
 
 
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):

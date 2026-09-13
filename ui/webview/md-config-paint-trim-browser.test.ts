@@ -106,7 +106,9 @@ try { pw = requireCjs("playwright"); } catch { pw = null; }
  *  trim's: the stripped-style scene's list item, whose source text the sanitizer shortens, is refused as a mismatch with its own
  *  element since Slice 5's pairing, where the html block before it used to take every node and the paint stopped there, plan
  *  item 10 (d); every scene's paint must reach the closing paragraph, test 1); `__unpaint` is the panel's (children back, the
- *  parent normalized) and returns the HTML; `__nest`
+ *  parent normalized; a display formula's `.katex-display` box the paint STAMPED with `fc-hl-block` instead of wrapping,
+ *  Slice 8 of plans/markdown-viewer.md item 5, stripped of the class and the paint's attributes in place, as file-comments.ts
+ *  unwrapMarks does) and returns the HTML; `__nest`
  *  hand-wraps a collapsed blank mark of an untrimmed paint in two more marks and reads all three. */
 const HELPERS = `
 const BLANK = /^(?:[^\\p{L}\\p{N}\\p{P}\\p{S}]|[\\u115f\\u1160\\u3164\\uffa0])*$/u;
@@ -132,7 +134,7 @@ window.__bare = () => { const out = []; const w = document.createTreeWalker(md()
     const top = topOf(t); if (!(top.querySelector && top.querySelector("mark.fc-hl"))) continue;
     if (width(t) > 0 && !(t.parentElement && t.parentElement.closest("mark"))) out.push({ parent: t.parentNode.tagName, text: t.data, w: width(t) }); }
   return out; };
-window.__unpaint = () => { const parents = new Set(); for (const n of Array.from(md().querySelectorAll("mark.fc-hl"))) { const p = n.parentNode; parents.add(p); while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); } for (const p of parents) p.normalize(); return md().innerHTML; };
+window.__unpaint = () => { for (const b of Array.from(md().querySelectorAll(".fc-hl-block"))) { b.classList.remove("fc-hl-block"); for (const a of ["data-act", "data-id", "data-new", "tabindex", "role", "title"]) b.removeAttribute(a); } const parents = new Set(); for (const n of Array.from(md().querySelectorAll("mark.fc-hl"))) { const p = n.parentNode; parents.add(p); while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); } for (const p of parents) p.normalize(); return md().innerHTML; };
 window.__nest = (src) => { const marks = paintOne(src, "c1", false);
   const inner = marks.find((k) => BLANK.test(k.textContent) && textWidth(k) === 0 && k.getClientRects().length > 0); if (!inner) return null;
   const wrap = (n) => { const o = document.createElement("mark"); o.className = "fc-hl"; n.parentNode.insertBefore(o, n); o.appendChild(n); return o; };

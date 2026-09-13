@@ -10,14 +10,21 @@
 //     renders with, recording the source index of every character it emits and verifying every token's
 //     raw text at the position the walk assigns it. Marks the renderer consumes (heading hashes, list
 //     bullets, emphasis delimiters, backticks, link brackets and destinations, escapes, hard breaks,
-//     task checkboxes) are dropped; a block whose text with all whitespace removed does not equal the
-//     rendered element's is refused, never mis-anchored. Code, tables, HTML, entity-bearing prose, and
-//     escaped link labels refuse by design (the plan's list).
+//     task checkboxes, a table's pipes and delimiter row, a fence's opener and closer) are dropped; a
+//     block whose text with all whitespace removed does not equal the rendered element's is refused,
+//     never mis-anchored. A table's cells and a code block's lines are positioned as prose is (Slice 8 of
+//     plans/markdown-viewer.md: walkTable re-cuts each row as marked's splitCells does, walkCode finds
+//     each text line in its raw line), so a selection inside a cell or a code line maps to the source; a
+//     selection spanning two cells of a table is refused with the reason named and the Raw view offered
+//     on the exact span, and a table or a code block whose raw the reading cannot lay out keeps a hole
+//     with the Raw offer (the fallback the plan keeps). HTML, entity-bearing prose, and escaped link
+//     labels refuse by design (the plan's list).
 //   - makeAnchor / locateComment delegate to the vendored track-changents engine, so the browser's anchor
 //     is byte-identical to the one `track-comment` would build.
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements; in the Rendered view an
 //     inline formula whose TeX the range holds goes under the mark with the words beside it (wrapBetween), so a passage
-//     with a formula in it is one highlight and not two with the formula bare between them.
+//     with a formula in it is one highlight and not two with the formula bare between them, and a display formula the
+//     range covers takes the block class on its own `.katex-display` box, returned among the marks (stampBlock).
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
@@ -177,12 +184,15 @@ const tagNameOf = (n: DElement): string => hasClass(n, IMG_WRAP_CLASS) ? "IMG" :
 // parts as well (a comment across two code lines matched its quote, which holds a newline, against a hay reading
 // "commentdef" and painted nothing, Slice 3 of plans/markdown-viewer.md; a comment across two cells reads its pipe as a
 // blank and finds the cells apart, Slice 5).
-// codeLineAt and codeLineStart, the line of a DOM position and the position where a line starts, are exported for
-// Slice 8's exact mapping of code lines and have no caller in production today: reader-place.ts read the code line at
-// the body's top edge through codeLineAt until the Slice 3 review's round 3 retired that hit-test read, and now counts
-// the `.cl` row under the edge as its line, the line codeLineAt gives any position in the row (one row per line).
-// anchor-map-wrapped-code.test.ts exercises the two and pins that no production module calls them; a caller added later
-// updates this paragraph and the plan's Slice 3 build note (item 9).
+// The exact mapping of code lines (walkCode, Slice 8 of plans/markdown-viewer.md) reads no row: the rows drop only the
+// newlines, which the walk never emits, so the character count under a `<pre>` is the walk's and descend and nthNonWs see
+// through the rows to the selected character. One reader of a row remains, the change points' placement on a code line that
+// shows no character (renderedSpot, blankCodeLineSpot): such a line has no character to sit against, and its row is the box
+// the viewer gives it, so the point goes there (the Slice 8 review, round 1). codeLineAt and codeLineStart, the line of a DOM position and the position
+// where a line starts, were exported here from Slice 3 for that mapping and had no caller in production (reader-place.ts
+// counts the `.cl` row under the body's top edge as its line, one row per line); Slice 8 deleted them, and
+// anchor-map-wrapped-code.test.ts pins that nothing under ui/webview defines or calls them again (the plan's Slice 3 build
+// note, item 9, records the deletion).
 
 const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl");
 
@@ -222,61 +232,6 @@ function hayRuns(n: DNode): CodeRun[] { const out: CodeRun[] = []; runsUnder(n, 
 
 /** The text of `code` as its source shows it: the text nodes' data with the newline between rows put back. */
 export const codeText = (code: DNode): string => codeRuns(code).map((r) => r.text).join("");
-
-/** The 0-based line of the DOM position (`node`, `offset`) in `code`: a text node and an index into it, or an element
- *  and an index among its children (a caret between two of them, or at its end, the shapes caretRangeFromPoint gives);
- *  -1 for a position not under `code`. The newlines before the position count, real and between rows. The position is
- *  taken as a DOM position, not a character offset, on purpose: once the wrap has dropped the newline, the end of one
- *  row's text and the start of the next are the same character offset and different lines, and the row that holds the
- *  position tells them apart. */
-export function codeLineAt(code: DNode, node: DNode, offset: number): number {
-  const target: DNode | null = isText(node) ? node : node.childNodes[offset] || null;
-  const atEnd = !isText(node) && !target;   // the end of an element: after its last content
-  let lines = 0;
-  const nl = (s: string, end: number): number => { let n = 0; for (let i = 0; i < end; i++) if (s.charCodeAt(i) === 10) n++; return n; };
-  const visit = (n: DNode): boolean => {   // true once the position is reached
-    if (target && n === target) { if (isText(n)) lines += nl(n.data, Math.min(offset, n.data.length)); return true; }
-    if (isText(n)) { lines += nl(n.data, n.data.length); return false; }
-    let prevRow = false;
-    for (let i = 0; i < n.childNodes.length; i++) {
-      const c = n.childNodes[i];
-      if (isControl(c)) continue;
-      const row = isElement(c) && isCodeRow(c);
-      if (row && prevRow) lines++;   // the boundary before this row, whether the position is in it or past it
-      if (visit(c)) return true;
-      prevRow = row;
-    }
-    if (atEnd && n === node) return true;
-    return false;
-  };
-  return visit(code) ? lines : -1;
-}
-
-/** The text position where line `k` (0-based) of `code` starts: the character after the k-th newline (the start of the
- *  next text node when the newline ends one, or the row after it when the newline is a row boundary; the row element
- *  itself, at offset 0, when that row holds no text); null past the last line. */
-export function codeLineStart(code: DNode, k: number): { node: DNode; offset: number } | null {
-  const runs = codeRuns(code);
-  const firstTextFrom = (i: number): DText | null => { for (let j = i; j < runs.length; j++) if (runs[j].node) return runs[j].node; return null; };
-  if (k === 0) { const t = firstTextFrom(0); return t ? { node: t, offset: 0 } : null; }
-  let seen = 0;
-  for (let i = 0; i < runs.length; i++) {
-    const r = runs[i];
-    if (!r.node) {
-      if (++seen < k) continue;
-      const rowText = textNodes(r.row as DNode)[0];
-      return rowText ? { node: rowText, offset: 0 } : { node: r.row as DNode, offset: 0 };
-    }
-    const d = r.text;
-    for (let j = 0; j < d.length; j++) {
-      if (d.charCodeAt(j) !== 10 || ++seen < k) continue;
-      if (j + 1 < d.length) return { node: r.node, offset: j + 1 };
-      const next = firstTextFrom(i + 1);
-      return next ? { node: next, offset: 0 } : { node: r.node, offset: d.length };
-    }
-  }
-  return null;
-}
 
 /** Sum of the lengths of the text nodes under `n` that a `counts` predicate admits (null = all). */
 function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => boolean) | null): number {
@@ -779,7 +734,8 @@ function expandTabs(str: string, n: (i: number) => number): { str: string; map: 
  *  marker left in the text (`> \tquoted`, `>\t\tcode`, a closing `> \t`, `- \titem`) is four spaces in the nested
  *  tokens' raws. The top-level walk runs over N, the source with the same expansion (normalizeSource); this is that step
  *  one level down, and the four spaces take the tab's position, so no emitted character moves and a block the tab opens
- *  (an indented code block) places as a hole where the tab stands. The Slice 4 review, round 6: before this the nested
+ *  (an indented code block) places its lines at their own characters past the tab (walkCode; a hole where the tab stood,
+ *  before Slice 8). The Slice 4 review, round 6: before this the nested
  *  walk ran over the unexpanded text, the nested raws did not tile it, and any such quote refused whole, a closing
  *  `> \t` line with "a paragraph the mapping could not place" (round 5 covered `>\t` and `> ` singly: the strip takes
  *  one whitespace and the nested lexer expanded the second), a `> \tquoted` line with a reason naming the tab. */
@@ -789,18 +745,64 @@ function blockLexView(v: View): View {
   return new View(str, null, map);
 }
 
+/** Source the walk shows without positioning: the reason a selection touching it reads (refusalNoun's terms) and its span in N.
+ *  A hole may show no character at all: a formula's (FORMULA_HOLE), whose glyphs are a control, and a fence line's (FENCE_LINE),
+ *  which renders nothing; no selection touches such a hole, and the change points read it (renderedSpot). */
 type Hole = { reason: string; startN: number; endN: number };
+/** A table cell's emitted characters, `[startK, endK)` of the block's chars, and the cell's own span in N, `[startN, endN)`: the
+ *  row's segment trimmed as marked trims the cell's text (walkRow). Every cell whose trimmed source holds something has one: a
+ *  cell that shows a character, a cell the per-cell fallback holds (its characters in a hole), and a cell whose source emits no
+ *  character at all, a formula alone or a picture, with an empty range `startK === endK` (the Slice 8 review, round 4; before,
+ *  such a cell had no record, and the one-cell rule, which counts cells, never saw two of them in one span). A padded cell,
+ *  which has no source, has none, nor a cell whose trimmed source is empty. Slice 8 of plans/markdown-viewer.md: the one-cell
+ *  rule of the selection map reads them (mapRenderedSelection), and a change's point places inside one and nowhere else in the
+ *  table (renderedSpot). */
+type Cell = { startK: number; endK: number; startN: number; endN: number };
+/** A table's place in its block: its raw's span in N, its characters' range in the block's chars and its cells,
+ *  `cells[cellFrom, cellTo)`; a list item or a quote can hold several. `endsLf` says whether the raw ends with a line feed (the
+ *  tokenizer swallows the blank lines after a table) or with the last row's last character (a table that ends its quote or its
+ *  list item, whose trailing line feed marked trims off the container's text, or the note with no final line feed), read from
+ *  the raw itself: inside a container the view's index after the raw is the next line's first character past the indent or the
+ *  marker, so N there does not tell (renderedSpot's table rule, the Slice 8 review, round 3). */
+type TableSpan = { startN: number; endN: number; startK: number; endK: number; cellFrom: number; cellTo: number; endsLf: boolean };
+/** One text line of a code block the walk positioned (walkCode): the N index of its raw line's first character in the block's
+ *  view (`startN`: inside a list item or a quote the first character past the container's indent or `> ` marker, which have no
+ *  index in the view; blankCodeLineSpot reads a line from the byte after the ending before it, so those bytes are the line's) and
+ *  of the line feed that ends it (`endN`; the raw's end for a last line with none), the block's `chars` index of its first
+ *  character (`k`; -1 for a line that shows none) and, for such a line, the N index of each character its row shows (`ws`: the
+ *  line's whitespace, none for a blank line). A change's point on a line that shows no character places in the line's own row
+ *  through these (renderedSpot, blankCodeLineSpot); a line that shows one places against its characters. */
+type CodeLine = { startN: number; endN: number; k: number; ws: number[] | null };
+/** A code block of the walk: its raw's span in N and its text lines in order (CodeLine), one per row the viewer cuts (code-block.ts
+ *  wrapLinesHtml), a trailing blank line aside, whose row marked's renderer folds; no line for a block whose lines the reading
+ *  could not place (walkCode's hole). Every code token has one, in walk order, so the block's k-th record is its k-th `<pre>`. */
+type CodeSpan = { startN: number; endN: number; lines: CodeLine[] };
 /** The reason of a formula's hole (mathInline, mathBlock), the one formulaExtra finds a hole by. */
 const FORMULA_HOLE = "a formula";
-/** The reasons of a code block's and a table's holes (the walk shows their text and refuses to map inside them). */
+/** The reasons of a code block's holes and of a table's. Since Slice 8 a code block's lines (walkCode) and a table's cells
+ *  (walkTable) are positioned, and these holes stand for what those readings could not place: a code block whose text lines are
+ *  not its raw's lines less a whitespace prefix, a cell whose re-cut of the row is not marked's text for it, or a table whose raw
+ *  does not lay out as marked's token says (tableHole). */
 const CODE_HOLE = "a code block", INDENTED_CODE_HOLE = "an indented code block", TABLE_HOLE = "a table";
+/** The reason of a fence line's zero-text hole (walkCode): the opener with its info string, and the closer with the line feed that
+ *  ends the last code line before it and its own line feed, render nothing, and a change's point on them keeps its card
+ *  (renderedSpot). Never read by a selection: the hole holds no character. */
+const FENCE_LINE = "a code block's fence line";
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
- *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
- *  block or table the renderer shows but the mapping refuses). */
+ *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a code block or a
+ *  table cell the reading could not place, a footnote reference's number, a callout's title). `cells` and
+ *  `tables` are the tables' shapes among the chars (Cell, TableSpan), empty for a block holding no table;
+ *  `codes` the code blocks in walk order (CodeSpan; the lines positioned, or none for one the reading could
+ *  not place), empty for a block holding none. `N` is the text the walk runs over (walkedBlocks), for a walk that
+ *  reads the character after a token's raw (walkCode: a fence closer's line feed the lexer left off the raw). */
 class Emitter {
+  constructor(readonly N: string) {}
   chars = "";
   pos: number[] = [];
   holes: Hole[] = [];
+  cells: Cell[] = [];
+  tables: TableSpan[] = [];
+  codes: CodeSpan[] = [];
   put(c: string, n: number): void {
     if (isWs(c)) return;
     if (this.pos.length && n >= 0) {
@@ -809,8 +811,15 @@ class Emitter {
     }
     this.chars += c; this.pos.push(n);
   }
+  /** The hole's shown text, counted per UTF-16 code unit as `put` counts positioned text (emitText, walkCode): one `pos` entry
+   *  per character of `chars`, so an astral character (an emoji: two code units) inside a hole leaves every later character of
+   *  the block reading its own position. Iterated by code point, as it was, the hole came out one entry short per such character,
+   *  and since Slice 8 put a hole's characters beside positioned ones (a cell the per-cell fallback holds, walkRow) every later
+   *  cell of that table read the position of the character after it: the quote ran over the pipe and the line feed into the next
+   *  row, the last cell's end was unset, a Raw comment on a later cell painted across two cells and a deletion point in one landed
+   *  a character early, where the base refused the whole table (the Slice 8 review, round 1; anchor-map-cells.test.ts). */
   putHole(text: string, hole: number): void {
-    for (const c of text) if (!isWs(c)) { this.chars += c; this.pos.push(-(hole + 1)); }
+    for (let i = 0; i < text.length; i++) { const c = text[i]; if (!isWs(c)) { this.chars += c; this.pos.push(-(hole + 1)); } }
   }
 }
 
@@ -877,7 +886,9 @@ function emitText(view: View, em: Emitter): void {
   for (let i = 0; i < view.str.length; i++) em.put(view.str[i], view.n(i));
 }
 
-/** Rendered text of inline tokens with no positions (table cells: shown, never mapped). */
+/** Rendered text of inline tokens with no positions: what a table cell the walk cannot place shows (the per-cell fallback,
+ *  walkRow, and the whole-table fallback, tableHole; until Slice 8 every cell went through this). Throws Refusal on an entity
+ *  and on a kind it has no case for, as the positioned walk does. */
 function plainInline(tokens: Token[]): string {
   let out = "";
   for (const t of tokens) {
@@ -986,6 +997,229 @@ function headingTextOffset(raw: string, text: string): number {
 
 const DEF_RE = (): RegExp => Lexer.rules.block.gfm.def;
 
+// ── tables (Slice 8 of plans/markdown-viewer.md, item 1: a cell maps from Rendered) ────────────────────────────────────────
+// marked lays a table out from its raw line by line: the first line is the header, the second the delimiter row (never
+// rendered), the lines after it the body rows in order, then the blank lines the raw swallowed (the gfm table rule; the
+// tokenizer's `cap[3].replace(/\n[ \t]*$/, "").split("\n")`). It cuts a row with splitCells: at every pipe an EVEN count of
+// backslashes precedes (an odd count is the escape `\|`), a blank first and a blank last segment dropped (the leading and the
+// trailing pipe), a body row cut to the header's width and padded with empty cells, and each cell TRIMMED with `\|` made `|`;
+// the cell's inline tokens are lexed from that text (TableCell: text and tokens, no raw and no position). So a cell's shown
+// text stands over the row's own characters, and the walk below places it there: the cell's inline tokens over a View whose
+// n(i) is the row position of character i of the text, the backslash of every `\|` skipped. The renderer emits the header's
+// cells then each row's left to right, the walk's order, so the block's chars are byte for byte what putHole gave and the
+// `<table>` pairs to its block as before (analyzeRendered); only the positions change. A cell the reading cannot place (the
+// re-cut is not marked's text for it, or its walk refuses: an entity) is a hole of its own, so the cells beside it map (the
+// brief's open question 9); a table whose raw has fewer lines than the token says is the whole-table hole it was (tableHole).
+/** A row's segments as splitCells cuts them, `[start, end)` in the row before the trim; null for a cell marked padded. */
+function rowCells(row: string, count: number | undefined): ({ a: number; b: number } | null)[] {
+  const segs: { a: number; b: number }[] = [];
+  let from = 0;
+  for (let i = 0; i < row.length; i++) {
+    if (row[i] !== "|") continue;
+    let slashes = 0;
+    for (let b = i - 1; b >= 0 && row[b] === "\\"; b--) slashes++;
+    if (slashes % 2) continue;
+    segs.push({ a: from, b: i }); from = i + 1;
+  }
+  segs.push({ a: from, b: row.length });
+  if (segs.length && row.slice(segs[0].a, segs[0].b).trim() === "") segs.shift();
+  if (segs.length && row.slice(segs[segs.length - 1].a, segs[segs.length - 1].b).trim() === "") segs.pop();
+  const out: ({ a: number; b: number } | null)[] = segs;
+  if (count) { if (out.length > count) out.length = count; else while (out.length < count) out.push(null); }
+  return out;
+}
+/** The cell's text (marked's: the segment `[cs, ce)` of the row, `\|` unescaped) over the segment's own characters: character i of
+ *  the text at the row position of the character it shows, the backslash of every `\|` skipped (the source holds it, the text
+ *  does not). Null when the segment read that way is not the text (a shape this reading does not follow). */
+function cellView(row: View, cs: number, ce: number, text: string): View | null {
+  const map: number[] = [];
+  let out = "";
+  for (let i = cs; i < ce; i++) {
+    if (row.str[i] === "\\" && i + 1 < ce && row.str[i + 1] === "|") continue;
+    out += row.str[i]; map.push(row.n(i));
+  }
+  if (out !== text) return null;
+  map.push(row.n(ce));
+  return new View(text, null, map);
+}
+/** One row of a table, `line` at `lv`, against marked's cells for it (`count` the header's width for a body row, none for the
+ *  header): each cell's inline tokens over the cell's own characters (cellView, walkInline), its extent recorded (Emitter.cells;
+ *  a cell that emits no character, a formula alone, is recorded with an empty range so the one-cell rule counts it); a cell the
+ *  reading cannot place a hole of its own over the cell's span, its shown text put through the hole, with the walk's reason where
+ *  the walk refused (an entity: the sentence the table read before Slice 8) and the table's where the re-cut is not marked's
+ *  text. A padded cell shows nothing; a row's tail past the header's width is not rendered and is left unpositioned. Throws
+ *  Refusal when the row does not cut into the token's cells, and the caller keeps the whole table a hole. */
+function walkRow(line: string, lv: View, cells: Tokens.TableCell[], count: number | undefined, em: Emitter): void {
+  const segs = rowCells(line, count);
+  if (segs.length !== cells.length) throw new Refusal("a table the mapping could not place");
+  for (let c = 0; c < cells.length; c++) {
+    const seg = segs[c];
+    if (!seg) continue;
+    const s = line.slice(seg.a, seg.b);   // trimmed as splitCells trims the cell (String.prototype.trim's alphabet, both ends)
+    const cs = seg.a + (s.length - s.trimStart().length), ce = Math.max(cs, seg.b - (s.length - s.trimEnd().length));
+    const k0 = em.chars.length, pos0 = em.pos.length, h0 = em.holes.length;
+    const cv = cellView(lv, cs, ce, cells[c].text);
+    let reason: string | null = cv ? null : TABLE_HOLE;
+    if (cv) {
+      try { walkInline(cells[c].tokens, cv, em); }
+      catch (e) {
+        if (!(e instanceof Refusal)) throw e;
+        em.chars = em.chars.slice(0, k0); em.pos.length = pos0; em.holes.length = h0;   // the cell's own characters, if any went in
+        reason = e.message;
+      }
+    }
+    if (reason !== null) {
+      em.holes.push({ reason, startN: lv.n(cs), endN: lv.n(ce) });
+      let shown: string;
+      try { shown = plainInline(cells[c].tokens); } catch (e) { if (!(e instanceof Refusal)) throw e; shown = plainInlineText(cells[c].tokens, []); }   // an entity: the character it shows
+      em.putHole(shown, em.holes.length - 1);
+    }
+    if (em.chars.length > k0 || ce > cs) em.cells.push({ startK: k0, endK: em.chars.length, startN: lv.n(cs), endN: lv.n(ce) });
+  }
+}
+/** The table before Slice 8, kept for a raw the reading cannot lay out: one hole over the whole raw, every cell's shown text through it. */
+function tableHole(tt: Tokens.Table, tv: View, em: Emitter): void {
+  em.holes.push({ reason: TABLE_HOLE, startN: tv.n(0), endN: tv.n(tv.str.length) });
+  const h = em.holes.length - 1;
+  for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
+  for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
+}
+/** A table token over `tv`, the view its raw tiles: the header's cells, then each body row's (walkRow), in the renderer's
+ *  order, and the table's span recorded (Emitter.tables). A raw with fewer lines than the token's rows, or a row that does not
+ *  cut into its cells, is the whole-table hole (tableHole), the table's shape before this slice. */
+function walkTable(tt: Tokens.Table, tv: View, em: Emitter): void {
+  const lines = tv.str.split("\n");
+  const k0 = em.chars.length, pos0 = em.pos.length, h0 = em.holes.length, c0 = em.cells.length;
+  if (lines.length >= 2 + tt.rows.length) {
+    try {
+      let ls = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        if (i === 0) walkRow(ln, tv.sub(ls, ls + ln.length), tt.header, undefined, em);
+        else if (i >= 2 && i - 2 < tt.rows.length) walkRow(ln, tv.sub(ls, ls + ln.length), tt.rows[i - 2], tt.header.length, em);
+        ls += ln.length + 1;
+      }
+      em.tables.push({ startN: tv.n(0), endN: tv.n(tv.str.length), startK: k0, endK: em.chars.length, cellFrom: c0, cellTo: em.cells.length, endsLf: tv.str.endsWith("\n") });
+      return;
+    } catch (e) {
+      if (!(e instanceof Refusal)) throw e;
+      em.chars = em.chars.slice(0, k0); em.pos.length = pos0; em.holes.length = h0; em.cells.length = c0;
+    }
+  }
+  tableHole(tt, tv, em);
+}
+
+// ── code (Slice 8 of plans/markdown-viewer.md, item 2: a code line maps from Rendered) ────────────────────────────────────
+// marked lays a code block out from its raw line by line. A fence's raw is the opener line, the content lines and the closer
+// (none for a fence the note ends inside), plus the one line feed the lexer moves onto a block's raw; its `text` is the content
+// lines, each less the opener's indent when the line has at least that much (indentCodeCompensation, for a BACKTICK opener
+// alone: a tilde fence keeps its lines whole), so content line i of the raw renders text line i. An indented block's raw is its
+// lines with their four or more leading spaces and the blank lines between them; its `text` those lines less one to four leading
+// spaces, the trailing line feeds trimmed. The lexer has already turned each line's leading tab run into four spaces a tab in the
+// view the walk runs over (normalizeSource at the top level, blockLexView one level down), every one of them carrying the tab's
+// own position. The renderer writes the text into `<pre><code>`, and the viewer cuts it into per-line rows whose line feeds are
+// DROPPED (code-block.ts wrapLinesHtml), splits a row's text around the URLs and paths it links (file-view-links.ts) and parks
+// the Copy button in the `<pre>`, a control every walk skips (isControl); a line feed is whitespace and a link's split moves no
+// character, so the characters under the `<pre>` are the text's non-whitespace characters in order, and the walk below emits
+// exactly those: each text line's characters at the raw line's own positions, past the whitespace prefix the text lost, so the
+// block's chars are byte for byte what putHole gave and the `<pre>` pairs to its block as before (analyzeRendered); only the
+// positions change. A selection inside a row then maps to the line's source span (the tab bytes and CRLFs the source holds,
+// since the position is the source's and not a text search's), and one across rows to the span from the first character to the
+// last, the line feeds and a quoted fence's markers inside the quote as a Raw selection over the same characters mints (the
+// brief's open question 2: lines are not cells, and a rule against crossing them would be one the Raw view does not have). A
+// block whose text lines are not its raw's lines less a whitespace prefix (a shape this reading does not follow; marked's
+// tokenizer produces none today) keeps the hole it had, one over the whole raw with the code's reason, so its refusal, its Raw
+// offer and the fallback paint stand for it ("the Raw fallback stays for shapes the map still refuses").
+/** A fence's closing line as marked's rule reads one: up to three spaces, three or more backticks or tildes, more fence characters, spaces. */
+const FENCE_CLOSER_RE = /^ {0,3}(?:`{3,}|~{3,})[`~]* *$/;
+/** Where each text line of a code token begins in `cv.str` (the view its raw tiles): entry i is the index of text line i's first
+ *  character, the raw line being the text line after a whitespace prefix (the opener's indent the compensation took, an indented
+ *  block's one to four spaces, or none). Null when a line is not laid out so, or a raw line past the content is neither blank nor
+ *  a fence's closer. A fence with no content line has no line to place: []. marked's text is "" for that fence and for one whose
+ *  one content line is blank (its lazy content stops at the first closer; the compensation can empty an indented fence's line
+ *  too), and the raw tells them apart: the second's raw line after the opener is blank AND a raw line follows it (the closer, or
+ *  the line feed the lexer moved onto the raw of a fence the note ends inside), and that line is placed as any blank line is, so
+ *  a change's point on it goes into the one row the viewer shows for it (the Slice 8 review, round 2; before, both shapes
+ *  answered [] and the point kept its card). A fence the note ends inside right after its opener's line feed (raw "```\n") has
+ *  no content line: its raw's second line is the split's artifact of that line feed, not a line, so it answers [] like the empty
+ *  fence and a point at the note's end keeps its card (the Slice 8 review, round 3; round 2's test read the artifact as the
+ *  one-blank-line fence's line and placed that point in the pre's one row, marked's floor for empty text). */
+function codeLineStarts(tt: Tokens.Code, cv: View): number[] | null {
+  const lines = cv.str.split("\n"), textLines = tt.text.split("\n");
+  const fenced = tt.codeBlockStyle !== "indented", first = fenced ? 1 : 0;
+  if (tt.text === "" && !(fenced && lines.length > 2 && stripWs(lines[1]) === "")) return [];
+  if (lines.length < first + textLines.length) return null;
+  const starts: number[] = [];
+  let ls = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const rl = lines[i], ti = i - first;
+    if (ti >= 0 && ti < textLines.length) {
+      const tl = textLines[ti], b = rl.length - tl.length;
+      if (b < 0 || !rl.endsWith(tl) || stripWs(rl.slice(0, b)) !== "") return null;
+      starts.push(ls + b);
+    } else if (ti >= textLines.length && stripWs(rl) !== "" && !(fenced && FENCE_CLOSER_RE.test(rl))) return null;   // past the content: the closer, or the line feed the lexer moved onto the raw
+    ls += rl.length + 1;
+  }
+  return starts;
+}
+/** A code token over `cv`, the view its raw tiles: every text line's characters at the raw line's own positions (codeLineStarts),
+ *  line by line, so the emitted characters are the ones putHole gave, positioned; a fence's opener line and its closer, which render
+ *  nothing, are zero-text holes either side of them (FENCE_LINE; the closer's from the line feed that ends the last line through
+ *  the closer's own line feed, and one hole over the whole raw for a fence with no line to place), so a change's point on a fence
+ *  line keeps its card while a point in a line places in its row (renderedSpot); an indented block has no fence lines. The
+ *  closer's line feed is the lexer's to place: a lone line feed after a block goes onto the block's raw, so the raw of a fence a
+ *  line follows directly ends with it and the hole's end, the raw's end, is past it; a blank line after the fence is a `space`
+ *  token's, and the line feed that ends a list item's or a quote's last line is trimmed off the container's text, so the raw of
+ *  a fence a blank line follows, or one that ends its item or its quote, ends with the closer's last character and the line feed
+ *  stands at the view's end, one character past the raw in N (Emitter.N). The hole takes it there too, so the same point keeps
+ *  its card in every shape (the Slice 8 PR review's round 1; through the closing pass the hole ended at the raw's end, so
+ *  the point at that line feed fell to renderedSpot's adjacency rule and was painted after the last code character, at the top
+ *  level or in a quote, or before the next item's text when the fence ended its item, where main 929ae86e1 kept the card, the
+ *  fence a hole, or placed it before the next item's text; a fence the note ends inside has no line feed there and no closer
+ *  hole, and a closed fence ending the note with no final line feed keeps its hole at the raw's end). Each line placed is
+ *  recorded with its span and whether it shows a character (Emitter.codes, CodeSpan), so a point on a line that shows none, a
+ *  blank line, can go into the
+ *  line's own row (renderedSpot, blankCodeLineSpot). A token whose lines the reading cannot place is the hole it was before this
+ *  slice, one over the whole raw with the code's reason, its text shown through it; it is recorded too, with no line, so the
+ *  block's k-th record stays its k-th code block, the k-th `<pre>` the renderer emits (blankCodeLineSpot pairs them so for a
+ *  block whose lines all show nothing). */
+function walkCode(tt: Tokens.Code, cv: View, em: Emitter): void {
+  const starts = codeLineStarts(tt, cv);
+  if (starts === null) {
+    em.holes.push({ reason: tt.codeBlockStyle === "indented" ? INDENTED_CODE_HOLE : CODE_HOLE, startN: cv.n(0), endN: cv.n(cv.str.length) });
+    em.putHole(tt.text, em.holes.length - 1);
+    em.codes.push({ startN: cv.n(0), endN: cv.n(cv.str.length), lines: [] });
+    return;
+  }
+  const textLines = tt.text.split("\n"), lines = cv.str.split("\n");
+  const fenced = tt.codeBlockStyle !== "indented", contentStart = lines[0].length + 1;
+  // the opener's hole ends right after the line feed that ends the opener line: inside a container the view has no index for
+  // the indent or the `> ` marker before the first content line, so `cv.n(contentStart)` is that line's first character PAST
+  // them, and the bytes of the indent or the marker fell strictly inside the hole and kept their card, while the same bytes
+  // before every later line, which no hole holds, place in the line's row (the Slice 8 review, round 4; blankCodeLineSpot)
+  // the closer's own line feed when the lexer left it off the raw (a blank line after the fence, or the fence ending its list
+  // item or its quote): the character after the raw in N, the closer hole's last (the docstring); a raw that ends with the line
+  // feed the lexer moved onto it already holds it, and a fence ending the note has none
+  const rawEnd = cv.n(cv.str.length), closerEnd = !cv.str.endsWith("\n") && em.N[rawEnd] === "\n" ? rawEnd + 1 : rawEnd;
+  if (fenced) em.holes.push({ reason: FENCE_LINE, startN: cv.n(0), endN: starts.length ? cv.n(lines[0].length) + 1 : closerEnd });
+  const span: CodeSpan = { startN: cv.n(0), endN: cv.n(cv.str.length), lines: [] };
+  em.codes.push(span);
+  let ls = fenced ? contentStart : 0;   // the raw line's start: its indent's first character, or the line's own
+  for (let i = 0; i < starts.length; i++) {
+    const tl = textLines[i], s = starts[i], rl = lines[(fenced ? 1 : 0) + i];
+    const k0 = em.chars.length;
+    for (let j = 0; j < tl.length; j++) em.put(tl[j], cv.n(s + j));
+    const shown = em.chars.length > k0;
+    span.lines.push({ startN: cv.n(ls), endN: cv.n(ls + rl.length), k: shown ? k0 : -1, ws: shown ? null : Array.from({ length: tl.length }, (_, j) => cv.n(s + j)) });
+    ls += rl.length + 1;
+  }
+  if (fenced && starts.length) {
+    let closer = contentStart;
+    for (let i = 0; i < starts.length; i++) closer += lines[1 + i].length + 1;
+    if (closer <= cv.str.length) em.holes.push({ reason: FENCE_LINE, startN: cv.n(closer - 1), endN: closerEnd });
+  }
+}
+
 /** Place `tokens`, which tile `view.str` from `p` (block-level; nested containers recurse). */
 function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
   for (const t of tokens) {
@@ -1050,18 +1284,15 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "code": {
-        // shown by the renderer, refused by the mapping: a hole the selection may not touch
-        const tt = t as Tokens.Code;
-        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? INDENTED_CODE_HOLE : CODE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
-        em.putHole(tt.text, em.holes.length - 1);
+        // every line positioned over the raw line's own characters (Slice 8, item 2), the opener's indent and an indented block's
+        // spaces skipped; a block the reading cannot lay out keeps its hole (walkCode)
+        walkCode(t as Tokens.Code, view.sub(p, p + raw.length), em);
         break;
       }
       case "table": {
-        const tt = t as Tokens.Table;
-        em.holes.push({ reason: TABLE_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
-        const h = em.holes.length - 1;
-        for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
-        for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
+        // every cell positioned over the row's own characters (Slice 8, item 1), the header's cells then each body row's left to
+        // right, the order the renderer emits them in; a cell the reading cannot place is a hole of its own (walkTable)
+        walkTable(t as Tokens.Table, view.sub(p, p + raw.length), em);
         break;
       }
       case "frontMatter": {
@@ -1091,8 +1322,14 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
         break;
       }
       case "mathBlock": {
-        // a display formula of its own: KaTeX's glyphs are skipped as a control (isControl), so the block has no text
-        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.length) });
+        // a display formula of its own: KaTeX's glyphs are skipped as a control (isControl), so the block has no text. The hole
+        // ends at the closing delimiter, the raw less the spaces and line feeds the tokenizer takes after it (math.ts blockMath),
+        // not at the raw's end: inside a quote or a callout the raw's trailing line feeds map past the `> ` marker of the quote
+        // line after the formula (suffixLineView), and formulaSpan's whitespace trim back from there stopped at the marker, so a
+        // quote that is exactly a quoted `$$` block, the opener through the closer, never covered its formula (no stamp, the
+        // card offering Reveal) and the Raw offer for one preselected the markers of the lines after it (the Slice 8 review,
+        // round 2). At the top level the two ends agreed once trimmed.
+        em.holes.push({ reason: FORMULA_HOLE, startN: view.n(p), endN: view.n(p + raw.replace(/\s+$/, "").length) });
         break;
       }
       case "html": throw new Refusal("an HTML block");
@@ -1129,6 +1366,13 @@ type Block = {
    *  newline) — between blocks, not in one (renderedSpot's own-rows rule). */
   textEndN: number;
   chars: string; pos: number[]; holes: Hole[];
+  /** the tables the block holds, their cells among its chars (Emitter.cells, Emitter.tables): a top-level table's one entry, or
+   *  the tables nested in a list item or a quote; empty for every other block */
+  cells: Cell[]; tables: TableSpan[];
+  /** the block's code blocks in walk order (Emitter.codes, CodeSpan; the k-th is the k-th `<pre>` under the block's nodes): each
+   *  positioned line's span in N and whether it shows a character, for a change's point on a line that shows none (renderedSpot);
+   *  empty for a block holding no code */
+  codes: CodeSpan[];
   refused: string | null;
   dom: DNode[];
   isHtml: boolean;
@@ -1827,7 +2071,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
   let pDepth = 0;   // the chain's length when that `<p>` was left open: the elements below it; a closer popping to one of them closes the `<p>`
   const pInScope = (): boolean => !chain.slice(pDepth).some((e) => P_SCOPE_BARRIERS.has(e));   // the parser's "p in button scope"
   for (const { t, startN, endN, textEndN, broken } of table.placed) {
-    const em = new Emitter();
+    const em = new Emitter(table.N);
     let refused: string | null = broken;
     if (refused === null) {
       try { walkBlocks([t], View.identity(table.N, 0), em, startN); }
@@ -1891,7 +2135,7 @@ function walkedBlocks(table: SourceTable): Walked[] {
     // read past, and a closing tag's block ran the resync, which, before a paragraph carrying an inline closer, confirmed at no
     // end and took every node to the document's end: the Slice 5 review, round 2)
     const blank = isHtml && (commentsOnly(t.raw) || (!(tags as TopTag[]).some((tt) => !tt.stray) && htext === ""));
-    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
+    out.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, cells: em.cells, tables: em.tables, codes: em.codes, refused, isHtml, blank, tag, tags, ends, minted, pOpen: !!scan && scan.pOpen, nested, htext });
   }
   if (table.lexError !== null) out.length = 0;
   table.walked = out;
@@ -1933,7 +2177,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));
   for (const n of content) nodeText.set(n, textKey(n));
   if (lexError !== null) {
-    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
+    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], cells: [], tables: [], codes: [], refused: `markdown the lexer could not parse (${lexError})`,
                   dom: content.slice(), isHtml: false, blank: false, tag: null, tags: null, ends: [], minted: false, pOpen: false, nested: false, htext: "", wrap: [] });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
@@ -2447,8 +2691,8 @@ function formulaElements(n: DNode, out: DNode[] = []): DNode[] {
  *  an html wrapper, whose block is then the paragraph's and not the wrapper's), and the hole the element stands for, the
  *  k-th formula hole of the block for the k-th formula element under the node (the walk pushes holes in source order and
  *  the renderer emits elements in the same order). The Raw view opens at the hole and preselects it: the formula with its
- *  delimiters, `$E = mc^2$` or the `$$` block through its closing line (the hole's span less the line feeds a display
- *  block's raw carries after it, and any indent before it), so the composer quotes the formula (the owner's ruling 7: the
+ *  delimiters, `$E = mc^2$` or the `$$` block through its closing `$$` (the hole's span, which ends at the closer, less any
+ *  indent before it), so the composer quotes the formula (the owner's ruling 7: the
  *  whole formula, not the TeX between the delimiters). KaTeX's glyphs are not the source's text, so the offer every other
  *  refusal makes, the selected text's occurrence (rawExtra), is the answer only where the hole is not found: the block's
  *  own start when the count disagrees (a placeholder an author typed by hand renders a formula the walk never saw), or a
@@ -2469,12 +2713,14 @@ function formulaHole(idx: RenderedIndex, root: DNode, control: DNode): { blk: Bl
   const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
   return { blk, hole: k >= 0 && k < holes.length ? holes[k] : null };
 }
-/** A formula hole's span as the Raw view preselects it: the formula with its delimiters, less the line feeds a display block's
- *  raw carries after it and any indent before it (source offsets). */
+/** A formula hole's span as the Raw view preselects it: the formula with its delimiters, less any indent before it (source
+ *  offsets). The hole's end is the closing delimiter's (walkInline's mathInline case, walkBlocks' mathBlock case), so nothing
+ *  is trimmed there: a trim back from a display block's raw end skipped whitespace only, and inside a quote that end lay past
+ *  the next quote line's `> ` marker, where the trim stopped (the Slice 8 review, round 2). */
 function formulaSpan(idx: RenderedIndex, hole: Hole): SourceRange {
-  let s = hole.startN, e = hole.endN;
+  let s = hole.startN;
+  const e = hole.endN;
   while (s < e && isWs(idx.N[s])) s++;
-  while (e > s && isWs(idx.N[e - 1])) e--;
   return { start: nOf(idx, s), end: nOf(idx, e) };
 }
 function formulaExtra(idx: RenderedIndex, root: DNode, control: DNode, gs: number, ge: number): Partial<MapRefusal> {
@@ -2568,9 +2814,12 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   const sa = boundaryAt(a, idx.total), sf = boundaryAt(f, idx.total);
   const gs = Math.min(sa, sf), ge = Math.max(sa, sf);
   const FORMULA_TOUCHED = "This selection touches a formula; comment on it from the Raw view.";
+  const ONE_CELL = "This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view.";
   // a formula at the selection's END is an obstacle like a hole's: named after the obstacles before it in the span (the pass
-  // below), so a drag from a table cell into a formula's glyphs names the table, the obstacle the person's eye meets first;
-  // one at the START is the first obstacle and is named at once
+  // below), so a drag from a table's first cell into a formula's glyphs after the table names the table's one-cell rule, the
+  // obstacle the person's eye meets first, while one from the table's last cell names the formula (a positioned cell is no
+  // obstacle since Slice 8; before it the table was a hole and a drag from any cell named it); one at the START is the first
+  // obstacle and is named at once
   let formulaEnd: Partial<MapRefusal> | null = null;
   const covered: DNode[] = [];   // the formulas the selection covers whole, at its start or its end
   for (const [x, sx, other, o] of [[a, sa, sf, f], [f, sf, sa, a]] as const) {
@@ -2687,10 +2936,68 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
     }
     return descend(node, isStart ? c : c + 1, isStart);
   };
+  // The one-cell rule's count (Slice 8, item 3; the Slice 8 review, rounds 3 to 5): a table's cells whose trimmed SOURCE the
+  // selection's source span overlaps, so a cell that emits no positioned character, a formula alone or a picture alone (an empty
+  // character range, walkRow), counts where its source lies inside the span, wherever the drag's ends fell. The span is the
+  // selection's positioned characters' widened by the formulas it covered whole at either end (widened). Round 3 counted the
+  // covered formula's own cell alone; round 4 every cell of the table whose source holds something, but only through a formula
+  // the selection covered at its start or its end (this check), while the pass counted by positioned characters, so a drag from
+  // the prose before a table through a header row of formulas alone into a body cell, from a positioned cell through a trailing
+  // formula-only or picture-only cell into the prose after, or over a whole table of formulas between two paragraphs mapped with
+  // the pipes and the delimiter row inside the quote (round 5: the pass counts by source span too, cellsRule). Two or more cells
+  // refuse with the same sentence and the Raw view offered on the table's covered cells, the first's start through the last's
+  // end, clipped to the span (round 4; round 3 offered the whole widened span, the same offer for its shapes, which lay inside
+  // the table). Read in the pass for every table of the span's blocks, and through coveredCells for a covered formula's table the
+  // pass does not reach: a table with no positioned character in the selection (a drag begun on its formula-alone last cell or
+  // ended on its formula-alone first cell, whose block the endpoints leave), and, through orFormula, a selection whose
+  // characters are the covered formulas alone, two formula-only cells selected in one row or in two, the one-cell rule's before
+  // they are the formula's (before round 4: "touches a formula", the Raw offer on the first formula alone, one cell of the two).
+  const cellsRule = (blk: Block, tb: TableSpan, start: number, end: number): MapRefusal | null => {
+    const cells = blk.cells.slice(tb.cellFrom, tb.cellTo).filter((x) => nOf(idx, x.startN) < end && nOf(idx, x.endN) > start);
+    if (cells.length < 2) return null;
+    const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));
+    return refuse(ONE_CELL, { blockStartLine: rawOffsetToLine(source, s), blockStartOffset: s, rawHasQuote: true, rawRange: { start: s, end: e } });
+  };
+  const coveredCells = (start: number, end: number): MapRefusal | null => {
+    for (const c of covered) {
+      const fh = formulaHole(idx, root, c);
+      if (!fh || !fh.hole) continue;
+      const hs = nOf(idx, fh.hole.startN);
+      const tb = fh.blk.tables.find((t) => nOf(idx, t.startN) <= hs && hs < nOf(idx, t.endN));
+      const r = tb ? cellsRule(fh.blk, tb, start, end) : null;
+      if (r) return r;
+    }
+    return null;
+  };
+  /** The selection's source span [start, end) widened by the formulas it covered whole, each with its delimiters: the quote's
+   *  span, and the one-cell rule's; a formula whose hole is not found (the count disagrees) widens nothing. */
+  const widened = (start: number, end: number): { start: number; end: number } => {
+    for (const c of covered) {
+      const fh = formulaHole(idx, root, c);
+      if (!fh || !fh.hole) continue;
+      const span = formulaSpan(idx, fh.hole);
+      if (span.start < start) start = span.start;
+      if (span.end > end) end = span.end;
+    }
+    return { start, end };
+  };
+  /** The covered formulas' own span, for a selection with no positioned character: the first's start through the last's end. */
+  const coveredOnly = (): MapRefusal | null => {
+    let start = Infinity, end = -Infinity;
+    for (const c of covered) {
+      const fh = formulaHole(idx, root, c);
+      if (!fh || !fh.hole) continue;
+      const sp = formulaSpan(idx, fh.hole);
+      if (sp.start < start) start = sp.start;
+      if (sp.end > end) end = sp.end;
+    }
+    return start < end ? coveredCells(start, end) : null;
+  };
   // a selection the text cannot place, or of whitespace alone, that ends inside a formula still touched the formula; one that
-  // covered a formula whole and holds no text beside it selected the formula
+  // covered a formula whole and holds no text beside it selected the formula, unless the formulas it covered are two cells of a
+  // table (coveredCells)
   const orFormula = (r: MapResult): MapResult => formulaEnd ? refuse(FORMULA_TOUCHED, formulaEnd)
-    : covered.length ? refuse(FORMULA_TOUCHED, formulaExtra(idx, root, covered[0], gs, ge)) : r;
+    : covered.length ? (coveredOnly() || refuse(FORMULA_TOUCHED, formulaExtra(idx, root, covered[0], gs, ge))) : r;
   const S = locate(gs, true), E = locate(ge, false);
   if (!S || !E) return orFormula(refuse("The selection could not be matched to the file text.", rawExtra()));
   let { b: bs, k: ks } = S;
@@ -2700,10 +3007,12 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
   if (bs < 0 || be < 0) return orFormula(refuse("The selection is only whitespace.", rawExtra()));
   // The obstacles in the span, in document order, the first one named: a refused block with an element on the page (an html
   // block, a mismatch) refuses when the pass reaches it, and a mapped block's selected characters are read for a hole (a
-  // table, a code block, a footnote's number) before the block after it is looked at, so a selection from a table cell into
-  // an html block after it is refused as touching the table, the obstacle the person's eye meets first (before this, every
-  // refused block in the span was named ahead of any hole, and a span from a table into a `<details>` summary named the
-  // HTML block). A refused block that rendered nothing (a comment, a closing tag alone) is never in the way: its source
+  // footnote's number, a cell or a code block the reading could not place) and its tables for the one-cell rule before the
+  // block after it is looked at, so a selection from a table's first cell into an html block after it is refused by the
+  // one-cell rule, the obstacle the person's eye meets first, and one from the table's LAST cell, one cell covered, as touching
+  // the html block (before this, every refused block in the span was named ahead of any hole, and a span from a table into a
+  // `<details>` summary named the HTML block; until Slice 8 every cell was a hole and a drag from any cell named the table). A
+  // refused block that rendered nothing (a comment, a closing tag alone) is never in the way: its source
   // travels inside the quote. The span's characters are read only when the endpoints stand in order (bs <= be): a
   // selection of the whitespace between two blocks lands its start on the block after and its end on the block before, and
   // that block's text, which the person did not select, is not scanned for a hole. A formula the selection ends inside
@@ -2721,20 +3030,39 @@ export function mapRenderedSelection(sel: SelLike, renderedRoot: Element, source
       const p = blk.pos[k];
       if (p < 0) { const h = blk.holes[-p - 1]; return refuse(`This selection touches ${h.reason}; comment on it from the Raw view.`, blockExtra(blk, h.startN)); }
     }
+    // The one-cell rule (Slice 8, item 3; the brief's open question 3): the cells of one table the selection covers must be ONE.
+    // A quote across two cells would carry the pipe between them, and the row's line feed across two rows, raw delimiters the
+    // person did not select as text (the ruling that declined raw html in a quote for the wrappers), so the selection is refused
+    // with the reason named, and the Raw view is offered on the exact span, the first covered cell's start through the last's end,
+    // clipped to the selection's (rawRange, with blockStartOffset that start so rawTarget's search begins there and not at an
+    // earlier identical row), where Save works: two body cells, prose before the table into a body cell (the header's cells lie
+    // in the span), the whole table. One cell and the prose after the table maps, the row's closing pipe and line feed inside the
+    // quote as a Raw selection over the same characters mints. The cells are counted by SOURCE SPAN (cellsRule) against the
+    // selection's span in this block: its first positioned character's offset in the first block and its last's plus one in the
+    // last (both positioned, the hole scan above having passed them), the block's whole extent between, widened by a formula the
+    // selection covered whole at either end. So a cell that emits no positioned character, a formula alone or a picture alone,
+    // counts where its source lies inside the span, wherever the drag's ends fell (the Slice 8 review, round 5; before, this
+    // count read the positioned characters and the covered formulas' tables alone (coveredCells), so a drag from the prose before
+    // a table through a header row of formulas alone into a body cell, from a positioned cell through a trailing formula-only or
+    // picture-only cell into the prose after, or over a whole table of formulas between two paragraphs mapped with the pipes and
+    // the delimiter row inside the quote, and the offer stopped at the positioned characters). Before this slice every cell was
+    // a hole and the loop above refused at the first, "touches a table", the Raw offer an indexOf of the tab-joined selection
+    // that found nothing.
+    if (blk.tables.length && (from < to || (b !== bs && b !== be))) {
+      const sp = widened(b === bs ? nOf(idx, blk.pos[from]) : -Infinity, b === be ? nOf(idx, blk.pos[to - 1]) + 1 : Infinity);
+      for (const tb of blk.tables) { const r = cellsRule(blk, tb, sp.start, sp.end); if (r) return r; }
+    }
   }
   if (formulaEnd) return refuse(FORMULA_TOUCHED, formulaEnd);
   if (bs > be || (bs === be && ks >= ke)) return orFormula(refuse("The selection is only whitespace.", rawExtra()));
-  let start = nOf(idx, idx.blocks[bs].pos[ks]);
-  let end = nOf(idx, idx.blocks[be].pos[ke - 1]) + 1;
   // a formula covered whole at an end of the selection travels inside the quote, with its delimiters, as one between two
-  // selected words does; where its hole is not found (the count disagrees) the prose alone is the quote
-  for (const c of covered) {
-    const fh = formulaHole(idx, root, c);
-    if (!fh || !fh.hole) continue;
-    const span = formulaSpan(idx, fh.hole);
-    if (span.start < start) start = span.start;
-    if (span.end > end) end = span.end;
-  }
+  // selected words does (widened; where its hole is not found, the count disagreeing, the prose alone is the quote)
+  const { start, end } = widened(nOf(idx, idx.blocks[bs].pos[ks]), nOf(idx, idx.blocks[be].pos[ke - 1]) + 1);
+  // the one-cell rule over the widened span for a covered formula whose table the pass did not read: a table with no positioned
+  // character in the selection, the drag begun on its formula-alone last cell or ended on its formula-alone first cell, whose
+  // block the endpoints leave (coveredCells)
+  const cellsRefusal = coveredCells(start, end);
+  if (cellsRefusal) return cellsRefusal;
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 
@@ -2870,7 +3198,8 @@ const skipBlockWs = (t: DText, root: DNode): boolean => {
  *  its own line: KaTeX's `.katex` inside its `.katex-display` wrapper (whose `>` selectors lay the formula out), the belt's
  *  `code` inside a `pre`, or KaTeX's flag standing as a top-level node (under `root`). An inline mark around a block-level box
  *  paints nothing over it, and a mark between `.katex-display` and its `.katex` breaks the layout, so a display formula is
- *  never wrapped: a highlight over one needs a block-level treatment of its own, which nothing paints today. */
+ *  never wrapped: a highlight over one stamps its `.katex-display` box with the block class instead (stampBlock, Slice 8 of
+ *  plans/markdown-viewer.md, item 5), and the fill's two other display shapes stay bare. */
 function isInlineFormula(n: DNode, root: DNode): boolean {
   if (!isFormula(n)) return false;
   const p = n.parentNode;
@@ -3030,14 +3359,48 @@ function wrapBetween(idx: RenderedIndex, root: DNode, s: { t: DText; off: number
 }
 /** The formulas of `blk` whose TeX lies inside `range`, as elements: the k-th formula hole of the block stands for the k-th
  *  formula element under its nodes (formulaExtra's pairing, the walk's source order being the renderer's document order);
- *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). */
+ *  none when the counts disagree (a placeholder an author typed by hand renders a formula the walk never saw). The span
+ *  tested is the hole's as the Raw view preselects it (formulaSpan): the opener, less any indent before it, through the
+ *  closing delimiter, where the hole ends (the mathBlock case; before the Slice 8 review's round 2 it ran to the raw's end
+ *  and the trim back from there stopped at a quote line's `>` marker, so a quoted `$$` block's exact quote never covered
+ *  it), so a comment whose quote is exactly the `$$` block, made in the Raw view or through the formula's Raw offer, covers
+ *  the formula at the top level, in a list item, in a quote or in a callout (Slice 8, item 5). */
 function coveredFormulas(idx: RenderedIndex, blk: Block, range: SourceRange, out: DNode[]): void {
   const holes = blk.holes.filter((h) => h.reason === FORMULA_HOLE);
   if (!holes.length) return;
   const els: DNode[] = [];
   for (const n of blk.dom) formulaElements(n, els);
   if (els.length !== holes.length) return;
-  holes.forEach((h, k) => { if (nOf(idx, h.startN) >= range.start && nOf(idx, h.endN) <= range.end) out.push(els[k]); });
+  holes.forEach((h, k) => { const sp = formulaSpan(idx, h); if (sp.start >= range.start && sp.end <= range.end) out.push(els[k]); });
+}
+/** The block-level paint (plans/markdown-viewer.md Slice 8, item 5; the Slice 8 contract line). A display formula is a block of
+ *  its own line, which no inline mark can wrap: a mark around a block box paints nothing over it, and a mark between
+ *  `.katex-display` and its `.katex` breaks KaTeX's layout (isInlineFormula), and a mark at the top level would be a child the
+ *  block pairing meets. So a display formula the range covers takes a CLASS on its own `.katex-display` box instead: the
+ *  block class of the paint's class, `fc-hl-block` for a highlight (the first token of `fc-hl fc-hl-context` too: the panel
+ *  adds the context cue to a stamped box itself) and `fc-presel-block` for the composer's pending target, plus the paint's
+ *  data attributes as makeMark sets them on a mark, and the box is returned among the marks in document order, so the panel
+ *  records it as one of its marks (a control that opens the card, the margin layout's box) and strips it in place where a mark
+ *  is unwrapped (file-comments.ts unwrapMarks, BLOCK_PAINT_CLASSES); both sheets dress the two classes on the box. The paint
+ *  serves the two comment classes alone (BLOCK_PAINT_FOR): a change's tint (`fc-ins`) has no block rule in the sheets and
+ *  unpaintChanges strips marks by class, so a change covering a display formula keeps its shape from before, the prose either
+ *  side marked and the box bare. The trim never measures a stamped box (isBlankMark requires a MARK), and the pairing's
+ *  blank-mark read is MARK-only too, so the class on the box disturbs nothing about the block table. */
+const BLOCK_PAINT_FOR = new Set(["fc-hl", "fc-presel"]);
+/** The display formula's box a covered formula element stands in: its parent `.katex-display` (KaTeX's display-mode wrapper,
+ *  the mathBlock block's one element, at the top level or spliced inside a wrapper), else null: an inline formula, or one of the
+ *  fill's other display shapes (KaTeX's flag standing at the top level, the belt's `code.md-math-src` in a `pre`), which no
+ *  sheet rule dresses and which stay bare as before. */
+function displayBoxOf(f: DNode): DElement | null {
+  const p = f.parentNode;
+  return p && isElement(p) && hasClass(p, "katex-display") ? p : null;
+}
+/** Stamp a display formula's box: the block class of `className`'s first token appended once to the box's class, and every key
+ *  of `data` set as `data-<key>` (rewritten on a repeat). */
+function stampBlock(el: DElement, className: string, data?: Record<string, string>): void {
+  const cls = className.split(/\s+/).filter(Boolean)[0] + "-block";
+  if (!hasClass(el, cls)) el.setAttribute("class", ((el.getAttribute("class") || "") + " " + cls).trim());
+  if (data) for (const k of Object.keys(data)) el.setAttribute("data-" + k, data[k]);
 }
 
 /** A string and, for each of its characters, the source index it was derived from: `text[i]` is what the rendering shows for
@@ -4023,10 +4386,13 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     return out.length ? out : null;
   };
   const idx = renderedIndex(root, source);
-  // ── the exact path: emitted characters whose source offset lies in the range, and the inline formulas whose TeX does
-  //    (a formula emits no character: its hole names its span, and coveredFormulas pairs the hole with its element)
+  // ── the exact path: emitted characters whose source offset lies in the range, and the formulas whose TeX does (a formula
+  //    emits no character: its hole names its span, and coveredFormulas pairs the hole with its element): an inline formula
+  //    goes under the marks with the words beside it (wrapBetween), a display formula's box is stamped with the block class
+  //    and returned among the marks (stampBlock; Slice 8, item 5), for the classes the block paint serves (BLOCK_PAINT_FOR)
   let first: { b: number; k: number } | null = null, last: { b: number; k: number } | null = null;
-  const formulas: DNode[] = [];
+  const formulas: DNode[] = [], boxes: DElement[] = [];
+  const blockPaint = BLOCK_PAINT_FOR.has(className.split(/\s+/).filter(Boolean)[0]);
   for (let b = 0; b < idx.blocks.length; b++) {
     const blk = idx.blocks[b];
     if (blk.refused !== null || !blk.dom.length) continue;
@@ -4038,28 +4404,41 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
       const s = nOf(idx, p);   // one source character: emitted text is never a tab expansion or a line ending
       if (s >= range.start && s < range.end) { if (!first) first = { b, k }; last = { b, k }; }
     }
-    coveredFormulas(idx, blk, range, formulas);
+    const covered: DNode[] = [];
+    coveredFormulas(idx, blk, range, covered);
+    for (const f of covered) { const box = blockPaint ? displayBoxOf(f) : null; if (box) boxes.push(box); else formulas.push(f); }
   }
+  // the marks of one paint with the covered display formulas' boxes stamped and merged in document order (precedes); the trim
+  // (done) measures the marks alone and keeps every box
+  const withBoxes = (marks: DElement[]): DElement[] => {
+    if (!boxes.length) return marks;
+    for (const box of boxes) stampBlock(box, className, data);
+    return marks.concat(boxes).sort((a, b) => a === b ? 0 : precedes(root, a, b) ? -1 : 1);
+  };
   if (first && last) {
     const s = nthNonWs(idx.blocks[first.b].dom[0], first.k);
     const e = nthNonWs(idx.blocks[last.b].dom[0], last.k);
     if (s && e) {
-      const out = done(wrapBetween(idx, root, s, { t: e.t, off: e.off + 1 }, className, data, formulas));
+      const out = done(withBoxes(wrapBetween(idx, root, s, { t: e.t, off: e.off + 1 }, className, data, formulas)));
       if (out) return out;
     }
-  } else if (formulas.length) {
-    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone): the formulas are the highlight,
-    // read from the blocks' nodes they sit under (blockTopOf, unitsUnder), as wrapBetween reads its units. A walk of the whole
-    // root here cost marks x nodes for such marks after main's M1 had scoped the text path: 40 formula-only marks over a
-    // 26k-node document were 142 ms a pass against 6.9 ms for 40 text marks on the same paragraphs (the Slice 4 review, round 7).
-    const tops = new Set<DNode>();
-    for (const f of formulas) { const tf = blockTopOf(idx, root, f); if (tf) tops.add(tf); }
-    const all = unitsUnder(root, tops);
-    const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
-    if (at.length) {
-      const out = done(wrapRuns(root, all.slice(Math.min(...at), Math.max(...at) + 1), className, data));
-      if (out) return out;
+  } else if (formulas.length || boxes.length) {
+    // the range holds formulas and no text (a comment made in the Raw view on `$x^2$` alone, or on a `$$` block alone): the
+    // inline formulas are the highlight, read from the blocks' nodes they sit under (blockTopOf, unitsUnder), as wrapBetween
+    // reads its units, and a display formula's box is stamped (withBoxes; before Slice 8 a `$$` block alone painted nothing
+    // and its card offered Reveal). A walk of the whole root here cost marks x nodes for such marks after main's M1 had scoped
+    // the text path: 40 formula-only marks over a 26k-node document were 142 ms a pass against 6.9 ms for 40 text marks on the
+    // same paragraphs (the Slice 4 review, round 7).
+    const marks: DElement[] = [];
+    if (formulas.length) {
+      const tops = new Set<DNode>();
+      for (const f of formulas) { const tf = blockTopOf(idx, root, f); if (tf) tops.add(tf); }
+      const all = unitsUnder(root, tops);
+      const at = formulas.map((f) => all.indexOf(f)).filter((i) => i >= 0);
+      if (at.length) for (const m of wrapRuns(root, all.slice(Math.min(...at), Math.max(...at) + 1), className, data)) marks.push(m);
     }
+    const out = done(withBoxes(marks));
+    if (out) return out;
   }
   // ── the fallback: a whitespace-tolerant match of the quote read as the rendering shows it (renderedBlocks: the rendered
   //    text of the blocks the range overlaps, marked's tokens written out with a source position per character, cut to the
@@ -4101,8 +4480,11 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
     const hits = occurrences(hay, quote);
     // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's rendering, which the
-    // quote was cut from. A change's text is short (a word, a number), and a table or a code block repeats such tokens; the
-    // first occurrence would mark an unchanged cell and report it painted, the wrong passage under "Scroll to the change".
+    // quote was cut from. A change's text is short (a word, a number) and a block repeats such tokens (until Slice 8 a table's
+    // cells and a code block's lines, which repeat them most, came here; since then those paint by position through the exact
+    // path above, and the ordinal serves what still falls here: an html block's text, a fence line's or the delimiter row's
+    // quote, a cell the per-cell fallback holds); the first occurrence would mark an unchanged passage and report it painted,
+    // the wrong passage under "Scroll to the change".
     // The count is taken over the RENDERED scope, not the raw slice: a comment's quote may carry markup of its own (`` `GET
     // /notes` `` in a table cell, `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the
     // rendering shows its text twice. The ordinal is exact when the rendering shows the text as many times as the scope's
@@ -4383,34 +4765,429 @@ function ownRows(idx: RenderedIndex, b: Block): { lo: number; hi: number } {
   return { lo, hi: b.textEndN + 1 === idx.N.length ? hi + 1 : hi };          // …and the end of the file right after it
 }
 
+/** Where a point goes in the Rendered view (renderedSpot): before offset `off` of text node `t`; or, for a point on a code line
+ *  that shows no character (blankCodeLineSpot), at column `col` among the text of the line's row cell `host`, whose text nodes,
+ *  if any, hold the row's whitespace. */
+type Spot = { t: DText; off: number } | { host: DElement; col: number };
+
+/** The row cell of a code line that shows no character, for a point on that line (renderedSpot). The viewer cuts a code block into
+ *  one `.cl` row per line (code-block.ts wrapLinesHtml), a blank line's an empty `.ct`, so the line has a box of its own to hold
+ *  the point, as the Raw view puts a point on a blank line into its row's cell (paintRawPoint). The line is found by the offset
+ *  among the block's positioned code (Block.codes: a line runs from the byte after the ending before it, the opener line's for
+ *  the first content line, so a container's indent or `> ` marker before the line is the line's, through its own line ending,
+ *  both bytes of a CRLF; the Slice 8 review, round 4: before, the first line began at its first character past the indent, so a
+ *  point on the indent or the marker before it fell out of every line, to the caller's rule, while the same point before every
+ *  later line was the line's); its row from the nearest line of the same block that shows a character,
+ *  before it else after: that character's text node, the `.cl` row above it, and the rows between counted, the rows standing one
+ *  per line. A code block whose lines all show nothing (one blank line, `\`\`\`\n\n\`\`\``, or lines of whitespace alone) has no
+ *  such character, so its `<pre>` is found by order instead: the block's k-th `<pre>` in document order for its k-th code block
+ *  (Block.codes records every code token in walk order, and the renderer emits one `<pre>` per code token in the same order), and
+ *  the row is that pre's i-th `.cl` (the Slice 8 review, round 2; before, the point kept its card while the pre showed the row
+ *  and the Raw view placed it there). The column is the count of the line's whitespace before the offset (CodeLine.ws), 0 on a
+ *  blank line. A fence's trailing blank line, its last line, has no row: marked's code renderer drops the text's final line feed
+ *  and the viewer's cut drops the empty segment after it, so the pre stands one row short of the block's lines; a point on that
+ *  line (or on its line feed, the closer hole's first position) goes to the END of the pre's last row, the row nearest the line
+ *  (the Slice 8 review, round 3; before, it fell to the caller's rule against the nearest positioned character, which with blank
+ *  or whitespace-only rows between stood two or more rows above the rows the pre shows for those lines, so the point read as the
+ *  first line changed; where the last row shows the nearest character the two places are one). Null when the offset is not on
+ *  such a line, or the pre offers no row for it: an undressed pre (a stand-in, a renderer that cut no rows), or a block whose
+ *  `<pre>` count is not its code blocks' (the fill's `<pre>` for a display formula past its bound, math.ts); the caller's rules
+ *  then place the point against the nearest character, after the text before the fence inside a list item, as main did for the
+ *  one-blank-line fence (its hole put no character in the way) and every tree for a whitespace-only line. */
+function blankCodeLineSpot(idx: RenderedIndex, blk: Block, offset: number): { host: DElement; col: number } | null {
+  for (const cs of blk.codes) {
+    if (!cs.lines.length || offset < nOf(idx, cs.startN) || offset > nOf(idx, cs.endN)) continue;
+    const endOf = (l: CodeLine): number => { const e = nOf(idx, l.endN); return idx.source[e] === "\r" && idx.source[e + 1] === "\n" ? e + 1 : e; };
+    let start = lineStartAt(idx.source, nOf(idx, cs.lines[0].startN));   // the first line's raw start, a container's indent or marker included
+    for (let i = 0; i < cs.lines.length; i++) {
+      const ln = cs.lines[i], end = endOf(ln);
+      if (offset > end) { start = end + 1; continue; }
+      if (offset < start || ln.k >= 0) return null;   // before the first line (the opener), or a line that shows a character
+      let ref = -1;
+      for (let q = i - 1; q >= 0 && ref < 0; q--) if (cs.lines[q].k >= 0) ref = q;
+      for (let q = i + 1; q < cs.lines.length && ref < 0; q++) if (cs.lines[q].k >= 0) ref = q;
+      let target: DNode | undefined, tail = false;   // tail: the folded trailing blank line, placed at the end of the pre's last row
+      const last = i === cs.lines.length - 1;
+      if (ref >= 0) {
+        const at = nthNonWs(blk.dom[0], cs.lines[ref].k);
+        if (!at) return null;
+        let row: DNode | null = at.t.parentNode;
+        while (row && !hasClass(row, "cl")) row = row.parentNode;
+        if (!row || !row.parentNode) return null;
+        const rows: DNode[] = [];
+        for (let c = 0; c < row.parentNode.childNodes.length; c++) { const n = row.parentNode.childNodes[c]; if (hasClass(n, "cl")) rows.push(n); }
+        const r = rows.indexOf(row) + (i - ref);
+        target = rows[r];
+        if (!target && last && r === rows.length) { target = rows[r - 1]; tail = true; }
+      } else {
+        // no line of this code block shows a character: its pre by order among the block's, its row by index
+        const pres: DNode[] = [];
+        for (const n of blk.dom) elementsUnder(n, (e) => e.tagName.toUpperCase() === "PRE", pres);
+        if (pres.length !== blk.codes.length) return null;
+        const rows = elementsUnder(pres[blk.codes.indexOf(cs)], (e) => hasClass(e, "cl"));
+        target = rows[i];
+        if (!target && last && i > 0 && i === rows.length) { target = rows[i - 1]; tail = true; }
+      }
+      if (!target) return null;
+      let host = target as DElement;
+      for (let c = 0; c < target.childNodes.length; c++) { const n = target.childNodes[c]; if (hasClass(n, "ct")) { host = n as DElement; break; } }
+      let col = 0;
+      if (tail) for (const t of textNodes(host)) col += t.data.length;
+      else if (ln.ws) for (const w of ln.ws) if (nOf(idx, w) < offset) col++;
+      return { host, col };
+    }
+    return null;
+  }
+  return null;
+}
+/** The source offset where the line holding `off` begins: the byte after the nearest line ending before it, or 0. */
+function lineStartAt(source: string, off: number): number {
+  let i = off;
+  while (i > 0 && source[i - 1] !== "\n" && source[i - 1] !== "\r") i--;
+  return i;
+}
+/** The elements under `n` (n itself included) that `keep` accepts, in document order. */
+function elementsUnder(n: DNode, keep: (e: DElement) => boolean, out: DNode[] = []): DNode[] {
+  if (isElement(n) && keep(n)) out.push(n);
+  for (let i = 0; i < n.childNodes.length; i++) elementsUnder(n.childNodes[i], keep, out);
+  return out;
+}
+/** The nearest `<li>` above `n` inside the block's nodes, or null: a top-level block's, a quote's text and its table (the pairing
+ *  puts a list's items under its one element). */
+function itemAbove(blk: Block, n: DNode | null): DNode | null {
+  for (let x: DNode | null = n; x && blk.dom.indexOf(x) < 0; x = x.parentNode) if (isElement(x) && x.tagName.toUpperCase() === "LI") return x;
+  return null;
+}
+/** Whether the block's j-th and k-th positioned characters stand in the same list item, or both in none (the Slice 8 review,
+ *  round 4; since round 5 edgeSpot's fallback for a block whose element cannot be paired). */
+function sameItem(blk: Block, j: number, k: number): boolean {
+  const itemOf = (i: number): DNode | null => { const at = nthNonWs(blk.dom[0], i); return itemAbove(blk, at ? at.t : null); };
+  return itemOf(j) === itemOf(k);
+}
+/** Whether content of the block's own item or quote stands before `el` (its `<table>` or `<pre>`) with no positioned character of
+ *  the block's among it, `jt` the text node holding the block's last positioned character before the offset (null for none). The
+ *  container is the nearest `<li>` or `<blockquote>` above `el` inside the block's nodes, else the block's node holding `el` (an
+ *  html wrapper's element); `el` itself among the block's nodes, a top-level table or fence, has none. The container's nodes before
+ *  `el` in document order, an ancestor of `el` descended, are content when one is an element or a text with a non-whitespace
+ *  character: a formula's glyphs and a picture among them, which the walks skip or which shows no text (a zero-text hole), and a
+ *  footnote reference's number, a hole's character. The positioned characters of the container before `el` stand in it exactly when
+ *  `jt` does: every positioned character of the container before `el` precedes the offset, else the offset would not be the start
+ *  edge's, and the last of them before the offset is `jt`, the characters standing in source order. Where the container holds
+ *  nothing before `el` (the block begins its item or its quote) and is itself inside another item or quote of the block's, that
+ *  one is read the same way, out to the block's node: a sub-item's table under an outer item holding a formula alone begins its
+ *  sub-item, and the outer item's formula stands before it, unpositioned (the Slice 8 PR review's round 1, on the
+ *  maintainer's ruling; the closing pass read the innermost container alone). The item or quote holding `jt`, the block's own or
+ *  one enclosing it, is read for the content between `jt` and `el` alone: what stands before `jt` is before the text the point
+ *  could follow, not between that text and the block, and what stands after `jt` is unpositioned (the last positioned character
+ *  before the offset is `jt`), so an outer item whose text precedes a formula alone, then a sub-item's table, holds content
+ *  before the table, and the outer item's text then a sub-item's table with nothing between holds none, the table beginning its
+ *  item after that text (round 4's rule; the PR review's round 2: round 1 read no further once an item held `jt`, and the
+ *  formula's bytes, the blank lines and the sub-item's indent and marker took the table's first header cell). A list element
+ *  holding `el` is never descended, whichever container is read: its children before the item holding `el` are sibling items,
+ *  whose content is not content before the block, at every nesting, so a formula-alone item followed by an item that begins with
+ *  a table places the same at the top level, nested in an item and in a quote (round 2; round 1 counted the sibling's formula
+ *  through a nested list's element and kept the card for the nested and the quoted list alone). In the reading between `jt` and
+ *  `el` a table or a code block of the block's is another block, not content: the one holding `jt` shows no positioned character
+ *  after it and one standing after `jt` shows none at all (else `jt` would stand in it), and the start edge after another block's
+ *  characters is round 5's, before the block's own first positioned character (an unplaceable fence, then a placed fence in the
+ *  same item: the placed fence's opener sits before its own code, as round 1 had it). The block's own node is read only as the
+ *  direct container (an html wrapper's element holding the table), never past an item and never for the content past `jt`. The
+ *  rule the reading serves: a placement never carries bytes from outside the block into a cell or a row, and where the
+ *  exact-position arithmetic would put them there the point keeps its card (the start edge's test, edgeSpot; the Slice 8
+ *  review's closing pass and the PR review's rounds 1 and 2). */
+function unpositionedBefore(blk: Block, el: DNode, jt: DNode | null): boolean {
+  const tag = (x: DNode): string => isElement(x) ? x.tagName.toUpperCase() : "";
+  const isItem = (x: DNode): boolean => tag(x) === "LI" || tag(x) === "BLOCKQUOTE";
+  const isList = (x: DNode): boolean => tag(x) === "UL" || tag(x) === "OL";
+  const under = (n: DNode | null, root: DNode): boolean => { for (let x: DNode | null = n; x; x = x.parentNode) if (x === root) return true; return false; };
+  let between = false;   // whether the container under inspection holds `jt`, so the reading is of the content between `jt` and `el`
+  let past = true;   // whether the scan has passed `jt`: false in the between reading until `jt` is met
+  // the nodes under `n` before `el` in document order, past `jt`: true when one is content, null when `el` is met with none before
+  // it, false when `el` is not under `n`; a list element holding `el` is not descended, its earlier children sibling items; in the
+  // between reading a table or a code block is another block of the block's, not content (the one holding `jt` shows no positioned
+  // character after it, one after `jt` shows none at all, else `jt` would stand in it), and the start edge after another block's
+  // characters is round 5's, before the block's own first positioned character (an unplaceable fence then a placed fence in one item)
+  const contentBefore = (n: DNode): boolean | null => {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (c === el) return null;
+      if (c === jt) { past = true; continue; }
+      if (between && (tag(c) === "TABLE" || tag(c) === "PRE")) { if (under(jt, c)) past = true; continue; }
+      if (under(el, c)) return isList(c) ? null : contentBefore(c);
+      if (under(jt, c)) { const r = contentBefore(c); if (r !== false) return r; continue; }
+      if (past && (isElement(c) || (isText(c) && stripWs(c.data) !== ""))) return true;
+    }
+    return false;
+  };
+  const read = (x: DNode): boolean => { between = under(jt, x); past = !between; return contentBefore(x) === true; };
+  let pastItem = false;   // whether an item or a quote lies between `el` and the node under inspection
+  for (let x = el.parentNode; x; x = x.parentNode) {
+    const own = blk.dom.indexOf(x) >= 0;
+    if (!isItem(x) && !own) continue;
+    if (under(jt, x)) return isItem(x) && read(x);
+    if ((isItem(x) || !pastItem) && read(x)) return true;
+    if (own) return false;
+    pastItem = true;
+  }
+  return false;
+}
+/** The n-th element of `tag` under the block's nodes in document order, paired with the n-th of the walk's `count` records of that
+ *  kind (a `<table>` per TableSpan, a `<pre>` per CodeSpan: the renderer emits one per token in walk order, the pairing
+ *  blankCodeLineSpot makes for the pres); null when the counts disagree (a `<pre>` no code token emitted, the fill's belt for a
+ *  display formula past its bound; a table whose raw the reading could not lay out, tableHole, has no TableSpan), so the caller
+ *  falls to another test. */
+function nthBlockElement(blk: Block, tag: string, n: number, count: number): DNode | null {
+  const els: DNode[] = [];
+  for (const d of blk.dom) elementsUnder(d, (e) => e.tagName.toUpperCase() === tag, els);
+  return els.length === count ? els[n] || null : null;
+}
+/** The source offset of the line ending at or after `off` (its LF, or the CR of a CRLF), or the source's length. */
+function lineEndAt(source: string, off: number): number {
+  let i = off;
+  while (i < source.length && source[i] !== "\n" && source[i] !== "\r") i++;
+  return i;
+}
+/** A change's point at the edge of a table or a code block inside its block (renderedSpot), `j` and `k` the block's positioned
+ *  characters before and at or past `offset` (-1 for none): the placement, null for the card, undefined when the offset is at no
+ *  such edge. Three edges (the Slice 8 review, rounds 2 to 6).
+ *  The INNER edge of a code block: an offset past the opener's line (an indented block's first character) through the last
+ *  line's ending, with no positioned character of the block at or past it (the trailing whitespace of the last code line and the line
+ *  feed that ends it, the closer hole's first position; a trailing blank line the pre has no row for), or on the line of the
+ *  block's positioned character before it, past that character through the line's ending, with the block's next positioned
+ *  character on a later line (an inner code line's trailing whitespace and the line feed that ends it, a blank or whitespace-only
+ *  line after it or not): the point sits after that character, its own line's, whatever follows (round 4 applied the same-item
+ *  test below to the last line's edge too, so a fence that ended a list item put the point before the NEXT item's text, or inside
+ *  the next item's pre, when the last code line carried trailing whitespace; round 3 and before had it after the character; the
+ *  inner line's is the review's round 6: through round 5 those offsets fell to renderedSpot's adjacency rule, which placed the
+ *  point before the next line's first character, one row down, or two past a blank line, where the Raw view keeps it on its
+ *  line, the adjacent offset and the CRLF ending's LF byte alone sitting after the character). A positioned character of the
+ *  block on the offset's own line at or past it (a point inside a line, before or after a character of the same row), or none of
+ *  the block's before it (a fence whose lines all show nothing, the pre with no row for the line), leaves the point to
+ *  renderedSpot's rules against the nearest character, the recorded fallback.
+ *  THE LINE BEFORE a table or a code block: an offset on the line of the block's prose before it, past the prose's last
+ *  positioned character through the line's ending (its trailing whitespace, its line feed, both bytes of a CRLF), with the next
+ *  positioned character on a later line inside a table or a code block: the point sits after that prose character, the Raw
+ *  view's row, whatever block that character opens and whichever item it stands in, so the block's first row or its first header
+ *  cell never holds a point from the line before it (the review's round 6; round 5 left these offsets to renderedSpot's
+ *  adjacency rule, which placed the point before the block's first positioned character, inside the fence's first row or the
+ *  table's first header cell, a row or a cell the change is not in, where round 4's fence-line edge and main 696229f84's hole
+ *  rule placed it after the prose; before a sub-item's fence or before an indented block after a blank line the same offsets sat
+ *  so since the build). A line before the block with no positioned character at all, a formula alone or a picture alone, has no
+ *  rule here: its offsets are the start edge's below, which keeps their point on its card (the review's closing pass). A hole's
+ *  characters between the two (a footnote reference's number ending the prose, which stands
+ *  before the offset; a code block the reading could not place after it) leave the point after the prose's character; an offset
+ *  inside such a hole is the hole's and keeps its card. With the next positioned character elsewhere, the same paragraph's
+ *  next line or the next item's text, the offset is renderedSpot's rule's, as on main: a paragraph's trailing whitespace at a
+ *  list item's end places its point before the NEXT item's first character, in that item, identical on main 696229f84 and
+ *  outside Slice 8's items (the review's round 6; recorded in the plan's Slice 8 note and routed to a follow-up).
+ *  The START edge: the next table's or fenced block's first character (the leading pipe, the opener's first backtick) and the
+ *  bytes before it past the line ending after `j` (a blank line, the item's marker, a container's indent), nothing positioned or
+ *  unpositioned between; a code block the reading could not place (walkCode's hole, a CodeSpan with no line) counts as a fenced
+ *  block here, its raw's first character its first (the review's round 6; before, the search for the next block skipped it and
+ *  latched onto a later fence of the same block, so the point at the unplaceable fence's first character kept its card, or sat
+ *  before the later fence's code, where main 696229f84's hole rule placed it after the text before; marked's own tokenizer yields
+ *  no such block, so the shape needs a tokenizer override); an offset strictly inside a hole whose characters stand before the
+ *  block (a table the reading could not lay out, an unplaceable code block, with a placed fence after it in the same item) is the
+ *  hole's, never the edge's, and keeps its card (round 6; round 5 placed it before the later block's first character). The point
+ *  is that block's own: after the prose before it when that prose stands in the same list item (or both in none: a quote's text
+ *  before its table; a display formula between that prose and the block, a zero-text hole, does not stand between, so the point
+ *  sits after the prose above the formula's box, identical on main 696229f84, whose hole rule placed it there too, outside Slice
+ *  8's items, recorded in the plan's Slice 8 note and routed to a follow-up beside the formula-span check renderedSpot's
+ *  docstring names; the review's round 6), never after a character of another table or code block (two tables in one item with
+ *  nothing between, a fence after a table: the point sat inside the earlier block's last cell or row); else before the block's
+ *  first positioned character, a table's first header cell's first or the code's first (a top-level block, or one that begins an
+ *  item, whose text before is the previous item's); where the block begins neither its item nor its quote, content of the item
+ *  standing before it with no positioned character of the block's among it (a formula alone, a picture alone or a footnote
+ *  reference alone on the line before; unpositionedBefore), the point keeps its card, as main 696229f84 kept it, its table a hole,
+ *  at every offset from the hole's end through the line's ending, the blank line and the indent to the block's first character,
+ *  and inside a formula's TeX, which the hole rule does not catch, a formula's hole having no character (the review's closing
+ *  pass; rounds 2 to 6 placed it before the block's first positioned character, inside the first header cell or the fence's first
+ *  row, a cell or a row the change is not in, and in the second item of two, whose text before is the first item's, where main
+ *  had placed it after that text); the same where the block begins its item or its quote and that container stands inside
+ *  another whose content before it is unpositioned, a sub-item's table or fence under an outer item holding a formula alone, or a
+ *  list item's table in a quote holding a formula alone before the list (the PR review's round 1, on the maintainer's ruling
+ *  over the closing pass's record: the outer line's line feed, the sub-item's indent and its marker and the block's first
+ *  character all sat before the first header cell's first character or the code's first, bytes outside the cell painted inside
+ *  it, where main 929ae86e1 kept the card, the table a hole), and where that enclosing item's or quote's own text precedes the
+ *  formula alone, the content between the text and the block read (the PR review's round 2; round 1 read no further once an
+ *  item held that text, and the formula's bytes, the blank lines and the sub-item's indent and marker took the cell, where
+ *  main placed them after the text, never in a cell); a sibling item's content before is not this rule's at any nesting, so a
+ *  table that begins the item after a formula-alone item keeps round 4's placement at the top level, nested in an item and in
+ *  a quote alike (round 2; round 1 counted the sibling's formula through a nested list's element and kept the card for the
+ *  nested and the quoted list alone): the rule these serve is that a placement never carries bytes from outside the block into
+ *  a cell or a row, the card kept wherever the exact-position arithmetic would put them there; and where that character does
+ *  not exist, the first header cell showing
+ *  nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
+ *  showing nothing (or the fence empty), the point keeps its card, as a point inside such a cell does (before round 5: before the
+ *  block's first positioned character wherever it stood, the second header cell's or the body row's first cell's, a cell the
+ *  change is not in, and with none in the block's item after the previous item's text or before the next item's; main 696229f84
+ *  kept the card for a table, its whole a hole). The same-item test reads the block's element, the n-th `<table>` or `<pre>`
+ *  under the block's nodes (nthBlockElement); when the counts disagree it reads the block's first positioned character, and with
+ *  none the point keeps its card. An indented code block the reading placed has no start edge: the indent before its first line
+ *  is that line's. */
+function edgeSpot(idx: RenderedIndex, blk: Block, offset: number, j: number, k: number): Spot | null | undefined {
+  const src = idx.source;
+  const within = (p: number, s: { startN: number; endN: number }): boolean => nOf(idx, s.startN) <= p && p < nOf(idx, s.endN);
+  const pj = j >= 0 ? nOf(idx, blk.pos[j]) : -1, pk = k >= 0 ? nOf(idx, blk.pos[k]) : -1;
+  const placeAfter = (i: number): Spot | null => { const at = nthNonWs(blk.dom[0], i); return at ? { t: at.t, off: at.off + 1 } : null; };
+  const opener = (cs: CodeSpan): Hole | undefined => blk.holes.find((h) => h.reason === FENCE_LINE && h.startN === cs.startN);
+  // the hole over the raw of a code block the reading could not place (walkCode), a CodeSpan with no line: the start edge's block
+  // as a fenced block is, its first character the hole's (the review's round 6)
+  const unplaced = (cs: CodeSpan): Hole | undefined => cs.lines.length ? undefined : blk.holes.find((h) => (h.reason === CODE_HOLE || h.reason === INDENTED_CODE_HOLE) && h.startN === cs.startN);
+  const inBlock = (p: number): boolean => blk.tables.some((t) => within(p, t)) || blk.codes.some((c) => within(p, c));
+  // whether the offset lies strictly inside a hole whose characters stand between j and k (a footnote reference's number, a code
+  // block or a table the reading could not place): such a point is the hole's, never an edge's, and keeps its card by
+  // renderedSpot's hole rule (the review's round 6; round 5's start edge placed it before the next block's first character)
+  const insideHole = (): boolean => {
+    for (let i = j + 1; i < (k < 0 ? blk.pos.length : k); i++) { const h = blk.holes[-blk.pos[i] - 1]; if (h && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN)) return true; }
+    return false;
+  };
+  const lineEnd = j >= 0 ? lineEndAt(src, pj) : -1;   // the ending of the line the positioned character before the offset stands on
+  for (const cs of blk.codes) {
+    // past the opener's line (an indented block's first character) through the last line's ending, the fence's closer hole's
+    // first position or an indented block's raw's end (its trailing line feed is the lexer's, off the raw)
+    const op = opener(cs);
+    if (!cs.lines.length || offset < nOf(idx, op ? op.endN : cs.startN) || offset > nOf(idx, cs.lines[cs.lines.length - 1].endN)) continue;
+    if (j < 0 || !within(pj, cs)) return undefined;
+    // the last line's edge: no positioned character of the block at or past the offset; an inner line's: the offset on the line
+    // of the character before it, through its ending, and the block's next positioned character on a later line (round 6)
+    return !(k >= 0 && within(pk, cs)) || (offset <= lineEnd && pk > lineEnd) ? placeAfter(j) : undefined;
+  }
+  // the line before a table or a code block: the offset on the line of the prose's last positioned character, past it, and the
+  // next positioned character on a later line inside a table or a code block (round 6); a hole's characters between them do not
+  // move the point (a footnote reference's number ending the prose stands before the offset, a block the reading could not
+  // place after it), unless the offset is inside the hole; the same offsets before anything else are renderedSpot's rule's
+  if (j >= 0 && offset <= lineEnd) return k >= 0 && pk > lineEnd && inBlock(pk) && !inBlock(pj) && !insideHole() ? placeAfter(j) : undefined;
+  let tb: TableSpan | null = null, cs: CodeSpan | null = null, s = Infinity;
+  for (const t of blk.tables) { const ts = nOf(idx, t.startN); if (ts >= offset && ts < s) { s = ts; tb = t; cs = null; } }
+  for (const c of blk.codes) { const cst = nOf(idx, c.startN); if ((opener(c) || unplaced(c)) && cst >= offset && cst < s) { s = cst; cs = c; tb = null; } }
+  if ((!tb && !cs) || (k >= 0 && pk < s) || insideHole()) return undefined;
+  const span = (tb || cs) as { startN: number; endN: number };
+  let kf = -1;
+  if (tb) {
+    // the first header cell's first positioned character: the first record's, when that record is the row's first column (an
+    // empty first cell has no record, so the first record could be the second column's; the pipes before it tell)
+    const c0 = tb.cellFrom < tb.cellTo ? blk.cells[tb.cellFrom] : null;
+    if (c0 && k >= 0 && c0.startK <= k && k < c0.endK && (src.slice(s, nOf(idx, c0.startN)).match(/\|/g) || []).length <= 1) kf = k;
+  } else if (k >= 0 && within(pk, span)) kf = k;
+  // the prose before the block: the character before the offset, positioned outside every table and code block, with no hole's
+  // characters between it and the block (a footnote reference's number ending the text before would stand between)
+  let prose = j >= 0 && !blk.tables.some((t) => within(pj, t)) && !blk.codes.some((c) => within(pj, c));
+  for (let i = j + 1; prose && i < (k < 0 ? blk.pos.length : k); i++) { const h = blk.holes[-blk.pos[i] - 1]; if (h && nOf(idx, h.startN) < s) prose = false; }
+  // the block's element, the n-th `<table>` or `<pre>` under the block's nodes (null when the counts disagree), and the text node
+  // holding the positioned character before the offset
+  const el = tb ? nthBlockElement(blk, "TABLE", blk.tables.indexOf(tb), blk.tables.length) : nthBlockElement(blk, "PRE", blk.codes.indexOf(cs as CodeSpan), blk.codes.length);
+  const atJ = j >= 0 ? nthNonWs(blk.dom[0], j) : null;
+  if (prose) {
+    const same = el && atJ ? itemAbove(blk, atJ.t) === itemAbove(blk, el) : k >= 0 && within(pk, span) && sameItem(blk, j, k);
+    if (same) return placeAfter(j);
+  }
+  // the block begins neither its item nor its quote, and no positioned character of the item's stands before it (a formula alone, a
+  // picture alone or a footnote reference alone on the line before): nothing to place the point after, and the block's first
+  // character is inside a cell or a row the change is not in, so the point keeps its card, as main 696229f84 kept it (the review's
+  // closing pass; rounds 2 to 6 placed it before the block's first positioned character, the rule for a block that begins its item)
+  if (el && unpositionedBefore(blk, el, atJ ? atJ.t : null)) return null;
+  return kf >= 0 ? nthNonWs(blk.dom[0], kf) : null;
+}
+
 /** Where source `offset` falls in the rendered text: the text node and the offset in it BEFORE which a
  *  point at that source position sits. The block is the mapped (not refused) one whose own rows hold the
  *  offset (ownRows: its text lines, the last one's line ending, the end of the file right after it) — no
  *  two blocks' rows overlap, so where one block's raw ends exactly as the next begins the one that begins
  *  there has the offset. Inside the block the point goes before the first emitted character at or past
  *  the offset — or right after the last one before it, when the offset follows that character directly
- *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
- *  Null when no block's rows hold the offset (a blank line between blocks, whichever token's raw carries
- *  it), the block is refused or has no element, or the offset sits inside a hole (a nested code block or
- *  table the renderer shows but the mapping does not place): a point there would land beside the wrong
- *  words, so the change keeps its card and Reveal instead. */
-function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
+ *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows. On a
+ *  code line that shows no character (a blank line inside a fence) the point goes into the line's own row
+ *  instead (blankCodeLineSpot), where the pre has one for it. Null when no block's rows hold the offset (a
+ *  blank line between blocks, whichever token's raw carries it), the block is refused or has no element,
+ *  or the offset sits inside a hole (a footnote reference's number, a cell or a code block the reading
+ *  could not place, a table's source outside its cells, a fence's opener or closer line): a point there
+ *  would land beside the wrong words, so the change keeps its card and Reveal instead. The hole rule reads
+ *  a hole through its characters (the gap between the positioned ones below), and a formula's hole has
+ *  none (a zero-text hole, KaTeX's glyphs a control), so it is not caught by it: at the top level a display
+ *  formula's block has no mapped text and a point inside the formula keeps its card, but inside a quote or
+ *  a list item a point in its TeX or on its closer is placed before the first character of the paragraph
+ *  after it (a table or a fence after it instead: on its card since the review's closing pass, edgeSpot's
+ *  start edge for a block whose item holds no positioned character before it), a pre-existing edge of
+ *  Slice 5's hole, identical on main 696229f84 (the Slice 8 review, round
+ *  3: recorded in the plan's Slice 8 note and routed to a follow-up, whose shape is a check like the fence
+ *  line's below for the formula's span). The two bytes of a CRLF ending are one position in EVERY block:
+ *  normalizeSource maps N's line feed to the CR's offset, so a point at the LF byte is placed as the CR's
+ *  (the Raw view puts either byte's point at the end of the line it ends, paintRawPoint; the Slice 8 review,
+ *  round 3: before, a point at the LF byte of an inner code line's ending fell before the next line's first
+ *  character, one row down, and at the LF of the last code line's ending lay strictly inside the closer's
+ *  hole and kept its card, while the CR byte sat after the line's last character; the same move outside
+ *  code, recorded and pinned by the review's round 4: a paragraph's or a quote's soft break's LF byte sat
+ *  before the next line's first character, and a list item's line ending's LF byte before the NEXT item's
+ *  first character, in that item, where the CR byte sat after the line's or the item's last character). */
+function renderedSpot(idx: RenderedIndex, offset: number): Spot | null {
+  if (offset > 0 && idx.source[offset - 1] === "\r" && idx.source[offset] === "\n") offset--;   // the LF byte of a CRLF: the CR's position
   let blk: Block | null = null;
   for (const b of idx.blocks) {
     const { lo, hi } = ownRows(idx, b);
     if (lo <= offset && offset < hi) { blk = b; break; }
   }
   if (!blk || blk.refused !== null || !blk.dom.length) return null;
+  // Inside a table (Slice 8) the cells are positioned and nothing else is: an offset in the table's raw places only inside a
+  // cell's span, its first character through the position right after its last, and everywhere else in the table (the
+  // delimiter row, a pipe, a row's line feed, the blank lines the raw swallowed) the change keeps its card, as it did when the
+  // whole table was a hole; a point there would land in a cell the change is not in. The table's first character is the
+  // boundary, the outside's, placed by edgeSpot (below): after the prose before the table when that prose is the same list
+  // item's or the same quote's, else before the first header cell's first character, the block's or the item's edge, and, that
+  // cell showing nothing, on its card (the Slice 8 review, rounds 2, 4 and 5; before Slice 8 the point kept its card, the table
+  // a hole). The table's END is the table's too when its raw ends with the last row's last character and not with the row's
+  // line feed (a table that ends its quote or its list item, whose trailing line feed marked trims off the container's text, or
+  // the note with no final line feed): the offset right after the row, the row's line feed or the end of the file, is a row's
+  // line feed in the rule above and no cell holds it, so it keeps its card (the Slice 8 review, round 3; before, the end was
+  // exclusive there and the rule below placed the point after the last rendered cell's text, in a cell the change is not in, at
+  // the starkest after `b` for a deletion in the unrendered tail of a truncated row `| b | c d |`). A raw that ends with a line
+  // feed keeps the exclusive end: the offset after it is the next block's, or the end of the file after the block, which sits
+  // after the block's last character as it does after a paragraph's or a fence's (ownRows).
+  const tb = blk.tables.find((t) => { const s = nOf(idx, t.startN), e = nOf(idx, t.endN); return s <= offset && (offset < e || (offset === e && !t.endsLf)); });
+  const cell = tb ? blk.cells.slice(tb.cellFrom, tb.cellTo).find((c) => nOf(idx, c.startN) <= offset && offset <= nOf(idx, c.endN)) : undefined;
+  if (tb && !cell && offset !== nOf(idx, tb.startN)) return null;
+  // On a fence's line (Slice 8): the opener with its info string and the closer render nothing and are zero-text holes of their own
+  // (walkCode, FENCE_LINE), so a point past a fence line's first position has no row to sit in and keeps its card, as it did when
+  // the whole block was a hole (placed by the rule below it would land at the first or the last code character, which the change
+  // is not at). The first position is the edge, placed by edgeSpot beside the text it borders: the opener's first character, and
+  // the line feed that ends the last code line before the closer. The closer's own line feed is the hole's whichever token's raw
+  // carries it (walkCode's closerEnd): a point there kept its card when the raw held the line feed and, through the review's
+  // closing pass, fell to the rules below when a blank line followed the fence or the fence ended its item or its quote, painted
+  // after the last code character or before the next item's text (the PR review's round 1; main 929ae86e1 kept the card at
+  // the top level and in a quote).
+  if (blk.holes.some((h) => h.reason === FENCE_LINE && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN))) return null;
+  // On a code line that shows no character (a blank line, or one of whitespace alone; the Slice 8 review, round 1): the point goes
+  // into the line's own row (blankCodeLineSpot), where the rule below put it before the next line's first character, one row down,
+  // which read as that line changed; a fence's trailing blank line, whose row marked's renderer folds, goes to the end of the
+  // pre's last row (the review's round 3). A pre with no row for the line (undressed, or the block's pre count not its code
+  // blocks') leaves the point to the rule below, against the nearest character.
+  const row = blankCodeLineSpot(idx, blk, offset);
+  if (row) return row;
   // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
-  // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
+  // if any, are hole characters (mapped characters are in source order, the Emitter's own rule). Inside a cell
+  // the scan is the cell's own characters (Cell.startK through endK): the point places against the cell's
+  // text, before its first character or after its last, never against the next cell's or the previous one's
+  // (the Slice 8 review, round 4; before, a point inside an inline formula that ended a cell's text, `head
+  // $x$`, past the cell's last positioned character with none at or past it in the cell, read the block's
+  // next positioned character, the first of the next cell or of the next row's first cell, and was painted
+  // there, in a cell the change is not in); a cell with no positioned character, a formula alone or the
+  // per-cell fallback's hole, has nothing of its own to place against and keeps its card.
   let j = -1, k = -1;
-  for (let i = 0; i < blk.pos.length; i++) {
+  const lo = cell ? cell.startK : 0, hiK = cell ? cell.endK : blk.pos.length;
+  for (let i = lo; i < hiK; i++) {
     const p = blk.pos[i];
     if (p < 0) continue;
     if (nOf(idx, p) < offset) j = i; else { k = i; break; }
   }
-  if (j < 0 && k < 0) return null;   // a block with no mapped text
-  const gapFrom = j + 1, gapTo = k < 0 ? blk.pos.length : k;
+  if (j < 0 && k < 0) return null;   // a block with no mapped text, or a cell with none
+  // At the edge of a table or a code block, outside every cell, the point is that block's own (edgeSpot, whose docstring states
+  // the rules): a code block's inner edge, the trailing whitespace and line feed of its last line and of every inner line, after
+  // the line's last character; the line before a table or a code block, past its prose's last character, after the prose; and
+  // the start edge, the table's first character or the fence's opener and the bytes before it past the line ending before, after
+  // the same item's prose, before the block's first positioned character, or on its card (the review's rounds 2 to 6 and its
+  // closing pass); a cell's own span was scanned above. An offset at no edge falls to the adjacency rule below.
+  if (!cell) { const e = edgeSpot(idx, blk, offset, j, k); if (e !== undefined) return e; }
+  const gapFrom = j < 0 ? lo : j + 1, gapTo = k < 0 ? hiK : k;
   let after: boolean;
   if (gapTo > gapFrom) {
     // hole characters between the two: the point belongs before the hole or after it, never inside
@@ -4431,9 +5208,11 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
  * the position the index map gives source `offset` (renderedSpot), splitting a text node when the offset
  * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
  * as before. At the edge of another change's mark the point sits outside the mark, as in Raw (the
- * boundary rule above insertAfterText). Returns null when the offset cannot be placed (a refused block, a
- * hole, a blank line between blocks — a `space` token's or one a heading's raw swallowed; ownRows): the
- * change stays unpainted and keeps its card.
+ * boundary rule above insertAfterText). A point on a code line that shows no character goes into the
+ * line's own row cell, at its column among the row's whitespace or into the empty cell, as Raw's does
+ * (blankCodeLineSpot). Returns null when the offset cannot be placed (a refused block, a hole, a blank
+ * line between blocks, a `space` token's or one a heading's raw swallowed; ownRows): the change stays
+ * unpainted and keeps its card.
  */
 export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
                                    data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
@@ -4441,6 +5220,10 @@ export function paintRenderedPoint(renderedRoot: Element, source: string, offset
   const spot = renderedSpot(renderedIndex(root, source), offset);
   if (!spot) return null;
   const m = makePoint(root.ownerDocument, className, data, label, styles);
+  if ("host" in spot) {
+    if (!insertPointAt(textNodes(spot.host), spot.col, m)) spot.host.appendChild(m);
+    return m as unknown as Element;
+  }
   const parent = spot.t.parentNode as DElement | null;
   if (!parent) return null;
   if (spot.off <= 0) insertBeforeNode(spot.t, m);

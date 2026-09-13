@@ -786,7 +786,7 @@ test("a PDF: a region on a page with a box is placed beside its rectangle on the
 
 test("at source: the id selectors are escaped; the moves that can detach a focused control run through the one helper that gives the focus back; the body's content joins the observer per pass", () => {
   assert.match(SRC, /function cssId\(s: string\): string \{/, "one escape helper for the panel: the composer follow-on's cssId");
-  assert.match(SRC, /querySelectorAll\('\[data-act="' \+ act \+ '"\]\[data-id="' \+ cssId\(id\) \+ '"\]'\)/, "ownMarks");
+  assert.match(SRC, /const sel = '\[data-act="' \+ act \+ '"\]\[data-id="' \+ cssId\(id\) \+ '"\]' \+ ', \[data-act="' \+ act \+ '"\]\[data-ids\]';\n\s*return Array\.from\(this\.ctx\.body\(\)\.querySelectorAll\(sel\)\)/, "ownMarks (the id escaped; a stamped box's covering set beside it since the Slice 8 review)");
   assert.match(SRC, /'\.fc-card\[data-id="' \+ cssId\(k\.card\) \+ '"\]'/, "focusNear");
   assert.match(SRC, /private moving\(nodes: HTMLElement\[\], move: \(\) => void\): void \{\n\s*const held = document\.activeElement/);
   assert.match(SRC, /this\.moving\(rows, \(\) => \{\n\s*if \(foot\) this\.sections\.send\.insertBefore\(foot, this\.sections\.send\.firstChild\);\n\s*for \(const r of rows\) if \(r !== foot\) send\.insertBefore\(r, box\);/, "the rows' move: the foot first, the others in the list's order");

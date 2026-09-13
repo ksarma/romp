@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Lexer, marked } from "marked";
 import { applyMdConfig, resolveWikilink } from "./md-config";
-import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
+import { mapRenderedSelection, sourceBlockSpans, renderedBlockIndex, renderedBlockElements, paintRendered, trimCollapsedMarks, refusalNoun, type SelLike, type MapResult } from "./anchor-map";
 import { hideEdges } from "../test-dom-shim";
 
 applyMdConfig();
@@ -517,7 +517,7 @@ test("a range holding a formula alone reads the top-level block the formula sits
   assert.deepEqual(touched, [p], "only the formula's block was read; read: " + touched.length + " of " + blocks.length);
 });
 
-test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and no mark stands at the top level", () => {
+test("a formula the range does not hold stays outside the highlight, and a display formula is never wrapped: a range across the display block marks the prose either side and STAMPS the .katex-display box with fc-hl-block and the paint's data (Slice 8, item 5; before: the box bare), the box returned between the marks in document order, its .katex child in place and no mark at the top level", () => {
   const box = buildRendered(FIX);
   const p = topEl(box, 15);
   const before = paintRendered(El(box), FIX, rangeOf(FIX, "Inline"), "fc-hl") as unknown as FakeElement[];
@@ -528,15 +528,169 @@ test("a formula the range does not hold stays outside the highlight, and a displ
   assert.deepEqual(after.map((m) => shape(m)), [["#text(math and)"]]);
   assert.deepEqual(shape(p), ["#text(Inline )", "SPAN.katex", "#text( )", "MARK.fc-hl", "#text( display:)"]);
   unpaintAll(box);
-  // across the display formula: prose to prose, the .katex-display block untouched (a block of its own line needs a block-level treatment, not an inline mark)
+  // across the display formula: prose to prose, and the .katex-display block STAMPED, never wrapped (a block of its own line takes
+  // no inline mark: a mark around a block box paints nothing over it, and one between .katex-display and its .katex breaks KaTeX's
+  // layout; the block-level paint of Slice 8, item 5, puts the block class on the box itself and returns it among the marks)
   const s = FIX.indexOf("and display:"), e = FIX.indexOf("Para after display math.") + "Para after display math.".length;
-  const across = paintRendered(El(box), FIX, { start: s, end: e }, "fc-hl") as unknown as FakeElement[];
-  assert.deepEqual(across.map((m) => m.textContent), ["and display:", "Para after display math."]);
+  const across = paintRendered(El(box), FIX, { start: s, end: e }, "fc-hl", { act: "fcopen", id: "c7" }) as unknown as FakeElement[];
   const display = topEl(box, 16);
-  assert.equal(display.getAttribute("class"), "katex-display");
+  assert.deepEqual(across.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["MARK.fc-hl", "SPAN.katex-display fc-hl-block", "MARK.fc-hl"], "the two marks and the stamped box, in document order (before Slice 8: the two marks alone)");
+  assert.equal(across[1], display, "the returned element is the formula's own box");
+  assert.deepEqual([across[0].textContent, across[2].textContent], ["and display:", "Para after display math."]);
+  assert.deepEqual([display.getAttribute("data-act"), display.getAttribute("data-id")], ["fcopen", "c7"], "the paint's data on the box, as on a mark");
   assert.deepEqual(shape(display), ["SPAN.katex"], "the display formula's root keeps its .katex child, no mark between them");
   for (const m of marksUnder(box)) assert.notEqual(m.parentNode, box, "no mark is a top-level node (the block pairing reads the top-level children)");
   assert.deepEqual(box.childNodes.filter((n) => n.nodeType === 1).map((n) => (n as FakeElement).tagName).slice(15, 18), ["P", "SPAN", "P"]);
+});
+
+/** Strip a stamped box as the panel's unwrapMarks does (file-comments.ts stripBlockPaint): the block class and the paint's data. */
+function stripBox(d: FakeElement): void {
+  d.setAttribute("class", (d.getAttribute("class") || "").split(" ").filter((c) => c && !/-block$/.test(c) && c !== "fc-hl-context").join(" "));
+  for (const a of ["data-act", "data-id"]) d.attrs.delete(a);
+}
+const attrsOf = (d: FakeElement): Record<string, string | null> => ({ cls: d.getAttribute("class"), act: d.getAttribute("data-act"), id: d.getAttribute("data-id") });
+
+test("the block-level paint on a display formula (Slice 8, item 5; the Slice 8 contract line): a range holding the formula alone, exactly `$$ ... $$` or with the raw's line feeds, returns the .katex-display box stamped fc-hl-block with the paint's data and no mark (before: null, the card offering Reveal); the pending target's class stamps fc-presel-block and a two-token class its first token's block class alone; a second paint stamps once; the trim leaves the box; a change's tint (fc-ins) stamps nothing and paints nothing for the formula alone; an inline formula alone still goes under a mark; the fill's other display shapes (the flag at the top level, the belt's code in a pre) stay bare", () => {
+  const box = buildRendered(FIX);
+  const display = topEl(box, 16);
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "bare before any paint");
+  const formula = "$$\n\\sum_i i\n$$";
+  assert.ok(FIX.includes(formula), "the fixture's display formula");
+  const exact = rangeOf(FIX, formula);
+  // the formula alone: coveredFormulas tests the formulaSpan span (the hole less any indent before the opener), and the
+  // mathBlock hole ends at the closing `$$` (the Slice 8 review, round 2; before, it ran to the raw's end, past the trailing line
+  // feeds, and the trim back from there stopped at a quote line's marker), so a comment whose quote is exactly the `$$` block
+  // covers the formula
+  const alone = paintRendered(El(box), FIX, exact, "fc-hl", { act: "fcopen", id: "f1" }) as unknown as FakeElement[] | null;
+  assert.ok(alone, "the formula alone paints (before: null)");
+  assert.deepEqual(alone!.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block"], "the box alone, stamped, no mark");
+  assert.equal(alone![0], display);
+  assert.deepEqual(attrsOf(display), { cls: "katex-display fc-hl-block", act: "fcopen", id: "f1" });
+  assert.deepEqual(shape(display), ["SPAN.katex"], "the .katex child in place");
+  assert.equal(marksUnder(box).filter((m) => /\bfc-/.test(m.getAttribute("class") || "")).length, 0, "no paint mark anywhere (the fixture's own ==mark== is the one MARK)");
+  // the same paint again over the same body stamps once and rewrites the data (the panel unpaints before a repaint; a caller that does not gets no second class)
+  const again = paintRendered(El(box), FIX, exact, "fc-hl", { act: "fcopen", id: "f2" }) as unknown as FakeElement[];
+  assert.deepEqual(again.map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "stamped once");
+  assert.equal(display.getAttribute("data-id"), "f2");
+  // the trim never measures or unwraps the box: isBlankMark requires a MARK
+  assert.deepEqual(trimCollapsedMarks([El(display)]), [El(display)], "the trim keeps a stamped box");
+  stripBox(display);
+  // with the raw's trailing line feeds inside the range (a Raw selection over the three rows and the blank line after them)
+  const withFeeds = paintRendered(El(box), FIX, { start: exact.start, end: exact.end + 2 }, "fc-hl", { act: "fcopen", id: "f3" }) as unknown as FakeElement[] | null;
+  assert.deepEqual((withFeeds || []).map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "covered with the line feeds too");
+  stripBox(display);
+  // the pending target: fc-presel-block; a class of two tokens (the guessed copy's `fc-hl fc-hl-context`): the first token's block class alone, the pass adds the cue itself
+  const presel = paintRendered(El(box), FIX, exact, "fc-presel") as unknown as FakeElement[];
+  assert.deepEqual(presel.map((m) => m.getAttribute("class")), ["katex-display fc-presel-block"], "the pending target's block class");
+  assert.deepEqual([display.getAttribute("data-act"), display.getAttribute("data-id")], [null, null], "no data given, none set");
+  stripBox(display);
+  const context = paintRendered(El(box), FIX, exact, "fc-hl fc-hl-context", { act: "fcopen", id: "f4" }) as unknown as FakeElement[];
+  assert.deepEqual(context.map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], "the first token's block class alone (file-comments.ts adds fc-hl-context to a stamped box itself)");
+  stripBox(display);
+  // a change's tint is not a block paint: unpaintChanges strips marks by class and no sheet dresses a tinted formula, so a change over the
+  // formula alone paints nothing (the change keeps its card) and one across it marks the prose either side with the box bare, as before
+  assert.equal(paintRendered(El(box), FIX, exact, "fc-ins", { act: "fcchange", id: "g1" }), null, "fc-ins over the formula alone: nothing");
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "the box bare");
+  const s = FIX.indexOf("and display:"), e = FIX.indexOf("Para after display math.") + "Para after display math.".length;
+  const tint = paintRendered(El(box), FIX, { start: s, end: e }, "fc-ins", { act: "fcchange", id: "g2" }) as unknown as FakeElement[];
+  assert.deepEqual(tint.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["MARK.fc-ins", "MARK.fc-ins"], "prose either side, no box among them");
+  assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, "the box bare");
+  unpaintAll(box);
+  // an inline formula alone: under a mark, as before (wrapRuns)
+  const inline = paintRendered(El(box), FIX, rangeOf(FIX, "$x^2$"), "fc-hl", { act: "fcopen", id: "i1" }) as unknown as FakeElement[];
+  assert.deepEqual(inline.map((m) => shape(m)), [["SPAN.katex"]], "the inline formula is the highlight's one mark");
+  assert.equal(inline[0].tagName, "MARK");
+  unpaintAll(box);
+  // the fill's other display shapes: KaTeX's flag on TeX it could not parse stands at the top level with no .katex-display around it, and the
+  // belt's `code.md-math-src` sits in a `pre`; neither has a sheet rule, so a paint over the formula alone leaves them bare and paints nothing
+  for (const [tex, tag] of [["\\BROKEN x", "SPAN"], ["\\HUGE x", "PRE"]] as [string, string][]) {
+    const src = "Before.\n\n$$\n" + tex + "\n$$\n\nAfter.\n";
+    const b2 = buildRendered(src);
+    const el = topEl(b2, 1);
+    assert.equal(el.tagName, tag, tex + ": the shape the fill leaves");
+    const cls = el.getAttribute("class");
+    assert.equal(paintRendered(El(b2), src, rangeOf(src, "$$\n" + tex + "\n$$"), "fc-hl", { act: "fcopen", id: "o1" }), null, tex + ": nothing painted");
+    assert.deepEqual([el.getAttribute("class"), el.getAttribute("data-act")], [cls, null], tex + ": the element bare");
+    const acrossB = paintRendered(El(b2), src, { start: 0, end: src.length }, "fc-hl", { act: "fcopen", id: "o2" }) as unknown as FakeElement[];
+    assert.deepEqual(acrossB.map((m) => m.tagName), ["MARK", "MARK"], tex + ": across it, the prose either side alone");
+  }
+});
+
+test("the record beside the display-formula paint reads true of the code (the Slice 8 review, round 3): the mathBlock hole ends at the closing `$$` with the raw's trailing line feeds after it, so formulaSpan trims nothing at the end and the Raw offer for a boundary inside the fixture's formula is exactly the `$$` block, and the paint test's comment above says so; no comment in this file says the hole's end lies past the raw's trailing line feeds (before: the paint test's comment kept round 1's mechanism after round 2 moved the hole's end to the closer)", () => {
+  // the code, through the public API: a boundary inside a display formula's glyphs refuses as a formula, and the offer's rawRange is
+  // formulaSpan over the hole, whose end is the hole's own (nothing trimmed there). The witness is a quoted formula with a quote line
+  // after the closer: its raw's trailing line feed runs on to that line's `> ` marker, where a trim back from the raw's end stopped,
+  // so the offer ends at the closing `$$` only when the hole does; at the top level (the paint test's scene) the two agreed once
+  // trimmed, and the fixture's two line feeds after the closer lie outside the hole either way
+  const QUOTED = "Intro.\n\n> $$\n> \\int_0^1 x\\,dx\n> $$\n> Quote tail two.\n\nAfter.\n";
+  const qOpen = QUOTED.indexOf("$$");
+  const scenes: [string, string, { start: number; end: number }, (box: FakeElement) => FakeElement][] = [
+    ["the fixture's top-level formula", FIX, rangeOf(FIX, "$$\n\\sum_i i\n$$"), (box) => topEl(box, 16)],
+    ["a quoted formula with a quote line after the closer", QUOTED, { start: qOpen, end: QUOTED.indexOf("$$", qOpen + 2) + 2 }, (box) => byClass(box, "katex-display")],
+  ];
+  for (const [name, src, exact, pick] of scenes) {
+    assert.equal(src.slice(exact.start, exact.end).split("\n").length, 3, name + ": the block's three lines");
+    const box = buildRendered(src);
+    const glyphs = allText(byClass(pick(box), "katex"))[0];
+    const r = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), name + ": the glyphs alone");
+    assert.match(r.reason, /touches a formula/, name);
+    assert.deepEqual([r.rawHasQuote, r.rawRange], [true, exact], name + ": the offer ends at the closing `$$`, the hole's end");
+    assert.equal(src[exact.end], "\n", name + ": the raw's line feed after the closer lies outside the hole");
+  }
+  // the record: the paint test's comment states that mechanism, and no comment line in this file states the one before round 2
+  const own = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-obsidian.test.ts"), "utf8");
+  const from = own.indexOf('test("the block-level paint on a display formula (Slice 8, item 5');
+  const to = own.indexOf("\ntest(", from + 1);
+  assert.ok(from >= 0 && to > from, "the paint test found in this file");
+  assert.match(own.slice(from, to), /mathBlock hole ends at the closing `\$\$`/, "the paint test's comment says where the hole ends");
+  const stale = own.split("\n").filter((l) => /^\s*\/\//.test(l) && /lies past the raw's trailing line feeds/.test(l));
+  assert.deepEqual(stale, [], "no comment says the hole's end lies past the raw's trailing line feeds");
+});
+
+test("the block-level paint on a display formula inside a blockquote or a callout (the Slice 8 review, round 2): a range that is exactly the quoted `$$` block, the opener through the closing `$$` (the natural Raw quote, with or without the row's `> ` marker before the opener), stamps the formula's box when a quote line follows the closer, a blank `>` line then a tail or the tail directly (before: the hole ran to the raw's end, past the `> ` marker of the quote line after the formula, where formulaSpan's whitespace trim stopped, so the exact quote never covered the formula, the box stayed bare and the card offered Reveal); a range on into the tail returns the box then the tail's mark; the Raw offer for a boundary inside such a formula preselects the block through its closing `$$` and no marker after it (before: `$$ ... $$` then `>` and `>`); a formula last in its quote, at the top level and in a list item stamp as before", () => {
+  const TEX = "\\int_0^1 x\\,dx";
+  const scenes: [string, string, string][] = [
+    // the scene, its source, and the text after the formula a range runs on into
+    ["a blank `>` line then a tail", "Intro.\n\n> Quote lead.\n>\n> $$\n> " + TEX + "\n> $$\n>\n> Quote tail.\n\nAfter.\n", "Quote tail."],
+    ["the tail directly after the closer", "Intro.\n\n> $$\n> " + TEX + "\n> $$\n> Quote tail two.\n\nAfter.\n", "Quote tail two."],
+    ["a callout's body", "Intro.\n\n> [!note] Title\n> $$\n> " + TEX + "\n> $$\n>\n> Callout tail.\n\nAfter.\n", "Callout tail."],
+    ["the formula last in its quote", "Intro.\n\n> Quote lead three.\n>\n> $$\n> " + TEX + "\n> $$\n\nAfter.\n", "After."],
+    ["the top level", "Intro.\n\n$$\n" + TEX + "\n$$\n\nAfter.\n", "After."],
+    ["a list item", "Intro.\n\n- item one\n\n  $$\n  " + TEX + "\n  $$\n\n- item two\n", "item two"],
+  ];
+  for (const [name, src, tail] of scenes) {
+    const open = src.indexOf("$$"), close = src.indexOf("$$", open + 2) + 2;
+    const exact = { start: open, end: close };
+    assert.equal(src.slice(open, close).split("\n").length, 3, name + ": the block's three lines");
+    const box = buildRendered(src);
+    const display = byClass(box, "katex-display");
+    assert.deepEqual(attrsOf(display), { cls: "katex-display", act: null, id: null }, name + ": bare before any paint");
+    // the exact quote: the box alone, stamped and returned
+    const alone = paintRendered(El(box), src, exact, "fc-hl", { act: "fcopen", id: "q1" }) as unknown as FakeElement[] | null;
+    assert.ok(alone, name + ": the exact quote covers the formula (before: null for a quoted block with a quote line after it)");
+    assert.deepEqual(alone!.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block"], name + ": the box alone, stamped, no mark");
+    assert.equal(alone![0], display, name);
+    assert.deepEqual(attrsOf(display), { cls: "katex-display fc-hl-block", act: "fcopen", id: "q1" }, name);
+    assert.equal(marksUnder(box).length, 0, name + ": no mark anywhere");
+    stripBox(display);
+    // from the row's start: the `> ` marker before the opener lies in the range and is positioned nowhere, so the same
+    const rowStart = src.lastIndexOf("\n", open) + 1;
+    const fromRow = paintRendered(El(box), src, { start: rowStart, end: close }, "fc-hl", { act: "fcopen", id: "q2" }) as unknown as FakeElement[] | null;
+    assert.deepEqual((fromRow || []).map((m) => m.getAttribute("class")), ["katex-display fc-hl-block"], name + ": from the row's start too");
+    stripBox(display);
+    // on into the text after the formula: the box, then that text's mark, in document order
+    const across = paintRendered(El(box), src, { start: open, end: src.indexOf(tail) + tail.length }, "fc-hl", { act: "fcopen", id: "q3" }) as unknown as FakeElement[];
+    assert.deepEqual(across.map((m) => m.tagName + "." + (m.getAttribute("class") || "")), ["SPAN.katex-display fc-hl-block", "MARK.fc-hl"], name + ": into the text after: the box then its mark");
+    assert.equal(across[1].textContent, tail, name);
+    unpaintAll(box);
+    stripBox(display);
+    // the Raw offer for a boundary inside the glyphs: the block through its closing `$$`, no marker of a later line
+    const glyphs = allText(byClass(display, "katex"))[0];
+    const r = bad(mapRenderedSelection(sel({ node: glyphs, offset: 0 }, { node: glyphs, offset: glyphs.data.length }), El(box), src), name + ": the glyphs alone");
+    assert.match(r.reason, /touches a formula/, name);
+    assert.deepEqual([r.rawHasQuote, r.rawRange], [true, exact], name + ": the preselection is the block through its closing `$$` (before: through the `>` markers of the lines after it)");
+    assert.equal(r.blockStartOffset, open, name + ": the Raw view opens at the formula");
+  }
 });
 
 test("a highlight across two blocks inside a folded callout, or from a fold's body into the block after it, paints the blocks' text and never the whitespace between them: no whitespace-only mark, none directly under the details, the fold's children as rendered", () => {
@@ -778,7 +932,7 @@ test("a quote closed with an empty `>` line maps: marked's blockquote tokenizer 
   // not for the tail, and it maps since round 6: test 18)
 });
 
-test("a tab after a quote's marker maps: the nested block lexer expands the leading tab run of every line it is handed, and the nested walk runs over that expanded text (blockLexView), so a closing `> \\t` line, a `> \\tsecond` continuation, a `>\\t\\tcode` line, a callout's body line and a list item's `- \\t` are placed; an indented code block a tab opens is a hole at the tab's position", () => {
+test("a tab after a quote's marker maps: the nested block lexer expands the leading tab run of every line it is handed, and the nested walk runs over that expanded text (blockLexView), so a closing `> \\t` line, a `> \\tsecond` continuation, a `>\\t\\tcode` line, a callout's body line and a list item's `- \\t` are placed; an indented code block a tab opens maps its line to the line's own offset since Slice 8 (before: a hole at the tab's position)", () => {
   // (the Slice 4 review, round 6: marked's blockquote strip takes ONE whitespace after the marker, `^ *>[ \t]?`, so a second one stays
   // in the quote's text, and blockTokens expands a leading tab there to four spaces before lexing: the nested paragraph's raw was
   // `first\n    ` over a quote text of `first\n\t`, and the whole quote refused with "a paragraph the mapping could not place";
@@ -809,22 +963,24 @@ test("a tab after a quote's marker maps: the nested block lexer expands the lead
       assert.equal(r.quote, s, why);
     }
   }
-  // a tab right after the marker's space on a line of its own paragraph is indented code in the nested lex: the code block is a
-  // hole at the tab's position (a selection on it refuses as any code block does, in the person's terms), and the quote's other
-  // paragraph and the paragraph after it map; before, the whole quote refused with a reason naming the tab
+  // a tab right after the marker's space on a line of its own paragraph is indented code in the nested lex: since Slice 8 the code's
+  // line maps to its own offset, the tab's four spaces in the nested view carrying the tab's position and never emitted (before
+  // Slice 8 the block was a hole at the tab's position; before the Slice 4 review's round 6 the whole quote refused with a reason
+  // naming the tab), and the quote's other paragraph and the paragraph after it map
   const coded = "> first\n>\n> \tcode here\n\nAfter para.\n";
   const cb = buildRendered(coded);
   assert.match(marked.parse(coded) as string, /<blockquote>[\s\S]*<pre><code>code here/, "the lexer's reading: indented code inside the quote");
-  const hole = bad(mapIn(cb, coded, "code here"), "the code block the tab opened");
-  assert.match(hole.reason, /an indented code block/);
-  assert.equal(hole.blockStartOffset, coded.indexOf("\t"), "the hole stands where the tab does");
+  const code = ok(mapIn(cb, coded, "code here"), "the code block the tab opened");
+  assert.deepEqual(code.range, { start: coded.indexOf("code here"), end: coded.indexOf("code here") + 9 }, "the line's own offset, past the tab");
+  assert.equal(code.quote, "code here");
   for (const s of ["first", "After para."]) assert.deepEqual(ok(mapIn(cb, coded, s), s).range, { start: coded.indexOf(s), end: coded.indexOf(s) + s.length });
   // the same in a list item: `- `, a tab and text is indented code in the item (marked's list tokenizer keeps a tab after the
   // bullet's space, and the item's nested lex expands it); the item after it and the paragraph after the list map
   const listed = "- \tcode here\n- plain item\n\nAfter para.\n";
   const lb = buildRendered(listed);
   assert.match(marked.parse(listed) as string, /<li><pre><code>code here/, "the lexer's reading: indented code inside the item");
-  assert.match(bad(mapIn(lb, listed, "code here"), "the item's code block").reason, /an indented code block/);
+  const item = ok(mapIn(lb, listed, "code here"), "the item's code block");
+  assert.deepEqual(item.range, { start: listed.indexOf("code here"), end: listed.indexOf("code here") + 9 }, "the line's own offset inside the item");
   for (const s of ["plain item", "After para."]) assert.deepEqual(ok(mapIn(lb, listed, s), s).range, { start: listed.indexOf(s), end: listed.indexOf(s) + s.length });
 });
 
@@ -1062,27 +1218,35 @@ test("no refusal names a token type: over every element of the obsidian and refu
 // obstacle it meets, a refused block or a hole; the Raw offer for each refusal is what it was.
 const OBSTACLES = "Intro para.\n\n```\ncode line one\ncode line two\n```\n\nMiddle para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\n<div class=\"note\">Html block text</div>\n\nAfter para.\n";
 
-test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it refuses as touching the table, one from a code line across the table into the html block as the code block, each with its own Raw offer (before: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table or starting in the code names them as before, and the whitespace between two blocks is still only whitespace", () => {
+test("the first obstacle in document order is the one named: a selection from a table cell into an html block after it is refused by the one-cell rule (the Slice 5 shape was touching the table), one from a code line across the table into the html block at the table as well (since Slice 8 the code is positioned; before it: the code block), each with the Raw view offered on the covered cells' span (before Slice 5: the HTML block, the refused block named ahead of any hole in the span); a span with no hole before the html block still names it, one ending in the table names it, one starting in the code and ending in prose maps, and the whitespace between two blocks is still only whitespace", () => {
   const src = OBSTACLES;
   const box = buildRendered(src);
   const span = (from: string, to: string) => mapRenderedSelection(sel(point(box, from), point(box, to, true)), El(box), src);
   const lineOf = (needle: string) => src.slice(0, src.indexOf(needle)).split("\n").length - 1;
+  // since Slice 8 the cells are positioned and a span from `cell one` covers `cell two` as well, so the table's obstacle is the
+  // one-cell rule, still named ahead of the html block after it, with the Raw view offered on the two cells' exact span (the
+  // Slice 5 shape was "touches a table" with the table's offset)
   let r = bad(span("cell one", "Html block text"), "a table cell to the html block");
-  assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("| Col A")], "the Raw offer is the table's");
+  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| cell one"), src.indexOf("cell one")], "the Raw offer starts at the first covered cell");
+  assert.equal(r.rawHasQuote, true);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "cell one | cell two", "the exact span of the covered cells");
+  // since Slice 8 the code's lines are positioned too, so a span from a code line across the table to the html block meets the
+  // table first: the one-cell rule, with the Raw view offered on the table's covered cells (the Slice 5 shape named the code block)
   r = bad(span("code line one", "Html block text"), "a code line across the table to the html block");
-  assert.match(r.reason, /a code block/, "the code block comes first (before: an HTML block): " + r.reason);
-  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("```"), src.indexOf("```")], "the Raw offer is the code block's");
-  assert.equal(r.rawHasQuote, false, "text spanning blocks is not one source passage");
+  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before Slice 8: the code block; before Slice 5: an HTML block): " + r.reason);
+  assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), src.indexOf("Col A")], "the Raw offer starts at the first covered cell");
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two", "the covered cells, first through last");
   // as before: a span with no hole before the html block names it; one ending in the table or starting in the code names them
   r = bad(span("Between para.", "Html block text"), "the paragraph before the html block into it");
   assert.match(r.reason, /an HTML block/, r.reason);
   assert.equal(r.blockStartOffset, src.indexOf("<div"));
   assert.match(bad(span("Middle para.", "Html block text"), "prose across the table to the html block").reason, /a table/, "the table stands between them");
   assert.match(bad(span("Middle para.", "cell two"), "prose into the table").reason, /a table/);
-  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /a code block/);
-  assert.match(bad(span("Intro para.", "code line two"), "prose into the code").reason, /a code block/);
+  assert.match(bad(span("code line one", "cell two"), "code across the table").reason, /spans more than one cell/, "the table's rule (before Slice 8: the code block)");
+  assert.equal(ok(span("Intro para.", "code line two"), "prose into the code (before Slice 8: refused as a code block)").quote, "Intro para.\n\n```\ncode line one\ncode line two", "the fence's opener inside the quote, as a Raw selection mints it");
   assert.match(bad(span("cell one", "cell two"), "two cells").reason, /a table/);
+  assert.match(bad(span("cell one", "cell two"), "two cells").reason, /spans more than one cell/, "the one-cell rule (Slice 8)");
   // the whitespace node between the middle paragraph and the table: its start snaps to the table and its end to the paragraph, and
   // the table's text, which the person did not select, is not read for its hole
   const middle = allText(box).find((t) => t.data === "Middle para.")!;

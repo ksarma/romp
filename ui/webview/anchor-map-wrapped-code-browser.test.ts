@@ -5,8 +5,8 @@
 // analysis measured 0 marks where the unwrapped block painted 13). The fallback now reads the block's text through
 // codeRuns, the newline put back between rows. Measured here: a range over two code lines paints marks inside both rows;
 // a one-line range still paints; a change mark (paintChangesRendered, an insertion) across two lines paints; a Rendered
-// selection inside the code is still refused with the Raw offer (Slice 8 maps it); the plain fence (no language) has
-// rows and paints too. The fixture is anchor-map-fixtures/fenced.md, synthetic. Skips loudly without a browser.
+// selection inside the code maps to the word's own source offsets (Slice 8 of the plan, item 2; before it: refused as a code
+// block with the Raw offer); the plain fence (no language) has rows and paints too. The fixture is anchor-map-fixtures/fenced.md, synthetic. Skips loudly without a browser.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -34,7 +34,7 @@ const HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><style>${STYLES}\n$
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
 
-test("a comment across two wrapped code lines paints in both rows; one line still paints; a change across lines paints; the selection is still refused with the Raw offer", { timeout: 90000 }, async (t) => {
+test("a comment across two wrapped code lines paints in both rows; one line still paints; a change across lines paints; a selection inside the code maps to its offsets (Slice 8; before: refused with the Raw offer)", { timeout: 90000 }, async (t) => {
   if (!pw) { t.skip("playwright is not installed under vscode-extension; the browser leg needs it (CI installs no browsers)"); return; }
   let browser: any;
   try { browser = await pw.chromium.launch(); }
@@ -121,16 +121,18 @@ test("a comment across two wrapped code lines paints in both rows; one line stil
     }, NOTE);
     assert.ok(change.ins > 0, "the insertion painted: " + change.out);
     assert.ok(change.rowsHit >= 2, "...across at least two rows (" + change.rowsHit + ")");
-    // 7. mapping a selection inside the code is still refused, the Raw view offered (Slice 8's work, untouched here)
-    const refused = await page.evaluate((src: string) => {
+    // 7. mapping a selection inside the code: since Slice 8 the rows' characters are positioned, so `def` maps to its own offset in
+    // the fence's second line (before: refused as a code block with the Raw view offered)
+    const mapped = await page.evaluate((src: string) => {
       const root = document.querySelector(".fileview-md")!; const code = root.querySelector("pre code")!;
       const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT); let tn: Text | null = null;
       for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) { if (n.data.indexOf("def") >= 0) { tn = n; break; } }
       const sel = { anchorNode: tn, anchorOffset: 0, focusNode: tn, focusOffset: 3, isCollapsed: false };
       return (window as any).AM.mapRenderedSelection(sel, root, src);
     }, NOTE);
-    assert.equal(refused.ok, false, "code refuses from Rendered");
-    assert.equal(refused.rawHasQuote, true, "...with the Raw view offered");
+    assert.equal(mapped.ok, true, "code maps from Rendered (before: refused as a code block): " + JSON.stringify(mapped));
+    assert.equal(mapped.quote, "def", "the selected word");
+    assert.deepEqual(mapped.range, { start: NOTE.indexOf("def f(x)"), end: NOTE.indexOf("def f(x)") + 3 }, "its own offset in the fence's second line");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   } finally { await browser.close(); }

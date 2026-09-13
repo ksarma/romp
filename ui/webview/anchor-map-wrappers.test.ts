@@ -293,9 +293,10 @@ test("the plain fixture: every paragraph after and inside a `<div align=\"center
   // its source travels inside the quote as a comment block's does (anchor-map.test.ts, an HTML block that renders none)
   const out = ok(mapRenderedSelection(sel(point(box, "inside the div."), point(box, "div wrapper.", true)), El(box), PLAIN), "across the closing tag");
   assert.equal(out.quote, "inside the div.\n\n</div>\n\nParagraph after the div wrapper.");
-  // controls: the blocks before the wrappers read as ever
-  assert.match(bad(mapText(box, PLAIN, "total = a"), "code").reason, /a code block/);
-  assert.match(bad(mapText(box, PLAIN, "cell one"), "table").reason, /a table/);
+  // controls: the blocks before the wrappers read as ever (the code line and the table's cell map since Slice 8, where they refused
+  // as a code block and a table)
+  mapsWhole(box, PLAIN, "total = a");
+  mapsWhole(box, PLAIN, "cell one");
   mapsWhole(box, PLAIN, "Text inside the folded callout.");
   mapsWhole(box, PLAIN, "Repeated line here.", 1);
   mapsWhole(box, PLAIN, "Intro paragraph one with several words in it.");
@@ -341,24 +342,32 @@ test("a div never closed, and one closed by the document's last block: the neste
 });
 
 // ── Slice 5, item 4: the first obstacle in document order, over the wrappers (the slice's probe (d), d10 and d11) ──
-test("the first obstacle in document order is the one named over the plain fixture: a drag from a table cell to the `Click me` summary after it, and one from the math paragraph to the summary, refuse as touching the table (the probe's d10 and d11; before: an HTML block at the details' offset, the refused block named ahead of the table's hole); from the code line past the div wrapper as the code block; from the paragraph before the div into the div's nested paragraph still as an HTML block, the wrapper's block being the first obstacle", () => {
+test("the first obstacle in document order is the one named over the plain fixture: a drag from a table cell to the `Click me` summary after it, and one from the math paragraph to the summary, refuse at the table (the probe's d10 and d11; before Slice 5: an HTML block at the details' offset, the refused block named ahead of the table's hole; since Slice 8 the cells are positioned, so the table's obstacle is the one-cell rule, the span covering every cell from the first covered one, and the Raw view is offered on that exact span); from the code line past the div wrapper at the table as well (the code positioned since Slice 8; before: the code block); from the paragraph before the div into the div's nested paragraph still as an HTML block, the wrapper's block being the first obstacle", () => {
   const box = buildRendered(PLAIN);
   const lineOf = (needle: string) => PLAIN.slice(0, PLAIN.indexOf(needle)).split("\n").length - 1;
-  for (const [what, from] of [["d10, a table cell", "cell one"], ["d11, the math paragraph", "Paragraph with inline math"]] as const) {
+  const CELLS_RULE = /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/;
+  for (const [what, from, first, span] of [["d10, a table cell", "cell one", "cell one", "cell one | cell two |\n| cell three | cell four"], ["d11, the math paragraph", "Paragraph with inline math", "Col A", "Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four"]] as const) {
     const r = bad(mapSpan(box, PLAIN, from, "Click me"), what + " to the summary");
-    assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, what + ": the table comes first (before: an HTML block): " + r.reason);
-    assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf("| Col A"), at(PLAIN, "| Col A")], what + ": the Raw offer is the table's");
+    assert.match(r.reason, CELLS_RULE, what + ": the table comes first (before: an HTML block): " + r.reason);
+    assert.deepEqual([r.blockStartLine, r.blockStartOffset], [lineOf(first), at(PLAIN, first)], what + ": the Raw offer starts at the first covered cell");
+    assert.equal(r.rawHasQuote, true, what + ": with the span");
+    assert.equal(PLAIN.slice(r.rawRange!.start, r.rawRange!.end), span, what + ": the covered cells, first through last");
   }
+  // since Slice 8 the code's lines are positioned, so the span from the code line past the div wrapper meets the table first: the
+  // one-cell rule, the Raw view offered on every cell (before Slice 8: the code block; before Slice 5: an HTML block)
   const code = bad(mapSpan(box, PLAIN, "total = a", "Paragraph after the div"), "the code line past the div wrapper");
-  assert.match(code.reason, /a code block/, "the code block comes first (before: an HTML block): " + code.reason);
-  assert.equal(code.blockStartOffset, at(PLAIN, "```python"));
+  assert.match(code.reason, CELLS_RULE, "the table comes first (before Slice 8: the code block): " + code.reason);
+  assert.equal(code.blockStartOffset, at(PLAIN, "Col A"));
+  assert.equal(PLAIN.slice(code.rawRange!.start, code.rawRange!.end), "Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n| cell three | cell four");
   const div = bad(mapSpan(box, PLAIN, "Final paragraph", "inside the div."), "the paragraph before the div into its nested paragraph");
   assert.match(div.reason, /an HTML block/, "the wrapper's block is the first obstacle, as before: " + div.reason);
   assert.equal(div.blockStartOffset, at(PLAIN, "<div align"));
-  // a span ending in the table names it, one starting in the code names it, as before
-  assert.match(bad(mapSpan(box, PLAIN, "Intro paragraph", "cell two"), "the intro into the table").reason, /a code block/, "the code block stands between them");
-  assert.match(bad(mapSpan(box, PLAIN, "Paragraph with inline math", "cell two"), "the math paragraph into the table").reason, /a table/);
-  assert.match(bad(mapSpan(box, PLAIN, "total = a", "around it."), "the code into the math paragraph").reason, /a code block/);
+  // a span ending in the table names it (the header's cells and the body cell lie in it: the one-cell rule), from the intro past
+  // the code as well since Slice 8 (before: the code block stood between them); one starting in the code and ending in the math
+  // paragraph maps, the fence's closer and the formula's TeX inside the quote (before: refused as a code block)
+  assert.match(bad(mapSpan(box, PLAIN, "Intro paragraph", "cell two"), "the intro into the table").reason, CELLS_RULE, "the table is the first obstacle (before Slice 8: the code block)");
+  assert.match(bad(mapSpan(box, PLAIN, "Paragraph with inline math", "cell two"), "the math paragraph into the table").reason, CELLS_RULE);
+  assert.equal(ok(mapSpan(box, PLAIN, "total = a", "around it."), "the code into the math paragraph").quote, "total = a * b * 2\nname_ = under_score  # trailing comment\n```\n\nParagraph with inline math $E = mc^2$ around it.");
 });
 
 test("two html `<p>` blocks a blank line apart own one element each (before: nothing and both); a closed `<div>x</div>` stays refused with its one element; two sibling tags in one block own both; a `<style>` block the sanitizer dropped owns nothing and the paragraph after it maps; a stray `</p>` is the parser's empty `<p>`; a `<p>` the block leaves open is closed by the next block's tag and is no wrapper", () => {
@@ -601,19 +610,24 @@ test("a closing tag inside a paragraph (`**Bold** </div>` on the paragraph's own
   assert.equal(owner(box, STRAY, kidsOf(box)[3]), blockAt(STRAY, P(3)));
 });
 
-test("a formula at the selection's END is judged in document order with the other obstacles: a drag from a table cell (or from the intro across the table) into a formula's glyphs names the table, the obstacle the person's eye meets first, with the table's Raw offer (before: the formula, judged ahead of the pass); a drag from the paragraph before the formula into it still names the formula with the formula preselected, and so does one from the whitespace between two formulas into the second, and a drag begun inside a formula names the formula whatever follows", () => {
+test("a formula at the selection's END is judged in document order with the other obstacles: a drag from two table cells (or from the intro across the table) into a formula's glyphs names the table, the obstacle the person's eye meets first, with the table's Raw offer (before Slice 5: the formula, judged ahead of the pass; since Slice 8 the cells are positioned, so the table's obstacle is the one-cell rule, and a drag from the table's LAST cell into the formula meets no obstacle before the formula and names it); a drag from the paragraph before the formula into it still names the formula with the formula preselected, and so does one from the whitespace between two formulas into the second, and a drag begun inside a formula names the formula whatever follows", () => {
   const src = "Intro para.\n\n| Col A | Col B |\n|-------|-------|\n| cell one | cell two |\n\nBetween para.\n\nTail $tt$ formula.\n\nPair $aa$ $bb$ here.\n";
   const box = buildRendered(src);
   const inT = { node: find(box, "SPAN", "tt").childNodes[0], offset: 1 };   // strictly inside the stand-in fill's glyphs for $tt$ (a `.katex` span holding "tt")
   assert.equal((inT.node as FakeText).data, "tt", "the formula's glyph node");
   const span = (from: Pt, to: Pt) => mapRenderedSelection(sel(from, to), El(box), src);
-  let r = bad(span(point(box, "cell two"), inT), "a cell into the formula's glyphs");
-  assert.match(r.reason, /^This selection touches a table; comment on it from the Raw view\.$/, "the table comes first (before: a formula): " + r.reason);
-  assert.equal(r.blockStartOffset, at(src, "| Col A"), "the table's Raw offer");
+  let r = bad(span(point(box, "cell one"), inT), "two cells into the formula's glyphs");
+  assert.match(r.reason, /^This selection spans more than one cell of a table; select within one cell, or comment on it from the Raw view\.$/, "the table comes first (before: a formula): " + r.reason);
+  assert.equal(r.blockStartOffset, at(src, "cell one"), "the table's Raw offer, at the first covered cell");
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "cell one | cell two", "the covered cells' exact span");
   r = bad(span(point(box, "Intro para."), inT), "the intro across the table into the formula");
   assert.match(r.reason, /a table/, r.reason);
-  r = bad(span(inT, point(box, "cell two")), "the same drag made backwards (the anchor inside the formula, the focus in the cell)");
+  r = bad(span(inT, point(box, "cell one")), "the same drag made backwards (the anchor inside the formula, the focus in the cell)");
   assert.match(r.reason, /a table/, "the end of the span in document order is still the formula: " + r.reason);
+  // the table's last cell alone is no obstacle since Slice 8: the formula the drag ends in is named, and preselected
+  r = bad(span(point(box, "cell two"), inT), "the last cell into the formula's glyphs");
+  assert.match(r.reason, /a formula/, "one cell is no obstacle (before Slice 8: a table): " + r.reason);
+  assert.equal(src.slice(r.rawRange!.start, r.rawRange!.end), "$tt$");
   // no obstacle before the formula: the formula, preselected
   r = bad(span(point(box, "Between para."), inT), "the paragraph before into the formula");
   assert.match(r.reason, /a formula/, r.reason);
@@ -634,8 +648,11 @@ test("a formula at the selection's END is judged in document order with the othe
   // begun at the formula's first glyph: the formula is covered whole and travels inside the quote (the review's round 2 ruling)
   const fromEdge = ok(span({ node: inT.node, offset: 0 }, point(box, "formula.", true)), "from the formula's first glyph to the end of its paragraph");
   assert.equal(fromEdge.quote, "$tt$ formula.");
-  // the spans that end in prose read as before
-  assert.match(bad(span(point(box, "cell two"), point(box, "Tail", true)), "a cell into prose").reason, /a table/);
+  // the spans that end in prose: two cells into prose refuse at the table; one cell and the prose after the table MAPS since
+  // Slice 8, the row's closing pipe and the line feeds inside the quote as a Raw selection over the same characters mints
+  // (before: refused as a table)
+  assert.match(bad(span(point(box, "cell one"), point(box, "Tail", true)), "two cells into prose").reason, /a table/);
+  assert.equal(ok(span(point(box, "cell two"), point(box, "Tail", true)), "the last cell into prose").quote, "cell two |\n\nBetween para.\n\nTail");
   assert.equal(ok(span(point(box, "Between para."), point(box, "Tail", true)), "prose to prose").quote, "Between para.\n\nTail");
 });
 
@@ -1053,9 +1070,9 @@ test("a block of stray end tags alone (`</div>`, `</details>`) that names a wrap
   const TABLE = "Intro 001 alpha bravo.\n\n<div>\n\n<p>Lead 002 charlie.\n\n</div>\n\n| c1 | c2 |\n|---|---|\n| cell 006 juliet | kilo lima |" + AFTER;
   let box = buildRendered(TABLE);
   assert.deepEqual(tagsOf(box, TABLE, blockAt(TABLE, "| c1")), ["TABLE"], "the table's block owns the table (before: the p's block did)");
-  const cell = bad(mapText(box, TABLE, "cell 006 juliet"), "a cell");
-  assert.match(cell.reason, /a table/, "refused as a table (before: as an HTML block)");
-  assert.equal(cell.blockStartOffset, at(TABLE, "| c1"), "at the table's own offset (before: the `<p>Lead` line)");
+  // the cell maps to its own offsets through that pairing (Slice 8; between Slice 5 and it: refused as a table at the table's own
+  // offset; before Slice 5: as an HTML block at the `<p>Lead` line)
+  mapsWhole(box, TABLE, "cell 006 juliet");
   for (const t of ["After 005 golf hotel.", "Last 007 mike november."]) mapsWhole(box, TABLE, t);
   const STRAYP = "Intro 001 alpha bravo.\n\n<div>\n\n<p>Lead 002 charlie.\n\n</div>\n\n</p>\n\n<img src=\"x.png\" alt=\"\">" + AFTER;
   box = buildRendered(STRAYP);

@@ -88,6 +88,10 @@ const RULES = [
   ".fileview-main {", ".fileview-aside {", ".fileview-fc {", ".fileview-fc[hidden] {", ".fc-panel {", ".fc-card {",
   ".fc-chip {", ".fc-input {", ".fc-hl {", ".fc-presel {", ".fc-float {",
   ".fc-hl .fc-hl {",   // the nest an overlap of two comments makes wears one wash and one ring (plans/markdown-viewer.md Slice 5, item 6)
+  ".fileview-md pre .fc-hl, .fileview-md pre .fc-presel {",   // a mark in a fence row keeps the columns in line (Slice 8, item 2, the review's round 1; styles-fc-hl-code-row-browser.test.ts)
+  // the block-level paint on a display formula (plans/markdown-viewer.md Slice 8, item 5): the highlight's wash and ring, the context
+  // cue's ring drop and the pending target's accent as classes on the formula's own box (file-comments-block-paint.test.ts reads the bodies)
+  ".fileview-md .katex-display.fc-hl-block {", ".fileview-md .katex-display.fc-hl-block.fc-hl-context {", ".fileview-md .katex-display.fc-presel-block {",
   // the editor's marks over pending changes (Slice 5; track-decorations.ts CLS): the chat and feed pages both host the editor
   ".tc-diff-ins {", ".tc-diff-del {", ".tc-diff-sub {", ".tc-diff-del.tc-diff-sub {", ".tc-diff-del-block {", ".tc-diff-del-line {", ".tc-diff-hover {",
   // the embed token a struck block row still holds (track-decorations.ts, departure 4) and its tag; the pixel legs are
