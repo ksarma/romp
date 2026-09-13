@@ -7843,6 +7843,11 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     setActive(ord[(i + dir + ord.length) % ord.length]);
   } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    // a full-pane surface owns its keys, as the type-to-compose default below reads it (typeFromAnywhereTarget): the file
+    // viewer's body holds the keyboard while it is up (file-view.ts takeKeyboard; Slice 6 of plans/markdown-viewer.md,
+    // item 1), and the arrow must scroll the note natively, not the transcript behind the modal
+    if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
+        || document.getElementById("romp-lightbox")) return;
     const content = document.getElementById("content");
     if (!content) return;
     e.preventDefault();

@@ -1698,8 +1698,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
     textSize.sync();                          // the text-size control follows every paint: shown over a text view only
-    closeOutline();                           // the Outline's rows were read off the DOM this paint replaces; the button follows the paint (syncOutline, below)
-    outlineBtn.hidden = true;
+    closeOutline();                           // the Outline's rows were read off the DOM this paint replaces (the popover is out of the flow: no layout moves)
+    // The Outline button's visibility is the ONE bar control that differs between the two text views, and a bar whose height
+    // changes (the actions row wraps at the pane's width with one more button) moves the body's height: hidden here, before
+    // the paint below reads the reader's place, it re-clamped a body standing at the document's end and the held place was
+    // lost (the Slice 6 consolidation: the Rendered/Raw round trip from the end came back one paragraph early, a fold's row
+    // 523px low). So a text paint decides it inside the paint, after the swap and before the hooks measure and the seat
+    // writes (syncOutline, below); only the paths that paint no text hide it here (the loader, the editor's entry).
+    if (editing || text === null) outlineBtn.hidden = true;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -1747,12 +1753,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
       folds.restore();                        // each fold as the person left it, before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
+      syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
       fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
       shownText = text;
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
-    syncOutline();                            // the Outline button: shown over a Rendered paint that holds a heading
     if (rendered && pendingHeading !== null) {
       const h = pendingHeading; pendingHeading = null;
       requestAnimationFrame(() => {
@@ -2442,7 +2448,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let probeStopped = false;                    // a 413/415 retired the probe for this open
   let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch
   const diskBarUp = (): boolean => diskBar !== null && note === diskBar.el;   // still the card's notice (enterEdit or a later notice may have taken it)
-  const dropDiskBar = (): void => { if (diskBarUp()) { diskBar!.el.remove(); note = null; } diskBar = null; };
+  // The bar's Reload held the keyboard when a click put it there (a click focuses a button), and the removal drops it to the
+  // document's body by the browser's fixup: the body takes it then (takeKeyboard, the brief's call-site list names the
+  // button), so PageDown reads on after the Reload; a keyboard held anywhere else is left where it is.
+  const dropDiskBar = (): void => {
+    if (diskBarUp()) {
+      const held = diskBar!.el.contains(document.activeElement);
+      diskBar!.el.remove(); note = null;
+      if (held) takeKeyboard();
+    }
+    diskBar = null;
+  };
   const raiseDiskBar = (): void => {
     if (diskBarUp()) return;                   // one bar, the same words: a second move while it stands replaces nothing
     const bar2 = noteBar(CHANGED_ON_DISK);

@@ -877,8 +877,8 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
   // (the folds' restore stands between the swap and the hooks since the Slice 4 review: the hooks measure the folds as the person left them;
   // the tables' width stamp follows it, before the hooks, and reads no geometry)
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*fireRendered\(\);/,
-    "every text paint fires it, after the folds' restore and the fresh tables' width stamp (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it, after the folds' restore, the fresh tables' width stamp and the Outline button's visibility (the bar's layout settles before the hooks measure; Slice 6 of plans/markdown-viewer.md) (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
     "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");

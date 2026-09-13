@@ -1304,6 +1304,7 @@ test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the
   assert.match(probe, /re\.type = "button"; re\.textContent = "Reload";/);
   assert.match(probe, /re\.disabled = true; re\.textContent = "Reloading";[^\n]*\n\s*fetchFile\(\);\n\s*diskBar\.asked = fetchSeq;/, "acknowledged at the click; the reload is fetchFile, which keeps the place; its landing is remembered");
   assert.match(probe, /if \(diskBar && \(mtimeMoved\(diskBar\.under, mtimeNs\) \|\| my === diskBar\.asked\)\) dropDiskBar\(\);/, "the clearing event: a landing under another mtime, or the bar's own ask's landing");
+  assert.match(probe, /const held = diskBar!\.el\.contains\(document\.activeElement\);\n\s*diskBar!\.el\.remove\(\); note = null;\n\s*if \(held\) takeKeyboard\(\);/, "the drop: the keyboard the bar's Reload held goes to the body (the consolidation; the brief's call-site list named the button)");
   assert.match(openFn, /isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "right after the landing applies the mtime, text and media alike");
   assert.match(openFn, /rearmDiskBar\(my\);[^\n]*\n\s*const why = el\("div", "fileview-err"\);/, "the failure landing re-arms the bar's own button before painting the pane");
   assert.doesNotMatch(probe, /setTimeout|setInterval|requestAnimationFrame/, "no timer: the events are the reader's return, the answer and the landing");

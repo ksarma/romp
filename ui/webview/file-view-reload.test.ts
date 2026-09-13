@@ -104,6 +104,9 @@ class El {
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
   set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
+  /** The browser's focus fixup: a removed subtree that holds the active element drops it to the document's body (the
+   *  changed-on-disk bar's Reload, focused by its click and removed with the bar at the landing). */
+  private dropFocusIn(n: El | Txt): void { if (n instanceof El && doc.activeElement && n.contains(doc.activeElement)) doc.activeElement = doc.body; }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   prepend(...ns: Array<El | Txt>): void { for (const n of ns.slice().reverse()) { this.detach(n); this.childNodes.unshift(n); n.parentNode = this; } }
   insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
@@ -112,9 +115,9 @@ class El {
     const i = this.childNodes.indexOf(ref);
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
-  removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
-  remove(): void { this.detach(this); }
+  removeChild<T extends El | Txt>(n: T): T { this.dropFocusIn(n); this.detach(n); return n; }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) { this.dropFocusIn(x); x.parentNode = null; } this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
+  remove(): void { this.dropFocusIn(this); this.detach(this); }
   normalize(): void { /* no adjacent text nodes are built here */ }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
@@ -688,6 +691,38 @@ test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HE
   assert.ok(body.querySelector(".fileview-err"), "the failure pane says what happened");
   assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.textContent, "Reload"); assert.equal(btn.disabled, false, "armed again: no dead end");
   assert.equal(ctx.mtimeNs(), MT3, "a failed landing lends no mtime"); assert.equal(paints, 3, "and no paint");
+});
+
+test("changed on disk: the Reload button holds the keyboard at its click (a click focuses a button), and the landing that removes the bar hands it to the body, so PageDown reads on; a bar another ask's landing clears while a box in the aside holds the keyboard leaves it there; a failed Reload keeps it on the re-armed button", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  const btn = reloadButton(wrap);
+  btn.focus();                                             // a real click focuses the button; the stand-in's click() moves nothing, so the focus is put there first
+  assert.equal(doc.activeElement, btn);
+  btn.click(); await settle();
+  assert.equal(barOf(wrap), null, "the landing took the bar"); assert.equal(ctx.mtimeNs(), MT2);
+  assert.equal(doc.activeElement, body, "the body took the keyboard the removed button held (before the consolidation it fell to the document's body and stayed there)");
+  // another ask's landing (the seam's reload(): the panel's poll) clears the bar while the panel's box holds the keyboard:
+  // the button never held it, so nothing moves
+  const aside = new El("div"); const box = aside.appendChild(new El("textarea"));
+  ctx.aside(aside as unknown as HTMLElement);
+  box.focus();
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  ctx.reload(); await settle();
+  assert.equal(barOf(wrap), null, "the poll's landing cleared it"); assert.equal(ctx.mtimeNs(), MT3);
+  assert.equal(doc.activeElement, box, "the box kept the keyboard");
+  // the bar's own Reload failing: the bar stands with its button armed again, and the keyboard stays on the button
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
+  focusWindow(); await settle();
+  const btn2 = reloadButton(wrap);
+  btn2.focus();
+  delete disk[APP];                                        // gone by the time the GET runs
+  btn2.click(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn2.disabled, false, "armed again");
+  assert.equal(doc.activeElement, btn2, "and the button keeps the keyboard: nothing was removed");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

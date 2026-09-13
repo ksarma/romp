@@ -57,7 +57,10 @@
 //     as STRINGS — and on every figure a text file's region comments name, against the poll's own last
 //     reading (a regenerated figure moves none of the three; tick). The Files pane has no filesystem
 //     watcher; the poll stands in for that event, and the person's own writes never fire it because every
-//     verb reply re-baselines it. Replies land in the
+//     verb reply re-baselines it. With the panel CLOSED the viewer itself sends one HEAD on the window's
+//     focus and the document's return to visibility and raises its Changed on disk line when the mtime
+//     moved (file-view.ts, Slice 6 of plans/markdown-viewer.md); it reads the same header through this
+//     module's headVerdict and mtimeMoved and never writes the mtime. Replies land in the
 //     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
 //     it finishes, and a status that read the disk before a write — asked before it, or asked while it was
 //     in flight — must not put the panel back a step once the write's reply is showing.

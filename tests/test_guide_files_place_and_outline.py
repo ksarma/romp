@@ -2,21 +2,21 @@
 """The guide's Files and Waiting on you sections say six things Slice 6 of plans/markdown-viewer.md made true, and
 the viewer, the Files pane and the todo surfaces do them.
 
-The file takes the keyboard when it opens, so PageDown and Space scroll it with no click first, and a box the person
-was typing in keeps the keyboard (item 1: the body's tabIndex and takeKeyboard's gate on the active element); the
-Outline button above a rendered file lists the file's headings and a pick scrolls the heading to the top, a closed
-fold opened on the way (item 2: the button's label, the pick through the fragment landing); a file reopened from the
-Files pane's Recent list opens at the place it was left (item 3: the row hands its stored place back and the pane
-writes the place the viewer hands it on leaving); a line or a section written after a path in a todo's text or
-detail opens the file there, from the chat's todo card and from the Waiting on you pane alike, and a missing section
-is named in the notice bar (item 4: the walks' targetSuffix option, the relay's `at`, the viewer's notice); and a
-change on disk while the Comments panel is closed raises a line above the text with a Reload that keeps the place
-(item 5: the probe's two events, the bar's words, the button through fetchFile). Each clause is pinned flattened, so
-a rewrap survives, and cross-checked against the source that keeps it; the clauses other guide pins read in the same
-paragraphs and sections (the chip sentence of tests/test_guide_todo_file_chip.py, the hard-wrapped opening lines of
-tests/test_files_pane.py) are re-read here unchanged, so an edit that moves one fails in one place and not two. The
-guide's word "outline" also names the sessions pane, so the Outline sentence says "the file's headings" and a pin
-holds it to that. Synthetic: only the repo's own text.
+The file takes the keyboard when it opens, so the arrow keys, PageDown and Space scroll it with no click first, and a
+box the person was typing in keeps the keyboard (item 1: the body's tabIndex and takeKeyboard's gate on the active
+element); the Outline button above a rendered file lists the file's headings and a pick scrolls the heading to the
+top, a closed fold opened on the way (item 2: the button's label, the pick through the fragment landing); a file
+reopened from the Files pane's Recent list opens at the place it was left (item 3: the row hands its stored place
+back and the pane writes the place the viewer hands it on leaving); a line or a section written after a path in a
+todo's text or detail opens the file there, from the chat's todo card and from the Waiting on you pane alike, and a
+missing section is named in the notice bar (item 4: the walks' targetSuffix option, the relay's `at`, the viewer's
+notice); and a change on disk while the Comments panel is closed raises a line above the text with a Reload that
+keeps the place (item 5: the probe's two events, the bar's words, the button through fetchFile). Each clause is
+pinned flattened, so a rewrap survives, and cross-checked against the source that keeps it; the clauses other guide
+pins read in the same paragraphs and sections (the chip sentence of tests/test_guide_todo_file_chip.py, the
+hard-wrapped opening lines of tests/test_files_pane.py) are re-read here unchanged, so an edit that moves one fails
+in one place and not two. The guide's word "outline" also names the sessions pane, so the Outline sentence says
+"the file's headings" and a pin holds it to that. Synthetic: only the repo's own text.
 """
 import os
 import re
@@ -52,8 +52,8 @@ def _paragraph(section, lead):
 
 RECENT = ("When no file is open, the pane lists the files most recently open here; click one to open it again, and "
           "the file opens at the place you left it.")
-KEYBOARD = ("The file takes the keyboard when it opens, so PageDown and Space scroll it at once; a box you were typing "
-            "in keeps the keyboard.")
+KEYBOARD = ("The file takes the keyboard when it opens, so the arrow keys, PageDown and Space scroll it at once; a box "
+            "you were typing in keeps the keyboard.")
 DISK = ("When a file changes on disk while you read it with the Comments panel closed, a line above the text says so "
         "the next time you return to the dashboard, and **Reload** reads it again with your place kept.")
 OUTLINE = ("The **Outline** button above a rendered file lists the file's headings; pick one and the view scrolls to "

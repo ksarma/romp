@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { linkTarget } from "./path-links";
+import { hideEdges, staysEnumerable } from "../test-dom-shim";   // the window stand-in's parent is an edge: hidden, so a failing dump never walks the cycle
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));   // esbuild from the extension, wherever this bundle was written
@@ -43,6 +44,7 @@ function openPathIn(w: World) {
   const parent = { postMessage: (m: Posted, _o: string) => { shellPosts.push(m); } };
   const win: Record<string, unknown> = { parent: w.framed ? parent : null };
   if (!w.framed) win.parent = win;                                 // unframed: window.parent === window
+  hideEdges(win);                                                  // parent non-enumerable (ui/test-dom-shim.ts): a failing assertion over the window dumps primitives, never the cycle
   const openPath = fn(
     { postMessage: (m: Posted) => { hostPosts.push(m); } }, { protocol: w.protocol }, SID,
     () => w.route, { fileLinkPane: w.route }, win, { files: true },
@@ -111,4 +113,11 @@ test("openLinkedPath reads the link's target through linkTarget and hands it to 
   assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/);
   assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/);
   assert.match(RENDER, /identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null, at: a \}, "\*"\);/);
+});
+
+// ── the window stand-in is a projection (ui/test-dom-shim.ts): a failing assertion over it dumps primitives, never a cycle through parent ──
+test("the window stand-in enumerates its primitives alone: parent is hidden by hideEdges, so a failing dump never walks the self-cycle", () => {
+  const win: Record<string, unknown> = { parent: null, framed: false }; win.parent = win; hideEdges(win);
+  assert.ok(Object.keys(win).every((k) => staysEnumerable(win[k])), "the stand-in keeps an enumerable edge: " + Object.keys(win).join(","));
+  assert.equal(win.parent, win, "the edge is still there, read through the property");
 });

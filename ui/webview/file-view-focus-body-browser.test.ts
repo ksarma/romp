@@ -13,8 +13,8 @@
 // scene runs render.ts's own window keydown handlers, lifted from its source (real-viewer-leg.ts chatKeysScript, shared with
 // the Outline leg) as file-view-links-browser.test.ts lifts the chat's click opener, over a composer and a #content stand-in: a printable key with the viewer up lands nowhere
 // (typeFromAnywhereTarget stands aside for a full-pane surface), and after Escape the same key lands in the composer; the
-// chat's ArrowUp/Down handler scrolls #content for any non-typing target and names no exception for the viewer, so the arrow
-// is read as either mover (a render.ts change, not the viewer's; recorded for the unit that owns render.ts). Before item 1
+// chat's ArrowUp/Down handler stands aside for a full-pane surface since the Slice 6 consolidation, so the arrow scrolls the
+// note and never the transcript box (before that guard the key moved the transcript behind the modal). Before item 1
 // the body had no tabindex and nothing focused it: red at the first PageDown over a git archive of the base. Skips LOUDLY
 // without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an invented note,
 // /repo/notes-api paths, the placeholder sid.
@@ -123,7 +123,7 @@ test("in a browser, on the Files pane at 900 and 380 px: the note opened with no
   });
 });
 
-test("in a browser, in the chat modal under render.ts's own key handlers: the composer keeps the keyboard when it holds it at the open; with nothing focused the body takes it and PageDown, Space, End and Home scroll the note; a typed letter with the viewer up lands nowhere and after Escape lands in the composer; ArrowDown is read against the chat's arrow handler", { timeout: 120000 }, async (t) => {
+test("in a browser, in the chat modal under render.ts's own key handlers: the composer keeps the keyboard when it holds it at the open; with nothing focused the body takes it and PageDown, Space, End and Home scroll the note; a typed letter with the viewer up lands nowhere and after Escape lands in the composer; ArrowDown scrolls the note and not the transcript behind the modal (render.ts's arrow shortcut stands aside for the viewer)", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     const errors: string[] = [];
@@ -165,15 +165,16 @@ test("in a browser, in the chat modal under render.ts's own key handlers: the co
     await page.waitForFunction(() => { const b = document.querySelector(".fileview-body") as HTMLElement; return b.scrollTop >= b.scrollHeight - b.clientHeight - 1; }, null, { timeout: 4000 });
     await page.keyboard.press("Home");
     await page.waitForFunction(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop === 0, null, { timeout: 4000 });
-    // ArrowDown: the chat's own arrow handler scrolls #content for every non-typing target and preventDefaults, with no
-    // exception for the viewer (render.ts, the single-key shortcuts): the key moves the note or the transcript box, never
-    // nothing. Which one is render.ts's call, recorded for its owner; the viewer's half (the body focused, the key
-    // reaching it) is what this reads.
+    // ArrowDown: the chat's own arrow handler (render.ts, the single-key shortcuts) scrolls #content for a non-typing target
+    // and preventDefaults, and since the Slice 6 consolidation stands aside for a full-pane surface as its type-to-compose
+    // default does, so the key scrolls the note natively and the transcript box behind the modal never moves
     const content0: number = await page.evaluate(() => (document.getElementById("content") as HTMLElement).scrollTop);
     await page.keyboard.press("ArrowDown");
-    const arrow = await page.waitForFunction((c0: number) => (document.querySelector(".fileview-body") as HTMLElement).scrollTop > 0 || (document.getElementById("content") as HTMLElement).scrollTop > c0, content0, { timeout: 4000 }).then(() => true, () => false);
-    const read = await page.evaluate((c0: number) => ({ body: (document.querySelector(".fileview-body") as HTMLElement).scrollTop, content: (document.getElementById("content") as HTMLElement).scrollTop - c0, active: (document.activeElement as HTMLElement).className }), content0);
-    assert.ok(arrow, "ArrowDown with the body focused moved the note or, under render.ts's arrow handler, the transcript box (read body " + read.body + ", content " + read.content + ")");
+    await page.waitForFunction(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop > 0, null, { timeout: 4000 }).catch(() => { /* read below */ });
+    const read = await page.evaluate((c0: number) => ({ body: (document.querySelector(".fileview-body") as HTMLElement).scrollTop, content: (document.getElementById("content") as HTMLElement).scrollTop - c0, scrolls: (window as any).__contentScrolls, active: (document.activeElement as HTMLElement).className }), content0);
+    assert.ok(read.body > 0, "ArrowDown with the body focused moved the note (read body " + read.body + ", content " + read.content + ", the handler's scroller ran " + read.scrolls + " times)");
+    assert.equal(read.content, 0, "…and not the transcript box behind the modal");
+    assert.equal(read.scrolls, 0, "render.ts's arrow shortcut stood aside for the viewer (its scroller never ran)");
     assert.equal(read.active, "fileview-body", "…and the keyboard stayed on the body");
     // a printable key with the viewer up: the chat's type-to-compose stands aside for a full-pane surface, so the letter
     // lands nowhere and the keyboard stays on the body; after Escape the same key lands in the composer (the handler is live)

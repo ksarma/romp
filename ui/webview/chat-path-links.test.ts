@@ -32,11 +32,12 @@ test("the chat event carries the kernel's pathLinks verdict on user and assistan
 
 test("membership in pathLinks gates the link, and the map's value is the OPEN target", () => {
   // every existing shape gate stays — the map only ever narrows, never widens (the walk is path-links.ts's;
-  // render.ts threads the event's map through: linkifyPathTokens(root, sid, pathLinks))
+  // render.ts threads the event's map through: linkifyPathTokens(root, sid, pathLinks, walkOpts)) (walkOpts: the todo
+  // surfaces' targetSuffix, Slice 6 of plans/markdown-viewer.md; the transcript's callers pass none)
   assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(span\.inCode && looksLikeBareFileName\(tok\)\)\) continue;/);   // inCode is the node's the token lies in (textUnits)
   assert.match(LINKS, /const fixed = !isUri && pathLinks \? pathLinks\[tok\] : undefined;/);
   assert.match(LINKS, /if \(!isUri && pathLinks && typeof fixed !== "string"\) continue;/);
-  assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks\)/);
+  assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks, walkOpts\)/);
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
   // (a surface with its own place, the file viewer, hands the walk a `resolve` for the token or the fixed target; the chat passes none)

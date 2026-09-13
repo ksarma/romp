@@ -638,8 +638,9 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /document\.addEventListener\("pointerdown", onDown, true\);\n\s*window\.addEventListener\("resize", closeOutline\);/);
   assert.match(openFn, /pop\.focus\(\{ preventScroll: true \}\);\n\s*\};/, "the popover takes the focus at the open, without moving the body");
   assert.match(openFn, /outlineBtn\.addEventListener\("click", \(\) => \{ flash\(outlineBtn\); if \(outline\) closeOutline\(\); else openOutline\(\); \}\);/, "the press pulse, then the toggle");
-  assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n\s*outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover and hides the button until the paint decides");
-  assert.match(openFn, /landRemembered\(\);[^\n]*\n\s*\}\);\n\s*syncOutline\(\);/, "…and the text paint decides it");
+  assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(editing \|\| text === null\) outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover; the paths that paint no text hide the button here (the loader, the editor's entry)");
+  assert.match(openFn, /stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "…and a text paint decides it inside the paint, after the swap and before the hooks measure and the seat writes (the consolidation: a bar whose height changes between the place read and the seat re-clamped a body at the document's end and lost the held place)");
+  assert.doesNotMatch(openFn, /landRemembered\(\);[^\n]*\n\s*\}\);\n\s*syncOutline\(\);/, "never after the seat");
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
   assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
   // the sheets: the rules in the tokens, the same bytes in both, and no dark literal outside a var() fallback (menu-theme-tokens.test.ts's rule)

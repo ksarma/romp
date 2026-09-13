@@ -464,10 +464,11 @@ file, an edit the viewer refuses) sits above the file's text, wherever you have 
 to, and stays through a switch of view and a reload until the next notice replaces it or
 you open the editor. A notice raised while you edit (a save that failed) goes when you
 leave the editor; a warning about the comments log stays when the save that raised it
-closes the editor. The file takes the keyboard when it opens, so PageDown and Space scroll
-it at once; a box you were typing in keeps the keyboard. When a file changes on disk while
-you read it with the Comments panel closed, a line above the text says so the next time you
-return to the dashboard, and **Reload** reads it again with your place kept.
+closes the editor. The file takes the keyboard when it opens, so the arrow keys, PageDown
+and Space scroll it at once; a box you were typing in keeps the keyboard. When a file
+changes on disk while you read it with the Comments panel closed, a line above the text says
+so the next time you return to the dashboard, and **Reload** reads it again with your place
+kept.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
 modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
