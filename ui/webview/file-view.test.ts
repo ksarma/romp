@@ -1287,3 +1287,30 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
   assert.match(openFn, /if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;[\s\S]{0,400}noteBar\('No section named "' \+ shown \+ '" in this file\.'\);/, "a heading the note lacks: the notice, never a silent open at the top");
   assert.doesNotMatch(openFn, /opts\?\.frag|opts\.line|pendingFrag/, "the former options are gone, not aliased");
 });
+
+test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the probe's HEAD through the panel's two readings, its listeners on the window's focus and the document's visibilitychange, registered as probeLive and dropped by both exits and the URL view's replace; the bar's words and its Reload through fetchFile; a landing settles the bar and the failure landing re-arms its own button; no timer anywhere in it", () => {
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set)");
+  assert.match(VIEW, /export const CHANGED_ON_DISK = "Changed on disk\.";/, "the bar's words (C4)");
+  assert.match(VIEW, /let probeLive: \(\(\) => void\) \| null = null;\nfunction dropProbe\(\): void \{\n\s*if \(probeLive\) \{ const f = probeLive; probeLive = null; f\(\); \}\n\}/, "one live probe, the onKey idiom");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  const probe = openFn.slice(openFn.indexOf("let probeOut = false;"), openFn.indexOf("// The fetch pipeline, as a function:"));
+  assert.match(probe, /if \(probeOut \|\| probeStopped \|\| editing \|\| !mtimeNs \|\| !wrap\.isConnected \|\| document\.hidden\) return;\n\s*probeOut = true;/, "the gate: one in flight, not retired, no editor, a fetched file, the viewer up, the document visible");
+  assert.match(probe, /fetch\(fileUrl\(path, sid\), \{ method: "HEAD", cache: "no-store" \}\)\.then\(\(r\) => \{\n\s*const v = headVerdict\(r\.status, r\.headers\.get\("X-Romp-Mtime-Ns"\)\);\n\s*if \(v\.kind === "stop"\) \{ probeStopped = true; return; \}/, "the same URL the GET used, read as the poll reads its own; a 413/415 retires it");
+  assert.match(probe, /if \(mtimeMoved\(mtimeNs, v\.value\)\) raiseDiskBar\(\);/, "a string compare, the contract the panel and the save fence keep");
+  assert.match(probe, /\.catch\(\(\) => \{[^\n]*\}\)\n\s*\.finally\(\(\) => \{ probeOut = false; \}\);/, "a network failure says nothing; the flight ends either way");
+  assert.match(probe, /window\.addEventListener\("focus", onWindowFocus\);\n\s*document\.addEventListener\("visibilitychange", onVisibility\);\n\s*probeLive = \(\) => \{ window\.removeEventListener\("focus", onWindowFocus\); document\.removeEventListener\("visibilitychange", onVisibility\); \};/, "the two events, registered for the exits");
+  assert.match(probe, /const onVisibility = \(\): void => \{ if \(!document\.hidden\) probe\(\); \};/, "to visible only");
+  assert.match(probe, /const bar2 = noteBar\(CHANGED_ON_DISK\);/, "the one notice row, the conflict bar's shape");
+  assert.match(probe, /re\.type = "button"; re\.textContent = "Reload";/);
+  assert.match(probe, /re\.disabled = true; re\.textContent = "Reloading";[^\n]*\n\s*fetchFile\(\);\n\s*diskBar\.asked = fetchSeq;/, "acknowledged at the click; the reload is fetchFile, which keeps the place; its landing is remembered");
+  assert.match(probe, /if \(diskBar && \(mtimeMoved\(diskBar\.under, mtimeNs\) \|\| my === diskBar\.asked\)\) dropDiskBar\(\);/, "the clearing event: a landing under another mtime, or the bar's own ask's landing");
+  assert.match(openFn, /isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "right after the landing applies the mtime, text and media alike");
+  assert.match(openFn, /rearmDiskBar\(my\);[^\n]*\n\s*const why = el\("div", "fileview-err"\);/, "the failure landing re-arms the bar's own button before painting the pane");
+  assert.doesNotMatch(probe, /setTimeout|setInterval|requestAnimationFrame/, "no timer: the events are the reader's return, the answer and the landing");
+  // the exits: closeFileView, the replace path, openUrlView's replace, each right after dropOnKey
+  const closeFn = VIEW.split("export function closeFileView")[1].split("\n}\n")[0];
+  assert.ok(closeFn.indexOf("dropProbe();") > closeFn.indexOf("dropOnKey();") && closeFn.indexOf("dropOnKey();") >= 0, "closeFileView drops the probe after the Escape handler");
+  assert.ok(openFn.indexOf("dropProbe();") > openFn.indexOf("dropOnKey();") && openFn.indexOf("dropProbe();") < openFn.indexOf('document.getElementById("romp-fileview")?.remove();'), "the replace path drops it before the old card goes");
+  const urlFn = VIEW.split("export function openUrlView")[1].split("\n}\n")[0];
+  assert.ok(urlFn.indexOf("dropProbe();") > urlFn.indexOf("gitHooks = null;") && urlFn.indexOf("dropProbe();") < urlFn.indexOf("dropOnKey();"), "the URL viewer's replace path drops it too (before dropOnKey: file-comments.test.ts pins dropOnKey and runCloseHooks adjacent there)");
+});

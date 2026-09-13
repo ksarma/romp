@@ -10,7 +10,12 @@
 // would put its bytes in the body under the newer response's mtime. Here the viewer runs over the seam
 // suite's DOM stand-in (file-view-seam.test.ts, copied: node --test runs each file in its own process, and
 // this one stubs URL.revokeObjectURL and hands the viewer Blobs and texts whose decode it can hold) and
-// each job is checked by what the viewer DOES. Synthetic fixtures only: the notes-api world, placeholder ids.
+// each job is checked by what the viewer DOES. The changed-on-disk cases at the end (plans/markdown-viewer.md Slice 6,
+// item 5) drive the same stand-in through the window's `focus` and the document's `visibilitychange`, the two events
+// that run the viewer's HEAD /file while the Comments panel is closed, and read the bar the moved mtime raises above the
+// body row, its Reload, and the landing that clears it; the fetch stub answers a HEAD with the headers and no body, as the
+// kernel does, and can hold one, fail one on the network or answer it 413. Synthetic fixtures only: the notes-api world,
+// placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -165,6 +170,15 @@ const doc = {
     doc.listeners = doc.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
   },
   contains: (n: El | Txt | null) => doc.body.contains(n),
+  /** An event on the document itself (visibilitychange): its capture listeners, then its bubble listeners. */
+  dispatchEvent(ev: Ev): boolean {
+    for (const capture of [true, false]) for (const l of doc.listeners.slice()) {
+      if (l.type !== ev.type || l.capture !== capture) continue;
+      if (l.once) doc.listeners = doc.listeners.filter((x) => x !== l);
+      ev.currentTarget = null; l.cb.call(null, ev);
+    }
+    return !ev.defaultPrevented;
+  },
 };
 doc.body = new El("body"); doc.head = new El("head");
 /** The DOM event path: document capture, ancestors' capture root→target, target and ancestors' bubble, document bubble. */
@@ -218,17 +232,28 @@ win.__rompEditor = {
 // A served file may bring its own Blob, or its own text(): the deferrable tests hand the viewer bytes
 // whose decode (or whose body read) resolves when the test says so, which is how a response gets
 // overtaken by a newer reload or a close.
-type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string> };
+// `head`: the status a HEAD of the file answers instead of 200 (413: too large to serve); `headWait`: a HEAD's answer waits
+// on it (a slow kernel, for the one-in-flight cases); `headFail`: the HEAD fails on the network (the fetch rejects).
+type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string>; head?: number; headWait?: Promise<void>; headFail?: boolean };
 const disk: Record<string, Served> = {};
 const fetches: string[] = [];
 (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
-  fetches.push((init && init.method || "GET") + " " + url.replace(/[?&]token=[^&]*/, ""));
+  const method = (init && init.method) || "GET";
+  fetches.push(method + " " + url.replace(/[?&]token=[^&]*/, ""));
   if (url.startsWith("/version")) return { json: async () => ({ fileEditing: true }) };   // consent already given
   if (url.startsWith("/sessions")) return { json: async () => [] };
   const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
   const f = disk[p];
   // an image 200 wears image/* and no X-Romp-Text-Utf8 (tests/test_kernel_preview.py pins that server-side)
   const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" && f.type.startsWith("text/") ? "1" : null) : null) };
+  if (method === "HEAD") {
+    // the kernel's HEAD /file: the GET's headers and no bytes (tests/test_kernel_preview.py pins the empty body)
+    if (f && f.headWait) await f.headWait;
+    if (f && f.headFail) throw new TypeError("network gone");
+    if (!f) return { ok: false, status: 404, headers, text: async () => "" };
+    if (f.head) return { ok: false, status: f.head, headers, text: async () => "" };
+    return { ok: true, status: 200, headers, text: async () => "" };
+  }
   if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
   return {
     ok: true, status: 200, headers,
@@ -455,6 +480,214 @@ test("two text reloads in flight: the newer wins whatever order they answer in �
   await settle();
   assert.equal(body.querySelector(".fileview-err"), null, "an overtaken failure replaces nothing");
   assert.equal(ctx.text(), v5); assert.equal(ctx.mtimeNs(), "1757145600000000010"); assert.equal(paints, 3);
+});
+
+// ── changed on disk (plans/markdown-viewer.md Slice 6, item 5) ────────────────────────────────────────────────────────
+// The events: a `focus` on the window and a `visibilitychange` on the document (the stand-in's window is a real
+// EventTarget; the document dispatches its own). The reading: the requests the stub saw by method, the bar
+// `#fileview-save-err` as a row of the card between the title bar and the body row, its words as its own text nodes (the
+// button's label is a child, not the words), its one button and that button's state.
+const TEXT = "text/plain; charset=utf-8";
+const CHANGED = "Changed on disk.";
+const heads = () => fetches.filter((f) => f.startsWith("HEAD ")).length;
+const gets = () => fetches.filter((f) => f.startsWith("GET ") && /[?&]path=/.test(f)).length;
+const focusWindow = () => { win.dispatchEvent(new Event("focus")); };
+const visibility = (hidden: boolean) => { doc.hidden = hidden; doc.dispatchEvent(new Ev("visibilitychange")); };
+const barOf = (wrap: El): El | null => wrap.querySelector("#fileview-save-err");
+const cardRows = (wrap: El): string[] => wrap.querySelector(".fileview")!.childNodes.filter((x): x is El => x instanceof El).map((x) => x.className);
+type BarRead = { text: string; button: string | null; disabled: boolean; rows: string[] };
+function readBar(wrap: El): BarRead {
+  const bar = barOf(wrap);
+  const btns = bar ? bar.querySelectorAll("button") : [];
+  return {
+    text: bar ? bar.childNodes.filter((x): x is Txt => x instanceof Txt).map((x) => x.textContent).join("") : "",
+    button: btns.length === 1 ? btns[0].textContent : btns.length ? "(" + btns.length + " buttons)" : null,
+    disabled: btns.length === 1 && btns[0].disabled, rows: cardRows(wrap),
+  };
+}
+/** Every element under `root`, for a read the stand-in's selector engine has no word for (`*`). */
+const allEls = (root: El): El[] => { const out: El[] = []; const visit = (n: El) => { for (const c of n.childNodes) if (c instanceof El) { out.push(c); visit(c); } }; visit(root); return out; };
+const reloadButton = (wrap: El): El => { const b = barOf(wrap)!.querySelectorAll("button"); assert.equal(b.length, 1, "one button in the bar"); return b[0]; };
+/** A HEAD whose answer waits for the test. */
+function heldHead(): { wait: Promise<void>; release: () => void } { let release!: () => void; const wait = new Promise<void>((r) => { release = r; }); return { wait, release }; }
+const visibleAfter = (t: TestContext) => { t.after(() => { doc.hidden = false; }); };
+
+test("changed on disk: a window focus sends one HEAD of the file's URL and the same mtime raises nothing; a moved mtime raises the bar above the body row with its words and a Reload button, fetching no bytes; a second move while it stands changes nothing; a visibilitychange to hidden asks nothing and to visible asks once", async (t) => {
+  visibleAfter(t);
+  const { wrap, ctx } = await open(APP, t);
+  assert.equal(heads(), 0, "the open sends no HEAD");
+  focusWindow(); await settle();
+  assert.equal(heads(), 1, "one HEAD for the focus");
+  assert.match(fetches.find((f) => f.startsWith("HEAD "))!, /^HEAD \/file\?path=%2Frepo%2Fnotes-api%2Fsrc%2Fapp\.py&sid=11111111-2222-3333-4444-555555555555$/, "the URL the GET used (fileUrl)");
+  assert.equal(barOf(wrap), null, "the same mtime: no bar");
+  assert.deepEqual(cardRows(wrap), ["fileview-bar", "fileview-main"]);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };   // a session wrote the file
+  focusWindow(); await settle();
+  assert.equal(heads(), 2);
+  const b = readBar(wrap);
+  assert.equal(b.text, CHANGED, "the bar's words");
+  assert.equal(b.button, "Reload", "and its one button");
+  assert.equal(b.disabled, false);
+  assert.deepEqual(b.rows, ["fileview-bar", "fileview-err", "fileview-main"], "a row of the card between the title bar and the body row (noteBar's place)");
+  assert.equal(ctx.text(), PY, "the body shows the text the reader has: the probe fetched no bytes");
+  assert.equal(ctx.mtimeNs(), MT); assert.equal(gets(), 1, "the open's GET alone"); assert.equal(paints, 1, "no repaint");
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };   // and again, while the bar stands
+  focusWindow(); await settle();
+  assert.equal(heads(), 3, "the probe still asks while the bar stands");
+  assert.deepEqual(readBar(wrap), b, "one bar, the same words, one button");
+  assert.equal(wrap.querySelectorAll("#fileview-save-err").length, 1);
+  visibility(true); await settle();
+  assert.equal(heads(), 3, "hidden: nothing asked");
+  focusWindow(); await settle();
+  assert.equal(heads(), 3, "a focus while the document is hidden asks nothing either");
+  visibility(false); await settle();
+  assert.equal(heads(), 4, "visible again: one HEAD");
+});
+
+test("changed on disk: one HEAD in flight: a focus, a second focus and a visibilitychange while it is out send one request, and the next event after its answer asks again; a HEAD that fails on the network raises nothing and does not retire the probe", async (t) => {
+  visibleAfter(t);
+  const { wrap } = await open(APP, t);
+  const held = heldHead();
+  disk[APP] = { bytes: PY, type: TEXT, mtimeNs: MT, headWait: held.wait };
+  focusWindow(); focusWindow(); visibility(false); await settle();
+  assert.equal(heads(), 1, "folded into the one out: no timer, no queue");
+  held.release(); await settle();
+  assert.equal(barOf(wrap), null, "the same mtime");
+  focusWindow(); await settle();
+  assert.equal(heads(), 2, "the answer landed: the next event asks");
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2, headFail: true };
+  focusWindow(); await settle();
+  assert.equal(heads(), 3); assert.equal(barOf(wrap), null, "a network failure says nothing: nothing the reader sees has changed");
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(heads(), 4, "not retired"); assert.equal(readBar(wrap).text, CHANGED, "and the move is seen this time");
+});
+
+test("changed on disk: a 413 retires the probe for the open: a later focus or visibility sends nothing though the file moved; a replace-open of the path arms a fresh probe, and one focus is one HEAD (the replaced viewer's listeners left with it)", async (t) => {
+  visibleAfter(t);
+  const { fv, wrap } = await open(APP, t);
+  disk[APP] = { bytes: PY, type: TEXT, mtimeNs: MT, head: 413 };
+  focusWindow(); await settle();
+  assert.equal(heads(), 1); assert.equal(barOf(wrap), null, "a stop verdict raises nothing");
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); visibility(false); await settle();
+  assert.equal(heads(), 1, "retired for this open");
+  assert.equal(fv.openFileView(APP, SID), true); await settle();   // the replace path: a fresh viewer over the moved file
+  const wrap2 = doc.getElementById("romp-fileview")!;
+  assert.ok(wrap2 !== wrap && !wrap.isConnected, "a new card");
+  fetches.length = 0;
+  focusWindow(); await settle();
+  assert.equal(heads(), 1, "one HEAD, the new viewer's: the replaced viewer's listeners are gone");
+  assert.equal(barOf(wrap2), null, "the fresh open read the moved file; nothing moved since");
+});
+
+test("changed on disk: Reload disables the button and relabels it Reloading at the click, fetches the file once, and the landing with the moved mtime removes the bar: one repaint, the new text under the new mtime, nothing scrolled into view (a reload keeps the reader's place by its own rule)", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  const bar = barOf(wrap)!; const btn = reloadButton(wrap);
+  assert.equal(gets(), 1);
+  btn.click();
+  assert.equal(btn.disabled, true); assert.equal(btn.textContent, "Reloading", "acknowledged at the click, before the round-trip");
+  assert.equal(gets(), 2, "the GET is out");
+  btn.click();
+  assert.equal(gets(), 2, "a second click on the disabled button asks nothing");
+  await settle();
+  assert.equal(barOf(wrap), null, "the landing took the bar"); assert.equal(bar.isConnected, false, "detached, not hidden");
+  assert.deepEqual(cardRows(wrap), ["fileview-bar", "fileview-main"]);
+  assert.equal(ctx.text(), PY2); assert.equal(ctx.mtimeNs(), MT2); assert.equal(paints, 2, "one repaint");
+  assert.equal(heads(), 1, "no HEAD rode along with the reload");
+  assert.ok(allEls(body).every((x) => x.scrolled === 0), "nothing scrolled into view");
+});
+
+test("changed on disk: a reload another ask ran (the seam's reload(): the Comments panel's poll) clears the bar when its landing brings the moved mtime; a landing under the SAME mtime (a GET that was out before the write) keeps it, and the bar's own Reload then clears it", async (t) => {
+  const { wrap, ctx } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  ctx.reload(); await settle();                            // the panel's poll saw the move too and asked its own reload
+  assert.equal(barOf(wrap), null, "the poll's landing clears it: the later landing rules"); assert.equal(ctx.mtimeNs(), MT2);
+  // a GET out before the write: its headers say MT2; the write moves the file to MT3; the focus HEAD sees MT3 and the bar
+  // goes up under MT2; the old GET then lands MT2, the same mtime: the moved file is still not what shows, the bar stands
+  const slow = heldText(PY2);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2, text: slow.text };
+  ctx.reload(); await settle();
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "the HEAD saw the newer write");
+  slow.release(); await settle();
+  assert.equal(ctx.mtimeNs(), MT2, "the older GET landed its own bytes");
+  assert.equal(readBar(wrap).text, CHANGED, "under the same mtime the bar stands");
+  assert.equal(readBar(wrap).disabled, false, "its button untouched: this was not its ask");
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.text(), PY3); assert.equal(ctx.mtimeNs(), MT3);
+});
+
+test("changed on disk: while editing no HEAD runs and the editor's entry takes the bar with the other notices; Cancel brings the probe back and the bar with it; after the close no event sends anything", async (t) => {
+  visibleAfter(t);
+  const { fv, wrap, ctx } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  const acts = wrap.querySelector(".fileview-acts")!;
+  acts.querySelectorAll("button").find((x) => x.textContent === "Edit")!.click(); await settle();
+  assert.equal(ctx.editing(), true, "the editor is up"); assert.equal(ed.mounted, 1);
+  assert.equal(barOf(wrap), null, "the editor's entry took the bar (enterEdit: a notice over the read view goes as the editor takes the body)");
+  const n = heads();
+  focusWindow(); visibility(false); await settle();
+  assert.equal(heads(), n, "editing: the probe stands down (the save's fence has its own Reload)");
+  acts.querySelectorAll("button").find((x) => x.textContent === "Cancel")!.click(); await settle();
+  assert.equal(ctx.editing(), false);
+  focusWindow(); await settle();
+  assert.equal(heads(), n + 1, "the edit over, the probe asks again");
+  assert.equal(readBar(wrap).text, CHANGED, "the file still moved: the bar is back");
+  fv.closeFileView();
+  assert.equal(doc.getElementById("romp-fileview"), null);
+  const m = heads();
+  focusWindow(); visibility(false); await settle();
+  assert.equal(heads(), m, "closed: the listeners left with the viewer");
+});
+
+test("changed on disk: a picture probes too (a regenerated figure is a change on disk) and its Reload lands the new bytes and clears the bar; a failed open (the 404 pane, no mtime) never probes", async (t) => {
+  visibleAfter(t);
+  const { fv, wrap, ctx, body } = await open(PLOT, t);
+  assert.equal(ctx.mode(), "media");
+  disk[PLOT] = { bytes: PNG2, type: "image/png", mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(heads(), 1); assert.equal(readBar(wrap).text, CHANGED);
+  const first = img(body)!.src;
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT2); assert.notEqual(img(body)!.src, first, "the new bytes' URL");
+  assert.equal(fv.openFileView(ROOT + "/docs/missing.md", SID), true); await settle();
+  const wrap2 = doc.getElementById("romp-fileview")!;
+  assert.ok(wrap2.querySelector(".fileview-body .fileview-err"), "the 404 pane");
+  fetches.length = 0;
+  focusWindow(); visibility(false); await settle();
+  assert.equal(heads(), 0, "no mtime to compare against: no HEAD");
+});
+
+test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HEAD answered after a newer landing had already put the moved file in the body raised it over the file that shows); a Reload that fails leaves the failure pane in the body, the bar standing and its button armed again", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  const held = heldHead();
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2, headWait: held.wait };
+  focusWindow(); await settle();                           // the HEAD is out and will answer MT2
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  ctx.reload(); await settle();                            // the poll's reload lands MT3 first
+  assert.equal(ctx.mtimeNs(), MT3); assert.equal(barOf(wrap), null);
+  held.release(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "the stale answer read as a move (a string compare, the panel's contract)");
+  reloadButton(wrap).click(); await settle();
+  assert.equal(ctx.mtimeNs(), MT3, "the reload brought the same file"); assert.equal(barOf(wrap), null, "its own ask's landing clears the bar");
+  assert.equal(paints, 3, "the open, the poll's reload, the bar's");
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  delete disk[APP];                                        // gone by the time the GET runs
+  const btn = reloadButton(wrap);
+  btn.click(); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "the failure pane says what happened");
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.textContent, "Reload"); assert.equal(btn.disabled, false, "armed again: no dead end");
+  assert.equal(ctx.mtimeNs(), MT3, "a failed landing lends no mtime"); assert.equal(paints, 3, "and no paint");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

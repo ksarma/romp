@@ -24,6 +24,7 @@ import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
+import { headVerdict, mtimeMoved } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5)
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
@@ -327,6 +328,10 @@ export function readAt(x: unknown): At | null {
  *  in localStorage beside its Recent entry, and a block's words there would put file content into the store. The
  *  record is in the file's own terms, as the reader's place across a paint is (reader-place.ts Place). */
 export type RememberedPlace = { start: number; end: number; top: number; atTop: boolean; view: "rendered" | "raw"; mtimeNs: string; scrollTop: number; t: number };
+/** The changed-on-disk bar's words (plans/markdown-viewer.md Slice 6, item 5): raised above the body row when a HEAD on the
+ *  window's focus or the document's return to visibility finds the file's mtime moved under a reader whose Comments panel is
+ *  closed (with it open, the panel's poll reloads by itself). Two words and a Reload button, in the person's terms. */
+export const CHANGED_ON_DISK = "Changed on disk.";
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -392,6 +397,13 @@ let closeAsks: Array<() => CloseAsk | null> = [];
 let onKeyLive: ((e: KeyboardEvent) => void) | null = null;
 function dropOnKey(): void {
   if (onKeyLive) { document.removeEventListener("keydown", onKeyLive); onKeyLive = null; }
+}
+// ONE live changed-on-disk probe at a time (plans/markdown-viewer.md Slice 6, item 5): the open viewer's window `focus` and
+// document `visibilitychange` listeners, registered here so BOTH exits remove them (dropProbe), as onKeyLive is: a replaced
+// viewer's probe must not HEAD a file that no longer shows or raise a bar in a card that is gone.
+let probeLive: (() => void) | null = null;
+function dropProbe(): void {
+  if (probeLive) { const f = probeLive; probeLive = null; f(); }
 }
 // ONE live media object URL at a time (images used to render as line-numbered mojibake; now an
 // image/PDF view holds its bytes in an object URL). The URL is per-open state, but — like editHooks
@@ -786,6 +798,7 @@ export function closeFileView(): void {
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
+  dropProbe();                                         // …and its changed-on-disk probe (the window and document listeners)
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
   dropWidthWatch();                                    // …and the body's width watch (watchBodyWidth)
   dropUrlRead();                                       // …and a URL view's in-flight read is cancelled
@@ -856,6 +869,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
+  dropProbe();                                         // …and its changed-on-disk probe: the new open arms its own
   runCloseHooks();                                     // …and the old viewer's panel hooks
   dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
   dropUrlRead();                                       // …and a URL viewer's in-flight read, if that is what was up
@@ -2284,6 +2298,71 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   document.addEventListener("keydown", onKey);
   onKeyLive = onKey;
 
+  // ── changed on disk (plans/markdown-viewer.md Slice 6, item 5) ── With the Comments panel closed nothing watched the
+  // file: a session's write went unnoticed until something else reloaded it. A `focus` on this window and a
+  // `visibilitychange` to visible, the moments the dashboard has the reader's attention again, each run ONE
+  // `HEAD /file` (the kernel answers the GET's headers and no bytes; fileUrl, the URL the GET used) while the viewer
+  // shows a fetched file (mtimeNs set: text or media) and the editor is not up. The answer is read as the panel's poll
+  // reads its own (headVerdict, then mtimeMoved: a string compare, the contract the panel and the save fence keep). A
+  // move raises the one-line bar above the body row, CHANGED_ON_DISK with a Reload button: the click runs fetchFile,
+  // which keeps the reader's place as every reload does, and the bar goes at the landing that applies a different
+  // mtime from the one it was raised under, whoever asked for that reload (with the panel open its poll asks within
+  // 2.5 s, and the later landing rules), or at the landing of the bar's own ask whatever mtime it brings (a HEAD
+  // answered after a newer landing had already put the moved file in the body raised it over the file that shows).
+  // One HEAD in flight: a second event while it is out is folded into it, no timer. A 413 or 415 retires the probe for
+  // this open (the panel's `stopped`, per target); a network failure paints nothing and says nothing, since nothing the
+  // reader sees has changed, and the next event asks again. While editing the probe stands down (the save's fence
+  // refuses a stale save and offers its own Reload) and the editor's entry takes the bar with every other notice.
+  // The listeners leave with the viewer by both exits (probeLive, dropProbe: the onKey idiom). Exact events throughout:
+  // the reader's return, the answer, the landing.
+  let probeOut = false;                        // a HEAD is out: the next event is folded into it
+  let probeStopped = false;                    // a 413/415 retired the probe for this open
+  let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch
+  const diskBarUp = (): boolean => diskBar !== null && note === diskBar.el;   // still the card's notice (enterEdit or a later notice may have taken it)
+  const dropDiskBar = (): void => { if (diskBarUp()) { diskBar!.el.remove(); note = null; } diskBar = null; };
+  const raiseDiskBar = (): void => {
+    if (diskBarUp()) return;                   // one bar, the same words: a second move while it stands replaces nothing
+    const bar2 = noteBar(CHANGED_ON_DISK);
+    const re = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
+    re.type = "button"; re.textContent = "Reload";
+    re.title = "Read the file as it is now; your place is kept";
+    re.addEventListener("click", () => {
+      if (editing || !diskBar || diskBar.btn !== re || re.disabled) return;
+      re.disabled = true; re.textContent = "Reloading";   // the acknowledgement: the body shows nothing new until the landing (the place rule)
+      fetchFile();
+      diskBar.asked = fetchSeq;                // this ask's landing clears the bar whatever mtime it brings
+    });
+    bar2.appendChild(re);
+    diskBar = { el: bar2, btn: re, under: mtimeNs, asked: 0 };
+  };
+  // A landing that stands (fetchFile, text or media), `my` its fetch: the bar goes when the landed mtime differs from the
+  // one it was raised under, or when the landing is the bar's own ask; another ask's landing under the same mtime (a GET
+  // that was out before the write) keeps it, since the moved file is still not what shows.
+  const settleDiskBar = (my: number): void => {
+    if (diskBar && (mtimeMoved(diskBar.under, mtimeNs) || my === diskBar.asked)) dropDiskBar();
+  };
+  // The bar's own ask failed (the failure pane in the body says why): the button is armed again, so the bar is no dead end.
+  const rearmDiskBar = (my: number): void => {
+    if (!diskBar || my !== diskBar.asked || !diskBarUp()) return;
+    diskBar.btn.disabled = false; diskBar.btn.textContent = "Reload"; diskBar.asked = 0;
+  };
+  const probe = (): void => {
+    if (probeOut || probeStopped || editing || !mtimeNs || !wrap.isConnected || document.hidden) return;
+    probeOut = true;
+    fetch(fileUrl(path, sid), { method: "HEAD", cache: "no-store" }).then((r) => {
+      const v = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
+      if (v.kind === "stop") { probeStopped = true; return; }
+      if (v.kind !== "value" || editing || !mtimeNs || !wrap.isConnected) return;   // an unknown answer, or the world moved while the HEAD was out
+      if (mtimeMoved(mtimeNs, v.value)) raiseDiskBar();
+    }).catch(() => { /* a network failure: nothing the reader sees has changed; the next event asks again */ })
+      .finally(() => { probeOut = false; });
+  };
+  const onWindowFocus = (): void => { probe(); };
+  const onVisibility = (): void => { if (!document.hidden) probe(); };
+  window.addEventListener("focus", onWindowFocus);
+  document.addEventListener("visibilitychange", onVisibility);
+  probeLive = () => { window.removeEventListener("focus", onWindowFocus); document.removeEventListener("visibilitychange", onVisibility); };
+
   // The fetch pipeline, as a function: the open runs it once, and the seam's reload() runs it again
   // (the comments panel's poll saw the file's mtime move — an agent wrote it) with the action row
   // and the aside left standing; only the body and the mtime change.
@@ -2404,6 +2483,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
+      settleDiskBar(my);                                        // the changed-on-disk bar goes with the landing that brings the moved file (or its own ask's)
       if (t instanceof Blob) {
         // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
         // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
@@ -2435,6 +2515,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)
+      rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane below
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
       why.textContent = msg;
@@ -2491,6 +2572,7 @@ export function openUrlView(href: string): void {
   runLeave();                                          // a file viewer's place is remembered when a URL replaces it (RememberedPlace)
   editHooks = null;
   gitHooks = null;
+  dropProbe();                                         // …and the old viewer's changed-on-disk probe (a URL view has no mtime to watch)
   dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
   runCloseHooks();                                     // …and the old viewer's panel hooks
   dropMediaUrl();

@@ -87,7 +87,9 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
  *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
- *  is on. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
+ *  is on. `window.__fetches` counts every request the stub answers and `window.__heads` the `HEAD`s among them (the Comments
+ *  panel's poll, the viewer's changed-on-disk probe; Slice 6, item 5): a HEAD is answered with the GET's headers and no
+ *  body, as the kernel answers it. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
  *  reflows among them (`why` "reflow"), so `__paints - __reflows` is the paints proper. */
 export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = ""): string {
   // The sheets in the kernel's order (_chat_page, _feed_page and _files_page in kernel/kernel.py): the surface's sheet (a
@@ -99,17 +101,18 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, t
   const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__fetches = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
-window.fetch = async function (url) {
+window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
+window.fetch = async function (url, init) {
   url = String(url); window.__fetches++;
+  var head = !!(init && init.method === "HEAD"); if (head) window.__heads++;   // the kernel's HEAD /file: the headers alone
   if (url.indexOf("/version") === 0) return new Response(JSON.stringify({ fileEditing: true }), { headers: { "Content-Type": "application/json" } });
   if (url.indexOf("/sessions") === 0) return new Response("[]", { headers: { "Content-Type": "application/json" } });
   if (window.__urls[url] !== undefined) return new Response(window.__urls[url], { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } });
   var m = /[?&]path=([^&]*)/.exec(url); var p = m ? decodeURIComponent(m[1]) : "";
   var text = window.__docs[p];
-  if (text === undefined) return new Response("no such file: " + p, { status: 404 });
-  if (/\.svg$/i.test(p)) return new Response(text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
-  return new Response(text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
+  if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404 });
+  if (/\.svg$/i.test(p)) return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
+  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
 };
 window.__paints = 0; window.__reflows = 0; window.__seam = null; window.__autoReply = true;
 FV.initFileView(function (m) {
