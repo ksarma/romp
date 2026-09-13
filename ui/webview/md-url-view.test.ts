@@ -460,7 +460,7 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {
   // the fragment rides openFileView's options bag beside the fork's todoId, and the open answers with its verdict
   // (the 2026-09-07 fold; user-todo-links.test.ts pins the todoId half)
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   // the fragment is the open's `{ heading }` since Slice 6 of plans/markdown-viewer.md (pendingHeading; the former frag option), landed the same way and, when the note has no such section, said so in the notice bar (file-view-seam.test.ts)
   assert.match(OPEN_FN, /let pendingHeading: string \| null = at !== null && "heading" in at && at\.heading \? at\.heading : null;/);
   assert.match(OPEN_FN, /if \(rendered && pendingHeading !== null\) \{\s*\n\s*const h = pendingHeading; pendingHeading = null;\s*\n\s*requestAnimationFrame\(\(\) => \{\s*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/);

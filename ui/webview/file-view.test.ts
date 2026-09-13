@@ -151,7 +151,7 @@ test("a relayed viewFile OPENS the viewer in the feed document, session id intac
   // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
   // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
   // BOTH viaRelay and the viewFileOpened ack on a real open.
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
   assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
@@ -1180,9 +1180,11 @@ test("the title bar carries a session chip resolved from the sid — never inven
   // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) and `at`, where the open lands
   // (Slice 6 of plans/markdown-viewer.md, item 4: a line, a source offset or a heading; the former `line` and `frag`
   // options are two of its arms, replaced, not aliased); every existing caller moved with it (file-view-seam.test.ts)
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void \}\): void \{/);
+  // The host's onLeave (Slice 6 of plans/markdown-viewer.md, item 3) hands the pane the reader's place in a file as they
+  // leave it, which the pane hands back as the open's `place`.
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {
@@ -1281,7 +1283,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
   assert.match(sso, /if \(!rendered\) \{ ctx\.scrollToOffset\(at\); return; \}/, "Raw: the seam's own row mapping");
   assert.match(sso, /const spans = sourceBlockSpans\(src\);[\s\S]*const held = blockHolding\(spans, at\);[\s\S]*renderedBlockElements\(md, src, k\)\[0\];[\s\S]*revealFragmentTarget\(target\);\n\s*target\.scrollIntoView\(\{ block: "center" \}\);/, "Rendered: the block table, the reader's place's reading of it, the paired element, a fold above it opened, centred");
   assert.match(VIEW, /import \{ sourceBlockSpans, renderedBlockElements \} from "\.\/anchor-map";/);
-  assert.match(VIEW, /import \{ readPlace, seatPlaceOutcome, blockHolding, type Place \} from "\.\/reader-place";/);
+  assert.match(VIEW, /import \{ readPlace, seatPlaceOutcome, blockHolding, blockIndexAt, type Place \} from "\.\/reader-place";/);
   assert.match(openFn, /if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;[\s\S]{0,400}noteBar\('No section named "' \+ shown \+ '" in this file\.'\);/, "a heading the note lacks: the notice, never a silent open at the top");
   assert.doesNotMatch(openFn, /opts\?\.frag|opts\.line|pendingFrag/, "the former options are gone, not aliased");
 });

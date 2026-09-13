@@ -859,7 +859,7 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(VIEW, /import \{ fileCommentsAction, panelMark \} from "\.\/file-comments";/);
   // the opener: the host's when registered (the Files pane), else the viewer in place
   assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, at: At \| null\) => void =\n\s*\(path, sid, at\) => \{ openFileView\(path, sid, \{ at \}\); \};/);
-  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
+  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
   assert.match(FILES, /openFile: \(p, sid, line, frag\) => openHere\(p, sid, null, null, line, frag\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section");
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{\n\s*if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);
   // the panel's change mark cancels the anchor's activation as its comment mark does; the keyboard route lands on the same handlers
@@ -889,7 +889,7 @@ test("source: a close or a replace-open asks about an unsaved comment the way it
 });
 
 test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the notice bar and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = at !== null && "line" in at && at\.line > 0 \? Math\.floor\(at\.line\) : null;/, "the line is the open's `at` (Slice 6 of plans/markdown-viewer.md; the former opts.line)");
   assert.match(VIEW, /text = t;\n\s*\/\/[^\n]*\n\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}/);

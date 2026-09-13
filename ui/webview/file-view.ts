@@ -27,7 +27,7 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlaceOutcome, blockHolding, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names (Slice 6)
+import { readPlace, seatPlaceOutcome, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
@@ -318,6 +318,50 @@ export function readAt(x: unknown): At | null {
   if (typeof o.offset === "number" && Number.isInteger(o.offset) && o.offset >= 0) return { offset: o.offset };
   if (typeof o.heading === "string" && o.heading) return { heading: o.heading };
   return null;
+}
+/** The reader's place in a file, kept when they leave it (plans/markdown-viewer.md Slice 6, item 3): the top-visible
+ *  block's source span (`start`, `end`) and its top edge's offset from the body's top in px (`top`, negative when the
+ *  reader is partway into it), whether the body stood at its very top (`atTop`), the view it was read in, the file's
+ *  mtime string when it was read (a match means the span is exact), the body's numeric `scrollTop` (the fallback when
+ *  the span is no block of the file any more) and `t`, when. No text field, ever: the Files pane persists this record
+ *  in localStorage beside its Recent entry, and a block's words there would put file content into the store. The
+ *  record is in the file's own terms, as the reader's place across a paint is (reader-place.ts Place). */
+export type RememberedPlace = { start: number; end: number; top: number; atTop: boolean; view: "rendered" | "raw"; mtimeNs: string; scrollTop: number; t: number };
+/** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
+ *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
+export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
+  return { start: place.start, end: place.end, top: place.top, atTop: place.atTop, view: place.view, mtimeNs, scrollTop, t: Date.now() };
+}
+/** The record back as a Place over `source`, the file's text as it is NOW, for seatPlaceOutcome to seat: the block of
+ *  `source` that starts where the remembered block started (the same block, whatever an edit inside or below it did to
+ *  its end; sourceBlockSpans), with the record's offset and flag, a `height` of 0 (unknown: the box was not kept) and
+ *  no neighbours. null when no block of `source` starts there (text inserted or removed above the block moved it, and
+ *  the old source is not kept to follow it through the edit as a reload's place is): the caller falls to the record's
+ *  numeric scrollTop. */
+export function placeFromRemembered(rec: RememberedPlace, source: string): Place | null {
+  const spans = sourceBlockSpans(source);
+  const b = blockIndexAt(spans, rec.start);
+  if (b < 0 || spans[b].start !== rec.start) return null;
+  return { source, view: rec.view, start: spans[b].start, end: spans[b].end, top: rec.top, height: 0, atTop: rec.atTop, prev: null, next: null };
+}
+// The memory: one record per path for the page's lifetime (keyed by the path as openFileView receives it, not by
+// session: the same bytes are the same file for every session), written at the moments the reader leaves a file
+// (closeFileView, the replace path of either open, the window's pagehide) and read at the next open of the path with
+// no target. The Files pane persists what it hears through `onLeave` (initFileView's host) in its Recent entry and
+// hands it back as `opts.place`; the chat modal and the feed viewer persist nothing, and this map covers a switch
+// between files there. `leaveLive` is the open viewer's write, registered as onKeyLive and mediaUrlLive are so both
+// exits reach it (runLeave); the window's pagehide listener (initFileView) runs it without retiring it, since the page
+// may come back from the cache with the viewer up.
+const rememberedPlaces = new Map<string, RememberedPlace>();
+let leaveHost: ((path: string, sid: string | null, rec: RememberedPlace) => void) | null = null;
+let leaveLive: (() => void) | null = null;
+function runLeave(): void { const f = leaveLive; leaveLive = null; if (f) f(); }
+/** Of two records for one path, the one read later (the pane's entry is per path and session, the map per path, so a
+ *  Recent row's record can be older than the map's for the same file); null when there is neither. */
+function newerPlace(a: RememberedPlace | null | undefined, b: RememberedPlace | null | undefined): RememberedPlace | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return b.t > a.t ? b : a;
 }
 // Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
 // reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
@@ -738,6 +782,7 @@ export function closeFileView(): void {
   if (closeGuard && !closeGuard()) return;   // unsaved edits (or an unsaved comment), and the user chose to keep them
   closeGuard = null;
   closeAsks = [];
+  runLeave();                                          // the reader's place, remembered for the next open of the path (RememberedPlace, above), read while the body stands
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
@@ -797,13 +842,17 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  in a todo): landed after the first rendered paint, the notice bar saying so when the note has no such section.
  *  `{ offset }` (a source offset): the block holding it centred in the Rendered view, the row in Raw. The viewFile relay
  *  carries it as `at` (initFileView, readAt). The former `opts.line` and `opts.frag` are two of its arms: replaced, not
- *  aliased, so there is one shape for one thing. */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null }): boolean {
+ *  aliased, so there is one shape for one thing.
+ *  `opts.place`: the reader's place in this file when they last left it, as the host persisted it (RememberedPlace; the
+ *  Files pane's Recent entry, plans/markdown-viewer.md Slice 6, item 3), seated on the first text paint; the viewer's
+ *  own memory of the path is read too, and the later of the two wins. An `at` lands where it points and ignores both. */
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null; place?: RememberedPlace | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
   closeGuard = null;
   closeAsks = [];
+  runLeave();                                          // …and the same leave write: the old file's place, before its body goes
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
@@ -1331,6 +1380,42 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   /** A scroll under a new width the aside hook saw made, reporting a scrollTop other than the one the hook read after the
    *  mount: a script's (the reveal) or the reader's, past the browser's own adjustment. */
   const pastAside = (): boolean => asideScrollTop >= 0 && body.scrollTop !== asideScrollTop;
+  // ── the reader's place, remembered across opens (plans/markdown-viewer.md Slice 6, item 3; RememberedPlace, above) ──
+  // The record for this path when the open names no target (an `at` lands where the person pointed and the memory stands
+  // aside): the host's (a Recent row's, opts.place) or the module's, whichever was read later. Seated once, on the FIRST
+  // text paint, right after that paint's own seat (renderBody: seat(kept) runs notePlace over the fresh body at scrollTop
+  // 0, and landRemembered then moves it), through seatPlaceOutcome as a reload's place is, with two things a record
+  // cannot carry. Its height is unknown, so the record's depth into the block cannot be a fraction of the height
+  // (seatedTop's rule for a view switch or a reflow) and is applied in pixels instead, after the block's top edge is
+  // seated at the body's edge, and only when the view is the one the record was read in (the same pixels mean the same
+  // passage there; in the other view the block's height is another number, and the block's top at the edge is what is
+  // known). And its source is not kept, so a block the text moved (placeFromRemembered null) is not followed: the
+  // numeric scrollTop is written and the browser clamps it. An unchanged file at the same width comes back to the pixel
+  // the browser snaps to; the seat's clamp, if any, is not held (a place at the file's end reads as what shows there).
+  let pendingPlace: RememberedPlace | null = at === null ? newerPlace(opts?.place, rememberedPlaces.get(path)) : null;
+  const landRemembered = () => {
+    if (pendingPlace === null || shownText === null) return;
+    const rec = pendingPlace; pendingPlace = null;
+    const kept = placeFromRemembered(rec, shownText);
+    const depth = kept && kept.top < 0 && ctx.mode() === rec.view ? -kept.top : 0;
+    const seated = kept ? seatPlaceOutcome(body, shownText, depth ? { ...kept, top: 0 } : kept).seated : false;
+    if (seated) { if (depth) body.scrollTop += depth; }
+    else body.scrollTop = rec.scrollTop;
+    notePlace();
+  };
+  // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
+  // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
+  // lesson), at this file's mtime and scrollTop, into the module's map and the host's ear. Never while the editor is up
+  // (its buffer is not the text) and never without a text view (a picture, a PDF frame, the loader, a failed fetch): a
+  // host that hears onLeave always has a record to store, and the path's last record stands until a text view is left.
+  leaveLive = () => {
+    if (editing || shownText === null || !textShowing()) return;
+    const p = keptPlace();
+    if (!p) return;
+    const rec = rememberedPlaceOf(p, mtimeNs, body.scrollTop);
+    rememberedPlaces.set(path, rec);
+    if (leaveHost) { try { leaveHost(path, sid ?? null, rec); } catch { /* a host's store must never cost the leave */ } }
+  };
   let placeFrame = 0;
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
@@ -1503,6 +1588,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         fireRendered();                         // a text body: the panel's highlight pass runs on it too
         shownText = svgText;
         seat(kept);
+        landRemembered();                       // the first text paint of an open with a remembered place seats it (once)
         return;
       }
       shownText = null;                         // a picture or a PDF frame: no text the body was painted from
@@ -1529,6 +1615,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       fireRendered();                         // the seam's onRendered: every text paint, so highlights follow the view
       shownText = text;
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
+      landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
     if (rendered && pendingHeading !== null) {
       const h = pendingHeading; pendingHeading = null;
@@ -2401,6 +2488,7 @@ export function openUrlView(href: string): void {
   // every module-level registration the old viewer made is dropped before it is torn down.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return;
   closeGuard = null;
+  runLeave();                                          // a file viewer's place is remembered when a URL replaces it (RememberedPlace)
   editHooks = null;
   gitHooks = null;
   dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
@@ -3308,12 +3396,19 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  plans/markdown-viewer.md (a todo link's line or heading: render.ts openPath and waiting.ts openTodoPath post it,
  *  the shell's two forwarders in kernel.py copy it), and both receivers read it through readAt, since it crossed a
  *  frame boundary. `host.openFile`: this document's own opener for a link inside a shown file (the Files pane's
- *  openHere), handed the link's target the same way (At). */
+ *  openHere), handed the link's target the same way (At). `host.onLeave`: the reader's place in a file as they leave it
+ *  (RememberedPlace; a close, a replace-open, the page hidden), for the host to persist and hand back as an open's
+ *  `place` (the Files pane's Recent entry; Slice 6, item 3). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
                              onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown; at?: unknown }) => void,
-                             host?: { openFile?: (path: string, sid: string | null, at: At | null) => void }): void {
+                             host?: { openFile?: (path: string, sid: string | null, at: At | null) => void; onLeave?: (path: string, sid: string | null, rec: RememberedPlace) => void }): void {
   post = poster;
   if (host && host.openFile) openLinkedFile = host.openFile;   // a link inside a shown file opens through the host (the Files pane's Recent list)
+  if (host && host.onLeave) leaveHost = host.onLeave;          // the reader's place when a file is left, for the host's store (the Files pane's Recent entry)
+  // The page going away (a reload, a navigation) is a leave too: the open viewer's place is written before it goes, and
+  // the write is not retired (a page restored from the back-forward cache still shows the viewer, and its close writes
+  // again). The chat's persistScrollForReload (render.ts) keeps its own place the same way.
+  window.addEventListener("pagehide", () => { if (leaveLive) leaveLive(); });
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

@@ -14,7 +14,7 @@ const local = VIEW.split("export function openFileView(")[1].split("\nexport fun
 
 test("file-view.ts: the SVG Source view's paint reads the place, swaps, runs the hooks, records the XML as shownText and seats; the media paint records no text; those are the only writers of shownText in the viewer, in that order", () => {
   assert.match(local,
-    /if \(svgSource && svgText !== null\) \{\n(?:\s*\/\/[^\n]*\n)*\s*const kept = keptPlace\(\);\n\s*body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = svgText;\n\s*seat\(kept\);\n\s*return;\n\s*\}\n\s*shownText = null;/,
+    /if \(svgSource && svgText !== null\) \{\n(?:\s*\/\/[^\n]*\n)*\s*const kept = keptPlace\(\);\n\s*body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = svgText;\n\s*seat\(kept\);\n\s*landRemembered\(\);[^\n]*\n\s*return;\n\s*\}\n\s*shownText = null;/,
     "the Source view: read, swap, hooks, record, seat; then, for a picture or a frame, no text");
   const writers = Array.from(local.matchAll(/\bshownText = ([^;]+);/g)).map((m) => m[0]);
   assert.deepEqual(writers, ["shownText = svgText;", "shownText = null;", "shownText = text;"], "the Source view's, the media paint's, the text views'");
