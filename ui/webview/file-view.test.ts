@@ -151,11 +151,11 @@ test("a relayed viewFile OPENS the viewer in the feed document, session id intac
   // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
   // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
   // BOTH viaRelay and the viewFileOpened ack on a real open.
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
   assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
-  assert.match(VIEW, /if \(openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null\)\) \{/);
+  assert.match(VIEW, /if \(openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null, \{ at: readAt\(m\.at\) \}\)\) \{/, "the relay's `at` (Slice 6 of plans/markdown-viewer.md), read through readAt: it crossed a frame boundary");
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   assert.ok(relayBranch.includes("viaRelay = true;"), "tagged only inside the real-open branch");
   assert.ok(relayBranch.includes('window.parent.postMessage({ romp: "viewFileOpened" }, "*");'),
@@ -1177,11 +1177,12 @@ test("the title bar carries a session chip resolved from the sid — never inven
   assert.match(openFn, /bar\.appendChild\(name\); if \(sess\) bar\.appendChild\(sess\); bar\.appendChild\(acts\);/,
     "between the path and the actions");
   // the signatures every opener and the relay pin depend on are as they were, plus the optional opts:
-  // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link), line (a `path:12` link
-  // inside a shown file) and frag (a sibling link's fragment lands after the render) — every existing caller unchanged
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
+  // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) and `at`, where the open lands
+  // (Slice 6 of plans/markdown-viewer.md, item 4: a line, a source offset or a heading; the former `line` and `frag`
+  // options are two of its arms, replaced, not aliased); every existing caller moved with it (file-view-seam.test.ts)
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void \}\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {
@@ -1263,4 +1264,24 @@ test("a window stand-in enumerates no parent edge, and a dump of it names neithe
   }
   const self = unframedWindow();
   assert.ok(self.parent === self && framedWindow(shell).parent === shell, "the parent is still reachable: itself when unframed, the shell when framed");
+});
+
+test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4): the At union and readAt's three arms; the delegate hands a path link's line or fragment on as `at`; the offset is spent at the first text landing and scrolled the next frame, the block centred in Rendered through the anchor map's table and the row in Raw through the seam's scrollToOffset, an offset past the end saying so; a missing heading says so", () => {
+  assert.match(VIEW, /export type At = \{ line: number \} \| \{ offset: number \} \| \{ heading: string \};/);
+  assert.match(VIEW, /export function readAt\(x: unknown\): At \| null \{\n\s*if \(!x \|\| typeof x !== "object"\) return null;\n\s*const o = x as Record<string, unknown>;\n\s*if \(typeof o\.line === "number" && Number\.isInteger\(o\.line\) && o\.line > 0\) return \{ line: o\.line \};\n\s*if \(typeof o\.offset === "number" && Number\.isInteger\(o\.offset\) && o\.offset >= 0\) return \{ offset: o\.offset \};\n\s*if \(typeof o\.heading === "string" && o\.heading\) return \{ heading: o\.heading \};\n\s*return null;\n\}/,
+    "validated at the receiver: the message crossed a frame boundary");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
+  assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
+  assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
+  assert.match(openFn, /if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*keyboardOnLanding\(\);/,
+    "spent at the landing like the line, scrolled the next frame (the heading landing's timing), before the keyboard");
+  const sso = openFn.slice(openFn.indexOf("const scrollToSourceOffset = "), openFn.indexOf("let pendingOffset"));
+  assert.match(sso, /if \(n > src\.length\) noteBar\("Offset " \+ n \+ " is past the end of this file, which has " \+ src\.length \+ \(src\.length === 1 \? " character" : " characters"\) \+ "; showing the last " \+ \(rendered \? "block\." : "line\."\)\);/, "the line rule's shape");
+  assert.match(sso, /if \(!rendered\) \{ ctx\.scrollToOffset\(at\); return; \}/, "Raw: the seam's own row mapping");
+  assert.match(sso, /const spans = sourceBlockSpans\(src\);[\s\S]*const held = blockHolding\(spans, at\);[\s\S]*renderedBlockElements\(md, src, k\)\[0\];[\s\S]*revealFragmentTarget\(target\);\n\s*target\.scrollIntoView\(\{ block: "center" \}\);/, "Rendered: the block table, the reader's place's reading of it, the paired element, a fold above it opened, centred");
+  assert.match(VIEW, /import \{ sourceBlockSpans, renderedBlockElements \} from "\.\/anchor-map";/);
+  assert.match(VIEW, /import \{ readPlace, seatPlaceOutcome, blockHolding, type Place \} from "\.\/reader-place";/);
+  assert.match(openFn, /if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;[\s\S]{0,400}noteBar\('No section named "' \+ shown \+ '" in this file\.'\);/, "a heading the note lacks: the notice, never a silent open at the top");
+  assert.doesNotMatch(openFn, /opts\?\.frag|opts\.line|pendingFrag/, "the former options are gone, not aliased");
 });

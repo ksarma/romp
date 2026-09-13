@@ -121,7 +121,8 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   // never opens a tab (a relayed viewFile, a Reload: no gesture, the viewer)
   // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
   // Files pane's openHere) rides in as the fourth argument, read AFTER the gesture, so the tab decision stays here
-  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null\) => void\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null\); else openFileView\(path, sid\);\n\}/);
+  // `at` (Slice 6 of plans/markdown-viewer.md): where the open lands (a todo link's line or heading), handed to whichever opener takes the plain click
+  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null, at: At \| null\) => void, at\?: At \| null\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null, at \?\? null\); else openFileView\(path, sid, \{ at: at \?\? null \}\);\n\}/);
   // no click site bypasses the gesture reader: the chat and the browser never call openFileView themselves
   assert.equal((RENDER.match(/openFileView\(/g) || []).length, 0, "render.ts opens files through openFileClick only");
   assert.equal((BROWSE.match(/openFileView\(/g) || []).length, 0, "file-browse.ts opens files through openFileClick only");

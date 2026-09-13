@@ -27,7 +27,8 @@ import { openFileTab, canPreview } from "./preview";   // any file's own tab, fo
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlaceOutcome, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md)
+import { readPlace, seatPlaceOutcome, blockHolding, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names (Slice 6)
+import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -301,12 +302,30 @@ export function hostStub(sid: string): FileViewIdentity | null {
   const host = hostOf(sid);
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
+/** Where an open lands (plans/markdown-viewer.md Slice 6, item 4): one target per open. `line`: a 1-based line of the Raw
+ *  view (the row centred; a markdown file opens in Raw for that open); `offset`: a source offset (the block holding it
+ *  centred in the Rendered view, the row in Raw); `heading`: a `#fragment` as written, percent-encoded or not, landed
+ *  after the first Rendered paint through scrollToFragment (the author's id, then the heading's slug). The viewFile relay
+ *  carries it as `at` at every hop and readAt validates what crossed the frame boundary. */
+export type At = { line: number } | { offset: number } | { heading: string };
+/** The relay's `at`, read where it lands: the message crossed a frame boundary, so its shape is nobody's promise. A
+ *  `line` a positive integer, an `offset` a non-negative integer, a `heading` a non-empty string, in that order of
+ *  precedence when a message carries more than one; anything else is no target (null), and the file opens at its top. */
+export function readAt(x: unknown): At | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.line === "number" && Number.isInteger(o.line) && o.line > 0) return { line: o.line };
+  if (typeof o.offset === "number" && Number.isInteger(o.offset) && o.offset >= 0) return { offset: o.offset };
+  if (typeof o.heading === "string" && o.heading) return { heading: o.heading };
+  return null;
+}
 // Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
 // reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
 // pane's openHere, so the file enters its Recent list and names its session), else the shared viewer in place,
-// replacing the file that carried the link. The same document either way: the person is reading here.
-let openLinkedFile: (path: string, sid: string | null, line: number | null, frag: string | null) => void =
-  (path, sid, line, frag) => { openFileView(path, sid, { line, frag }); };
+// replacing the file that carried the link. The same document either way: the person is reading here. The link's
+// target rides as `at` (the link's data-line as `{ line }`, its data-frag as `{ heading }`; null for a bare path).
+let openLinkedFile: (path: string, sid: string | null, at: At | null) => void =
+  (path, sid, at) => { openFileView(path, sid, { at }); };
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
@@ -756,11 +775,13 @@ export function closeFileView(): void {
  *  the viewer, so the PDF is never unreachable, and a non-PDF is simply not the opener's business.
  *  `open`: the plain click's opener when the hosting document has its own (the file browser's BrowseHost.openFile,
  *  which the Files pane routes through files.ts openHere); absent, the viewer here. The gesture is read first either
- *  way, so a modified click on a PDF means the tab whichever document hosts the browser. */
+ *  way, so a modified click on a PDF means the tab whichever document hosts the browser. `at`: where the open lands (At:
+ *  a todo link's line or heading, render.ts openPath; Slice 6 of plans/markdown-viewer.md), handed to whichever opener
+ *  takes the plain click; absent, the file's top. */
 export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined, path: string, sid?: string | null,
-                              open?: (path: string, sid: string | null) => void): void {
+                              open?: (path: string, sid: string | null, at: At | null) => void, at?: At | null): void {
   if (wantsOwnTab(ev) && openPdfTab(path, sid ?? null)) return;
-  if (open) open(path, sid ?? null); else openFileView(path, sid);
+  if (open) open(path, sid ?? null, at ?? null); else openFileView(path, sid, { at: at ?? null });
 }
 
 /** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks.
@@ -769,11 +790,15 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
 *  survivor as relay-opened nor arm a restore for an open that never happened).
  *  `opts.todoId`: the user todo the file was opened from (the Waiting-on-you pane's detail link).
- *  `opts.line`: a line the open should show (a `path:12` link in another file, file-view-links.ts): the code view
- *  scrolls its row into view once the text lands; a markdown file opens in its Raw view for THIS open (the Rendered
- *  view has no rows), without touching the saved preference.
- *  `opts.frag`: a sibling link's `#fragment` (`[see](report.md#results)`) to land on after the first rendered paint. */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; line?: number | null; frag?: string | null }): boolean {
+ *  `opts.at`: where the open lands (At; plans/markdown-viewer.md Slice 6, item 4). `{ line }` (a `path:12` link in another
+ *  file, file-view-links.ts, or after a path in a todo, path-links.ts): the code view scrolls its row into view once the
+ *  text lands, and a markdown file opens in its Raw view for THIS open (the Rendered view has no rows) without touching
+ *  the saved preference. `{ heading }` (a `#fragment`: `[see](report.md#results)` in a sibling file, `docs/report.md#results`
+ *  in a todo): landed after the first rendered paint, the notice bar saying so when the note has no such section.
+ *  `{ offset }` (a source offset): the block holding it centred in the Rendered view, the row in Raw. The viewFile relay
+ *  carries it as `at` (initFileView, readAt). The former `opts.line` and `opts.frag` are two of its arms: replaced, not
+ *  aliased, so there is one shape for one thing. */
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; at?: At | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -793,10 +818,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.id = "romp-fileview";
   wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
   const box = el("div", "fileview");
-  // A sibling link's `#fragment` (`[see](report.md#results)`: data-frag on the path link, file-view-links.ts
-  // linkMarkdownAnchors) lands on its heading after the FIRST rendered paint — once; a Raw view has no ids to
-  // land on, so the landing waits for the Rendered toggle rather than being spent (review find on #958, 2026-09-07).
-  let pendingFrag: string | null = opts?.frag || null;
+  // The open's target (`at`, one of At: a line, a source offset or a heading; plans/markdown-viewer.md Slice 6, item 4).
+  // A heading (a sibling link's `#fragment`, `[see](report.md#results)`: data-frag on the path link, file-view-links.ts
+  // linkMarkdownAnchors; a todo's `docs/report.md#results` through the relay) lands after the FIRST rendered paint, once,
+  // through scrollToFragment; a Raw view has no ids to land on, so the landing waits for the Rendered toggle rather than
+  // being spent (review find on #958, 2026-09-07). A heading the note does not have lands nowhere and says so in the
+  // notice bar (CLAUDE.md, fail loudly: a silent open at the top would read as the file's truth). The line and the
+  // offset are spent on the first text landing instead (pendingLine and pendingOffset, with the fetch below).
+  const at: At | null = opts?.at ?? null;
+  let pendingHeading: string | null = at !== null && "heading" in at && at.heading ? at.heading : null;
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
@@ -1500,9 +1530,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       shownText = text;
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
     });
-    if (rendered && pendingFrag) {
-      const h = pendingFrag; pendingFrag = null;
-      requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
+    if (rendered && pendingHeading !== null) {
+      const h = pendingHeading; pendingHeading = null;
+      requestAnimationFrame(() => {
+        if (!wrap.isConnected || scrollToFragment(body, h)) return;
+        // no such section: named as the link wrote it, decoded where the browser's encoding allows
+        const name = h.replace(/^#/, "");
+        let shown = name; try { shown = decodeURIComponent(name); } catch { /* a stray %: named as written */ }
+        noteBar('No section named "' + shown + '" in this file.');
+      });
     }
   };
 
@@ -1619,7 +1655,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
     }
     const ln = Number(x.dataset.line);
-    openLinkedFile(p, sid || null, ln > 0 ? ln : null, x.dataset.frag || null);
+    openLinkedFile(p, sid || null, ln > 0 ? { line: ln } : x.dataset.frag ? { heading: x.dataset.frag } : null);
   };
   // A gated figure's placeholder (figure-gate.ts; decision 8 of plans/markdown-viewer.md): the click loads every figure
   // of that host in the document and remembers the host for the page. Read here, on the stable body, since every paint
@@ -2194,7 +2230,36 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
     (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
-  let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
+  let pendingLine: number | null = at !== null && "line" in at && at.line > 0 ? Math.floor(at.line) : null;
+  // A source offset (an open's `{ offset }`; plans/markdown-viewer.md Slice 6, item 4): spent on the first text that lands
+  // like `line`, and scrolled one frame after that paint, the heading landing's timing (the Rendered pairing below reads
+  // the painted DOM). In the Rendered view the block holding the offset (the anchor map's block table, read as the
+  // reader's place reads it: blockHolding) scrolls its first element to the centre, a block with no element of its own
+  // (a comment) standing aside for the nearest that has one, a fold above it opened first as a heading's is; in the Raw
+  // view the row at the offset, through the seam's own scrollToOffset. An offset past the end of the text lands on the
+  // last block or row AND says so in the notice bar, the `line` rule's shape (CLAUDE.md, fail loudly: a silent landing on
+  // the last block would read as the file's truth).
+  const scrollToSourceOffset = (n: number) => {
+    const src = viewText();
+    if (src === null) return;
+    const rendered = isMd && fmt.md === "rendered";
+    if (n > src.length) noteBar("Offset " + n + " is past the end of this file, which has " + src.length + (src.length === 1 ? " character" : " characters") + "; showing the last " + (rendered ? "block." : "line."));
+    const at = Math.min(n, src.length);
+    if (!rendered) { ctx.scrollToOffset(at); return; }
+    const md = body.querySelector(".fileview-md");
+    if (!md) return;
+    const spans = sourceBlockSpans(src);
+    if (!spans.length) return;
+    const held = blockHolding(spans, at);
+    const b = held < 0 ? spans.length - 1 : held;   // past the last block's text (a trailing blank line): the last block
+    let target: Element | undefined;
+    for (let k = b; k >= 0 && !target; k--) target = renderedBlockElements(md, src, k)[0];
+    for (let k = b + 1; k < spans.length && !target; k++) target = renderedBlockElements(md, src, k)[0];
+    if (!target) return;
+    revealFragmentTarget(target);
+    target.scrollIntoView({ block: "center" });
+  };
+  let pendingOffset: number | null = at !== null && "offset" in at && at.offset >= 0 ? Math.floor(at.offset) : null;
   // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
   // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
   // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
@@ -2274,10 +2339,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       text = t;
-      // a line the link named: the Raw view for this open (unsaved: the preference stays), then the row
+      // the open's target: a line takes the Raw view for this open (unsaved: the preference stays), then the row; an offset the next frame
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
+      if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
       keyboardOnLanding();                       // the open's first paint: the body takes the keyboard (never a reload's landing)
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
@@ -3238,10 +3304,14 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  leave a stale armed flag behind. That ack and viaRelay are the FEED's contract; a document with
  *  a relay contract of its own passes `onRelay` and takes the relayed message whole instead (the
  *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
- *  owes the shell no pane restore, since the pane stays up). */
+ *  owes the shell no pane restore, since the pane stays up). The relayed message carries `at` since Slice 6 of
+ *  plans/markdown-viewer.md (a todo link's line or heading: render.ts openPath and waiting.ts openTodoPath post it,
+ *  the shell's two forwarders in kernel.py copy it), and both receivers read it through readAt, since it crossed a
+ *  frame boundary. `host.openFile`: this document's own opener for a link inside a shown file (the Files pane's
+ *  openHere), handed the link's target the same way (At). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
-                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void,
-                             host?: { openFile?: (path: string, sid: string | null, line: number | null, frag: string | null) => void }): void {
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown; at?: unknown }) => void,
+                             host?: { openFile?: (path: string, sid: string | null, at: At | null) => void }): void {
   post = poster;
   if (host && host.openFile) openLinkedFile = host.openFile;   // a link inside a shown file opens through the host (the Files pane's Recent list)
   window.addEventListener("message", (e: MessageEvent) => {
@@ -3252,7 +3322,7 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       // gated on the verdict: a dirty-edit veto keeps the PREVIOUS viewer, which must not be
       // re-tagged as relay-opened (a false announce on ITS close) and earns no ack (arm-on-ack —
       // the shell must not arm a restore for an open that never happened)
-      if (openFileView(m.path, typeof m.sid === "string" ? m.sid : null)) {
+      if (openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) })) {
         viaRelay = true;   // this open rode the shell's relay — the close must tell the shell (closeFileView)
         try { if (window.parent !== window) window.parent.postMessage({ romp: "viewFileOpened" }, "*"); }
         catch { /* no shell — nothing was brought forward, nothing to arm */ }

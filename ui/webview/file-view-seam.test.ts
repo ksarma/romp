@@ -15,7 +15,7 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { FileViewActionCtx } from "./file-view";
+import type { FileViewActionCtx, At } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
@@ -83,6 +83,7 @@ class El {
   style: Record<string, string> = {};
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
+  scrolledWith: unknown = null;                  // the last scrollIntoView argument ({ block: "center" } for a row or an offset's block, "start" for a heading)
   focused = 0;                                   // focus() calls (takeKeyboard's visible effect; Slice 6 of plans/markdown-viewer.md, item 1)
   constructor(tag: string) {
     this.tagName = tag.toUpperCase();
@@ -174,7 +175,7 @@ class El {
   get tabIndex(): number { const v = this.attrs.get("tabindex"); return v === undefined ? -1 : Number(v); }   // reflects the attribute, as the browser's does
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   blur(): void { if (doc.activeElement === this) doc.activeElement = null; }
-  scrollIntoView(): void { this.scrolled++; }
+  scrollIntoView(arg?: unknown): void { this.scrolled++; this.scrolledWith = arg ?? null; }
   getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
   get offsetWidth(): number { return 0; }
 }
@@ -353,7 +354,9 @@ async function mod(): Promise<typeof import("./file-view")> {
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
 type Btns = { rendered: El; raw: El; edit: El; save: El; cancel: El };
 type Open = { fv: typeof import("./file-view"); ctx: FileViewActionCtx; wrap: El; body: El; b: Btns };
-async function open(p: string, t: TestContext, sid: string | null = SID): Promise<Open> {
+/** `opts`: openFileView's third argument (`at`: where the open lands; Slice 6 of plans/markdown-viewer.md, item 4); `raw`: the
+ *  stored preference says Raw for a markdown file (the default every open otherwise starts from is Rendered). */
+async function open(p: string, t: TestContext, sid: string | null = SID, opts?: { todoId?: string | null; at?: At | null }, raw = false): Promise<Open> {
   const fv = await mod();
   disk[REPORT] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: MT };
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
@@ -362,9 +365,10 @@ async function open(p: string, t: TestContext, sid: string | null = SID): Promis
   disk[DECK] = { bytes: "%PDF-1.4\n", type: "application/pdf", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; paints = 0; seam = null;
   store.delete("romp:fileviewFmt");                     // every open starts from the default: markdown Rendered
+  if (raw) store.set("romp:fileviewFmt", JSON.stringify({ md: "raw" }));   // …unless the case wants the Raw preference
   ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   pdf.renders = 0; pdf.disposed = 0; pdf.bytes = 0; pdf.opts = null; pdf.refuse = null; pdf.roots.length = 0;
-  assert.equal(fv.openFileView(p, sid), true, "the open happened");
+  assert.equal(fv.openFileView(p, sid, opts), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
   const wrap = doc.getElementById("romp-fileview")!;
@@ -1447,4 +1451,187 @@ test("a picture's first landing and a code file's take the keyboard the same way
   assert.equal(code.wrap.querySelector(".fileview")!.dataset.fvText !== "100" && doc.activeElement === up, true, "the A+ step from a key on the button stepped and kept the keyboard on the button");
   assert.equal(code.body.focused, 2);
   store.delete("romp:fileviewTextSize");
+});
+
+// ── where an open lands (plans/markdown-viewer.md Slice 6, item 4) ──────────────────────────────────
+// openFileView's `at` (one of At: a line, a source offset or a heading) replaces the `line` and `frag` options: a line
+// takes the Raw view for that open and its row (spent at the first text landing, as before); a heading lands after the
+// first Rendered paint through scrollToFragment and says so in the notice bar when the note has no such section; an offset
+// (new) is spent at the first text landing and scrolled one frame later, the heading landing's timing: the block holding
+// it in the Rendered view (the anchor map's block table paired to the painted elements), the row in Raw, both centred.
+// The relay's default branch reads its `at` through readAt (the message crossed a frame boundary) and the body's delegate
+// hands a path link's data-line and data-frag on as `{ line }` and `{ heading }`. The stand-in parses no innerHTML, so a
+// case lays the elements marked or codeBlock would paint (layRendered, layRows) between the paint and the frame it
+// flushes (withFrames: requestAnimationFrame as a queue, installed for the case; the file's other cases run with none, the
+// paint pass's own frame reads then running bare). Before item 4: `at` was ignored (an open landed at the top with no
+// notice), readAt did not exist, and the delegate handed a line and a fragment as two arguments (red over a git archive of
+// the base with readAt stubbed).
+const frames: Array<() => void> = [];
+const withFrames = (t: TestContext): void => {
+  (globalThis as any).requestAnimationFrame = (cb: () => void) => { frames.push(cb); return frames.length; };
+  t.after(() => { delete (globalThis as any).requestAnimationFrame; frames.length = 0; });
+};
+const flushFrames = (): void => { const run = frames.splice(0); for (const cb of run) cb(); };
+const mk = (tag: string, text: string, id?: string): El => { const e = new El(tag); if (id) e.id = id; e.appendChild(new Txt(text)); return e; };
+/** The Rendered DOM marked paints for DOC, laid by hand: one element per block of the table (h1, h2, p, p), the heading ids
+ *  the viewer mints (md- plus the slug). Returned in block order. */
+const layRendered = (md: El): El[] => {
+  const els = [mk("h1", "Report", "md-report"), mk("h2", "Findings", "md-findings"), mk("p", "The api session cut p95 latency by 40%."), mk("p", "We recommend shipping the cache in v1.2.")];
+  md.replaceChildren(...els);
+  return els;
+};
+/** The Raw rows codeBlock paints for `src`: one .fv-cl per logical line, under the code.hljs element. */
+const layRows = (code: El, src: string): El[] => {
+  const lines = src.split("\n"); if (lines[lines.length - 1] === "") lines.pop();
+  const rows = lines.map((ln) => { const cl = new El("span"); cl.className = "fv-cl"; cl.appendChild(new Txt(ln)); return cl; });
+  code.replaceChildren(...rows);
+  return rows;
+};
+const scrolls = (els: El[]) => els.map((e) => e.scrolled);
+
+test("readAt: the relay's `at` is a line (a positive integer), an offset (a non-negative integer) or a heading (a non-empty string), in that order when a message carries more than one; anything else is no target", async () => {
+  const { readAt } = await mod();
+  assert.deepEqual(readAt({ line: 12 }), { line: 12 });
+  assert.deepEqual(readAt({ offset: 0 }), { offset: 0 });
+  assert.deepEqual(readAt({ offset: 4096 }), { offset: 4096 });
+  assert.deepEqual(readAt({ heading: "results" }), { heading: "results" });
+  assert.deepEqual(readAt({ heading: "Evidence%20Results" }), { heading: "Evidence%20Results" }, "as written: the landing decodes");
+  assert.deepEqual(readAt({ line: 3, heading: "x" }), { line: 3 }, "a line first, then an offset, then a heading");
+  assert.deepEqual(readAt({ offset: 7, heading: "x" }), { offset: 7 });
+  for (const bad of [null, undefined, "results", 12, [], {}, { line: "12" }, { line: 0 }, { line: -4 }, { line: 1.5 }, { line: NaN }, { offset: -1 }, { offset: 2.5 }, { offset: "0" }, { heading: "" }, { heading: 7 }, { frag: "results" }, { at: { line: 1 } }])
+    assert.equal(readAt(bad), null, "no target: " + inspect(bad));
+});
+
+test("an open at a line: the markdown file takes its Raw view for that open (the preference unsaved, the Rendered toggle one click away) and a heading rides through the relay's default branch and the body's delegate as `at`", async (t) => {
+  withFrames(t);
+  const o = await open(REPORT, t, SID, { at: { line: 2 } });
+  assert.equal(o.ctx.mode(), "raw", "the line's open shows the Raw view");
+  assert.ok(o.body.querySelector("code.hljs") && !o.body.querySelector(".fileview-md"));
+  assert.equal(store.has("romp:fileviewFmt"), false, "…without writing the preference");
+  assert.equal(frames.length, 0, "a line lands with the paint, no frame queued (as `line` did)");
+  o.b.rendered.click();
+  assert.equal(o.ctx.mode(), "rendered", "the toggle returns to the Rendered view");
+  // the relay's default branch: the shell's message carries `at`, read through readAt
+  const { fv } = o;
+  win.dispatchEvent(new MessageEvent("message", { data: { romp: "viewFile", path: REPORT, sid: SID, at: { heading: "findings" } } }));
+  await settle();
+  const wrap2 = doc.getElementById("romp-fileview")!;
+  assert.notEqual(wrap2, o.wrap, "the relay replaced the viewer");
+  assert.equal(seam!.mode(), "rendered");
+  assert.equal(frames.length, 1, "the heading's landing waits for the frame after the first Rendered paint");
+  const els = layRendered(wrap2.querySelector(".fileview-md")!);
+  flushFrames();
+  assert.deepEqual(scrolls(els), [0, 1, 0, 0], "the Findings heading was scrolled to, nothing else");
+  assert.deepEqual(els[1].scrolledWith, { block: "start" }, "…to the top of the body, as a section link lands");
+  assert.equal(errBar(wrap2.querySelector(".fileview-body")!), null, "no notice: the section exists");
+  // a malformed `at` off the relay is no target: the file opens at its top in its own view, with no notice and no frame
+  win.dispatchEvent(new MessageEvent("message", { data: { romp: "viewFile", path: REPORT, sid: SID, at: { line: "2" } } }));
+  await settle();
+  const wrap3 = doc.getElementById("romp-fileview")!;
+  assert.notEqual(wrap3, wrap2);
+  assert.equal(seam!.mode(), "rendered", "a string line is no line: the Rendered view, not Raw");
+  assert.equal(frames.length, 0, "nothing to land");
+  assert.equal(errBar(wrap3.querySelector(".fileview-body")!), null);
+  win.dispatchEvent(new MessageEvent("message", { data: { romp: "viewFile", path: REPORT, sid: SID, at: { line: 2 } } }));
+  await settle();
+  assert.equal(seam!.mode(), "raw", "a well-formed line off the relay takes the Raw view");
+  // the body's delegate: a path link inside the shown file carries data-line or data-frag, handed on as `at`
+  const body4 = doc.getElementById("romp-fileview")!.querySelector(".fileview-body")!;
+  const link = new El("span"); link.dataset.act = "openpath"; link.dataset.path = REPORT; link.dataset.frag = "findings";
+  body4.appendChild(link);
+  link.dispatchEvent(new Ev("click"));
+  await settle();
+  const wrap5 = doc.getElementById("romp-fileview")!;
+  assert.ok(wrap5 && !wrap5.contains(link), "the link's click replaced the viewer");
+  assert.equal(seam!.mode(), "rendered", "a heading link opens the Rendered view");
+  assert.equal(frames.length, 1);
+  const els5 = layRendered(wrap5.querySelector(".fileview-md")!);
+  flushFrames();
+  assert.deepEqual(scrolls(els5), [0, 1, 0, 0], "…and lands on the heading");
+  const link2 = new El("span"); link2.dataset.act = "openpath"; link2.dataset.path = REPORT; link2.dataset.line = "3";
+  wrap5.querySelector(".fileview-body")!.appendChild(link2);
+  link2.dispatchEvent(new Ev("click"));
+  await settle();
+  assert.equal(seam!.mode(), "raw", "a line link opens the Raw view for that open");
+  assert.equal(store.get("romp:fileviewFmt"), JSON.stringify({ md: "rendered" }), "the preference the Rendered toggle saved above stands: the line's Raw view is not written");
+  fv.closeFileView();
+});
+
+test("an open at a heading the note does not have lands nowhere and says so in the notice bar, above the body row, the name decoded; under the Raw preference the heading waits for the Rendered toggle, and the notice with it", async (t) => {
+  withFrames(t);
+  const o = await open(REPORT, t, SID, { at: { heading: "nowhere" } });
+  assert.equal(frames.length, 1);
+  assert.equal(errBar(o.body), null, "nothing said before the frame judges the painted DOM");
+  flushFrames();   // no heading laid: the section is not in the note
+  assert.equal(errBar(o.body)?.textContent, 'No section named "nowhere" in this file.', "the notice names the section");
+  assert.ok(aboveRow(o.body), "as a card row above the body");
+  assert.equal(o.body.scrolled, 0, "and nothing scrolled: never a silent landing at the top");
+  // the frame ran once: a later paint (the toggle) lands nothing and raises nothing again
+  o.b.raw.click(); o.b.rendered.click();
+  assert.equal(frames.length, 0, "the heading was spent");
+  // a percent-encoded name is shown decoded
+  o.fv.openFileView(REPORT, SID, { at: { heading: "#Evidence%20Results" } });
+  await settle();
+  flushFrames();
+  const body2 = doc.getElementById("romp-fileview")!.querySelector(".fileview-body")!;
+  assert.equal(errBar(body2)?.textContent, 'No section named "Evidence Results" in this file.');
+  // the Raw preference: no ids to land on, so the landing waits for the Rendered toggle rather than being spent
+  const r = await open(REPORT, t, SID, { at: { heading: "findings" } }, true);
+  assert.equal(r.ctx.mode(), "raw");
+  assert.equal(frames.length, 0, "no landing queued from a Raw paint");
+  assert.equal(errBar(r.body), null, "and no notice: the Raw view cannot judge");
+  r.b.rendered.click();
+  assert.equal(frames.length, 1, "the Rendered paint queues the landing");
+  const els = layRendered(r.body.querySelector(".fileview-md")!);
+  flushFrames();
+  assert.deepEqual(scrolls(els), [0, 1, 0, 0], "the heading lands after the toggle");
+  assert.equal(errBar(r.body), null);
+});
+
+test("an open at a source offset: the block holding it is scrolled to the centre in the Rendered view, the row in Raw (a .py file, or a markdown file under the Raw preference); an offset past the end lands on the last block or row and says so in the notice bar", async (t) => {
+  withFrames(t);
+  const o = await open(REPORT, t, SID, { at: { offset: DOC.indexOf("We recommend") } });
+  assert.equal(o.ctx.mode(), "rendered", "an offset keeps the view the preference names");
+  assert.equal(store.has("romp:fileviewFmt"), false);
+  assert.equal(frames.length, 1, "the offset is spent at the landing and scrolled the next frame");
+  const els = layRendered(o.body.querySelector(".fileview-md")!);
+  flushFrames();
+  assert.deepEqual(scrolls(els), [0, 0, 0, 1], "the fourth block, the paragraph holding the offset");
+  assert.deepEqual(els[3].scrolledWith, { block: "center" }, "centred");
+  assert.equal(errBar(o.body), null, "no notice: the offset is inside the text");
+  // offset 0: the first block; an offset on a blank line between two blocks: the block after the gap (reader-place blockHolding)
+  o.fv.openFileView(REPORT, SID, { at: { offset: 0 } }); await settle();
+  let els2 = layRendered(doc.getElementById("romp-fileview")!.querySelector(".fileview-md")!); flushFrames();
+  assert.deepEqual(scrolls(els2), [1, 0, 0, 0]);
+  o.fv.openFileView(REPORT, SID, { at: { offset: DOC.indexOf("\n\n## Findings") + 1 } }); await settle();
+  els2 = layRendered(doc.getElementById("romp-fileview")!.querySelector(".fileview-md")!); flushFrames();
+  assert.deepEqual(scrolls(els2), [0, 1, 0, 0], "the blank line before Findings lands on Findings");
+  // past the end: the last block, and the notice in the line rule's shape
+  o.fv.openFileView(REPORT, SID, { at: { offset: DOC.length + 50 } }); await settle();
+  const wrap3 = doc.getElementById("romp-fileview")!, body3 = wrap3.querySelector(".fileview-body")!;
+  const els3 = layRendered(wrap3.querySelector(".fileview-md")!); flushFrames();
+  assert.deepEqual(scrolls(els3), [0, 0, 0, 1], "the last block");
+  assert.equal(errBar(body3)?.textContent, "Offset " + (DOC.length + 50) + " is past the end of this file, which has " + DOC.length + " characters; showing the last block.");
+  assert.ok(aboveRow(body3));
+  o.fv.closeFileView();
+  // the Raw view: a code file's row at the offset (the second logical line of PY), centred
+  const c = await open(APP, t, SID, { at: { offset: PY.indexOf("return") } });
+  assert.equal(frames.length, 1);
+  const rows = layRows(c.body.querySelector("code.hljs")!, PY); flushFrames();
+  assert.deepEqual(scrolls(rows), [0, 1], "row 2 holds the offset");
+  assert.deepEqual(rows[1].scrolledWith, { block: "center" });
+  assert.equal(errBar(c.body), null);
+  c.fv.openFileView(APP, SID, { at: { offset: PY.length + 9 } }); await settle();
+  const body4 = doc.getElementById("romp-fileview")!.querySelector(".fileview-body")!;
+  const rows4 = layRows(body4.querySelector("code.hljs")!, PY); flushFrames();
+  assert.deepEqual(scrolls(rows4), [0, 1], "past the end: the last row");
+  assert.equal(errBar(body4)?.textContent, "Offset " + (PY.length + 9) + " is past the end of this file, which has " + PY.length + " characters; showing the last line.");
+  c.fv.closeFileView();
+  // a markdown file under the Raw preference: the row, not a block
+  const r = await open(REPORT, t, SID, { at: { offset: DOC.indexOf("We recommend") } }, true);
+  assert.equal(r.ctx.mode(), "raw");
+  const rrows = layRows(r.body.querySelector("code.hljs")!, DOC); flushFrames();
+  assert.deepEqual(scrolls(rrows), [0, 0, 0, 0, 0, 1], "the sixth row (the offset's line, one .fv-cl per logical line)");
+  assert.deepEqual(rrows[5].scrolledWith, { block: "center" });
+  assert.equal(store.get("romp:fileviewFmt"), JSON.stringify({ md: "raw" }), "the preference stands as it was");
 });

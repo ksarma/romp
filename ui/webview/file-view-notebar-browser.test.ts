@@ -32,7 +32,7 @@ function readBar(): Bar {
 test("in a browser, the real module: a line past the end raises a notice that is SEEN: above the body row, in the card and the viewport, still there after the body scrolls and after a Rendered/Raw switch; pane and chat", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "chat"] as const) {
-      const { page, errors } = await openViewer(browser, mode, 700, 600, { raw: true, openOpts: { line: 9999 } });
+      const { page, errors } = await openViewer(browser, mode, 700, 600, { raw: true, openOpts: { at: { line: 9999 } } });   // the open's `at` (Slice 6 of plans/markdown-viewer.md; the former `line` option)
       let b: Bar = await page.evaluate(readBar);
       assert.ok(b.present, mode + ": the past-the-end notice is up");
       assert.equal(b.text, "Line 9999 is past the end of this file, which has 201 lines; showing the last line.", mode + ": in the viewer's words");
