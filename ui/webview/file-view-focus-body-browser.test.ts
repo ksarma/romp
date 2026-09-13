@@ -10,8 +10,8 @@
 // toggle's paint leaves the keyboard in the box, and a real click on the toggle hands it from the button to the body; a
 // press on a highlight mid-press reads the body's tabindex as 0 and the mark's as absent (the panel's pressedMarks strip
 // selects marks, never the body) with the focus on the body, and the release focuses the mark, not the body. The chat
-// scene runs render.ts's own window keydown handlers, lifted from its source as file-view-links-browser.test.ts lifts the
-// chat's click opener, over a composer and a #content stand-in: a printable key with the viewer up lands nowhere
+// scene runs render.ts's own window keydown handlers, lifted from its source (real-viewer-leg.ts chatKeysScript, shared with
+// the Outline leg) as file-view-links-browser.test.ts lifts the chat's click opener, over a composer and a #content stand-in: a printable key with the viewer up lands nowhere
 // (typeFromAnywhereTarget stands aside for a full-pane surface), and after Escape the same key lands in the composer; the
 // chat's ArrowUp/Down handler scrolls #content for any non-typing target and names no exception for the viewer, so the arrow
 // is read as either mover (a render.ts change, not the viewer's; recorded for the unit that owns render.ts). Before item 1
@@ -20,9 +20,7 @@
 // /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { inBrowser, openViewer, openPanel, pageHtml, frames, paintsReach, requireCjs, UI, ORIGIN, REPORT, SID, MT, STATUS, PARA } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, pageHtml, frames, paintsReach, chatKeysScript, ORIGIN, REPORT, SID, MT, STATUS, PARA } from "./real-viewer-leg";
 import { makeAnchor } from "./anchor-map";
 
 const T0 = 1757145600000;
@@ -124,39 +122,6 @@ test("in a browser, on the Files pane at 900 and 380 px: the note opened with no
     await page.close();
   });
 });
-
-/** The chat page's own window keydown handlers, lifted from render.ts's source: the single-key shortcuts (the arrows, Enter)
- *  and the type-to-compose default, with a prelude standing in for the chat state they read. Every name the lift uses that
- *  render.ts imports or declares at its top level must be one the prelude declares or the lift itself declares, as
- *  file-view-links-browser.test.ts checks its lift, so a render.ts change surfaces here and not as a silent ReferenceError. */
-function chatKeysScript(): string {
-  const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
-  const a0 = RENDER.indexOf("\nconst NAV_SCROLL_STEP = 60;\n") + 1;
-  const a1 = RENDER.indexOf('\n// The gates the two "from anywhere" defaults share', a0);
-  const b0 = RENDER.indexOf("\nfunction typeFromAnywhereTarget(e: Event): HTMLTextAreaElement | null {", a1) + 1;
-  const b1 = RENDER.indexOf("\n// SELECT → PASTE", b0);
-  assert.ok(a0 > 0 && a1 > a0 && b0 > a1 && b1 > b0, "render.ts's shortcuts handler and its type-to-compose handler (the anchors moved; re-anchor)");
-  const lifted = RENDER.slice(a0, a1) + "\n" + RENDER.slice(b0, b1) + "\n";
-  const prelude = [
-    "let activeId: string | null = null;", "const order: string[] = [];", "const visibleOrder = (): string[] => order;", "const collapsedTabIds = new Set<string>();",
-    "const neighborOfFolded = (): string | null => null;", "const lastStripItems: unknown[] = [];", "const setActive = (_id: string): void => {};",
-    "const scrollContentBy = (content: HTMLElement, dy: number, _writer: string): void => { content.scrollTop += dy; (window as any).__contentScrolls++; };",
-    "const transcriptSelection = (): null => null;", "const seedTranscriptQuote = (): void => {};",
-    "const focusComposer = (): void => { (document.getElementById(\"composer-input\") as HTMLTextAreaElement).focus(); };",
-    "const composerNoteHolds = (): boolean => false;", "const focusComposerOrAsk = (): boolean => { focusComposer(); return true; };",
-    "const liveAsks = new Map<string, unknown>();", "const ctxMenuEl: HTMLElement | null = null;", "(window as any).__contentScrolls = 0;",
-  ].join("\n") + "\n";
-  const code = lifted.replace(/\/\*[\s\S]*?\*\/|\/\/.*$|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gm, (m) => (m[0] === "/" ? "" : '""'));
-  const locals = new Set(Array.from(code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g), (m) => m[1]));
-  const named = new Set<string>();
-  const addNamed = (list: string) => { for (const part of list.split(",")) { const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim(); if (name) named.add(name); } };
-  for (const m of RENDER.matchAll(/^import (?!type\b)(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\* as ([A-Za-z_$][\w$]*)|\{([^}]*)\})?\s*from "[^"]+";/gm)) { if (m[1]) named.add(m[1]); if (m[2]) named.add(m[2]); if (m[3]) addNamed(m[3]); }
-  for (const m of RENDER.matchAll(/^(?:export )?(?:const|let|var|(?:async )?function\*?|class) ([A-Za-z_$][\w$]*)/gm)) named.add(m[1]);
-  const declared = new Set(Array.from(prelude.matchAll(/^(?:const|let) ([A-Za-z_$][\w$]*)/gm), (m) => m[1]));
-  const free = Array.from(named).filter((n) => !locals.has(n) && !declared.has(n) && new RegExp("(?<![.\\w$])" + n.replace(/\$/g, "\\$") + "\\b").test(code));
-  assert.deepEqual(free, [], "render.ts's key handlers name these and the prelude defines none of them: define each in chatKeysScript's prelude, or the lifted handler throws where a key reaches it");
-  return requireCjs("esbuild").transformSync(prelude + lifted, { loader: "ts", target: "es2020" }).code;
-}
 
 test("in a browser, in the chat modal under render.ts's own key handlers: the composer keeps the keyboard when it holds it at the open; with nothing focused the body takes it and PageDown, Space, End and Home scroll the note; a typed letter with the viewer up lands nowhere and after Escape lands in the composer; ArrowDown is read against the chat's arrow handler", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {

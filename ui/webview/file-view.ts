@@ -35,7 +35,7 @@ import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
-import { delegate, pressHold } from "./actions";   // pressHold: a fetch landing waits while a pointer is pressed over the body (the reload under a press)
+import { delegate, flash, pressHold } from "./actions";   // pressHold: a fetch landing waits while a pointer is pressed over the body (the reload under a press); flash: the Outline button's press pulse
 import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own
@@ -332,6 +332,10 @@ export type RememberedPlace = { start: number; end: number; top: number; atTop: 
  *  window's focus or the document's return to visibility finds the file's mtime moved under a reader whose Comments panel is
  *  closed (with it open, the panel's poll reloads by itself). Two words and a Reload button, in the person's terms. */
 export const CHANGED_ON_DISK = "Changed on disk.";
+/** The Outline button's label (plans/markdown-viewer.md Slice 6, item 2): the action that lists a rendered note's headings by
+ *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the guide says
+ *  "the file's headings" beside it so the sessions pane's outline is never confused with it (the brief's open question 2). */
+export const OUTLINE_LABEL = "Outline";
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1083,6 +1087,121 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       acts.appendChild(b);
     }
   }
+  // ── the Outline (plans/markdown-viewer.md Slice 6, item 2) ── A rendered note's headings, listed so a section is one pick
+  // away where the audit found no list at all ("No heading ids, no outline"). The button shows over a markdown file's
+  // Rendered view once its paint holds a heading (syncOutline, from renderBody) and hides otherwise: in Raw (the rows carry
+  // no heading elements, and the toggle is one click away), in the editor, and while the loader holds the body; a
+  // non-markdown file never gets it, like the toggles. The list is read off the Rendered DOM when the popover OPENS, never
+  // per paint: every h1 to h6 under .fileview-md in document order, the elements mintHeadingIds gave ids (a heading inside
+  // a fold, open or closed, a quote or a list item is listed as the DOM holds it; the front-matter block is a details with
+  // no heading and mints none), each row the heading's text on one line, indented by its depth under the shallowest
+  // heading of the note (a note that starts at h2 indents nothing for its h2s), with the heading's id. A 500-heading note
+  // costs one query and 500 rows when the reader asks, nothing at a paint. The popover is a pane-local dropdown under the
+  // button in the menu vocabulary (the sheets' .fileview-outline rules read the --menu-* tokens; ui/CLAUDE.md), a child of
+  // the card positioned from the button's box, capped at the body's height less a margin and the card's width less a
+  // margin, scrolling within itself. It takes the focus at the open and closes on a pick, on Escape (stopped here, so the
+  // document's onKey below never sees it and the viewer stays up), on a press outside it (a capture-phase pointerdown on
+  // the document; a press on the button is the toggle's own and not "outside"), on the keyboard leaving it (focusout to
+  // anything but the button), on a window resize (the button's box moved), on every paint of the body (renderBody: the
+  // view switch, a reload; the rows were read off a DOM that is going) and with the viewer (closeHooks). Keys on the
+  // popover: ArrowDown and ArrowUp move the current row, Home and End jump, Enter and Space pick it, Escape closes; the
+  // current row is kept in the popover's own view by its scrollTop, never scrollIntoView, which would reach the body and
+  // the page. The pick lands the heading through the fragment landing's own steps (scrollToFragment: revealFragmentTarget
+  // opens the folds above it, then scrollIntoView block "start", so the heading's top sits at the body's edge less its
+  // scroll margin, where a `#` link puts it), and the keyboard returns to the body (takeKeyboard: the popover's removal
+  // left it on the document's body), so PageDown reads on from the section. Nothing is stored; nothing is read from the
+  // source; the popover is built and discarded per open of it.
+  const outlineBtn = el("button", "fileview-btn fileview-outline-btn") as HTMLButtonElement;
+  outlineBtn.type = "button"; outlineBtn.textContent = OUTLINE_LABEL; outlineBtn.title = "The file's headings";
+  outlineBtn.setAttribute("aria-haspopup", "menu"); outlineBtn.setAttribute("aria-expanded", "false");
+  outlineBtn.hidden = true;                            // shown by the first Rendered paint that holds a heading (syncOutline)
+  if (isMd) acts.appendChild(outlineBtn);
+  let outline: HTMLElement | null = null;              // the open popover
+  let dropOutline: (() => void) | null = null;         // its document and window listeners, removed with it
+  const headingsOf = (): HTMLElement[] => {
+    const md = body.querySelector(".fileview-md");
+    return md ? Array.from(md.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[] : [];
+  };
+  const closeOutline = (): void => {
+    if (!outline) return;
+    const pop = outline; outline = null;
+    if (dropOutline) { const f = dropOutline; dropOutline = null; f(); }
+    pop.remove();
+    outlineBtn.setAttribute("aria-expanded", "false");
+  };
+  const syncOutline = (): void => { outlineBtn.hidden = editing || ctx.mode() !== "rendered" || headingsOf().length === 0; };
+  const openOutline = (): void => {
+    const heads = headingsOf();
+    if (!heads.length) return;
+    const pop = el("div", "fileview-outline");
+    pop.setAttribute("role", "menu"); pop.setAttribute("aria-label", "The file's headings"); pop.tabIndex = -1;
+    const shallowest = Math.min(...heads.map((h) => Number(h.tagName[1])));
+    const rows = heads.map((h) => {
+      const r = el("div", "fileview-outline-row");
+      r.setAttribute("role", "menuitem"); r.dataset.id = h.id;
+      r.style.setProperty("--fv-ol-depth", String(Number(h.tagName[1]) - shallowest));
+      const words = (h.textContent || "").replace(/\u200b/g, "").replace(/\s+/g, " ").trim();   // KaTeX's strut is a U+200B
+      r.textContent = words; r.title = words;
+      pop.appendChild(r);
+      return r;
+    });
+    let cur = -1;
+    const setCur = (i: number): void => {
+      if (cur >= 0) rows[cur].classList.remove("current");
+      cur = Math.max(0, Math.min(i, rows.length - 1));
+      const r = rows[cur]; r.classList.add("current");
+      if (r.offsetTop < pop.scrollTop) pop.scrollTop = r.offsetTop;
+      else if (r.offsetTop + r.offsetHeight > pop.scrollTop + pop.clientHeight) pop.scrollTop = r.offsetTop + r.offsetHeight - pop.clientHeight;
+    };
+    const pick = (i: number): void => {
+      const id = rows[i] ? rows[i].dataset.id : undefined;
+      closeOutline();
+      if (id) scrollToFragment(body, id);
+      takeKeyboard();
+    };
+    pop.addEventListener("click", (ev) => {
+      const t = ev.target as Element | null;
+      const r = t && typeof t.closest === "function" ? t.closest(".fileview-outline-row") as HTMLElement | null : null;
+      if (r) pick(rows.indexOf(r));
+    });
+    pop.addEventListener("keydown", (e: KeyboardEvent) => {
+      const take = (): void => { e.preventDefault(); e.stopPropagation(); };
+      if (e.key === "Escape") { take(); closeOutline(); takeKeyboard(); }
+      else if (e.key === "ArrowDown") { take(); setCur(cur + 1); }
+      else if (e.key === "ArrowUp") { take(); setCur(cur - 1); }
+      else if (e.key === "Home") { take(); setCur(0); }
+      else if (e.key === "End") { take(); setCur(rows.length - 1); }
+      else if (e.key === "Enter" || e.key === " ") { take(); pick(cur); }
+    });
+    pop.addEventListener("focusout", (e: FocusEvent) => {
+      const to = e.relatedTarget as Node | null;
+      if (to && (pop.contains(to) || outlineBtn.contains(to))) return;
+      closeOutline();
+    });
+    const onDown = (e: Event): void => {
+      const t = e.target as Node | null;
+      if (t && (pop.contains(t) || outlineBtn.contains(t))) return;
+      closeOutline();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("resize", closeOutline);
+    dropOutline = () => { document.removeEventListener("pointerdown", onDown, true); window.removeEventListener("resize", closeOutline); };
+    // under the button, inside the card: the card is the containing block (its container-type gives it layout containment;
+    // the sheet's rule says so), so the offsets are from its padding edge; the caps are the body's height and the card's
+    // width, each less a margin, and never past the card's bottom
+    const br = outlineBtn.getBoundingClientRect(), cr = box.getBoundingClientRect(), bd = body.getBoundingClientRect();
+    const top = br.bottom - cr.top - (box.clientTop || 0) + 4;
+    pop.style.top = top + "px";
+    pop.style.right = Math.max(0, cr.right - (box.clientLeft || 0) - br.right) + "px";
+    pop.style.maxWidth = Math.max(0, cr.width - 16) + "px";
+    pop.style.maxHeight = Math.max(0, Math.min(bd.height - 16, cr.height - top - 8)) + "px";
+    box.appendChild(pop);
+    outline = pop;
+    outlineBtn.setAttribute("aria-expanded", "true");
+    setCur(0);
+    pop.focus({ preventScroll: true });
+  };
+  outlineBtn.addEventListener("click", () => { flash(outlineBtn); if (outline) closeOutline(); else openOutline(); });   // the press pulse, then the toggle (ui/CLAUDE.md: acknowledge at once)
   // ── text size ── A− and A+ step every text view through TEXT_SIZES, Ctrl/Cmd + wheel over the body
   // does the same, and the percentage between them (said once the size is off the default) is the reset;
   // textSizeControl above has the shape. Shown over a TEXT view only: the editor does not hold the body,
@@ -1579,6 +1698,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
     textSize.sync();                          // the text-size control follows every paint: shown over a text view only
+    closeOutline();                           // the Outline's rows were read off the DOM this paint replaces; the button follows the paint (syncOutline, below)
+    outlineBtn.hidden = true;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -1631,6 +1752,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
+    syncOutline();                            // the Outline button: shown over a Rendered paint that holds a heading
     if (rendered && pendingHeading !== null) {
       const h = pendingHeading; pendingHeading = null;
       requestAnimationFrame(() => {
@@ -2021,6 +2143,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }).catch((err) => fallback(String(err && (err as Error).message || err)));
   };
   closeHooks.push(dropPdf);                    // both exits (close, replace-open) release the document and its worker
+  closeHooks.push(closeOutline);               // …and drop the Outline popover's document and window listeners with the viewer
   const enterFallback = () => {                 // the plain textarea: LOUD fallback, never a silent one
     ta = el("textarea", "fileview-editor") as HTMLTextAreaElement;
     ta.value = text!;                           // the browser normalizes CRLF→LF on assignment…

@@ -1,0 +1,677 @@
+// The Outline (plans/markdown-viewer.md Slice 6, item 2; the outline half of the audit's High "No heading ids, no outline"):
+// a button in the viewer's actions row over a markdown file's Rendered view, a dropdown listing the note's headings by depth
+// in the menu vocabulary, and a pick that lands the heading at the top of the body through the fragment landing's own steps.
+// The REAL openFileView runs over the place suite's DOM stand-in (file-view-place-memory.test.ts: ancestry, attributes,
+// events with capture and bubbling, a tolerant selector engine, a layout for the body and its blocks), with three things
+// this suite adds: the `.fileview-md` box mints the heading ids the sanitizer's own pass would (mintHeadingIds: md- plus the
+// GitHub slug, unique in order, through the same two functions of md-links.ts), since under node DOMPurify has no document
+// and mdBlock falls back to the bare text, which the box renders through marked; a node's `style` takes setProperty (the
+// rows' depth variable); and scrollIntoView records its argument (the landing's block: "start"). The fixture is the shared
+// forty-two-heading report (file-view-outline-fixture.ts). What the browser alone can show, the box measured inside the
+// card, the heading's top at the body's edge, the tokens' colours under both themes, is file-view-outline-browser.test.ts's.
+// Before item 2: no Outline button in the actions row (red at the first assertion over a git archive of the base).
+// Synthetic fixtures only: the notes-api world, placeholder ids.
+import { test, type TestContext } from "node:test";
+import * as assert from "node:assert/strict";
+import { inspect } from "node:util";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { marked } from "marked";
+import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
+import { headingSlug, uniqueSlugs } from "./md-links";
+import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
+import type { FileViewActionCtx } from "./file-view";
+
+const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+const VIEW = web("file-view.ts");
+const CHAT = web("styles.css");
+const FEED = web("feed.css");
+
+// ── the layout: the body's edge and height, a block's and a row's pitch ─────────────────────────────
+const EDGE = 100;
+const BODY_H = 200;
+const BODY_W = 800;
+const BLOCK_H = 40;
+const BLOCK_BOX = 32;
+const ROW_H = 20;
+type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+const rect = (top: number, height: number, width = BODY_W): Rect => ({ left: 0, top, right: width, bottom: top + height, width, height });
+
+// ── a DOM stand-in: ancestry, ids, attributes, events with capture and bubbling, a tolerant selector engine, a layout ──
+class Ev {
+  target: El | Txt | null = null;
+  currentTarget: El | null = null;
+  defaultPrevented = false;
+  stopped = false;
+  key: string; ctrlKey: boolean; metaKey: boolean; detail: number;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; detail?: number } = {}) {
+    this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; this.detail = init.detail ?? 0;
+    hideEdges(this);
+  }
+  preventDefault(): void { this.defaultPrevented = true; }
+  stopPropagation(): void { this.stopped = true; }
+}
+type Listener = (ev: Ev) => void;
+type Reg = { type: string; cb: Listener; capture: boolean; once: boolean };
+const optsOf = (o?: boolean | { capture?: boolean; once?: boolean }) =>
+  typeof o === "boolean" ? { capture: o, once: false } : { capture: !!(o && o.capture), once: !!(o && o.once) };
+const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
+class Txt {
+  nodeType = 3;
+  parentNode!: El | null;
+  constructor(public data: string) { Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true }); hideEdges(this); }
+  get textContent(): string { return this.data; }
+  get nodeValue(): string { return this.data; }
+  set nodeValue(v: string) { this.data = v; }
+  get length(): number { return this.data.length; }
+  get parentElement(): El | null { return this.parentNode; }
+  get nextSibling(): El | Txt | null { const p = this.parentNode; if (!p) return null; const i = p.childNodes.indexOf(this); return p.childNodes[i + 1] || null; }
+  get previousSibling(): El | Txt | null { const p = this.parentNode; if (!p) return null; const i = p.childNodes.indexOf(this); return i > 0 ? p.childNodes[i - 1] : null; }
+  splitText(off: number): Txt {
+    const tail = new Txt(this.data.slice(off));
+    this.data = this.data.slice(0, off);
+    const p = this.parentNode;
+    if (p) { const i = p.childNodes.indexOf(this); p.childNodes.splice(i + 1, 0, tail); tail.parentNode = p; }
+    return tail;
+  }
+}
+type Compound = { tag: string | null; id: string | null; classes: string[]; attrs: Array<[string, string | null]>; pseudos: string[]; child: boolean };
+/** Comma groups of chains; a chain's links are joined by a descendant (space) or a child (`>`) combinator. A selector the
+ *  engine does not know parses to null and matches nothing, where a browser answers an empty list. */
+function parseSel(sel: string): Compound[][] | null {
+  const groups: Compound[][] = [];
+  for (const g of sel.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const chain: Compound[] = [];
+    let child = false;
+    for (const tok of g.split(/\s+/)) {
+      if (tok === ">") { child = true; continue; }
+      const m = /^(\*|[a-zA-Z][\w-]*)?(#[\w-]+)?((?:\.[\w-]+)*)((?:\[[^\]]+\])*)((?::[\w-]+)*)$/.exec(tok);
+      if (!m) return null;
+      const attrs: Array<[string, string | null]> = [];
+      for (const a of m[4].match(/\[[^\]]+\]/g) || []) {
+        const am = /^\[(?:\*\|)?([\w-]+)(?:="([^"]*)")?\]$/.exec(a);
+        if (!am) return null;
+        attrs.push([am[1], am[2] ?? null]);
+      }
+      const pseudos = (m[5].match(/:[\w-]+/g) || []).map((p) => p.slice(1));
+      if (pseudos.some((p) => p !== "first-child" && p !== "disabled")) return null;
+      chain.push({ tag: m[1] && m[1] !== "*" ? m[1].toUpperCase() : null, id: m[2] ? m[2].slice(1) : null, classes: (m[3].match(/\.[\w-]+/g) || []).map((c) => c.slice(1)), attrs, pseudos, child });
+      child = false;
+    }
+    if (chain.length) groups.push(chain);
+  }
+  return groups;
+}
+/** A node's inline style: the properties as written, plus the setProperty the Outline's rows use for their depth variable. */
+const styleOf = (): any => { const st: any = {}; st.setProperty = (k: string, v: string) => { st[k] = v; }; st.getPropertyValue = (k: string) => st[k] ?? ""; return st; };
+class El {
+  nodeType = 1;
+  tagName: string;
+  parentNode!: El | null;
+  childNodes!: Array<El | Txt>;
+  attrs = new Map<string, string>();
+  listeners: Reg[] = [];
+  hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
+  src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
+  style: any = styleOf();
+  onclick: ((ev: Ev) => void) | null = null;
+  scrolled = 0;                                  // scrollIntoView calls (the pick's landing on the heading)
+  scrolledWith: unknown = null;                  // its last argument ({ block: "start" } for a heading)
+  focused = 0;                                   // focus() calls
+  _html = "";
+  _scrollTop = 0;
+  constructor(tag: string) {
+    this.tagName = tag.toUpperCase();
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, "childNodes", { value: [], writable: true, enumerable: false, configurable: true });
+    hideEdges(this);
+  }
+  get id(): string { return this.attrs.get("id") || ""; }
+  set id(v: string) { this.attrs.set("id", v); }
+  get localName(): string { return this.tagName.toLowerCase(); }
+  get isConnected(): boolean { return doc.body.contains(this); }
+  get ownerDocument(): typeof doc { return doc; }
+  get parentElement(): El | null { return this.parentNode; }
+  get children(): El[] { return this.childNodes.filter((c): c is El => c instanceof El); }
+  get firstChild(): El | Txt | null { return this.childNodes[0] || null; }
+  get nextSibling(): El | Txt | null { const p = this.parentNode; if (!p) return null; const i = p.childNodes.indexOf(this); return p.childNodes[i + 1] || null; }
+  get previousSibling(): El | Txt | null { const p = this.parentNode; if (!p) return null; const i = p.childNodes.indexOf(this); return i > 0 ? p.childNodes[i - 1] : null; }
+  get nextElementSibling(): El | null { for (let n = this.nextSibling; n; n = n.nextSibling) if (n instanceof El) return n; return null; }
+  get className(): string { return this.attrs.get("class") || ""; }
+  set className(v: string) { this.attrs.set("class", v); }
+  get classes(): string[] { return this.className.split(/\s+/).filter(Boolean); }
+  classList = {
+    add: (...c: string[]) => { const s = new Set(this.classes); for (const x of c) s.add(x); this.className = [...s].join(" "); },
+    remove: (...c: string[]) => { const s = new Set(this.classes); for (const x of c) s.delete(x); this.className = [...s].join(" "); },
+    toggle: (c: string, on?: boolean) => { const want = on === undefined ? !this.classes.includes(c) : on; if (want) this.classList.add(c); else this.classList.remove(c); },
+    contains: (c: string) => this.classes.includes(c),
+  };
+  dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
+    get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
+    set: (_, k, v) => { this.attrs.set("data-" + kebab(String(k)), String(v)); return true; },
+    has: (_, k) => this.attrs.has("data-" + kebab(String(k))),
+    deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
+  });
+  get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
+  /** The browser's parser stands in here for the one text write that is a paint: mdBlock's fallback writes the note's source
+   *  into the `.fileview-md` box when the sanitizer could not hand it a tree (the header), and the box renders it through
+   *  marked as the sanitizer would have, then mints the heading ids the sanitizer's own pass mints (mintHeadingIds: md- plus
+   *  the GitHub slug, unique in order); every other element takes the text as one node. */
+  set textContent(v: string) {
+    this.clear();
+    if (v === "") return;
+    if (this.classes.includes("fileview-md")) {
+      for (const n of parseHTML(marked.parse(v) as string)) this.appendChild(n);
+      const heads = this.querySelectorAll("h1, h2, h3, h4, h5, h6");
+      const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent)));
+      heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+      return;
+    }
+    this.appendChild(new Txt(v));
+  }
+  get innerHTML(): string { return this._html; }
+  set innerHTML(v: string) { this._html = v; this.clear(); for (const n of parseHTML(v)) this.appendChild(n); }
+  private clear(): void { for (const c of this.childNodes) { this.dropFocusIn(c); c.parentNode = null; } this.childNodes.length = 0; }
+  /** The browser's focus fixup: a removed subtree that held the active element leaves the keyboard on the document's body
+   *  (so the popover's removal reads here as it does in Chromium, and takeKeyboard then gives the body the keyboard). */
+  private dropFocusIn(n: El | Txt): void { if (n instanceof El && doc.activeElement && n.contains(doc.activeElement)) doc.activeElement = doc.body; }
+  private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
+  appendChild<T extends El | Txt>(n: T): T {
+    if (n instanceof El && n.tagName === "#FRAGMENT") { for (const c of n.childNodes.slice()) this.appendChild(c); return n; }
+    this.detach(n); this.childNodes.push(n); n.parentNode = this; return n;
+  }
+  prepend(...ns: Array<El | Txt>): void { for (const n of ns.slice().reverse()) { this.detach(n); this.childNodes.unshift(n); n.parentNode = this; } }
+  insertBefore<T extends El | Txt>(n: T, ref: El | Txt | null): T {
+    if (!ref) return this.appendChild(n);
+    if (n instanceof El && n.tagName === "#FRAGMENT") { for (const c of n.childNodes.slice()) this.insertBefore(c, ref); return n; }
+    this.detach(n);
+    const i = this.childNodes.indexOf(ref);
+    this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
+  }
+  removeChild<T extends El | Txt>(n: T): T { this.dropFocusIn(n); this.detach(n); return n; }
+  replaceChildren(...c: Array<El | Txt>): void { this.clear(); for (const x of c) this.appendChild(x); }
+  append(...c: Array<El | Txt | string>): void { for (const x of c) this.appendChild(typeof x === "string" ? new Txt(x) : x); }
+  remove(): void { this.dropFocusIn(this); this.detach(this); }
+  normalize(): void {
+    const out: Array<El | Txt> = [];
+    for (const c of this.childNodes) {
+      if (c instanceof Txt) { if (!c.data) { c.parentNode = null; continue; } const last = out[out.length - 1]; if (last instanceof Txt) { last.data += c.data; c.parentNode = null; continue; } }
+      else c.normalize();
+      out.push(c);
+    }
+    this.childNodes = out;
+  }
+  setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
+  getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
+  getAttributeNS(_ns: string | null, k: string): string | null { return this.getAttribute(k); }
+  hasAttribute(k: string): boolean { return this.attrs.has(k); }
+  removeAttribute(k: string): void { this.attrs.delete(k); }
+  removeAttributeNS(_ns: string | null, k: string): void { this.attrs.delete(k); }
+  contains(n: El | Txt | null): boolean { for (let x: El | Txt | null = n; x; x = x.parentNode) if (x === this) return true; return false; }
+  private fits(c: Compound): boolean {
+    if (c.tag && c.tag !== this.tagName) return false;
+    if (c.id && c.id !== this.id) return false;
+    if (!c.classes.every((k) => this.classes.includes(k))) return false;
+    if (!c.attrs.every(([a, v]) => this.attrs.has(a) && (v === null || this.attrs.get(a) === v))) return false;
+    for (const p of c.pseudos) {
+      if (p === "first-child" && !(this.parentNode && this.parentNode.children[0] === this)) return false;
+      if (p === "disabled" && !this.disabled) return false;
+    }
+    return true;
+  }
+  matches(sel: string): boolean {
+    const groups = parseSel(sel);
+    if (!groups) return false;
+    return groups.some((chain) => {
+      if (!this.fits(chain[chain.length - 1])) return false;
+      let k = chain.length - 2, a: El | null = this.parentNode;
+      while (k >= 0 && a) {
+        if (a.fits(chain[k])) { k--; a = a.parentNode; continue; }
+        if (chain[k + 1].child) return false;
+        a = a.parentNode;
+      }
+      return k < 0;
+    });
+  }
+  closest(sel: string): El | null { for (let x: El | null = this; x; x = x.parentNode) if (x.matches(sel)) return x; return null; }
+  querySelectorAll(sel: string): El[] {
+    const out: El[] = [];
+    const visit = (n: El) => { for (const c of n.childNodes) if (c instanceof El) { if (c.matches(sel)) out.push(c); visit(c); } };
+    visit(this);
+    return out;
+  }
+  querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] || null; }
+  addEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean; once?: boolean }): void { this.listeners.push({ type, cb, ...optsOf(o) }); }
+  removeEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean }): void {
+    const cap = optsOf(o).capture;
+    this.listeners = this.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
+  }
+  dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
+  click(): void { this.dispatchEvent(new Ev("click")); }
+  focus(): void { this.focused++; doc.activeElement = this; }
+  blur(): void { if (doc.activeElement === this) doc.activeElement = null; }
+  get tabIndex(): number { const v = this.attrs.get("tabindex"); return v === undefined ? -1 : Number(v); }
+  set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
+  scrollIntoView(arg?: unknown): void { this.scrolled++; this.scrolledWith = arg ?? null; }
+  // ── the layout ──
+  private isBody(): boolean { return this.classes.includes("fileview-body"); }
+  private scroller(): El | null { for (let a: El | null = this.parentNode; a; a = a.parentNode) if (a.isBody()) return a; return null; }
+  private laid(): { top: number; height: number } | null {
+    const p = this.parentNode;
+    if (this.classes.includes("fileview-md")) return { top: 0, height: this.children.length * BLOCK_H };
+    if (this.tagName === "CODE" && this.classes.includes("hljs")) return { top: 0, height: this.children.filter((c) => c.classes.includes("fv-cl")).length * ROW_H };
+    if (p && p.classes.includes("fileview-md")) return { top: p.children.indexOf(this) * BLOCK_H, height: BLOCK_BOX };
+    if (p && p.tagName === "CODE" && p.classes.includes("hljs") && this.classes.includes("fv-cl")) return { top: p.children.filter((c) => c.classes.includes("fv-cl")).indexOf(this) * ROW_H, height: ROW_H };
+    return null;
+  }
+  getBoundingClientRect(): Rect {
+    if (this.isBody()) return rect(EDGE, BODY_H);
+    const s = this.scroller(), box = this.laid();
+    if (!s || !box) return rect(0, 0, 0);
+    return rect(EDGE + box.top - s.scrollTop, box.height);
+  }
+  get clientHeight(): number { return this.isBody() ? BODY_H : 0; }
+  get clientWidth(): number { return this.isBody() ? BODY_W : 0; }
+  get offsetWidth(): number { return this.clientWidth; }
+  get scrollHeight(): number {
+    if (!this.isBody()) return 0;
+    const md = this.querySelector(".fileview-md"); if (md) return md.children.length * BLOCK_H;
+    const code = this.querySelector("code.hljs"); if (code) return code.children.filter((c) => c.classes.includes("fv-cl")).length * ROW_H;
+    return 0;
+  }
+  get scrollTop(): number { return this._scrollTop; }
+  set scrollTop(v: number) { const max = Math.max(0, this.scrollHeight - this.clientHeight); this._scrollTop = Math.max(0, Math.min(Number(v) || 0, max)); }
+}
+const VOID = new Set(["br", "hr", "img", "input", "meta", "link", "area", "base", "col", "embed", "source", "track", "wbr"]);
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const decodeEntities = (s: string) => s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e: string) => {
+  if (e[0] === "#") return String.fromCodePoint(parseInt(e[1] === "x" || e[1] === "X" ? e.slice(2) : e.slice(1), e[1] === "x" || e[1] === "X" ? 16 : 10));
+  return e in NAMED ? NAMED[e] : m;
+});
+/** Markup as a tree (the place suite's parser): tags, text, entities; void elements do not nest; a comment is no node. */
+function parseHTML(html: string): Array<El | Txt> {
+  const root = new El("#root");
+  let cur: El = root;
+  const re = /<!--[\s\S]*?-->|<\/?([a-zA-Z][\w-]*)([^>]*)>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[0].startsWith("<!--")) continue;
+    if (m[3] !== undefined) { cur.appendChild(new Txt(decodeEntities(m[3]))); continue; }
+    const tag = m[1].toLowerCase();
+    if (m[0][1] === "/") { if (cur.tagName === tag.toUpperCase() && cur.parentNode) cur = cur.parentNode; continue; }
+    const el = new El(tag);
+    const attrRe = /([\w-]+)(?:="([^"]*)")?/g; let a: RegExpExecArray | null;
+    while ((a = attrRe.exec(m[2]))) el.setAttribute(a[1], a[2] === undefined ? "" : decodeEntities(a[2]));
+    cur.appendChild(el);
+    if (!VOID.has(tag) && !m[2].endsWith("/")) { cur = el; if (tag === "pre" && html[re.lastIndex] === "\n") re.lastIndex++; }
+  }
+  return root.childNodes.slice();
+}
+function walkNodes(root: El, what: number): Array<El | Txt> {
+  const out: Array<El | Txt> = [];
+  const walk = (n: El) => { for (const c of n.childNodes) { if (c instanceof Txt) { if (what & 4) out.push(c); } else { if (what & 1) out.push(c); walk(c); } } };
+  walk(root);
+  return out;
+}
+const doc = {
+  listeners: [] as Reg[],
+  body: null as unknown as El,
+  head: null as unknown as El,
+  hidden: false,
+  activeElement: null as El | null,
+  createElement: (tag: string) => new El(tag),
+  createTextNode: (s: string) => new Txt(s),
+  createDocumentFragment: () => new El("#fragment"),
+  createTreeWalker: (root: El, what = 4) => { const nodes = walkNodes(root, what); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
+  getElementById: (id: string): El | null => doc.body.querySelector("#" + id),
+  querySelectorAll: (sel: string): El[] => doc.body.querySelectorAll(sel),
+  addEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean; once?: boolean }): void { doc.listeners.push({ type, cb, ...optsOf(o) }); },
+  removeEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean }): void {
+    const cap = optsOf(o).capture;
+    doc.listeners = doc.listeners.filter((l) => !(l.type === type && l.cb === cb && l.capture === cap));
+  },
+  contains: (n: El | Txt | null) => doc.body.contains(n),
+};
+doc.body = new El("body"); doc.head = new El("head");
+/** The DOM event path: document capture, ancestors' capture root to target, target and ancestors' bubble, document bubble. */
+function dispatch(target: El | Txt, ev: Ev): boolean {
+  ev.target = target;
+  const chain: El[] = [];
+  for (let n: El | null = target instanceof El ? target : target.parentNode; n; n = n.parentNode) chain.push(n);
+  const run = (owner: { listeners: Reg[] }, capture: boolean, node: El | null): boolean => {
+    for (const l of owner.listeners.slice()) {
+      if (l.type !== ev.type || l.capture !== capture) continue;
+      if (l.once) owner.listeners = owner.listeners.filter((x) => x !== l);
+      ev.currentTarget = node; l.cb.call(node, ev);
+      if (ev.stopped) return true;
+    }
+    if (node && !capture && ev.type === "click" && node.onclick) node.onclick(ev);
+    return false;
+  };
+  if (run(doc, true, null)) return !ev.defaultPrevented;
+  for (let i = chain.length - 1; i >= 0; i--) if (run(chain[i], true, chain[i])) return !ev.defaultPrevented;
+  for (const n of chain) if (run(n, false, n)) return !ev.defaultPrevented;
+  run(doc, false, null);
+  return !ev.defaultPrevented;
+}
+const win: any = new EventTarget();
+win.parent = win; win.innerWidth = 1200; win.innerHeight = 800;
+win.getSelection = () => null;
+win.confirm = () => true;
+win.postMessage = () => { /* our own window: nothing listens here */ };
+(globalThis as any).window = win;
+(globalThis as any).document = doc;
+(globalThis as any).NodeFilter = { SHOW_ELEMENT: 1, SHOW_TEXT: 4 };
+(globalThis as any).location = { protocol: "http:" };
+const store = new Map<string, string>();
+(globalThis as any).localStorage = {
+  getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+  setItem: (k: string, v: string) => { store.set(k, String(v)); },
+  removeItem: (k: string) => { store.delete(k); },
+};
+// the editor chunk the viewer's Edit resolves from (the seam test's stub): a buffer with the two callbacks the viewer wires
+const ed = { buf: "", mounted: 0 };
+win.__rompEditor = {
+  mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void }) {
+    ed.buf = opts.text; ed.mounted++;
+    host.appendChild(new Txt(opts.text));
+    return { value: () => ed.buf, focus() { /* inert */ }, destroy() { /* inert */ } };
+  },
+};
+
+// ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
+type Served = { bytes: string; type: string; mtimeNs: string };
+const disk: Record<string, Served> = {};
+(globalThis as any).fetch = async (url: string) => {
+  if (url.startsWith("/version")) return { json: async () => ({ fileEditing: true }) };
+  if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
+  const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
+  const f = disk[p];
+  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
+  if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
+  return { ok: true, status: 200, headers, text: async () => f.bytes, blob: async () => new Blob([f.bytes], { type: f.type }) };
+};
+
+// ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
+const SID = "11111111-2222-3333-4444-555555555555";
+const ROOT = "/repo/notes-api";
+const MT = "1757145600000000001";
+const REPORT = ROOT + "/docs/report.md";
+const NOTES = ROOT + "/docs/notes.txt";
+const PLAIN = ROOT + "/docs/plain.md";
+const PROSE = "Just a paragraph, with no heading above it.\n\nAnd a second one.\n";
+/** The ids the viewer mints for the fixture's headings, in document order: md- plus the GitHub slug, unique in order. */
+const IDS = uniqueSlugs(OUTLINE_HEADINGS.map(([, t]) => headingSlug(t))).map((s) => "md-" + s);
+/** The row's words: the heading's text as marked renders it (inline code loses its backticks; the formula's placeholder is
+ *  its TeX without the delimiters, which is also what KaTeX's html reads as once the fill has run in a browser). */
+const WORDS = OUTLINE_HEADINGS.map(([, t]) => t.replace(/[`$]/g, ""));
+
+// ── the module and its probe ─────────────────────────────────────────────────────────────────────────
+let seam: FileViewActionCtx | null = null;
+let paints = 0;
+const posted: any[] = [];
+let fvMod: typeof import("./file-view") | null = null;
+async function mod(): Promise<typeof import("./file-view")> {
+  if (fvMod) return fvMod;
+  fvMod = await import("./file-view");
+  fvMod.initFileView((m) => posted.push(m));
+  fvMod.registerFileViewAction({ id: "outline-probe", mount(ctx) { seam = ctx; ctx.onRendered(() => { paints++; }); return null; } });
+  fvMod.setFileViewIdentity((sid) => (sid === SID ? { name: "api", color: { bg: "#123456", fg: "#ffffff" } } : null));
+  return fvMod;
+}
+const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
+type Open = { fv: typeof import("./file-view"); ctx: FileViewActionCtx; wrap: El; card: El; body: El; acts: El };
+/** Serve `text` at `p` and open it with the REAL openFileView; `raw`: the stored preference says Raw for a markdown file. */
+async function open(p: string, text: string, t: TestContext, raw = false): Promise<Open> {
+  const fv = await mod();
+  disk[p] = { bytes: text, type: "text/plain; charset=utf-8", mtimeNs: MT };
+  store.delete("romp:fileviewFmt");
+  if (raw) store.set("romp:fileviewFmt", JSON.stringify({ md: "raw" }));
+  seam = null; paints = 0;
+  assert.equal(fv.openFileView(p, SID), true, "the open happened");
+  t.after(() => { fv.closeFileView(); doc.activeElement = null; });
+  await settle();
+  const wrap = doc.getElementById("romp-fileview")!;
+  assert.ok(wrap, "the viewer is up");
+  assert.ok(seam, "the probe action was mounted with the ctx");
+  return { fv, ctx: seam!, wrap, card: wrap.querySelector(".fileview")!, body: wrap.querySelector(".fileview-body")!, acts: wrap.querySelector(".fileview-acts")! };
+}
+const button = (o: Open, label: string): El | undefined => o.acts.querySelectorAll("button").find((x) => x.textContent === label);
+const outlineBtn = (o: Open): El => { const b = button(o, "Outline"); assert.ok(b, "the Outline button is in the actions row (before item 2 there was none)"); return b!; };
+const popover = (o: Open): El | null => o.card.querySelector(".fileview-outline");
+const rowsOf = (pop: El): El[] => pop.querySelectorAll(".fileview-outline-row");
+const headings = (o: Open): El[] => o.body.querySelector(".fileview-md")!.querySelectorAll("h1, h2, h3, h4, h5, h6");
+/** Click the button and hand back the popover it opened. */
+const openOutline = (o: Open): El => { outlineBtn(o).click(); const pop = popover(o); assert.ok(pop, "the popover opened under the button"); return pop!; };
+const key = (target: El, k: string): Ev => { const ev = new Ev("keydown", { key: k }); target.dispatchEvent(ev); return ev; };
+
+test("the Outline button: in the actions row right after the Rendered/Raw toggle over a markdown file's Rendered view that has a heading, with the menu's aria; hidden in Raw and back on Rendered; hidden while the editor holds the body and, since Edit took the Raw view, until Rendered is chosen again; hidden over a note with no heading; absent for a non-markdown file", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  assert.equal(headings(o).length, 42, "the stand-in rendered the forty-two headings");
+  const b = outlineBtn(o);
+  assert.equal(b.hidden, false, "shown over the Rendered view");
+  assert.equal(b.textContent, "Outline"); assert.equal(b.title, "The file's headings");
+  assert.equal(b.getAttribute("aria-haspopup"), "menu"); assert.equal(b.getAttribute("aria-expanded"), "false");
+  assert.equal(b.type, "button"); assert.ok(b.classes.includes("fileview-btn"), "a bar button like its neighbours");
+  const btns = o.acts.querySelectorAll("button").map((x) => x.textContent);
+  assert.equal(btns.indexOf("Outline"), btns.indexOf("Raw") + 1, "right after the Rendered/Raw toggle: " + btns.join(","));
+  // Raw hides it (no heading elements in the rows), Rendered shows it again
+  button(o, "Raw")!.click();
+  assert.ok(o.body.querySelector("code.hljs"), "the Raw view is up");
+  assert.equal(b.hidden, true, "hidden in Raw");
+  button(o, "Rendered")!.click();
+  assert.equal(b.hidden, false, "shown again on Rendered");
+  // the editor: hidden while it holds the body, back after Cancel
+  button(o, "Edit")!.click(); await settle();
+  assert.ok(o.body.querySelector(".fileview-cm"), "the editor holds the body");
+  assert.equal(b.hidden, true, "hidden in the editor");
+  button(o, "Cancel")!.click();
+  assert.equal(o.ctx.mode(), "raw", "Edit switched the note to its Raw view (what you edit is what Raw shows) and Cancel leaves that standing");
+  assert.equal(b.hidden, true, "…so the button stays hidden after Cancel, by the Raw rule");
+  button(o, "Rendered")!.click();
+  assert.equal(b.hidden, false, "back on Rendered");
+  o.fv.closeFileView();
+  // a note with no heading: the button exists (a markdown file) and hides
+  const plain = await open(PLAIN, PROSE, t);
+  assert.equal(outlineBtn(plain).hidden, true, "no heading, no Outline");
+  plain.fv.closeFileView();
+  // a markdown file opened under the Raw preference: hidden until the Rendered toggle
+  const raw = await open(REPORT, OUTLINE_NOTE, t, true);
+  assert.equal(outlineBtn(raw).hidden, true, "hidden under the Raw preference");
+  button(raw, "Rendered")!.click();
+  assert.equal(outlineBtn(raw).hidden, false);
+  raw.fv.closeFileView();
+  // a text file has no Rendered form and no Outline
+  const txt = await open(NOTES, "line one\nline two\n", t);
+  assert.equal(button(txt, "Outline"), undefined, "no Outline button for a .txt file");
+});
+
+test("the list: one click opens a menu-role popover in the card with one menuitem row per heading in document order, the heading's id on each, its text on one line, the depth under the shallowest heading as the row's variable, the fold's and the quote's headings included and no row for the front-matter block; the popover takes the focus with the first row current and the button says it is expanded", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  assert.ok(o.body.querySelector(".fileview-md details.md-frontmatter"), "the fixture's front matter rendered as the folded block");
+  assert.equal(popover(o), null, "no popover before the click");
+  const pop = openOutline(o);
+  assert.equal(pop.getAttribute("role"), "menu"); assert.equal(pop.tabIndex, -1, "focusable by script, not a Tab stop");
+  assert.ok(pop.parentNode === o.card, "a child of the viewer's card (positioned from the button's box; the card is its containing block)");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "true");
+  assert.ok(doc.activeElement === pop, "the popover holds the keyboard");
+  for (const k of ["top", "right", "maxWidth", "maxHeight"]) assert.match(String(pop.style[k]), /^-?\d+(\.\d+)?px$/, "the popover's " + k + " is set inline from the boxes at the open");
+  const rows = rowsOf(pop);
+  assert.equal(rows.length, 42, "one row per heading");
+  assert.deepEqual(rows.map((r) => r.dataset.id), IDS, "the heading ids in document order; the second Results is results-1");
+  assert.equal(IDS[4], "md-results"); assert.equal(IDS[8], "md-results-1"); assert.equal(IDS[9], "md-using-cacheget"); assert.equal(IDS[10], "md-ratio-x");
+  assert.deepEqual(rows.map((r) => r.textContent), WORDS, "each row is the heading's text");
+  assert.deepEqual(rows.map((r) => r.title), WORDS, "…and carries it whole as its title (the row clips at the popover's width)");
+  assert.deepEqual(rows.map((r) => r.style.getPropertyValue("--fv-ol-depth")), OUTLINE_HEADINGS.map(([d]) => String(d - 1)), "the depth under the shallowest heading (the h1), as the row's indent variable");
+  assert.ok(rows.every((r) => r.getAttribute("role") === "menuitem"));
+  assert.equal(rows[13].textContent, FOLD_HEADING, "the heading inside the closed details is listed");
+  assert.ok(headings(o)[13].closest("details") && !headings(o)[13].closest("details")!.hasAttribute("open"), "…and its fold is shut");
+  assert.equal(rows[12].textContent, QUOTED_HEADING, "the heading inside the blockquote is listed");
+  assert.equal(rows[9].textContent, CODE_HEADING.replace(/`/g, ""), "inline code reads as its text");
+  assert.equal(rows[10].textContent, MATH_HEADING.replace(/\$/g, ""), "the formula heading reads as its text (the placeholder's TeX here; KaTeX's glyphs once filled)");
+  assert.ok(!rows.some((r) => /Front matter|title:|tags:/.test(r.textContent)), "no row for the front-matter block");
+  assert.deepEqual(rows.map((r) => r.classes.includes("current")), rows.map((_, i) => i === 0), "the first row is current");
+  // a second click on the button closes it (the toggle)
+  outlineBtn(o).click();
+  assert.equal(popover(o), null, "the button toggles the popover closed");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false");
+  // a note whose shallowest heading is an h2 indents nothing for its h2s
+  o.fv.closeFileView();
+  const deep = await open(PLAIN, "## Second\n\nText.\n\n### Third\n\nMore.\n\n## Another second\n", t);
+  const rows2 = rowsOf(openOutline(deep));
+  assert.deepEqual(rows2.map((r) => r.style.getPropertyValue("--fv-ol-depth")), ["0", "1", "0"], "relative to the shallowest heading, not to h1");
+});
+
+test("the pick: a click on the 40th row closes the popover, lands the 40th heading through the fragment landing (scrollIntoView block start on that element and no other) and returns the keyboard to the body; the row for the heading inside the closed details opens the fold first; the button reads collapsed again", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const heads = headings(o);
+  const focusedBefore = o.body.focused;
+  const pop = openOutline(o);
+  rowsOf(pop)[39].click();
+  assert.equal(popover(o), null, "the popover closed on the pick");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false");
+  assert.equal(heads[39].textContent, "Detail 9.1", "the 40th heading");
+  assert.equal(heads[39].scrolled, 1, "the 40th heading was scrolled into view");
+  assert.deepEqual(heads[39].scrolledWith, { block: "start" }, "…to the top of the body, the fragment landing's own call");
+  assert.equal(heads.reduce((n, h) => n + h.scrolled, 0), 1, "and no other heading");
+  assert.ok(doc.activeElement === o.body, "the keyboard is back on the body (the popover's removal left it on the document's body; takeKeyboard took it)");
+  assert.equal(o.body.focused, focusedBefore + 1, "one focus call for the pick");
+  assert.ok(doc.getElementById("romp-fileview") === o.wrap, "the viewer stands");
+  // the fold: the heading inside the closed details, revealed before the scroll (revealFragmentTarget)
+  const details = heads[13].closest("details")!;
+  assert.equal(details.hasAttribute("open"), false, "shut before the pick");
+  rowsOf(openOutline(o))[13].click();
+  assert.equal(details.hasAttribute("open"), true, "the pick opened the fold above the heading");
+  assert.equal(heads[13].scrolled, 1); assert.deepEqual(heads[13].scrolledWith, { block: "start" });
+  assert.equal(popover(o), null);
+});
+
+test("the keyboard on the popover: ArrowDown twice then Enter picks the third heading; End and Home jump; Space picks; Escape closes the popover, stops the event before the document's handler (the viewer stays up) and gives the body the keyboard; ArrowUp above the first row and ArrowDown below the last stay put", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const heads = headings(o);
+  let pop = openOutline(o);
+  let rows = rowsOf(pop);
+  const current = () => rows.findIndex((r) => r.classes.includes("current"));
+  const down = key(pop, "ArrowDown");
+  assert.ok(down.defaultPrevented && down.stopped, "the arrow is the popover's: prevented (the chat's arrow handler yields to a prevented key) and stopped");
+  key(pop, "ArrowDown");
+  assert.equal(current(), 2, "two ArrowDowns from the first row: the third is current");
+  assert.equal(rows.filter((r) => r.classes.includes("current")).length, 1, "one current row");
+  const enter = key(pop, "Enter");
+  assert.ok(enter.defaultPrevented && enter.stopped);
+  assert.equal(popover(o), null, "Enter picked and closed");
+  assert.equal(heads[2].textContent, "Scope"); assert.equal(heads[2].scrolled, 1, "the third heading landed");
+  assert.deepEqual(heads[2].scrolledWith, { block: "start" });
+  assert.ok(doc.activeElement === o.body, "the keyboard is on the body after the pick");
+  // End, Home, the ends, Space
+  pop = openOutline(o); rows = rowsOf(pop);
+  key(pop, "ArrowUp"); assert.equal(current(), 0, "ArrowUp above the first row stays on it");
+  key(pop, "End"); assert.equal(current(), 41, "End: the last row");
+  key(pop, "ArrowDown"); assert.equal(current(), 41, "ArrowDown below the last row stays on it");
+  key(pop, "Home"); assert.equal(current(), 0, "Home: the first row");
+  key(pop, "ArrowDown"); key(pop, " ");
+  assert.equal(popover(o), null, "Space picked");
+  assert.equal(heads[1].scrolled, 1, "the second heading landed");
+  // Escape: the popover's, never the viewer's
+  pop = openOutline(o);
+  assert.ok(doc.activeElement === pop);
+  const esc = key(pop, "Escape");
+  assert.ok(esc.defaultPrevented && esc.stopped, "Escape is taken and stopped on the popover, so the document's onKey never sees it");
+  assert.equal(popover(o), null, "the popover closed");
+  assert.ok(doc.getElementById("romp-fileview") === o.wrap, "…and the viewer is still up");
+  assert.ok(doc.activeElement === o.body, "the keyboard went to the body");
+  // a key the popover does not take passes through untouched
+  pop = openOutline(o);
+  const other = key(pop, "x");
+  assert.ok(!other.defaultPrevented && !other.stopped, "a letter is not the popover's");
+  assert.ok(popover(o) === pop, "…and leaves it open");
+});
+
+test("closers: a press outside the popover closes it and a press on the button does not (the button's click is the toggle); every paint of the body closes it (a reload keeps the button, the Raw toggle hides it); the viewer's close drops its document listener; the popover is built afresh per open", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const downs = () => doc.listeners.filter((l) => l.type === "pointerdown" && l.capture).length;
+  assert.equal(downs(), 0, "no outside-press listener before the popover opens");
+  let pop = openOutline(o);
+  assert.equal(downs(), 1, "one capture-phase pointerdown listener on the document while it is open");
+  o.body.dispatchEvent(new Ev("pointerdown"));
+  assert.equal(popover(o), null, "a press on the body (outside) closed it");
+  assert.equal(downs(), 0, "…and dropped the listener");
+  pop = openOutline(o);
+  outlineBtn(o).dispatchEvent(new Ev("pointerdown"));
+  assert.ok(popover(o) === pop, "a press on the button is not outside: the popover stays for the button's click to toggle it");
+  pop.querySelector(".fileview-outline-row")!.dispatchEvent(new Ev("pointerdown"));
+  assert.ok(popover(o) === pop, "a press inside the popover keeps it");
+  // a paint: the reload's landing closes the popover (its rows were read off the DOM the paint replaced) and keeps the button
+  const painted = paints;
+  o.ctx.reload(); await settle();
+  assert.equal(paints, painted + 1, "the reload painted");
+  assert.equal(popover(o), null, "the paint closed the popover");
+  assert.equal(outlineBtn(o).hidden, false, "the button stands over the Rendered paint");
+  assert.equal(downs(), 0);
+  // the view switch: closes it and hides the button
+  pop = openOutline(o);
+  button(o, "Raw")!.click();
+  assert.equal(popover(o), null, "Raw closed the popover");
+  assert.equal(outlineBtn(o).hidden, true, "…and hid the button");
+  button(o, "Rendered")!.click();
+  const again = openOutline(o);
+  assert.ok(again !== pop, "a fresh popover per open (nothing kept)");
+  assert.equal(rowsOf(again).length, 42);
+  // the viewer's close with the popover open: the card goes, and the listener with it (closeHooks)
+  o.fv.closeFileView();
+  assert.equal(doc.getElementById("romp-fileview"), null, "closed");
+  assert.equal(downs(), 0, "the close dropped the popover's document listener");
+  assert.equal(again.parentNode, null, "the popover left with the card");
+});
+
+test("file-view.ts and the two sheets: the button's label is the exported OUTLINE_LABEL with the menu's aria; the popover is built at the open (not at a paint) and read off the Rendered DOM through one query; every paint closes it and the text paint syncs the button; the pick closes, lands through scrollToFragment and takes the keyboard, in that order; Escape is taken and stopped; both exits run closeOutline; the sheets carry the popover's rules in the menu tokens, byte-equal, with no dark literal", () => {
+  assert.match(VIEW, /export const OUTLINE_LABEL = "Outline";/);
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /outlineBtn\.type = "button"; outlineBtn\.textContent = OUTLINE_LABEL; outlineBtn\.title = "The file's headings";\n\s*outlineBtn\.setAttribute\("aria-haspopup", "menu"\); outlineBtn\.setAttribute\("aria-expanded", "false"\);/);
+  assert.match(openFn, /if \(isMd\) acts\.appendChild\(outlineBtn\);/, "a markdown file's button, like the toggles");
+  assert.match(openFn, /const headingsOf = \(\): HTMLElement\[\] => \{\n\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*return md \? Array\.from\(md\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\] : \[\];/, "the one query, over the rendered box");
+  assert.match(openFn, /const syncOutline = \(\): void => \{ outlineBtn\.hidden = editing \|\| ctx\.mode\(\) !== "rendered" \|\| headingsOf\(\)\.length === 0; \};/);
+  assert.match(openFn, /const openOutline = \(\): void => \{\n\s*const heads = headingsOf\(\);/, "the list is read when the popover opens");
+  assert.match(openFn, /const pick = \(i: number\): void => \{\n\s*const id = rows\[i\] \? rows\[i\]\.dataset\.id : undefined;\n\s*closeOutline\(\);\n\s*if \(id\) scrollToFragment\(body, id\);\n\s*takeKeyboard\(\);\n\s*\};/, "close, land, keyboard");
+  assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutline\(\); takeKeyboard\(\); \}/);
+  assert.match(openFn, /const take = \(\): void => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \};/, "a key the popover takes never reaches the document's onKey or the chat's window handlers");
+  assert.match(openFn, /document\.addEventListener\("pointerdown", onDown, true\);\n\s*window\.addEventListener\("resize", closeOutline\);/);
+  assert.match(openFn, /pop\.focus\(\{ preventScroll: true \}\);\n\s*\};/, "the popover takes the focus at the open, without moving the body");
+  assert.match(openFn, /outlineBtn\.addEventListener\("click", \(\) => \{ flash\(outlineBtn\); if \(outline\) closeOutline\(\); else openOutline\(\); \}\);/, "the press pulse, then the toggle");
+  assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n\s*outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover and hides the button until the paint decides");
+  assert.match(openFn, /landRemembered\(\);[^\n]*\n\s*\}\);\n\s*syncOutline\(\);/, "…and the text paint decides it");
+  assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
+  assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
+  // the sheets: the rules in the tokens, the same bytes in both, and no dark literal outside a var() fallback (menu-theme-tokens.test.ts's rule)
+  const block = (css: string): string => { const a = css.indexOf("\n.fileview-outline {"), b = css.indexOf('.fileview-btn[aria-expanded="true"] {', a); return css.slice(a, css.indexOf("}", b) + 1); };
+  const chat = block(CHAT), feed = block(FEED);
+  assert.ok(chat.length > 200, "the Outline's rules are in styles.css");
+  assert.equal(chat, feed, "…and byte-equal in feed.css");
+  for (const tok of ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover", "--radius-menu", "--shadow-menu"]) assert.ok(chat.includes("var(" + tok + ")"), "the popover reads " + tok);
+  assert.match(chat, /\.fileview-outline \{ position: absolute;/, "positioned inside the card (its containing block through the card's layout containment)");
+  assert.match(chat, /font-size: 12px;/, "the menu's size (ui/CLAUDE.md)");
+  assert.match(chat, /\.fileview-outline-row \{ padding: 4px 10px 4px calc\(10px \+ var\(--fv-ol-depth, 0\) \* 1\.1em\);/, "the depth indent from the row's variable");
+  assert.match(chat, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/, "one line per row");
+  assert.match(chat, /\.fileview-outline-row:hover, \.fileview-outline-row\.current \{ background: var\(--menu-hover\); \}/);
+  assert.match(chat, /\.fileview-btn\[aria-expanded="true"\] \{ color: var\(--accent\); border-color: var\(--accent\); background: var\(--accent-wash\); \}/, "the open state wears the pressed toggle's dress");
+  const bare = chat.replace(/var\((--[\w-]+)\s*,\s*(?:[^()]|\([^()]*\))*\)/g, "var($1)");
+  for (const re of [/#[0-9a-fA-F]{3,8}\b/, /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/i, /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.35\s*\)/]) assert.doesNotMatch(bare, re, "no literal colour in the popover's rules: the tokens carry the theme");
+});
+
+// ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
+test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes; the md box mints the heading ids the sanitizer's pass would", () => {
+  const body = new El("div"); body.className = "fileview-body";
+  const md = body.appendChild(new El("div")); md.className = "fileview-md";
+  md.textContent = "# A\n\n## B\n\n## B\n";
+  const heads = md.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  assert.deepEqual(heads.map((h) => h.id), ["md-a", "md-b", "md-b-1"], "md- plus the slug, unique in order");
+  for (const n of [body, md, heads[0], heads[0].childNodes[0]] as Array<El | Txt>) {
+    for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
+    const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });
+    assert.ok(!dump.includes("parentNode") && !dump.includes("childNodes"), "the dump holds no edge: " + dump);
+  }
+  assert.ok(heads[0].parentNode === md && md.childNodes[0] === heads[0], "the tree is reachable as before");
+  assertHiddenEvent(new Ev("click"), body, heads[0]);
+  const r = new El("div"); r.style.setProperty("--fv-ol-depth", "2");
+  assert.equal(r.style.getPropertyValue("--fv-ol-depth"), "2", "the style stand-in keeps a set property");
+});

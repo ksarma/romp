@@ -26,6 +26,7 @@
 // variable redirects the tree: one did, and a value left in a shell would have run these legs over another tree than the
 // rest of the suite with nothing in the output saying so (file-view-leg-tree.test.ts pins this). Synthetic values only:
 // an invented report, /repo/notes-api paths, the placeholder sid.
+import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
@@ -195,6 +196,40 @@ export async function closePanel(page: any): Promise<void> {
   await page.click(".fileview-fc button");
   await page.waitForFunction(() => !document.querySelector(".fileview-aside"), null, { timeout: 5000 });
   await frames(page, 3);
+}
+
+/** The chat page's own window keydown handlers, lifted from render.ts's source, for a leg that puts the viewer under them in the
+ *  chat modal (file-view-focus-body-browser.test.ts, file-view-outline-browser.test.ts; Slice 6 of plans/markdown-viewer.md): the single-key shortcuts (the arrows, Enter)
+ *  and the type-to-compose default, with a prelude standing in for the chat state they read. Every name the lift uses that
+ *  render.ts imports or declares at its top level must be one the prelude declares or the lift itself declares, as
+ *  file-view-links-browser.test.ts checks its lift, so a render.ts change surfaces here and not as a silent ReferenceError. */
+export function chatKeysScript(): string {
+  const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
+  const a0 = RENDER.indexOf("\nconst NAV_SCROLL_STEP = 60;\n") + 1;
+  const a1 = RENDER.indexOf('\n// The gates the two "from anywhere" defaults share', a0);
+  const b0 = RENDER.indexOf("\nfunction typeFromAnywhereTarget(e: Event): HTMLTextAreaElement | null {", a1) + 1;
+  const b1 = RENDER.indexOf("\n// SELECT → PASTE", b0);
+  assert.ok(a0 > 0 && a1 > a0 && b0 > a1 && b1 > b0, "render.ts's shortcuts handler and its type-to-compose handler (the anchors moved; re-anchor)");
+  const lifted = RENDER.slice(a0, a1) + "\n" + RENDER.slice(b0, b1) + "\n";
+  const prelude = [
+    "let activeId: string | null = null;", "const order: string[] = [];", "const visibleOrder = (): string[] => order;", "const collapsedTabIds = new Set<string>();",
+    "const neighborOfFolded = (): string | null => null;", "const lastStripItems: unknown[] = [];", "const setActive = (_id: string): void => {};",
+    "const scrollContentBy = (content: HTMLElement, dy: number, _writer: string): void => { content.scrollTop += dy; (window as any).__contentScrolls++; };",
+    "const transcriptSelection = (): null => null;", "const seedTranscriptQuote = (): void => {};",
+    "const focusComposer = (): void => { (document.getElementById(\"composer-input\") as HTMLTextAreaElement).focus(); };",
+    "const composerNoteHolds = (): boolean => false;", "const focusComposerOrAsk = (): boolean => { focusComposer(); return true; };",
+    "const liveAsks = new Map<string, unknown>();", "const ctxMenuEl: HTMLElement | null = null;", "(window as any).__contentScrolls = 0;",
+  ].join("\n") + "\n";
+  const code = lifted.replace(/\/\*[\s\S]*?\*\/|\/\/.*$|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/gm, (m) => (m[0] === "/" ? "" : '""'));
+  const locals = new Set(Array.from(code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/g), (m) => m[1]));
+  const named = new Set<string>();
+  const addNamed = (list: string) => { for (const part of list.split(",")) { const name = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim(); if (name) named.add(name); } };
+  for (const m of RENDER.matchAll(/^import (?!type\b)(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\* as ([A-Za-z_$][\w$]*)|\{([^}]*)\})?\s*from "[^"]+";/gm)) { if (m[1]) named.add(m[1]); if (m[2]) named.add(m[2]); if (m[3]) addNamed(m[3]); }
+  for (const m of RENDER.matchAll(/^(?:export )?(?:const|let|var|(?:async )?function\*?|class) ([A-Za-z_$][\w$]*)/gm)) named.add(m[1]);
+  const declared = new Set(Array.from(prelude.matchAll(/^(?:const|let) ([A-Za-z_$][\w$]*)/gm), (m) => m[1]));
+  const free = Array.from(named).filter((n) => !locals.has(n) && !declared.has(n) && new RegExp("(?<![.\\w$])" + n.replace(/\$/g, "\\$") + "\\b").test(code));
+  assert.deepEqual(free, [], "render.ts's key handlers name these and the prelude defines none of them: define each in chatKeysScript's prelude, or the lifted handler throws where a key reaches it");
+  return requireCjs("esbuild").transformSync(prelude + lifted, { loader: "ts", target: "es2020" }).code;
 }
 
 /** Wait until the seam has painted `n` times in all. */

@@ -53,7 +53,7 @@ test("the anchor delegate routes a same-origin .md href to the viewer BEFORE the
   const vsArm = HANDLER.slice(HANDLER.indexOf("} else if (vscodeApi) {"));
   assert.doesNotMatch(vsArm, /openUrlView/, "the webview cannot reach the kernel origin — no viewer there");
   // the helpers arrive on their own import lines (the openFileView import is pinned verbatim elsewhere)
-  assert.match(RENDER, /import \{ openFileClick \} from "\.\/file-view";/);   // the chat opens files through the gesture reader (pdf-new-tab.test.ts)
+  assert.match(RENDER, /import \{ openFileClick, type At \} from "\.\/file-view";/);   // the chat opens files through the gesture reader (pdf-new-tab.test.ts); At is the target a link names (Slice 6, item 4)
   assert.match(RENDER, /import \{ openUrlView \} from "\.\/file-view";/);
   assert.match(RENDER, /import \{ isMarkdownUrl \} from "\.\/md-links";/);
 });

@@ -1605,6 +1605,25 @@ a.fileview-gh-note { border-style: dashed; }
   background: var(--accent-wash); font-weight: 600; }
 .fileview-btn.on:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
+/* The Outline's dropdown (file-view.ts openOutline; Slice 6 of plans/markdown-viewer.md, item 2): a rendered note's headings
+   under the Outline button, in the menu vocabulary (ui/CLAUDE.md: the --menu-* tokens and the menu's 12px, .ctx-menu the
+   reference; a hex never sits here). A child of the card positioned absolutely: .fileview's container-type gives the card
+   layout containment, which makes it the containing block of this box, so the top and right file-view.ts sets from the
+   button's box are card offsets and the card's overflow: hidden clips it; the width and height caps (the card's width and
+   the body's height, each less a margin) are set inline at the open too. Rows are one line each, an ellipsis at the box's
+   width, indented by their depth under the note's shallowest heading (--fv-ol-depth, set per row); the current row (the
+   keyboard's) and the hovered one wear the one menu wash; the popover holds the focus and shows no ring of its own, the
+   current row being the cue. The button wears the pressed toggle's dress while the popover is up (aria-expanded). Mirrored
+   in styles.css; fileview-parity.test.ts holds every head byte-equal. */
+.fileview-outline { position: absolute; z-index: 5; box-sizing: border-box; min-width: 12em; overflow: auto; padding: 4px;
+  background: var(--menu-bg); color: var(--menu-fg); border: 1px solid var(--menu-border); border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-menu); font-size: 12px; line-height: 1.4; }
+.fileview-outline:focus { outline: none; }
+.fileview-outline-row { padding: 4px 10px 4px calc(10px + var(--fv-ol-depth, 0) * 1.1em); border-radius: 4px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fileview-outline-row:hover, .fileview-outline-row.current { background: var(--menu-hover); }
+.fileview-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
+
 /* Wrap mode (the Wrap toggle, persisted per browser): long lines soft-wrap instead of scrolling
    sideways. The flat sibling gutter cannot survive that — one logical line becomes several visual lines
    and every number below it drifts — so wrap mode restructures: each logical line is a flex row (.fv-cl)

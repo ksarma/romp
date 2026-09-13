@@ -24,16 +24,16 @@ const FEED_CSS = web("feed.css");
 const CHAT_CSS = web("styles.css");
 
 test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
-  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void/);   // ev: the click, for a PDF's modified-click tab
+  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void/);   // ev: the click, for a PDF's modified-click tab; at: the target a todo link named (Slice 6 of plans/markdown-viewer.md, item 4)
   // web → the gesture reader, on every route (a plain click is openFileView here, or the relay below when the
   // route names a pane; a modified click on a PDF is the tab either way, pdf-new-tab.test.ts)
-  assert.match(RENDER, /openFileClick\(ev, path, to, relay\);/);
+  assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/);
   // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
   // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
   // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
-  assert.match(RENDER, /import \{ openFileClick \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
-  // VS Code keeps the host editor
-  assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
+  assert.match(RENDER, /import \{ openFileClick, type At \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
+  // VS Code keeps the host editor, whose arm reads a line target; a heading or an offset posts nothing extra
+  assert.match(RENDER, /const m: Record<string, unknown> = sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \};\n\s*if \(at && "line" in at\) m\.line = at\.line;\n\s*vscodeApi\.postMessage\(m\);/);
 });
 
 // executed: openPath's web-side branch (the user 2026-08-20). The DEFAULT is upstream's design — the
@@ -70,7 +70,7 @@ test("fileLinkRoute: an open Files pane takes the click; otherwise the preferenc
   // "here" becomes the plain click's opener (openFileClick's fourth argument, so the PDF gesture is read first),
   // which posts up a message naming its target pane and carrying the session's identity for the Files pane's chip
   assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);/);
-  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay\);/);
+  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null, a: At \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null, at: a \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay, at\);/);   // the relay carries the target too (Slice 6, item 4)
 });
 
 // The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
@@ -95,7 +95,7 @@ test("the chat caches the shell's pane set from its romp:panes broadcast, and op
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
-  for (const call of [/openPath\(path, null, e\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/,
+  for (const call of [/openPath\(path, null, e\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/,
                       /openPath\(p, id \|\| null, e\);/]) assert.match(RENDER, call);   // each with its click (a PDF's modified-click tab)
   // the ONLY openFile postMessage left in render.ts is openPath's own fallback branch
   assert.equal((RENDER.match(/type: "openFile"/g) || []).length, 2,
@@ -109,7 +109,7 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   // gate is chat-side — see the fileLinkRoute test), and the shell forwards unconditionally, the
   // browseFiles contract, into the feed iframe where initFileView's viewFile branch opens the viewer
   assert.match(KERNEL, /if\(m\.romp==='viewFile'\)\{var vf=document\.getElementById\('f-feed'\);/);
-  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid\},'\*'\)/);
+  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid,at:m\.at\|\|null\},'\*'\)/);   // …and the target rides through (Slice 6, item 4)
   // ARM ON ACK (review 2026-08-20): postMessage up the relay is fire-and-forget, so the shell only
   // STASHES the was-off bit at relay time and COMMITS the restore flag when the feed acks the real
   // open — a viewFile lost to a mid-reload feed iframe leaves no armed flag behind for a later
