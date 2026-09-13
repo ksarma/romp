@@ -17,7 +17,7 @@
 // paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, openPanel, frames, paintsReach, topBlock, LONG2, rewritten, REPORT, MT, MT2 } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, pageHtml, frames, paintsReach, topBlock, LONG, LONG2, rewritten, ORIGIN, REPORT, SID, MT, MT2 } from "./real-viewer-leg";
 
 const MT3 = "1757145600000000012";
 const near = (a: number, b: number, what: string, tol = 1.5) => assert.ok(Math.abs(a - b) <= tol, `${what}: ${a} vs ${b}`);
@@ -204,6 +204,129 @@ test("in a browser, the real module: a window focus runs one HEAD and the same m
       assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT3, cell + ": the panel's poll reloaded the file and that landing cleared the bar");
       const kept = (await topBlock(page))!;
       assert.equal(kept.text, after.text, cell + ": the top block kept through the poll's reload as well");
+      assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+// ── the review's round 1: the keyboard around the changed-on-disk bar and the editor's exit ──────────────────────────────
+const MT4 = "1757145600000000025";
+const activeName = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? a.tagName + "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "none"; });
+/** Press PageDown and wait for the body's scrollTop to pass `from`; false when it never does (Chromium may animate the scroll). */
+const pageDownMoves = (page: any, from: number): Promise<boolean> => page.keyboard.press("PageDown").then(() => page.waitForFunction((v: number) => (document.querySelector(".fileview-body") as HTMLElement).scrollTop > v, from, { timeout: 3000 }).then(() => true, () => false));
+const scrollTopOf = (page: any): Promise<number> => page.evaluate(() => (document.querySelector(".fileview-body") as HTMLElement).scrollTop);
+/** Move the file on disk and dispatch the window focus that runs the HEAD; wait for the bar. */
+async function raiseBar(page: any, text: string, mtime: string): Promise<void> {
+  await page.evaluate(([p, t, m]: [string, string, string]) => { const w = window as any; w.__docs[p] = t; w.__mtime = m; window.dispatchEvent(new Event("focus")); }, [REPORT, text, mtime]);
+  await page.waitForFunction(() => !!document.querySelector("#fileview-save-err button"), null, { timeout: 5000 });
+  await frames(page, 1);
+}
+const BODY_EL = "DIV.fileview-body";
+
+test("in a browser, the real module (review round 1): the Reload's click disables the button and the browser drops the focus off it at once, so the landing hands the keyboard to the body from the holder read AT THE CLICK, and PageDown scrolls (before: read at the landing, the hand-over never fired, and PageDown after every Reload scrolled nothing); Enter on the focused button the same; a failed Reload puts the keyboard back on the re-armed button; pane at 700 px and the chat modal", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "chat"] as const) {
+      const cell = mode + " 700px";
+      const { page, errors } = await openViewer(browser, mode, 700, 600);
+      // Chromium's rule, read on this page: a focused button that is disabled loses the focus synchronously
+      const rule = await page.evaluate(() => { const b = document.createElement("button"); b.textContent = "t"; document.body.appendChild(b); b.focus(); const before = document.activeElement === b; b.disabled = true; const after = document.activeElement === b; b.remove(); return { before, after }; });
+      assert.deepEqual(rule, { before: true, after: false }, cell + ": the browser drops the focus off a control the moment it is disabled");
+      // a mouse click on Reload: the landing hands the keyboard to the body
+      await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 300; });
+      await raiseBar(page, LONG2, MT2);
+      let paints: number = await page.evaluate(() => (window as any).__paints);
+      await page.locator("#fileview-save-err button", { hasText: /^Reload$/ }).click();
+      await paintsReach(page, paints + 1); await frames(page, 3);
+      assert.equal(await page.evaluate(() => !!document.getElementById("fileview-save-err")), false, cell + ": the landing took the bar");
+      assert.equal(await activeName(page), BODY_EL, cell + ": the body holds the keyboard after the Reload's landing (before the fix: the document's body)");
+      let from = await scrollTopOf(page);
+      assert.equal(await pageDownMoves(page, from), true, cell + ": PageDown scrolls the note after the Reload");
+      // the keyboard path: the button focused (a Tab's outcome), Enter
+      await raiseBar(page, rewritten(60, true), MT3);
+      await page.evaluate(() => { (document.querySelector("#fileview-save-err button") as HTMLElement).focus(); });
+      assert.equal(await activeName(page), "BUTTON.fileview-btn.fileview-err-dl", cell + ": the button holds the keyboard before Enter");
+      paints = await page.evaluate(() => (window as any).__paints);
+      await page.keyboard.press("Enter");
+      await paintsReach(page, paints + 1); await frames(page, 3);
+      assert.equal(await activeName(page), BODY_EL, cell + ": the body holds the keyboard after Enter's Reload");
+      from = await scrollTopOf(page);
+      assert.equal(await pageDownMoves(page, from), true, cell + ": PageDown scrolls the note after Enter's Reload");
+      // a failed Reload: the file is gone by the time the GET runs; the button is re-armed and holds the keyboard again
+      await raiseBar(page, rewritten(61, true), MT4);
+      await page.evaluate((p: string) => { delete (window as any).__docs[p]; }, REPORT);
+      await page.locator("#fileview-save-err button", { hasText: /^Reload$/ }).click();
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fileview-err"), null, { timeout: 5000 });
+      await frames(page, 2);
+      const failed = await page.evaluate(() => { const b = document.querySelector("#fileview-save-err button") as HTMLButtonElement | null; return { bar: !!b, disabled: b ? b.disabled : null, text: b ? b.textContent : null, active: document.activeElement === b }; });
+      assert.deepEqual(failed, { bar: true, disabled: false, text: "Reload", active: true }, cell + ": the bar stands with its button re-armed and holding the keyboard (before the fix: the document's body held it)");
+      assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the real module (review round 1): with the changed-on-disk bar up, Edit takes it with the other notices and Cancel brings it back at once with no HEAD (before: the old text came back with no line above it until the next focus), and the exit's repaint hands the keyboard to the body so PageDown scrolls; pane at 700 px", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 700, 600);
+    await raiseBar(page, LONG2, MT2);
+    const heads0: number = await page.evaluate(() => (window as any).__heads);
+    await page.locator("#romp-fileview .fileview-btn", { hasText: /^Edit$/ }).click();
+    await page.waitForFunction(() => !!document.querySelector(".fileview-editor, .fileview-cm"), null, { timeout: 5000 });
+    await frames(page, 2);
+    const inEdit: Disk = await page.evaluate(readDisk);
+    assert.notEqual(inEdit.text, "Changed on disk.", "the editor's entry took the bar (its own notice, or none, stands)");
+    await page.locator("#romp-fileview .fileview-btn", { hasText: /^Cancel$/ }).click();
+    await page.waitForFunction(() => !document.querySelector(".fileview-editor, .fileview-cm") && !!document.querySelector(".fileview-body .fv-cl, .fileview-md > p"), null, { timeout: 5000 });
+    await frames(page, 3);
+    const back: Disk = await page.evaluate(readDisk);
+    assert.equal(back.text, "Changed on disk.", "Cancel brings the bar back at once: the text that shows is still the file it was raised under");
+    assert.equal(back.button, "Reload", "…with its Reload"); assert.equal(back.disabled, false, "…armed");
+    assert.equal(back.bars, 1, "one bar in the card");
+    assert.equal(back.heads, heads0, "…and no HEAD was sent for it (nothing new is known; the next focus asks)");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT, "the view still shows the file the reader had");
+    assert.equal(await activeName(page), BODY_EL, "the exit's repaint gave the body the keyboard (before: the document's body, and PageDown scrolled nothing until a click)");
+    assert.equal(await pageDownMoves(page, await scrollTopOf(page)), true, "PageDown scrolls the note after Cancel");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+test("in a browser, the real module (review round 1): a relayed open into a Files iframe that did not hold the page's focus sends the open's GET and no HEAD (before: the landing's body.focus() moved the focus into the frame, its window fired `focus`, and the probe answered with a HEAD of the file it had just fetched); the probe is live for the next focus; a same-frame open sends one GET as before", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // a shell stand-in: a chat iframe holding a composer, and the Files pane's page (real-viewer-leg's, body.fileview-pane) beside it
+    const chat = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input"></textarea><p>chat pane stand-in</p></body></html>';
+    const top = `<!DOCTYPE html><html><body style="margin:0"><div id="shell" style="height:20px">shell stand-in</div><iframe id="a" src="${ORIGIN}/a" style="width:300px;height:560px"></iframe><iframe id="b" src="${ORIGIN}/b" style="width:660px;height:560px"></iframe></body></html>`;
+    const files = pageHtml("pane", { [REPORT]: LONG }, MT);
+    for (const holder of ["chat", "files"] as const) {
+      const cell = holder === "chat" ? "the chat iframe holds the focus (a relay open)" : "the Files iframe holds the focus (a same-frame open)";
+      const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+        const path = new URL(route.request().url()).pathname;
+        return route.fulfill({ status: 200, contentType: "text/html", body: path === "/a" ? chat : path === "/b" ? files : top });
+      });
+      await page.goto(ORIGIN + "/");
+      const fa = page.frames().find((f: any) => f.url() === ORIGIN + "/a"), fb = page.frames().find((f: any) => f.url() === ORIGIN + "/b");
+      assert.ok(fa && fb, cell + ": both iframes loaded");
+      await fb.waitForFunction(() => typeof (window as any).FV !== "undefined", null, { timeout: 10000 });
+      if (holder === "chat") await fa.click("#composer-input"); else await fb.click("body", { position: { x: 5, y: 5 } });
+      const before = await fb.evaluate(() => ({ hasFocus: document.hasFocus(), heads: (window as any).__heads }));
+      assert.equal(before.hasFocus, holder === "files", cell + ": the Files document " + (holder === "files" ? "holds" : "does not hold") + " the focus before the open");
+      assert.equal(before.heads, 0, cell + ": no HEAD before the open");
+      await fb.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+      await fb.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+      await frames(fb, 3);
+      const after = await fb.evaluate(() => ({ heads: (window as any).__heads, active: (document.activeElement as HTMLElement).className, hasFocus: document.hasFocus(), bar: !!document.getElementById("fileview-save-err") }));
+      assert.equal(after.active, "fileview-body", cell + ": the open's landing gave the body the keyboard");
+      assert.equal(after.hasFocus, true, cell + ": …so the Files document holds the page's focus after the open");
+      assert.equal(after.heads, 0, cell + ": the open sent no HEAD (before the fix a cross-frame open cost GET then HEAD: the window focus the viewer's own focus call fired read as the reader's return)");
+      assert.equal(after.bar, false, cell + ": no bar");
+      // the probe is live: the reader's return (a window focus) asks once
+      await fb.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+      await fb.waitForFunction(() => (window as any).__heads > 0, null, { timeout: 5000 });
+      assert.equal(await fb.evaluate(() => (window as any).__heads), 1, cell + ": one HEAD for the focus event");
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }

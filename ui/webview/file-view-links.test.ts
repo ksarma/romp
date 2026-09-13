@@ -862,7 +862,7 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
   assert.match(FILES, /openFile: \(p, sid, at\) => openHere\(p, sid, null, null, at\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section (the open's `at`, Slice 6 of plans/markdown-viewer.md)");
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, at: At \| null = null/);
-  assert.match(FILES, /if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, at/);   // B1 adds the Recent row's `place` beside it
+  assert.match(FILES, /if \(sid && identity\) identities\.set\(sid, identity\);\n\s*const place = recent\.find\([^\n]*\n\s*if \(!openFileView\(path, sid, \{ todoId, at/);   // B1 adds the Recent row's `place` beside it
   // the panel's change mark cancels the anchor's activation as its comment mark does; the keyboard route lands on the same handlers
   assert.match(FC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
   assert.match(FC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\);/);

@@ -1122,13 +1122,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const md = body.querySelector(".fileview-md");
     return md ? Array.from(md.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[] : [];
   };
-  const closeOutline = (): void => {
+  // The popover takes the focus at its open, so a closer that removes it while it holds the keyboard would leave the keyboard
+  // on the document's body by the browser's fixup, where PageDown, Space and the arrows scroll nothing until a click and the
+  // chat's bare-area Enter reaches the composer behind the modal (the review's round 1: the window resize closer, a zoom; the
+  // paint closer, the Comments panel's poll reloading the file). So the removal hands the keyboard to the body when the
+  // popover held it, or when the Outline button did (the toggle's second click focused the button, and the popover's own
+  // focusout stood aside for it), through takeKeyboard's gate as the pick and Escape do; a keyboard held anywhere else is
+  // left where the reader put it. `handOver` false: the focusout closer, after the keyboard has moved to another element (a
+  // Tab out, a press in the aside): that element keeps it.
+  const closeOutlineKeeping = (handOver: boolean): void => {
     if (!outline) return;
     const pop = outline; outline = null;
     if (dropOutline) { const f = dropOutline; dropOutline = null; f(); }
+    const a = document.activeElement;
+    const held = handOver && a !== null && (pop.contains(a) || a === outlineBtn);
     pop.remove();
     outlineBtn.setAttribute("aria-expanded", "false");
+    if (held) takeKeyboard();
   };
+  const closeOutline = (): void => closeOutlineKeeping(true);
   const syncOutline = (): void => { outlineBtn.hidden = editing || ctx.mode() !== "rendered" || headingsOf().length === 0; };
   const openOutline = (): void => {
     const heads = headingsOf();
@@ -1140,8 +1152,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       const r = el("div", "fileview-outline-row");
       r.setAttribute("role", "menuitem"); r.dataset.id = h.id;
       r.style.setProperty("--fv-ol-depth", String(Number(h.tagName[1]) - shallowest));
-      const words = (h.textContent || "").replace(/\u200b/g, "").replace(/\s+/g, " ").trim();   // KaTeX's strut is a U+200B
-      r.textContent = words; r.title = words;
+      let words = (h.textContent || "").replace(/\u200b/g, "").replace(/\s+/g, " ").trim();   // KaTeX's strut is a U+200B
+      // a heading whose only content is a picture (`## ![Figure one](figs/a.png)`) has no text: its row reads the pictures' alt
+      // text (the review's round 1: the row was an 8 px padding-only strip with an empty title); with no alt either, one
+      // non-breaking space keeps the row's height so the list's rhythm shows a heading is there
+      if (!words) words = Array.from(h.querySelectorAll("img")).map((i) => (i.getAttribute("alt") || "").replace(/\s+/g, " ").trim()).filter(Boolean).join(" ");
+      r.textContent = words || "\u00a0"; r.title = words;
       pop.appendChild(r);
       return r;
     });
@@ -1176,7 +1192,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     pop.addEventListener("focusout", (e: FocusEvent) => {
       const to = e.relatedTarget as Node | null;
       if (to && (pop.contains(to) || outlineBtn.contains(to))) return;
-      closeOutline();
+      closeOutlineKeeping(to === null);   // the keyboard went to another element: it stays there; to nothing (the window lost the focus): the body holds it for the return
     });
     const onDown = (e: Event): void => {
       const t = e.target as Node | null;
@@ -1186,16 +1202,30 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     document.addEventListener("pointerdown", onDown, true);
     window.addEventListener("resize", closeOutline);
     dropOutline = () => { document.removeEventListener("pointerdown", onDown, true); window.removeEventListener("resize", closeOutline); };
-    // under the button, inside the card: the card is the containing block (its container-type gives it layout containment;
-    // the sheet's rule says so), so the offsets are from its padding edge; the caps are the body's height and the card's
-    // width, each less a margin, and never past the card's bottom
-    const br = outlineBtn.getBoundingClientRect(), cr = box.getBoundingClientRect(), bd = body.getBoundingClientRect();
-    const top = br.bottom - cr.top - (box.clientTop || 0) + 4;
-    pop.style.top = top + "px";
-    pop.style.right = Math.max(0, cr.right - (box.clientLeft || 0) - br.right) + "px";
-    pop.style.maxWidth = Math.max(0, cr.width - 16) + "px";
-    pop.style.maxHeight = Math.max(0, Math.min(bd.height - 16, cr.height - top - 8)) + "px";
+    // Under the button, inside the card. The offsets are from the padding edge of the box's CONTAINING BLOCK, read after the
+    // append as its offsetParent: the viewer's fixed overlay (#romp-fileview), since the card's `container-type` gives it no
+    // layout containment in Chromium (the build placed the box from the card's edges, and in the chat and feed modals, where
+    // the card is inset from the overlay, the popover sat 18 px too high over the button's lower half and 25 px left of its
+    // anchor; the review's round 1). The caps are the body's height and the card's width, each less a margin, and never
+    // past the card's bottom.
     box.appendChild(pop);
+    const br = outlineBtn.getBoundingClientRect(), cr = box.getBoundingClientRect(), bd = body.getBoundingClientRect();
+    const cb = (pop.offsetParent as HTMLElement | null) || box, pb = cb.getBoundingClientRect();
+    const ox = pb.left + (cb.clientLeft || 0), oy = pb.top + (cb.clientTop || 0);
+    pop.style.top = (br.bottom + 4 - oy) + "px";
+    pop.style.right = Math.max(0, pb.right - (cb.clientLeft || 0) - br.right) + "px";
+    pop.style.maxWidth = Math.max(0, cr.width - 16) + "px";
+    pop.style.maxHeight = Math.max(0, Math.min(bd.height - 16, cr.bottom - br.bottom - 12)) + "px";
+    // Anchored by its right edge with `left` auto, the box shrinks to fit its rows, and the rows are one line each
+    // (nowrap), so its width is the longest heading's, capped by maxWidth alone: when that is wider than the room between
+    // the card's left padding edge and the button's right edge (a 45-character heading at a 900 px pane, 33 at 380 px)
+    // the browser solves `left` negative and the card's overflow clips the START of every row, the short ones to blank
+    // strips (the review's round 1). Read after the placement (one more layout, per open of the popover): a box that
+    // starts left of the card's margin is anchored at the margin instead, its width still capped at the card's less 16 px,
+    // so every row starts inside the card and a heading wider than the card takes the rows' ellipsis. A box with no layout
+    // (a stand-in) is left as placed.
+    const pr = pop.getBoundingClientRect(), margin = cr.left + (box.clientLeft || 0) + 8;
+    if (pr.width > 0 && pr.left < margin) { pop.style.left = (margin - ox) + "px"; pop.style.right = "auto"; }
     outline = pop;
     outlineBtn.setAttribute("aria-expanded", "true");
     setCur(0);
@@ -1322,11 +1352,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // reload's landing (the panel's poll asked it), the panel's own repaints (setMode) and a settings pick never call this:
   // the reader may be tabbed onto a mark or typing. preventScroll: the seat has placed the body and the focus must not move
   // it. Escape still closes through the document's onKey below, from the body as from the document's body.
+  // `takingKeyboard`: the body's focus() is under way. In a Files iframe that did not hold the page's focus (a relay open from
+  // the chat or the Waiting pane, the reader's last click in another pane) the call moves the focus into this frame and its
+  // window fires `focus` synchronously inside it, which the changed-on-disk probe below would read as the reader's return
+  // and answer with a HEAD of the file the landing just fetched (the review's round 1: GET then HEAD for every cross-frame
+  // open, one GET for a same-frame one); the probe stands aside for a focus event the viewer's own call fired.
+  let takingKeyboard = false;
   const takeKeyboard = (): void => {
     if (editing || !wrap.isConnected) return;
     const a = document.activeElement;
     if (a && a !== document.body && !bar.contains(a)) return;
-    body.focus({ preventScroll: true });
+    takingKeyboard = true;
+    try { body.focus({ preventScroll: true }); } finally { takingKeyboard = false; }
   };
   let keyboardPending = true;                          // the open's first landing takes the keyboard; a reload's does not
   const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };
@@ -1526,11 +1563,33 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // numeric scrollTop is written and the browser clamps it. An unchanged file at the same width comes back to the pixel
   // the browser snaps to; the seat's clamp, if any, is not held (a place at the file's end reads as what shows there).
   let pendingPlace: RememberedPlace | null = at === null ? newerPlace(opts?.place, rememberedPlaces.get(path)) : null;
+  // A record read inside a fold the reader had opened (an author's <details>, a folded `[!type]-` callout, the front matter)
+  // meets a reopen that paints every fold as authored (foldKeeper is per open, and the record carries no fold state), so the
+  // remembered block has no shown box: seatPlaceOutcome's last resort walked back through the fold's hidden paragraphs to
+  // the wrapper's refused block and seated nothing, and the numeric scrollTop from the OPEN fold's layout was written over
+  // a document the shut fold made thousands of pixels shorter, a passage thirty paragraphs past the reader's shown as their
+  // place (the review's round 1); and a block that IS a shut fold (a callout is one block) seated its summary at the edge
+  // and then took the reader's depth into its open content over a box a summary tall. So the folds above the block's
+  // elements are opened first, as the offset landing and a `#` link open them (revealFragmentTarget), and a fold that is
+  // the block itself is opened when the record's edge was inside it (a depth in the record's view): the reader had those
+  // folds open, since a shut fold's content is never at the edge, and the seat is then the exact one. A record read in the
+  // other view (a Raw row inside a fold Rendered shuts) opens the fold too, and shows the passage the reader had.
+  const revealRemembered = (p: Place, depth: number): void => {
+    const md = body.querySelector(".fileview-md");
+    if (!md || shownText === null) return;
+    const b = blockIndexAt(sourceBlockSpans(shownText), p.start);
+    if (b < 0) return;
+    for (const e of renderedBlockElements(md, shownText, b)) {
+      revealFragmentTarget(e);
+      if (depth > 0 && e.localName === "details" && !e.hasAttribute("open")) e.setAttribute("open", "");
+    }
+  };
   const landRemembered = () => {
     if (pendingPlace === null || shownText === null) return;
     const rec = pendingPlace; pendingPlace = null;
     const kept = placeFromRemembered(rec, shownText);
     const depth = kept && kept.top < 0 && ctx.mode() === rec.view ? -kept.top : 0;
+    if (kept) revealRemembered(kept, depth);
     const seated = kept ? seatPlaceOutcome(body, shownText, depth ? { ...kept, top: 0 } : kept).seated : false;
     if (seated) { if (depth) body.scrollTop += depth; }
     else body.scrollTop = rec.scrollTop;
@@ -2252,6 +2311,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // a fetch that landed while the editor was up painted nothing (fetchFile): now that the edit is over, read the file
     // as it is — the exit is the event the dropped bytes were waiting for
     if (refetchAfterEdit) { refetchAfterEdit = false; fetchFile(); }
+    // …or, with nothing to re-read, the changed-on-disk bar the editor's entry took with the other notices comes back with
+    // the read view when the file it was raised under is still the one that shows (a save that landed moved the mtime; the
+    // re-read above settles it at its landing): the reader is shown the old text again, and the line says so without a HEAD
+    // (the review's round 1: after Cancel the old text stood with no line above it until the next focus)
+    else if (diskBar && diskBar.under === mtimeNs && mtimeNs) raiseDiskBar();
+    // the exit's repaint is a paint the reader asked for from the viewer's own chrome (Cancel, Save, Escape in the editor),
+    // so the body takes the keyboard as after the Rendered/Raw toggle (takeKeyboard's gate: the button that was clicked, or
+    // the document's body the editor's removal left it on, yields; the panel's box keeps it); before the review's round 1
+    // PageDown after Cancel scrolled nothing until a click
+    takeKeyboard();
   };
   const doSave = () => {
     const buf = bufValue();
@@ -2446,14 +2515,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the reader's return, the answer, the landing.
   let probeOut = false;                        // a HEAD is out: the next event is folded into it
   let probeStopped = false;                    // a 413/415 retired the probe for this open
-  let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch
+  let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number; held: boolean } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch, whether the bar held the keyboard at its Reload's click
   const diskBarUp = (): boolean => diskBar !== null && note === diskBar.el;   // still the card's notice (enterEdit or a later notice may have taken it)
-  // The bar's Reload held the keyboard when a click put it there (a click focuses a button), and the removal drops it to the
-  // document's body by the browser's fixup: the body takes it then (takeKeyboard, the brief's call-site list names the
-  // button), so PageDown reads on after the Reload; a keyboard held anywhere else is left where it is.
+  // The bar's Reload held the keyboard when a click put it there (a click focuses a button; Enter on the focused button is
+  // the same press), and the landing removes the bar: the body takes the keyboard then (takeKeyboard, the brief's call-site
+  // list names the button), so PageDown reads on after the Reload; a keyboard held anywhere else is left where it is. Who
+  // held it is read AT THE CLICK, before the acknowledgement disables the button: a browser drops the focus off a control
+  // the moment it is disabled (Chromium, synchronously, to the document's body), so a read at the landing found the body
+  // and handed nothing over, and PageDown after every Reload scrolled nothing until a click (the review's round 1; the
+  // consolidation's read at the landing modelled a removal's fixup the click never reached). A failed Reload removes
+  // nothing and re-arms the button, and puts the keyboard back on it when the click had it (rearmDiskBar).
   const dropDiskBar = (): void => {
     if (diskBarUp()) {
-      const held = diskBar!.el.contains(document.activeElement);
+      const held = diskBar!.held || diskBar!.el.contains(document.activeElement);
       diskBar!.el.remove(); note = null;
       if (held) takeKeyboard();
     }
@@ -2467,12 +2541,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     re.title = "Read the file as it is now; your place is kept";
     re.addEventListener("click", () => {
       if (editing || !diskBar || diskBar.btn !== re || re.disabled) return;
+      diskBar.held = bar2.contains(document.activeElement);   // who holds the keyboard, before the disable below drops it (dropDiskBar, the header)
       re.disabled = true; re.textContent = "Reloading";   // the acknowledgement: the body shows nothing new until the landing (the place rule)
       fetchFile();
       diskBar.asked = fetchSeq;                // this ask's landing clears the bar whatever mtime it brings
     });
     bar2.appendChild(re);
-    diskBar = { el: bar2, btn: re, under: mtimeNs, asked: 0 };
+    diskBar = { el: bar2, btn: re, under: mtimeNs, asked: 0, held: false };
   };
   // A landing that stands (fetchFile, text or media), `my` its fetch: the bar goes when the landed mtime differs from the
   // one it was raised under, or when the landing is the bar's own ask; another ask's landing under the same mtime (a GET
@@ -2484,9 +2559,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const rearmDiskBar = (my: number): void => {
     if (!diskBar || my !== diskBar.asked || !diskBarUp()) return;
     diskBar.btn.disabled = false; diskBar.btn.textContent = "Reload"; diskBar.asked = 0;
+    if (diskBar.held) diskBar.btn.focus({ preventScroll: true });   // the click's keyboard, dropped by the disable, back on the re-armed button
+    diskBar.held = false;
   };
   const probe = (): void => {
-    if (probeOut || probeStopped || editing || !mtimeNs || !wrap.isConnected || document.hidden) return;
+    if (takingKeyboard || probeOut || probeStopped || editing || !mtimeNs || !wrap.isConnected || document.hidden) return;   // takingKeyboard: a window focus the viewer's own body.focus() fired (takeKeyboard, above), not the reader's return
     probeOut = true;
     fetch(fileUrl(path, sid), { method: "HEAD", cache: "no-store" }).then((r) => {
       const v = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
@@ -2676,6 +2753,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       body.replaceChildren(why);
+      syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
     }));
   };
   fetchFile();

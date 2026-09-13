@@ -38,7 +38,7 @@ import { delegate } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { hostNameNodes } from "./host-prefix";
-import { asIdentity, parseRecent, rememberRecent, placeRecent, RECENT_KEY, type RecentFile, type RecentPlace } from "./files-recent";
+import { asIdentity, parseRecent, rememberRecent, placeRecent, RECENT_KEY, type RecentFile } from "./files-recent";
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -59,14 +59,19 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
 /** Open `path` here: cache the identity so the chip resolves, open the shared viewer, and record the file
  *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
  *  `at` is the place the link named after its path (a todo's `docs/report.md#results` or `:12`, a `:line` or
- *  `#section` link inside a shown file), validated by the viewer's readAt where it crossed a frame (the relay);
- *  `place` is the reader's place a Recent row stored for the file (files-recent.ts RecentPlace, the viewer's
- *  RememberedPlace by structure), handed back so the note returns to where it was read; the relay and a link inside
- *  a shown file pass none (Slice 6 of plans/markdown-viewer.md).
- *  `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent
- *  list does not — a re-open is no longer that todo). */
-function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null, place: RecentPlace | null = null): void {
+ *  `#section` link inside a shown file), validated by the viewer's readAt where it crossed a frame (the relay).
+ *  The reader's place the file's Recent row stored (files-recent.ts RecentPlace, the viewer's RememberedPlace by
+ *  structure) is read from the row HERE and handed back through openFileView's `place` on every open of the path
+ *  with that session, whatever opened it: the shell's relay (a chat click), a link inside a shown file, a pick from
+ *  the listing or the row's click. So the note returns to where it was read after a page reload as it does before
+ *  one, when the viewer's own in-page memory covers the path (the viewer seats the later of the two records); with
+ *  the row's click alone handing the record back, a chat click after a reload opened the note at its top and its
+ *  leave wrote that top over the row (the Slice 6 review, round 1). An `at` lands where it points and the viewer
+ *  ignores the place then. `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries
+ *  it; the recent list does not: a re-open is no longer that todo). */
+function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null): void {
   if (sid && identity) identities.set(sid, identity);
+  const place = recent.find((r) => r.path === path && r.sid === sid)?.place ?? null;   // the row's record, read before the open: a replace-open's leave may rewrite the row, and the viewer takes the later record
   if (!openFileView(path, sid, { todoId, at, place })) return;
   const known = identity ?? (sid ? identities.get(sid) ?? null : null);
   recent = rememberRecent(recent, { path, sid, identity: known, t: Date.now(), place: null });   // the row keeps a place the viewer stored for it (files-recent.ts rememberRecent)
@@ -127,11 +132,11 @@ initFileView((m) => vscodeApi?.postMessage(m), (m) => {
 }, {
   // a link inside the shown file opens here too, so the file it names enters the Recent list (the identity the
   // relay cached for its session names the chip; a link opened from a todo's file is no longer that todo; its
-  // `:line` or `#section` rides as the open's target)
+  // `:line` or `#section` rides as the open's target, and with none the row's place seats it, as on every open here)
   openFile: (p, sid, at) => openHere(p, sid, null, null, at),
   // the reader's place when a file is left (a close, a replace-open, the page hidden), written on the file's Recent
-  // row so the row's click returns to it; the pane opened the file, so the row is there (openHere wrote it), and a
-  // file it did not open gets nothing (Slice 6 of plans/markdown-viewer.md, item 3)
+  // row so the next open of the file here returns to it (openHere reads the row); the pane opened the file, so the
+  // row is there (openHere wrote it), and a file it did not open gets nothing (Slice 6 of plans/markdown-viewer.md, item 3)
   onLeave: (p, sid, rec) => { recent = placeRecent(recent, p, sid, rec); writeStore(); },
 });
 initFileBrowse((m) => vscodeApi?.postMessage(m), {
@@ -152,7 +157,7 @@ initFileBrowse((m) => vscodeApi?.postMessage(m), {
   const empty = document.getElementById("files-empty");
   if (!empty) return;
   delegate(empty, {
-    open: (x) => { const r = recent[Number(x.dataset.i)]; if (r) openHere(r.path, r.sid, r.identity, null, null, r.place); },   // the row's place rides back (Slice 6)
+    open: (x) => { const r = recent[Number(x.dataset.i)]; if (r) openHere(r.path, r.sid, r.identity); },   // the row's place rides back from the store inside openHere, as on every open (Slice 6)
   });
 })();
 // the viewer's or the browser's element coming and going IS the open/close event: one observer on the body

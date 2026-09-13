@@ -6,8 +6,9 @@
 // Since Slice 6 of plans/markdown-viewer.md a row also carries the reader's PLACE in the file, the record
 // the viewer hands its host when the file is left (file-view.ts RememberedPlace, through initFileView's
 // `onLeave`): the top block's source span and pixel offset, the view, the file's mtime and the numeric
-// scrollTop, never a word of the file. A re-open from the row hands it back (openFileView's `place`), so the
-// note returns to where it was read. The place is used, never shown: the row looks as it did.
+// scrollTop, never a word of the file. The pane hands it back on every open of the path with that session here,
+// the row's click or any other (files.ts openHere, openFileView's `place`), so the note returns to where it was
+// read. The place is used, never shown: the row looks as it did.
 export interface RecentIdentity { name: string; color: { bg: string; fg: string } | null }
 /** The viewer's RememberedPlace (file-view.ts), spelled here so the pane's pure half imports nothing of the viewer:
  *  the same eight fields, by structure. `start`/`end`: the top block's source span; `top`: its top edge's offset from

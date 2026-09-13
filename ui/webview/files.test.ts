@@ -113,8 +113,10 @@ test("recent files: recorded only on a REAL open, painted as re-open rows in the
   for (const cls of ['"fileview-name"', '"fileview-dir"', '"fileview-base"', '"fileview-sess"']) assert.ok(SRC.includes(cls), cls);
   assert.match(SRC, /sess\.replaceChildren\(\.\.\.hostNameNodes\(r\.identity\.name, r\.sid\)\)/);
   // delegated on the stable container (actions.ts): a repaint between mousedown and mouseup still lands
-  assert.match(SRC, /delegate\(empty, \{\n\s*open: \(x\) => \{ const r = recent\[Number\(x\.dataset\.i\)\]; if \(r\) openHere\(r\.path, r\.sid, r\.identity, null, null, r\.place\); \},/,
-    "the row's click hands the viewer the place the row stored (Slice 6 of plans/markdown-viewer.md, item 3)");
+  assert.match(SRC, /delegate\(empty, \{\n\s*open: \(x\) => \{ const r = recent\[Number\(x\.dataset\.i\)\]; if \(r\) openHere\(r\.path, r\.sid, r\.identity\); \},/,
+    "the row's click opens through openHere like every other open; the place rides back from the store inside it (Slice 6 of plans/markdown-viewer.md, item 3)");
+  assert.match(openFn, /const place = recent\.find\(\(r\) => r\.path === path && r\.sid === sid\)\?\.place \?\? null;[^\n]*\n\s*if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;/,
+    "openHere reads the row's record itself, before the open, and hands it to the viewer on EVERY open of the path (the Slice 6 review, round 1: the relay's open after a reload landed at the top)");
   // the leave: the viewer's onLeave writes the record on the file's row (placeRecent) and persists the list; a file the pane
   // did not open has no row and gets nothing (executed: the host's arrow, lifted, over a list and a store recorder)
   const leave = /onLeave: (\(p, sid, rec\) => \{ recent = placeRecent\(recent, p, sid, rec\); writeStore\(\); \}),/.exec(SRC);
@@ -379,4 +381,65 @@ test("rememberRecent carries the newest record, and a re-open that brings none k
   const json = JSON.stringify(placed[0]);
   assert.deepEqual(Object.keys(JSON.parse(json).place).sort(), ["atTop", "end", "mtimeNs", "scrollTop", "start", "t", "top", "view"]);
   assert.doesNotMatch(json, /source|text|quote|lorem/, "no text field, no quote");
+});
+
+// EXECUTED: openHere as files.ts spells it, its body lifted from the source (the signature's types stripped) and run over
+// stubs for the viewer's open, the store and the paint, with the real list functions. The Slice 6 review's round 1: the
+// row's click alone passed the row's place, so after a page reload (the viewer's in-page map empty) a chat click on a
+// file whose row held a record opened it at the top, and that open's leave wrote the top over the row. Every open through
+// openHere now hands the row's record back; the viewer seats the later of that and its own (file-view.ts newerPlace) and
+// ignores both under an `at` (openFileView's doc), so the pane hands it over regardless.
+test("openHere, executed: every open of a path with a row hands the row's place to the viewer (the relay, a link, the row's click), none for another session's row or a path with none; a veto records nothing; the row keeps a fresher record its leave wrote during the open", () => {
+  const src = SRC.split("function openHere(")[1].split("\n}")[0];
+  const sig = src.slice(0, src.indexOf("{") + 1);
+  const js = "function openHere(" + sig.replace(/: [A-Za-z]+(?: \| null)?/g, "") + src.slice(src.indexOf("{") + 1) + "\n}";   // the source's own parameters, their types stripped
+  const opens: unknown[][] = []; const writes: number[] = []; const paints: number[] = [];
+  const last = () => opens[opens.length - 1];
+  let veto = false;
+  let leaveOnOpen: (() => void) | null = null;   // the viewer's runLeave on a replace-open reaches the host's onLeave BEFORE openFileView returns
+  const identities = new Map<string, unknown>();
+  const world = new Function("openFileView", "rememberRecent", "writeStore", "paint", "identities", "list",
+    "let recent = list; " + js + " return { openHere, get recent() { return recent; }, set recent(v) { recent = v; } };")(
+    (p: string, sid: string | null, opts: unknown) => { opens.push([p, sid, opts]); if (leaveOnOpen) { const f = leaveOnOpen; leaveOnOpen = null; f(); } return !veto; },
+    rememberRecent, () => { writes.push(1); }, () => { paints.push(1); }, identities,
+    [row("/repo/notes-api/docs/notes.md", SID2, "api", 3), row("/repo/notes-api/docs/report.md", SID, "web", 2, PLACE), row("/repo/notes-api/docs/design.md", SID, "web", 1)],
+  ) as { openHere: (p: string, sid: string | null, id: unknown, todoId?: string | null, at?: unknown) => void; recent: RecentFile[] };
+  const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
+  // the shell's relay (a chat click) after a reload: no place in hand, the row's record rides
+  world.openHere("/repo/notes-api/docs/report.md", SID, identity, null, null);
+  assert.deepEqual(last(), ["/repo/notes-api/docs/report.md", SID, { todoId: null, at: null, place: PLACE }], "the relay's open hands the row's record back");
+  assert.deepEqual(world.recent.map((r) => [r.path, r.place]), [["/repo/notes-api/docs/report.md", PLACE], ["/repo/notes-api/docs/notes.md", null], ["/repo/notes-api/docs/design.md", null]], "the row moves up and keeps its place");
+  assert.equal(writes.length, 1); assert.equal(paints.length, 1);
+  // a link inside a shown file (no identity in hand; the cache the relay filled names the chip): the same record
+  world.openHere("/repo/notes-api/docs/report.md", SID, null, null, null);
+  assert.deepEqual(last(), ["/repo/notes-api/docs/report.md", SID, { todoId: null, at: null, place: PLACE }], "a link's open too");
+  assert.deepEqual(world.recent[0].identity, identity, "the chip's identity from the cache");
+  // the row's click: the same call, the same record (one source, the store)
+  world.openHere("/repo/notes-api/docs/report.md", SID, identity);
+  assert.deepEqual((last()[2] as { place: unknown }).place, PLACE, "the row's click");
+  // rows are per path + session: another session's open of the same path finds no record of its own
+  world.openHere("/repo/notes-api/docs/report.md", SID2, null);
+  assert.deepEqual(last(), ["/repo/notes-api/docs/report.md", SID2, { todoId: null, at: null, place: null }], "another session's row is another row");
+  assert.deepEqual(world.recent.map((r) => [r.sid, r.place]), [[SID2, null], [SID, PLACE], [SID2, null], [SID, null]], "a new row for it; the first session's place stands");
+  // a path with no row: nothing to hand back
+  world.openHere("/repo/notes-api/README.md", SID, null);
+  assert.deepEqual((last()[2] as { place: unknown }).place, null);
+  // an `at` open (a todo's target): the pane hands the record all the same; the viewer lands on the target and ignores it
+  world.openHere("/repo/notes-api/docs/report.md", SID, null, "t1", { heading: "results" });
+  assert.deepEqual(last(), ["/repo/notes-api/docs/report.md", SID, { todoId: "t1", at: { heading: "results" }, place: PLACE }]);
+  // the same file opened over itself: the viewer's leave writes a fresher record on the row DURING the open; the pane read
+  // the row before it and hands the older one (the viewer seats the later of the two), and the row keeps the fresh record
+  // afterwards, since the entry openHere writes brings none
+  const fresh: RecentPlace = { ...PLACE, start: 2000, end: 2300, scrollTop: 5000, t: 9 };
+  leaveOnOpen = () => { world.recent = placeRecent(world.recent, "/repo/notes-api/docs/report.md", SID, fresh); };
+  world.openHere("/repo/notes-api/docs/report.md", SID, null);
+  assert.deepEqual((last()[2] as { place: unknown }).place, PLACE, "read before the open");
+  assert.deepEqual(world.recent[0].place, fresh, "the leave's fresher record stands on the row");
+  // a dirty-edit veto: the open did not happen, so nothing is recorded, written or painted
+  const n = opens.length, w = writes.length, k = paints.length, before = world.recent;
+  veto = true;
+  world.openHere("/repo/notes-api/docs/notes.md", SID2, null);
+  assert.equal(opens.length, n + 1); assert.equal(writes.length, w); assert.equal(paints.length, k); assert.equal(world.recent, before, "the list is untouched");
+  // the shape that makes this so: five parameters and no `place`, the row's record read inside, so no caller can pass a stale one or forget it
+  assert.equal(sig, "path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null): void {");
 });

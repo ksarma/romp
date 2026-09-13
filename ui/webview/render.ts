@@ -7812,7 +7812,9 @@ function focusComposerOrAsk(): boolean {
 //   • an open picker/confirm overlay (.picker-overlay) owns its own keys;
 //   • a handler that already acted (defaultPrevented) wins — a FOCUSED tab's
 //     onTabKey (which also does ↑/↓ row-jumps) and the live-ask card both
-//     preventDefault before this bubbles to window.
+//     preventDefault before this bubbles to window;
+//   • a full-pane surface (the file viewer, the file browser, the lightbox) owns
+//     every arrow while it is up, as typeFromAnywhereTarget reads it.
 // On ←/→ we do NOT focus the tab, so focus stays in the window and ↑/↓ keep
 // scrolling. Any modifier (so Cmd/Ctrl/Alt/Shift shortcuts and selection are
 // untouched) bails out.
@@ -7826,6 +7828,12 @@ window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
   if (isTypingTarget(e.target)) return;
   if (document.querySelector(".picker-overlay")) return;   // #picker / #confirm open
+  // a full-pane surface owns its keys, as the type-to-compose default below reads it (typeFromAnywhereTarget): the file
+  // viewer's body holds the keyboard while it is up (file-view.ts takeKeyboard; Slice 6 of plans/markdown-viewer.md,
+  // item 1), so every arrow scrolls the note natively: ↑/↓ never the transcript behind the modal, ←/→ never a step to
+  // the neighbouring session (the Slice 6 review, round 1: the stand-aside sat in the ↑/↓ branch alone)
+  if (e.key.startsWith("Arrow") && (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
+      || document.getElementById("romp-lightbox"))) return;
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     if (!activeId || order.length < 2) return;
     const dir = e.key === "ArrowRight" ? 1 : -1;
@@ -7843,11 +7851,6 @@ window.addEventListener("keydown", (e) => {
     e.preventDefault();
     setActive(ord[(i + dir + ord.length) % ord.length]);
   } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-    // a full-pane surface owns its keys, as the type-to-compose default below reads it (typeFromAnywhereTarget): the file
-    // viewer's body holds the keyboard while it is up (file-view.ts takeKeyboard; Slice 6 of plans/markdown-viewer.md,
-    // item 1), and the arrow must scroll the note natively, not the transcript behind the modal
-    if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
-        || document.getElementById("romp-lightbox")) return;
     const content = document.getElementById("content");
     if (!content) return;
     e.preventDefault();

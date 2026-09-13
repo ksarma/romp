@@ -253,8 +253,8 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*')"), "pane branch forwards todoId and the link's target (Slice 6 of plans/markdown-viewer.md)");
   assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')"), "feed route: path, sid and the target");
   assert.match(FILES, /openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);/);
-  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, at: At \| null = null, place: RecentPlace \| null = null\): void \{/);
-  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;/);   // `at`: a todo link's or an in-file link's target; `place`: a Recent row's (Slice 6 of plans/markdown-viewer.md)
+  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, at: At \| null = null\): void \{/);
+  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;/);   // `at`: a todo link's or an in-file link's target; `place`: the file's Recent row's record, read inside openHere for every open (Slice 6 of plans/markdown-viewer.md; its review, round 1)
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null/);   // `at` replaced upstream's frag and the viewer links' line (Slice 6 of plans/markdown-viewer.md, C1); A3's `place` follows in the same opts
   assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);

@@ -200,7 +200,9 @@ export async function closePanel(page: any): Promise<void> {
 
 /** The chat page's own window keydown handlers, lifted from render.ts's source, for a leg that puts the viewer under them in the
  *  chat modal (file-view-focus-body-browser.test.ts, file-view-outline-browser.test.ts; Slice 6 of plans/markdown-viewer.md): the single-key shortcuts (the arrows, Enter)
- *  and the type-to-compose default, with a prelude standing in for the chat state they read. Every name the lift uses that
+ *  and the type-to-compose default, with a prelude standing in for the chat state they read: its setActive records each call
+ *  in `window.__setActive` and moves activeId as the real one does, and `window.__chatScene(order, active)` seats a session
+ *  list for a leg that presses ←/→ (the tab step needs two sessions and an active one). Every name the lift uses that
  *  render.ts imports or declares at its top level must be one the prelude declares or the lift itself declares, as
  *  file-view-links-browser.test.ts checks its lift, so a render.ts change surfaces here and not as a silent ReferenceError. */
 export function chatKeysScript(): string {
@@ -213,7 +215,9 @@ export function chatKeysScript(): string {
   const lifted = RENDER.slice(a0, a1) + "\n" + RENDER.slice(b0, b1) + "\n";
   const prelude = [
     "let activeId: string | null = null;", "const order: string[] = [];", "const visibleOrder = (): string[] => order;", "const collapsedTabIds = new Set<string>();",
-    "const neighborOfFolded = (): string | null => null;", "const lastStripItems: unknown[] = [];", "const setActive = (_id: string): void => {};",
+    "const neighborOfFolded = (): string | null => null;", "const lastStripItems: unknown[] = [];",
+    "const setActive = (id: string): void => { (window as any).__setActive.push(id); activeId = id; };", "(window as any).__setActive = [];",
+    "(window as any).__chatScene = (ord: string[], active: string | null): void => { order.splice(0, order.length, ...ord); activeId = active; };",
     "const scrollContentBy = (content: HTMLElement, dy: number, _writer: string): void => { content.scrollTop += dy; (window as any).__contentScrolls++; };",
     "const transcriptSelection = (): null => null;", "const seedTranscriptQuote = (): void => {};",
     "const focusComposer = (): void => { (document.getElementById(\"composer-input\") as HTMLTextAreaElement).focus(); };",

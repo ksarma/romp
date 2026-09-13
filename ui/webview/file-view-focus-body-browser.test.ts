@@ -13,8 +13,12 @@
 // scene runs render.ts's own window keydown handlers, lifted from its source (real-viewer-leg.ts chatKeysScript, shared with
 // the Outline leg) as file-view-links-browser.test.ts lifts the chat's click opener, over a composer and a #content stand-in: a printable key with the viewer up lands nowhere
 // (typeFromAnywhereTarget stands aside for a full-pane surface), and after Escape the same key lands in the composer; the
-// chat's ArrowUp/Down handler stands aside for a full-pane surface since the Slice 6 consolidation, so the arrow scrolls the
-// note and never the transcript box (before that guard the key moved the transcript behind the modal). Before item 1
+// chat's arrow handler stands aside for a full-pane surface since the Slice 6 consolidation, so ArrowDown scrolls the note
+// and never the transcript box (before that guard the key moved the transcript behind the modal), and since the review's
+// round 1 the stand-aside covers ArrowLeft/Right as well: with two sessions seated the keys step no session while the viewer
+// is up and prevent nothing (a wide table keeps its native nudge), and after Escape ArrowRight steps to the second session, so
+// the null read is the guard and not a dead handler (before round 1 the ←/→ branch ran its tab step for the focused body and
+// the person found another session's transcript behind the closed viewer). Before item 1
 // the body had no tabindex and nothing focused it: red at the first PageDown over a git archive of the base. Skips LOUDLY
 // without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an invented note,
 // /repo/notes-api paths, the placeholder sid.
@@ -123,7 +127,7 @@ test("in a browser, on the Files pane at 900 and 380 px: the note opened with no
   });
 });
 
-test("in a browser, in the chat modal under render.ts's own key handlers: the composer keeps the keyboard when it holds it at the open; with nothing focused the body takes it and PageDown, Space, End and Home scroll the note; a typed letter with the viewer up lands nowhere and after Escape lands in the composer; ArrowDown scrolls the note and not the transcript behind the modal (render.ts's arrow shortcut stands aside for the viewer)", { timeout: 120000 }, async (t) => {
+test("in a browser, in the chat modal under render.ts's own key handlers: the composer keeps the keyboard when it holds it at the open; with nothing focused the body takes it and PageDown, Space, End and Home scroll the note; a typed letter with the viewer up lands nowhere and after Escape lands in the composer; ArrowDown scrolls the note and not the transcript behind the modal (render.ts's arrow shortcut stands aside for the viewer); with two sessions seated ArrowRight and ArrowLeft step no session and prevent nothing while the viewer is up, and after Escape ArrowRight steps to the second", { timeout: 120000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
     const errors: string[] = [];
@@ -176,6 +180,24 @@ test("in a browser, in the chat modal under render.ts's own key handlers: the co
     assert.equal(read.content, 0, "…and not the transcript box behind the modal");
     assert.equal(read.scrolls, 0, "render.ts's arrow shortcut stood aside for the viewer (its scroller never ran)");
     assert.equal(read.active, "fileview-body", "…and the keyboard stayed on the body");
+    // ArrowRight and ArrowLeft: the same handler's tab step (a preventDefault, then setActive on the neighbouring session) ran
+    // for the focused body until the Slice 6 review's round 1 hoisted the stand-aside over both arrow branches, so a person
+    // nudging a wide table found another session's transcript behind the closed viewer. Two sessions seated, the first
+    // active, and a bubble listener after the lifted handler reading each arrow's defaultPrevented: with the viewer up
+    // neither key steps or prevents; the control after Escape, below, shows the step live
+    await page.evaluate(() => {
+      (window as any).__chatScene(["a", "b"], "a");
+      (window as any).__arrows = [];
+      window.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key.startsWith("Arrow")) (window as any).__arrows.push(e.key + ":" + e.defaultPrevented); });
+    });
+    await page.keyboard.press("ArrowRight");
+    await frames(page, 2);
+    await page.keyboard.press("ArrowLeft");
+    await frames(page, 2);
+    const stepped = await page.evaluate(() => ({ calls: (window as any).__setActive.slice(), arrows: (window as any).__arrows.slice(), active: (document.activeElement as HTMLElement).className }));
+    assert.deepEqual(stepped.calls, [], "ArrowRight and ArrowLeft with the body focused stepped no session (read setActive " + JSON.stringify(stepped.calls) + "; before the round 1 fix the chat's tab step ran and the session behind the modal changed)");
+    assert.deepEqual(stepped.arrows, ["ArrowRight:false", "ArrowLeft:false"], "…and neither key's default was prevented (the note keeps its native horizontal nudge)");
+    assert.equal(stepped.active, "fileview-body", "…and the keyboard stayed on the body");
     // a printable key with the viewer up: the chat's type-to-compose stands aside for a full-pane surface, so the letter
     // lands nowhere and the keyboard stays on the body; after Escape the same key lands in the composer (the handler is live)
     await page.keyboard.press("x");
@@ -188,6 +210,14 @@ test("in a browser, in the chat modal under render.ts's own key handlers: the co
     await page.keyboard.press("y");
     await page.waitForFunction(() => (document.getElementById("composer-input") as HTMLTextAreaElement).value === "y", null, { timeout: 4000 });
     assert.equal((await focusOf(page)).active, "TEXTAREA#composer-input", "with the viewer closed the chat's type-to-compose put the letter in the composer (the lifted handler is live)");
+    // the control: with the viewer closed and nothing focused, ArrowRight steps to the second session and prevents the
+    // default, so the null read above is the stand-aside and not a dead handler
+    await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); });
+    await page.keyboard.press("ArrowRight");
+    await frames(page, 2);
+    const control = await page.evaluate(() => ({ calls: (window as any).__setActive.slice(), last: (window as any).__arrows[(window as any).__arrows.length - 1] }));
+    assert.deepEqual(control.calls, ["b"], "with the viewer closed ArrowRight stepped to the second session (the lifted tab step is live; read " + JSON.stringify(control.calls) + ")");
+    assert.equal(control.last, "ArrowRight:true", "…and prevented the default, as the step does");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
   });

@@ -644,7 +644,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
   assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
   // the sheets: the rules in the tokens, the same bytes in both, and no dark literal outside a var() fallback (menu-theme-tokens.test.ts's rule)
-  const block = (css: string): string => { const a = css.indexOf("\n.fileview-outline {"), b = css.indexOf('.fileview-btn[aria-expanded="true"] {', a); return css.slice(a, css.indexOf("}", b) + 1); };
+  const block = (css: string): string => { const a = css.indexOf("\n.fileview-outline {"), b = css.indexOf('.fileview-outline-btn[aria-expanded="true"] {', a); return css.slice(a, css.indexOf("}", b) + 1); };
   const chat = block(CHAT), feed = block(FEED);
   assert.ok(chat.length > 200, "the Outline's rules are in styles.css");
   assert.equal(chat, feed, "…and byte-equal in feed.css");
@@ -654,9 +654,44 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(chat, /\.fileview-outline-row \{ padding: 4px 10px 4px calc\(10px \+ var\(--fv-ol-depth, 0\) \* 1\.1em\);/, "the depth indent from the row's variable");
   assert.match(chat, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/, "one line per row");
   assert.match(chat, /\.fileview-outline-row:hover, \.fileview-outline-row\.current \{ background: var\(--menu-hover\); \}/);
-  assert.match(chat, /\.fileview-btn\[aria-expanded="true"\] \{ color: var\(--accent\); border-color: var\(--accent\); background: var\(--accent-wash\); \}/, "the open state wears the pressed toggle's dress");
+  assert.match(chat, /\.fileview-outline-btn\[aria-expanded="true"\] \{ color: var\(--accent\); border-color: var\(--accent\); background: var\(--accent-wash\); \}/, "the open state wears the pressed toggle's dress, keyed on the button's own class");
   const bare = chat.replace(/var\((--[\w-]+)\s*,\s*(?:[^()]|\([^()]*\))*\)/g, "var($1)");
   for (const re of [/#[0-9a-fA-F]{3,8}\b/, /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/i, /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.35\s*\)/]) assert.doesNotMatch(bare, re, "no literal colour in the popover's rules: the tokens carry the theme");
+});
+
+// ── the dress's reach: the open state dresses the Outline button and nothing else that wears .fileview-btn ─────────────
+// Review round 1: the build's rule was `.fileview-btn[aria-expanded="true"]`, and the Comments panel builds its buttons with
+// the same class by default (file-comments.ts btn) and sets aria-expanded on two of them, the card foot's Show more (true
+// while the body is open, so "Show less") and Reject all (true while its confirm row is armed); both turned accent, as a
+// pressed toggle, in both sheets. The rule keys on the button's own class now. Red over a git archive of d91f0c19d
+// (the bare head matched the panel's stand-ins); the panel's own source is pinned so the hazard stays named.
+test("the open state's dress reaches the Outline button alone: every aria-expanded rule in both sheets matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too", () => {
+  const FC = web("file-comments.ts");
+  assert.match(FC, /function btn\(label: string, act: string, cls = "fileview-btn"\)/, "the panel's buttons take the bar button's class by default");
+  assert.match(FC, /const b = btn\(open \? "Show less" : "Show more", "fcclip"\);[\s\S]{0,300}?b\.setAttribute\("aria-expanded", open \? "true" : "false"\);/, "the card foot's Show more/Show less carries aria-expanded");
+  assert.match(FC, /const none = btn\([^\n]*"Reject all", "fcrejectall"\);[\s\S]{0,400}?none\.setAttribute\("aria-expanded", this\.rejectAllConfirm && !editing \? "true" : "false"\);/, "Reject all carries aria-expanded while armed");
+  // the stand-ins: the Outline button as file-view.ts builds it, popover up; the panel's two buttons in the states that set the attribute
+  const card = new El("div"); card.className = "fileview";
+  const acts = card.appendChild(new El("div")); acts.className = "fileview-acts";
+  const outline = acts.appendChild(new El("button")); outline.className = "fileview-btn fileview-outline-btn";
+  outline.setAttribute("aria-haspopup", "menu"); outline.setAttribute("aria-expanded", "true");
+  const aside = card.appendChild(new El("aside")); aside.className = "fc-panel fileview-aside fc-margin";
+  const clipRow = aside.appendChild(new El("div")); clipRow.className = "fc-clip-row";
+  const showLess = clipRow.appendChild(new El("button")); showLess.className = "fileview-btn"; showLess.setAttribute("aria-expanded", "true");
+  const rejectAll = aside.appendChild(new El("button")); rejectAll.className = "fileview-btn"; rejectAll.setAttribute("aria-expanded", "true");
+  const showMore = clipRow.appendChild(new El("button")); showMore.className = "fileview-btn"; showMore.setAttribute("aria-expanded", "false");
+  // every rule head naming the attribute, read at a line start as fileview-parity.test.ts reads heads
+  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*aria-expanded[^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
+  for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
+    const hs = heads(css);
+    assert.ok(hs.length >= 1, sheet + ": the open state has a rule");
+    assert.ok(hs.some((h) => outline.matches(h)), sheet + ": one of them dresses the open Outline button: " + inspect(hs));
+    for (const h of hs) {
+      assert.ok(!showLess.matches(h), sheet + ": `" + h + "` reaches the panel's Show less");
+      assert.ok(!rejectAll.matches(h), sheet + ": `" + h + "` reaches the panel's armed Reject all");
+      assert.ok(!showMore.matches(h), sheet + ": `" + h + "` reaches the panel's Show more");
+    }
+  }
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

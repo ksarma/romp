@@ -156,7 +156,10 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_a_recent_row_hands_its_place_back_and_the_pane_stores_the_place_the_viewer_hands_it(self):
         files = _read("ui", "webview", "files.ts")
-        self.assertIn("openHere(r.path, r.sid, r.identity, null, null, r.place);", files)
+        # the row's click opens through openHere like every other open, and openHere reads the row's record itself, so the
+        # guide's clause holds for a chat click after a page reload as well (the Slice 6 review, round 1)
+        self.assertIn("openHere(r.path, r.sid, r.identity); }", files)
+        self.assertIn("const place = recent.find((r) => r.path === path && r.sid === sid)?.place ?? null;", files)
         self.assertIn("onLeave: (p, sid, rec) => { recent = placeRecent(recent, p, sid, rec); writeStore(); },", files)
         self.assertIn("if (!openFileView(path, sid, { todoId, at, place })) return;", files)
         recent = _read("ui", "webview", "files-recent.ts")

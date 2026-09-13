@@ -3727,13 +3727,35 @@ to its scrollTop; a todo link with a heading target opens at that heading; a mov
 shows the note bar.
 
 **The Slice 6 build** (2026-09-13). Branch `mdviewer-s6`, cut from 4a3e18664, the head of `mdviewer-s8` (Slice 8, fork
-PR 752, in the queue when the build began), every commit on it self-contained so that the branch can rebase onto the
-fork's main once Slice 8 lands (the alternative of the brief's open question 1, taken so the build could start before
-that landing, as Slice 8 itself was cut from Slice 5's head); every file this slice changes is byte-identical at that
-base and on the fork's main 929ae86e1, so the fails-before runs below hold over either. The items below are numbered
-as the build was planned: 1 the body takes the keyboard, 2 the Outline, 3 the remembered place, 4 the open-at target,
-5 the changed-on-disk line, 6 the records; a reference to an item below is to that numbering, and "the brief" is the
-Slice 6 build brief of 2026-09-13, whose seventeen open questions are cited by number with the default the build took.
+PR 752, in the queue when the build began), every commit on it self-contained so that the branch could rebase onto the
+fork's main once Slice 8 landed (the alternative of the brief's open question 1, taken so the build could start before
+that landing, as Slice 8 itself was cut from Slice 5's head). After the build's consolidation commit it was rebased
+onto main 0bf0465b4, the merge of PR 752, the branch's base since. Among the files this slice changes, 4a3e18664 and
+0bf0465b4 differ in this plan alone (Slice 8's two review-round commits lie between them), so a run over a `git
+archive` of 4a3e18664 reads the base's bytes in every file a test bundles or pins; the fork's main while the build
+ran, 929ae86e1, differs from 4a3e18664 in six of them (docs/guide.md, this plan, ui/webview/feed.css,
+file-comments.ts, fileview-parity.test.ts and styles.css) by Slice 8's hunks, so a run a commit records over 929ae86e1
+ran over a tree without Slice 8's four parity heads and its guide sentences, and stands as that commit describes it.
+The build's records had said every file the slice changes is byte-identical at 4a3e18664 and 929ae86e1 (this note as
+committed, the ledger entry and the plan commit's message); the review's round 1 corrected the note and the ledger,
+and the three commit messages that claim the identity for the files they themselves touch (579fc2852, 0f31a8759 and
+9b1cf0d31) hold, none of them touching the six. The rebase re-minted every commit, so the shas the commit messages
+name for their fails-before trees are trees no clone of the fork reaches; the mapping, which `git range-diff` over the
+lineages reads as the same patch commit for commit, with the build's label for each: 0302c727e (A1) is 579fc2852 on
+the branch, 9ac6a6f50 (A2) is 82e92a75f, 34b62b3f2 (A3) is 62f40046d, 52affc609 (B1) is 0f31a8759, 653df246a (B2) is
+9b1cf0d31, fc5fde2b4 (A4) is 2d985c081, a40d4f4cc (A5) is 0c6e6d11b, 7a03f202c (D1) is a491c4304, d79b3cf65 (D2) is
+3204b0623, f6f9b6a4c (D3) is 4977730b2 and the consolidation's c593ba950 is d91f0c19d. Those labels are the build's
+units, one builder each owning its files, under one session that coordinated them: A the viewer (file-view.ts, the two
+sheets' viewer rules and the viewer tests), B the Files pane, the link producers and the shell (files.ts,
+files-recent.ts, path-links.ts, render.ts, waiting.ts, kernel.py's two viewFile forwarders, their tests) and D the
+records (the guide, this note and the ledger); the brief's unit C, the comments panel, was not needed, the slice
+changing a header comment of file-comments.ts and none of its code. A consolidation pass followed the units, the
+commit titled "Slice 6: build consolidation", which closed the edges the units had recorded for it, ran the full test
+legs and wrote the build report; "the units recorded" and "the consolidation pass" below name those. The items below
+are numbered as the build was planned: 1 the body takes the keyboard, 2 the Outline, 3 the remembered place, 4 the
+open-at target, 5 the changed-on-disk line, 6 the records; a reference to an item below is to that numbering, and "the
+brief" is the Slice 6 build brief of 2026-09-13, whose seventeen open questions are cited by number with the default
+the build took.
 The standing rule for the build: these changes cause the file-comments feature no trouble, which item 6's last entry
 states as the guarantees every test family re-verifies. Where the code as built departs from the text above, why, and
 which test holds each rule:
@@ -3762,26 +3784,40 @@ which test holds each rule:
    `#romp-fileview`; the arrow branch did not), so with the body focused ArrowDown moved the transcript and not the
    note; the branch now returns for the same three full-pane surfaces before it prevents the default, the note scrolls
    natively in every host, and the chat leg reads the body moved, the transcript box unmoved and the handler's
-   scroller never run (over the tree before the guard it read body 0, transcript 60, the scroller run once). And the
+   scroller never run (over the tree before the guard it read body 0, transcript 60, the scroller run once); the
+   review's round 1 moved that stand-aside ahead of BOTH arrow branches, keyed on every Arrow key, since it sat in the
+   ArrowUp/ArrowDown branch alone and ArrowLeft or ArrowRight with the body focused stepped to the neighbouring
+   session behind the modal (the file browser's ArrowLeft with no crumb above and a one-image lightbox's arrows stand
+   aside from the tab step too now, the recorded three-surface set), and the chat leg reads `setActive` never called
+   and neither key's default prevented with the viewer up, then the step to the second session after Escape. And the
    disk bar's Reload (item 5) took no keyboard at its landing: the click focused the button, the landing removed the
    bar with it, and the browser's fixup dropped the focus to the document's body, so a PageDown after that Reload
-   scrolled nothing until a click; `dropDiskBar` now reads whether the bar held the active element before the removal
-   and calls `takeKeyboard` after it (the brief listed the button among the call sites), a keyboard held anywhere else
-   (the panel's box while the poll's landing clears the bar) is left where it is, and a failed Reload, which removes
-   nothing, keeps it on the re-armed button. Edges recorded and not built: the editor's exits (Cancel, Save) and the
-   fetch-failure pane take no keyboard; a `button`-typed opener outside the card would keep it (today's openers are
-   spans and `div` rows, so the focus falls to the document's body and the body takes it); the URL viewer's body is
-   not a Tab stop (the brief scopes the item to openFileView; the two sheet rules reach it by class). Measured, not
-   asserted: Chromium's `:focus-visible` heuristic shows the ring on a script focus with no prior interaction, so a
-   Files iframe opened by the relay before any click may show it at the open. Cost: one attribute per open and one
-   `focus` call per gesture. file-view-seam.test.ts (38, three new here: the stand-in gained `focus` counting, a
-   `tabIndex` accessor and the browser's focus fixup for a removed subtree), file-view-focus-body-browser.test.ts (3
-   legs, new: the pane at 900 and 380 px with no click, PageDown, Space, ArrowDown, End, Home and Escape, the Tab ring
-   in the accent and none for a pointer's press, a press on a path link landing the focus on the body and the
-   replace-open handing it to the new body; the chat modal under render.ts's own key handlers lifted from source, the
-   composer keeping the keyboard it held at the open and taking a typed letter after Escape, ArrowDown moving the note
-   alone; the panel's mid-press reading of the body's tabindex 0 and the mark's absent, the release focusing the mark,
-   the comment box keeping the keyboard through a Raw paint), fileview-parity.test.ts (3, the two heads),
+   scrolled nothing until a click; the Reload's click records who holds the keyboard BEFORE it disables the button
+   (the review's round 1: a browser drops the focus off a control the moment it is disabled, Chromium synchronously to
+   the document's body, so the consolidation pass's read at the landing found the body and handed nothing over in a
+   browser), `dropDiskBar` hands it to the body on that record with `takeKeyboard` after the removal (the brief listed
+   the button among the call sites), a keyboard held anywhere else (the panel's box while the poll's landing clears
+   the bar) is left where it is, and a failed Reload, which removes nothing, re-arms the button and puts the keyboard
+   back on it when the click had it. Three more edges the units recorded were closed by the review's round 1, each
+   with a test red before it: the editor's exits (Cancel, Save) repaint the text view and the body takes the keyboard
+   as after a toggle (`exitEdit` calls `takeKeyboard` after its repaint; PageDown after Cancel had scrolled nothing
+   until a click); the Outline's closers hand the keyboard to the body when the popover or the button held it (item
+   2); and `takeKeyboard` marks its own focus call, so the window focus it fires in a Files iframe that did not hold
+   the page's focus sends no HEAD (item 5). Edges recorded and not built: the fetch-failure pane takes no keyboard; a
+   `button`-typed opener outside the card would keep it (today's openers are spans and `div` rows, so the focus falls
+   to the document's body and the body takes it); the URL viewer's body is not a Tab stop (the brief scopes the item
+   to openFileView; the two sheet rules reach it by class). Measured, not asserted: Chromium's `:focus-visible`
+   heuristic shows the ring on a script focus with no prior interaction, so a Files iframe opened by the relay before
+   any click may show it at the open. Cost: one attribute per open and one `focus` call per gesture.
+   file-view-seam.test.ts (38, three new here: the stand-in gained `focus` counting, a `tabIndex` accessor and the
+   browser's focus fixup for a removed subtree), file-view-focus-body-browser.test.ts (3 legs, new: the pane at 900
+   and 380 px with no click, PageDown, Space, ArrowDown, End, Home and Escape, the Tab ring in the accent and none for
+   a pointer's press, a press on a path link landing the focus on the body and the replace-open handing it to the new
+   body; the chat modal under render.ts's own key handlers lifted from source, the composer keeping the keyboard it
+   held at the open and taking a typed letter after Escape, ArrowDown moving the note alone, ArrowRight and ArrowLeft
+   stepping no session and keeping their defaults with the viewer up and ArrowRight stepping to the second session
+   after Escape; the panel's mid-press reading of the body's tabindex 0 and the mark's absent, the release focusing
+   the mark, the comment box keeping the keyboard through a Raw paint), fileview-parity.test.ts (3, the two heads),
    file-view-place.test.ts (8, the text-size bracket's pin re-aimed).
 2. *Item 2, the Outline.* A markdown file's actions row gains an `Outline` button right after the Rendered/Raw toggle
    (the plan's word kept as the label, open question 2's default; the guide's sentence says "the file's headings"
@@ -3794,10 +3830,18 @@ which test holds each rule:
    per paint (open question 3, the default: a heading inside a fold, open or closed, or a quote is listed as the DOM
    holds it; a formula heading shows KaTeX's text with its U+200B struts stripped; the front-matter block is a
    `details` with no heading and has no row, the Slice 4 map's worry verified closed), one row per heading with its
-   id, its text on one line and its depth under the note's shallowest heading. The popover is `position: absolute`
-   inside the card (the card's `container-type` gives it layout containment, so it is the containing block; fixed
-   would resolve the same), placed from the button's box, capped at the body's height less 16 px and the card's width
-   less 16 px, scrolling within itself, focused at the open with the FIRST row current (the brief's keyboard case,
+   id, its text on one line (an image-only heading's row reads its pictures' alt text, and one non-breaking space with
+   none, so the row keeps a text row's height; the review's round 1: it was an 8 px blank strip) and its depth under
+   the note's shallowest heading. The popover is `position: absolute` inside the card, placed from the button's box
+   against its containing block, read as its `offsetParent` after the append: the viewer's fixed overlay, since the
+   card's `container-type` gives it no layout containment in Chromium (the review's round 1; the build placed it from
+   the card's edges, and in the chat and feed modals, where the card is inset from the overlay, the box sat 18 px too
+   high over the button's lower half and 25 px left of its anchor). It is capped at the body's height less 16 px and
+   the card's width less 16 px, and a right-anchored box that would start left of the card's 8 px margin (a
+   45-character heading at a 900 px pane, 33 at 380 px: the browser solved `left` negative and the card's overflow
+   clipped the start of every row) is anchored at that margin with the width still capped, read after the placement,
+   so every row starts inside the card and a heading wider than the card takes the rows' ellipsis (the review's round
+   1). It scrolls within itself and is focused at the open with the FIRST row current (the brief's keyboard case,
    "ArrowDown twice then Enter picks the third row", reads so; the section under the reader's eye as the start is a
    choice for the review). ArrowDown and ArrowUp move the current row within the popover's own scroll, Home and End
    jump, Enter and Space pick, Escape closes; every key it takes is prevented and stopped on the popover, so the
@@ -3809,35 +3853,50 @@ which test holds each rule:
    on from the section. Closers: a pick, Escape, a capture-phase pointerdown on the document outside the popover and
    the button, focusout to anything but the button (a Tab out does not leave it standing; a window losing the focus
    closes it too), a window resize, every paint of the body (a reload's paint rebuilds the headings the rows name, not
-   only a view switch) and both exits. Nothing is stored and nothing is read from the source. Measured: a 500-heading
-   note's popover opens about 9 ms after the click in headless Chromium (one query, 500 rows; the leg prints the
-   number and asserts a loose bound so a loaded box cannot flake it); the Outline adds one hidden button per markdown
-   open and one `querySelectorAll` per text paint for the button's visibility (open question 17). Edges: the URL
-   viewer's actions row has no Outline (the popover lives in openFileView's closure). menu-theme-tokens.test.ts's list
-   of menu surfaces names the popover's card and its row wash in both sheets since the consolidation pass (a guard,
-   green before: file-view-outline.test.ts applies the same dark-literal ban), so the two blocks are read with every
-   other menu. One fix from the consolidation pass, found by the full npm test: the button's visibility was decided at
-   the top of `renderBody` (hidden) and again after the paint (`syncOutline`), and it is the one bar control that
-   differs between the two text views; at pane 900 the actions row wraps with it (the bar 64 px in Rendered against 40
-   px in Raw, measured; the chat modal's bar wraps in both views), so hiding it before the paint read the reader's
-   place grew the body and re-clamped a body standing at the document's end, and the held place was lost: the
-   Rendered/Raw round trip from the end came back one paragraph early and a last fold's row 523 px low
-   (file-view-place-blocks-browser and file-view-place-last-fold-browser, green on origin/main and on the A4 head
-   fc5fde2b4, red at a40d4f4cc and alone). A text paint now decides it after the swap and the tables' width stamp and
-   before the hooks measure and the seat writes, and only the paths that paint no text (the loader, the editor's
+   only a view switch) and both exits. Since the review's round 1 a closer that removes the popover while it or the
+   button holds the keyboard hands the keyboard to the body through `takeKeyboard`'s gate (`closeOutlineKeeping`: the
+   resize, the paint, the button's second click, whose mousedown had focused the button; before it the browser's fixup
+   left the keyboard on the document's body, where PageDown scrolled nothing and the chat's bare-area Enter reached
+   the composer), the focusout closer excepted when the keyboard moved to another element, which keeps it (a window
+   losing the focus hands it to the body for the return); and the fetch pipeline's failure pane calls `syncOutline`,
+   so the button goes with the headings it listed (it stood, inert, over a 404 a reload painted). Nothing is stored
+   and nothing is read from the source. Measured: a 500-heading note's popover opens about 9 ms after the click in
+   headless Chromium (one query, 500 rows; the leg prints the number and asserts a loose bound so a loaded box cannot
+   flake it); the Outline adds one hidden button per markdown open and one `querySelectorAll` per text paint for the
+   button's visibility (open question 17). Edges: the URL viewer's actions row has no Outline (the popover lives in
+   openFileView's closure). menu-theme-tokens.test.ts's list of menu surfaces names the popover's card and its row
+   wash in both sheets since the consolidation pass (a guard, green before: file-view-outline.test.ts applies the same
+   dark-literal ban), so the two blocks are read with every other menu. One fix from the consolidation pass, found by
+   the full npm test: the button's visibility was decided at the top of `renderBody` (hidden) and again after the
+   paint (`syncOutline`), and it is the one bar control that differs between the two text views; at pane 900 the
+   actions row wraps with it (the bar 64 px in Rendered against 40 px in Raw, measured; the chat modal's bar wraps in
+   both views), so hiding it before the paint read the reader's place grew the body and re-clamped a body standing at
+   the document's end, and the held place was lost: the Rendered/Raw round trip from the end came back one paragraph
+   early and a last fold's row 523 px low (file-view-place-blocks-browser and file-view-place-last-fold-browser, green
+   on origin/main and on the A4 head fc5fde2b4, red at the A5 head a40d4f4cc and alone; both heads of the pre-rebase
+   lineage, mapped at the head of this note). A text paint now decides it after the swap and the tables' width stamp
+   and before the hooks measure and the seat writes, and only the paths that paint no text (the loader, the editor's
    entry) hide it at the top; the order pins name the new step (file-view-place.test.ts (8, two re-pinned),
    file-comments.test.ts (35, one order pin re-aimed), file-view-outline.test.ts's own). Sheets: `.fileview-outline`,
-   its `:focus`, `.fileview-outline-row`, the hover and current wash and the button's `[aria-expanded="true"]` dress,
-   byte-equal and in fileview-parity's list. file-view-outline.test.ts (7, new: the real openFileView over the place
-   suite's stand-in, given heading ids by the sanitizer's own two slug functions; the button's placement, aria and
-   hiding, the 42 rows with ids, texts, depths, the fold's and the quote's headings and no front-matter row, the
-   pick's landing and keyboard return, the fold opened, the keyboard, the closers, source pins over both sheets),
-   file-view-outline-browser.test.ts (2 legs, new: the pane at 900 and 380 px and the 500-heading cost, the tokens'
-   computed colours in the dark and the light theme, the 40th row at the top; the chat modal under render.ts's own key
-   handlers), the fixture ui/webview/file-view-outline-fixture.ts (42 headings, test-only), fileview-parity.test.ts
-   (3, five heads), menu-theme-tokens.test.ts (7, the Outline's two blocks in both sheets added to its surfaces by the
-   consolidation pass); real-viewer-leg.ts exports `chatKeysScript()`, the chat page's window key handlers lifted from
-   render.ts, shared by items 1 and 2's chat legs.
+   its `:focus`, `.fileview-outline-row`, the hover and current wash and the Outline button's own
+   `[aria-expanded="true"]` dress (`.fileview-outline-btn` since the review's round 1: the build's bare
+   `.fileview-btn` rule recoloured the Comments panel's Show less and armed Reject all, bar buttons that carry
+   aria-expanded too, a comments regression in the Rendered view), byte-equal and in fileview-parity's list.
+   file-view-outline.test.ts (8, new: the real openFileView over the place suite's stand-in, given heading ids by the
+   sanitizer's own two slug functions; the button's placement, aria and hiding, the 42 rows with ids, texts, depths,
+   the fold's and the quote's headings and no front-matter row, the pick's landing and keyboard return, the fold
+   opened, the keyboard, the closers, source pins over both sheets; from the review's round 1, every aria-expanded
+   rule head in both sheets reaching the Outline button and none of the panel's Show less, armed Reject all or Show
+   more), file-view-outline-browser.test.ts (3 legs, new: the pane at 900 and 380 px and the 500-heading cost, the
+   tokens' computed colours in the dark and the light theme, the 40th row at the top; the chat modal under render.ts's
+   own key handlers; from the review's round 1, long headings at pane 900, pane 380 and chat 1000 inside the card with
+   every row's text starting inside the popover and the 90-character row ellipsized, the usual note's right anchor 4
+   px under the button in the pane and the chat modal, an image-only heading's row reading its alt text at a text
+   row's height, the resize closer, the panel's reload closer and the toggle close leaving the body active with
+   PageDown scrolling, and the failure pane hiding the button), the fixture ui/webview/file-view-outline-fixture.ts
+   (42 headings, test-only), fileview-parity.test.ts (3, five heads), menu-theme-tokens.test.ts (7, the Outline's two
+   blocks in both sheets added to its surfaces by the consolidation pass); real-viewer-leg.ts exports
+   `chatKeysScript()`, the chat page's window key handlers lifted from render.ts, shared by items 1 and 2's chat legs.
 3. *Item 3, the remembered place.* The memory is the reader's place in the file's terms, with the pixel count as the
    fallback (open question 7, the default): `RememberedPlace`, exported from file-view.ts, is the top block's source
    span and its top edge's offset from the body's top in px, whether the body stood at its very top, the view it was
@@ -3865,29 +3924,48 @@ which test holds each rule:
    unchanged file at the same width comes back to the pixel the browser snaps to; a changed width comes back near, not
    exact); and the source is not kept, so a block that text inserted or removed ABOVE it moved is not followed as a
    reload's place is (`followPlace` has the old text; the memory does not, by open question 8's rule against file text
-   in the store): the numeric scrollTop is written and the browser clamps it. The brief's sentence for the Recent leg
-   ("twenty paragraphs inserted above and reopen: block 40 is at the top again") contradicted that rule, so the leg
-   asserts the same scrollTop with a different block there, and block 40 back within a pixel on an unchanged file and
-   a file changed below it. The remembered seat does not hold a clamped write the way `seat(kept)` does (one seat
-   path, one hold: a place at the file's end that the browser clamps reads back as the block the clamp shows), a
-   choice for the review. The Files pane persists the record on the Recent row: `RecentFile` gains `place`, a stored
-   one is validated field by field on read (`asPlace`: a malformed record costs the place, never the row),
-   `rememberRecent` keeps a row's place across a re-open that brings none (the viewer hands the pane the place of the
-   file it LEAVES before the re-open's own row is written), `placeRecent` writes one on its row; files.ts wires
-   `onLeave` to that write and the row's click hands `r.place` back through `opts.place`; the JSON in localStorage
-   holds the eight fields and nothing else. The chat modal and the feed viewer persist nothing across a page load
-   (open question 7's default); their in-page map covers a switch between files there. Cost: one `readPlace` per
-   leave, one `placeRecent` map over at most eight rows and one JSON write per leave. Not built: the wrapper control
-   the brief's routing (i) asked of the memory leg (the wrapper rulings stand through `readPlace`, unchanged, and the
-   place legs ran green). file-view-place-memory.test.ts (8, new: the real openFileView over a stand-in that, unlike
-   the seam's, has a layout, so the seat is read as a scrollTop; the two pure functions, a close and a reopen to the
-   pixel with nothing scrolled into view, a host's record and the later `t`, a replace-open, a changed file in its
-   four shapes, the views against each other, an `at` open, pagehide, the editor, a picture and a missing file, source
-   pins on the three write sites and the seat's place), files.test.ts (14, two new over the pure half, the wiring pins
-   re-aimed and one executed), files-recent-place-browser.test.ts (2 legs, new: the real Files page in headless
-   Chromium, the acceptance reopen within a pixel, the record's JSON, a change below and above the block, a page
-   reload, a replace-open with two rows, a relay re-open through the viewer's in-page memory),
-   file-view-place-svg-source.test.ts (1, the SVG Source branch's seat re-pinned).
+   in the store): the numeric scrollTop is written and the browser clamps it. Since the review's round 1 the seat
+   first opens the closed folds above the remembered block's elements, as the offset landing and a `#` link open them
+   (`revealFragmentTarget`), and the block's own fold when the record's edge was inside it (a depth in the record's
+   view; a shut fold's content is never at the edge, so the reader had it open): a reopen paints every fold as
+   authored and the record carries no fold state, so a record read inside an author's `<details>` the reader had
+   opened met no shown box, and the numeric fallback from the open fold's layout, clamped over a document the shut
+   fold made thousands of pixels shorter, showed a passage thirty paragraphs past the reader's; a folded callout, one
+   block, seated its summary at the edge and took the depth over a summary-tall box; a Raw record reopened under the
+   Rendered preference opens the fold too. The brief's sentence for the Recent leg ("twenty paragraphs inserted above
+   and reopen: block 40 is at the top again") contradicted that rule, so the leg asserts the same scrollTop with a
+   different block there, and block 40 back within a pixel on an unchanged file and a file changed below it. The
+   remembered seat does not hold a clamped write the way `seat(kept)` does (one seat path, one hold: a place at the
+   file's end that the browser clamps reads back as the block the clamp shows), a choice for the review. The Files
+   pane persists the record on the Recent row: `RecentFile` gains `place`, a stored one is validated field by field on
+   read (`asPlace`: a malformed record costs the place, never the row), `rememberRecent` keeps a row's place across a
+   re-open that brings none (the viewer hands the pane the place of the file it LEAVES before the re-open's own row is
+   written), `placeRecent` writes one on its row; files.ts wires `onLeave` to that write, and `openHere` reads the
+   row's record and hands it back through `opts.place` on every open of the path with that session, the row's click or
+   any other (the review's round 1: with the row's click alone handing it back, a chat click through the relay after a
+   page reload opened the note at its top and its leave wrote that top over the row, the place lost for good; the
+   record is read before the open, so a replace-open's leave, which rewrites the row during the open, is kept, the
+   viewer seating the later of the two); the JSON in localStorage holds the eight fields and nothing else. The chat
+   modal and the feed viewer persist nothing across a page load (open question 7's default); their in-page map covers
+   a switch between files there. Cost: one `readPlace` per leave, one `placeRecent` map over at most eight rows and
+   one JSON write per leave. Not built: the wrapper control the brief's routing (i) asked of the memory leg (the
+   wrapper rulings stand through `readPlace`, unchanged, and the place legs ran green). file-view-place-memory.test.ts
+   (8, new: the real openFileView over a stand-in that, unlike the seam's, has a layout, so the seat is read as a
+   scrollTop; the two pure functions, a close and a reopen to the pixel with nothing scrolled into view, a host's
+   record and the later `t`, a replace-open, a changed file in its four shapes, the views against each other, an `at`
+   open, pagehide, the editor, a picture and a missing file, source pins on the three write sites and the seat's
+   place), files.test.ts (15, two new over the pure half, the wiring pins re-aimed and one executed; from the review's
+   round 1, `openHere`'s body lifted and run over stubs: the relay's open, a link's and the row's click hand the row's
+   record, another session's row or no row hands null, an `at` open hands it too, a replace-open's fresher leave
+   record stays on the row, a veto records nothing), files-recent-place-browser.test.ts (2 legs, new: the real Files
+   page in headless Chromium, the acceptance reopen within a pixel, the record's JSON, a change below and above the
+   block, a page reload with the shell's relay as the first open after it returning to the block and its close keeping
+   the block on the row, a replace-open with two rows, a relay re-open through the viewer's in-page memory),
+   file-view-place-memory-fold-browser.test.ts (2 legs, new in the review's round 1: at 900 and 380 px an authored
+   `<details>` and a folded callout come back open with Paragraph 25 at the same edge and the scrollTop within a
+   pixel, a fold the reader left shut stays shut with Paragraph 41 exact, and a Raw record reopened under the Rendered
+   preference opens the fold with the block at the edge), file-view-place-svg-source.test.ts (1, the SVG Source
+   branch's seat re-pinned).
 4. *Item 4, the open-at target.* `openFileView(path, sid, { todoId?, at?, place? })` takes one target per open, the
    exported union `At = { line } | { offset } | { heading }`, in place of the `line` and `frag` options (replaced, not
    aliased: one shape for one thing, open question 10's default; `place` is item 3's record and not a target).
@@ -3984,29 +4062,42 @@ which test holds each rule:
    ask failing (the 404, 413 or 415 pane, a network failure) re-arms the button above the pane so the bar is no dead
    end (a second departure; removing the bar over the pane would leave a transient failure with no retry). One bar: a
    second move while it stands replaces nothing. While editing the probe stands down and the editor's entry takes the
-   bar with the other notices; Cancel brings both back. Edges recorded: a deleted file's HEAD answers 404, which
-   `headVerdict` reads as absent and `mtimeMoved` as moved, so the bar says `Changed on disk.` and Reload paints the
-   404 pane, loose words for a deletion under the one-bar rule; a window `focus` fires only on the window holding the
-   focus, so an alt-tab return to a tab whose Files iframe does not hold it sends no HEAD from that iframe
-   (`visibilitychange` fires in every frame on a tab switch; item 1's body focus makes the iframe the holder in the
-   common case); a real `page.bringToFront` fires no window focus event in headless Chromium (measured: `hasFocus()`
-   true throughout, no event, no HEAD), so the leg dispatches the event the browser would. The kernel's HEAD route and
-   its Python are untouched, so no Python test changes for this item. Cost: one HEAD per focus or visibility event
-   (`window.__heads` in the harness), zero repaints and zero GETs until Reload, one GET and one repaint for the
-   Reload. file-view-reload.test.ts (15, nine new: the stand-in's fetch stub answers a HEAD, held, failed or 413 on
-   request, and the document dispatches its own events; the focus's one HEAD and no bar under the same mtime, the
-   moved mtime's bar as a card row with its words and button and no bytes fetched, hidden asking nothing and visible
-   asking once, the in-flight fold and the network failure, the 413 retire and a fresh probe on a replace-open, the
-   Reload's acknowledgement, one GET, the landing clearing the bar with one repaint and no scroll, a same-mtime
-   landing keeping it, editing and the editor's entry, the close removing the listeners, a picture probing and a 404
-   pane never, the own-ask clearing and the failed Reload's re-armed button, and, from the consolidation pass, the
-   Reload's keyboard: the focused button's removal hands it to the body, the panel's box keeps it through the poll's
-   clearing, a failed Reload keeps it on the re-armed button; the stand-in gained the browser's focus fixup for a
-   removed subtree), file-view-notebar-browser.test.ts (3 legs, one new: the pane at 700 and 380 px and the chat
-   modal, the moved mtime's bar at scrollTop 400 above the body row with no repaint, Reload keeping the top block and
-   clearing the bar, the panel's poll clearing it with the top block kept; one re-aimed, its past-the-end line passed
-   as `{ at: { line: 9999 } }`); real-viewer-leg.ts's fetch stub answers a HEAD with the GET's headers and no body and
-   counts them beside `__fetches`.
+   bar with the other notices; Cancel brings both back, the bar at the exit itself and without a HEAD (the review's
+   round 1: `exitEdit` re-raises it when no re-read is pending and the file that shows is still the one it was raised
+   under, the mtime shown being `diskBar.under`; a save that landed moved the mtime, and a fetch the editor held lands
+   and settles it itself; before that the old text stood with no line above it until the next focus). Edges recorded:
+   a deleted file's HEAD answers 404, which `headVerdict` reads as absent and `mtimeMoved` as moved, so the bar says
+   `Changed on disk.` and Reload paints the 404 pane, loose words for a deletion under the one-bar rule; a window
+   `focus` fires only on the window holding the focus, so an alt-tab return to a tab whose Files iframe does not hold
+   it sends no HEAD from that iframe (`visibilitychange` fires in every frame on a tab switch; item 1's body focus
+   makes the iframe the holder in the common case); a real `page.bringToFront` fires no window focus event in headless
+   Chromium (measured: `hasFocus()` true throughout, no event, no HEAD), so the leg dispatches the event the browser
+   would. The kernel's HEAD route and its Python are untouched, so no Python test changes for this item. Cost: one
+   HEAD per focus or visibility event (`window.__heads` in the harness), zero repaints and zero GETs until Reload, one
+   GET and one repaint for the Reload; an open into a Files iframe that did not hold the page's focus costs one GET
+   and no HEAD (the review's round 1: the body's own `focus()` fires the window's focus event synchronously inside it,
+   and the probe read that as the reader's return, GET then HEAD on every cross-frame open; `takeKeyboard` now marks
+   its call and the probe stands aside for it). file-view-reload.test.ts (15, nine new: the stand-in's fetch stub
+   answers a HEAD, held, failed or 413 on request, and the document dispatches its own events; the focus's one HEAD
+   and no bar under the same mtime, the moved mtime's bar as a card row with its words and button and no bytes
+   fetched, hidden asking nothing and visible asking once, the in-flight fold and the network failure, the 413 retire
+   and a fresh probe on a replace-open, the Reload's acknowledgement, one GET, the landing clearing the bar with one
+   repaint and no scroll, a same-mtime landing keeping it, editing and the editor's entry, the close removing the
+   listeners, a picture probing and a 404 pane never, the own-ask clearing and the failed Reload's re-armed button,
+   and the Reload's keyboard, from the consolidation pass and corrected by the review's round 1: the click's record
+   hands it to the body at the landing (the stand-in's `disabled` setter drops the focus as a browser does, so the
+   case fails before at the drop itself), the panel's box keeps it through the poll's clearing, a failed Reload puts
+   it back on the re-armed button; the stand-in gained the browser's focus fixup for a removed subtree; and, from the
+   review's round 1, Cancel bringing the bar back at once with the HEAD count unchanged),
+   file-view-notebar-browser.test.ts (6 legs, one new in the build: the pane at 700 and 380 px and the chat modal, the
+   moved mtime's bar at scrollTop 400 above the body row with no repaint, Reload keeping the top block and clearing
+   the bar, the panel's poll clearing it with the top block kept; one re-aimed, its past-the-end line passed as `{ at:
+   { line: 9999 } }`; three from the review's round 1: at pane 700 and chat 700 a mouse Reload and an Enter Reload
+   each leave the body active with PageDown scrolling and a failed Reload re-arms the button with the keyboard on it;
+   after Cancel the body is active, the bar is back with no HEAD and the mtime unchanged; a shell stand-in holding a
+   chat iframe and the Files iframe, the relayed open with the chat composer focused sending the GET and no HEAD, the
+   body holding the keyboard, and a dispatched window focus then sending exactly one); real-viewer-leg.ts's fetch stub
+   answers a HEAD with the GET's headers and no body and counts them beside `__fetches`.
 6. *Item 6, the records, and what the earlier slices routed here.* docs/guide.md: the Files section's opening
    paragraph says a file reopened from the Recent list opens at the place it was left (the folder lines above the
    clause keep their hard wraps byte for byte; tests/test_files_pane.py reads them raw); "Your place in the file" says
@@ -4028,9 +4119,9 @@ which test holds each rule:
    reviewer asked for "remembered place"). The ledger entry is upstream/2026-09-13-markdown-viewer-slice6.md (tier
    feature; its `where:` line names every file the branch changes and says the two shell lines need the live kernel's
    restart). The brief's open questions, each taken as recorded above: 1 the stacked base (the alternative, the
-   manager's call); 2 the label `Outline` with "the file's headings" in the guide; 3 every heading as the DOM shows
-   it; 4 the button in Rendered only; 5 the focus rule's reach, with the key-driven text-size step as the one
-   exception; 6 the ring; 7 the record's fields, the path key, the page-life map and the Recent entry as the one
+   coordinating session's call); 2 the label `Outline` with "the file's headings" in the guide; 3 every heading as the
+   DOM shows it; 4 the button in Rendered only; 5 the focus rule's reach, with the key-driven text-size step as the
+   one exception; 6 the ring; 7 the record's fields, the path key, the page-life map and the Recent entry as the one
    store; 8 the span-start match and the clamped scrollTop; 9 an explicit target wins and the memory still writes; 10
    one `At` union and a separate `place`; 11 a target after a path in a todo's text or detail and inside a shown file,
    not in the transcript or the structured field; 12 the caret-to-offset export not built; 13 text and media, the
@@ -4051,28 +4142,41 @@ which test holds each rule:
    was not added to the memory leg (item 3); (j) Slice 7's failure paths, the VS Code host and the raw HTML `<table>`
    stay where they were. Edges the units recorded and the consolidation pass closed, each with a test that failed
    before it: render.ts's arrow shortcut scrolling the transcript with the viewer up, and the disk bar's Reload taking
-   no keyboard (item 1). Pre-existing edges outside the items, recorded and routed, not fixed: the URL viewer without
-   the keyboard take and the Outline (items 1 and 2); the editor's exits and the failure pane taking no keyboard (item
-   1). Tests, by file (every new node test on the shim's stand-ins with `hideEdges`; every browser leg over headless
-   Chromium and the real bundles, 0 skipped, counted on every run): file-view-seam (38, seven new),
-   file-view-focus-body-browser (3 legs, new), fileview-parity (3, seven heads), file-view-place (8, two re-pinned),
-   file-view (50, two new and six re-pinned), file-view-links (28, re-pinned), md-url-view (29, re-pinned),
-   pdf-new-tab (12, re-pinned), file-view-notebar-browser (3 legs, one new and one re-aimed), file-view-place-memory
-   (8, new), file-view-place-svg-source (1, re-pinned), file-view-reload (15, nine new), file-view-outline (7, new),
-   file-view-outline-browser (2 legs, new), files (14, two new), files-recent-place-browser (2 legs, new), path-links
-   (14, four new), render-open-path-target (5, new), user-todo-links (12, cases extended and re-pinned),
-   waiting-detail-link (5, one new), todo-link-target-browser (2 legs, new), waiting-file-chip (12, re-aimed),
-   user-todo-title-links (12, re-pinned), url-links (15, re-pinned), file-uri-link (4, re-pinned), chat-space-paths
-   (5, re-pinned), user-img-dedup (4, re-pinned), render-todo-file-chip (14, re-pinned), waiting-link-focus (4,
-   re-pinned), waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6, re-pinned), menu-theme-tokens (7, the
-   surfaces list), file-comments (35, one re-pinned), the fixture file-view-outline-fixture.ts (new) and
-   real-viewer-leg.ts (the HEAD-aware stub, `__heads`, `chatKeysScript`); tests/test_files_pane.py (24, one new),
+   no keyboard (item 1). The review's round 1 (2026-09-13) closed, each with a test red over an archive of d91f0c19d:
+   the arrow stand-aside ahead of both branches and the Reload's keyboard read at the click (item 1, the two
+   consolidation fixes corrected), the editor's exits taking the keyboard (item 1), the Outline's closers handing it
+   over, the popover placed from its containing block and anchored inside the card, the image-only row, the failure
+   pane hiding the button and the open dress scoped to the Outline button (item 2), the remembered seat opening folds
+   and the Recent row's place handed back on every open (item 3), the bar back at Cancel and no HEAD from the viewer's
+   own focus call (item 5); and the records: this note's base sentence, the ledger's `where:` line and the
+   build-process names defined at the head. Recorded, not changed: the Outline's first row current at the open (item
+   2, a design call for the owner) and a relayed open into the Files pane taking the keyboard from the chat composer
+   in the sibling iframe (item 1's rule, the brief's same-document scope; a preserved composer would be a relay field,
+   a follow-up). Pre-existing edges outside the items, recorded and routed, not fixed: the URL viewer without the
+   keyboard take and the Outline (items 1 and 2); the failure pane taking no keyboard (item 1). Tests, by file (every
+   new node test on the shim's stand-ins with `hideEdges`; every browser leg over headless Chromium and the real
+   bundles, 0 skipped, counted on every run): file-view-seam (38, seven new), file-view-focus-body-browser (3 legs,
+   new), fileview-parity (3, seven heads), file-view-place (8, two re-pinned), file-view (50, two new and six
+   re-pinned), file-view-links (28, re-pinned), md-url-view (29, re-pinned), pdf-new-tab (12, re-pinned),
+   file-view-notebar-browser (6 legs, one new and one re-aimed in the build, three in the review's round 1),
+   file-view-place-memory (8, new), file-view-place-svg-source (1, re-pinned), file-view-reload (15, nine new),
+   file-view-outline (8, new), file-view-outline-browser (3 legs, new), files (15, two new),
+   files-recent-place-browser (2 legs, new), file-view-place-memory-fold-browser (2 legs, new), path-links (14, four
+   new), render-open-path-target (5, new), user-todo-links (12, cases extended and re-pinned), waiting-detail-link (5,
+   one new), todo-link-target-browser (2 legs, new), waiting-file-chip (12, re-aimed), user-todo-title-links (12,
+   re-pinned), url-links (15, re-pinned), file-uri-link (4, re-pinned), chat-space-paths (5, re-pinned),
+   user-img-dedup (4, re-pinned), render-todo-file-chip (14, re-pinned), waiting-link-focus (4, re-pinned),
+   waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6, re-pinned), menu-theme-tokens (7, the surfaces
+   list), file-comments (35, one re-pinned), the fixture file-view-outline-fixture.ts (new) and real-viewer-leg.ts
+   (the HEAD-aware stub, `__heads`, `chatKeysScript`); tests/test_files_pane.py (24, one new),
    tests/test_guide_files_place_and_outline.py (12, new), tests/test_reference_todo_file.py (20, two re-pinned),
    tests/test_markdown_viewer_plan_note_counts.py (5, unchanged; it accepts this note). Every case that changes
-   behaviour fails over a `git archive` of 4a3e18664 (the head the branch was cut from) or of the fork's main
-   929ae86e1 (the same bytes in every file this slice touches), with the new exports stubbed where a test imports one,
-   and says how in its commit; a pin over a shape this slice moved is titled a re-pin and is red by construction over
-   those trees; the guards say they are guards.
+   behaviour fails over a `git archive` of 4a3e18664 (the head the branch was cut from, the base 0bf0465b4's bytes in
+   every file a test reads), of the fork's main while the build ran, 929ae86e1 (Slice 8's hunks absent there, in the
+   six files the head of this note names), or of a head of the pre-rebase lineage (the mapping at the head of this
+   note), with the new exports stubbed where a test imports one, and says how and over which tree in its commit; a pin
+   over a shape this slice moved is titled a re-pin and is red by construction over those trees; the guards say they
+   are guards.
    The guarantees the families re-verify: highlights are measured `<mark class="fc-hl">` elements over the range's
    text nodes with their data-act, id, tabIndex, role and title, the margin layout reading their boxes, and the
    panel's press-time strip takes the tabindex off marks alone, never off the body, whose own `tabindex` stands

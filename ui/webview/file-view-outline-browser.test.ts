@@ -13,7 +13,7 @@
 // playwright browser (CI installs none), as the other legs do. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { inBrowser, openViewer, pageHtml, frames, paintsReach, chatKeysScript, ORIGIN, REPORT, SID, MT } from "./real-viewer-leg";
+import { inBrowser, openViewer, pageHtml, frames, paintsReach, chatKeysScript, ORIGIN, REPORT, SID, MT, MT2 } from "./real-viewer-leg";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, manyHeadings } from "./file-view-outline-fixture";
 
 const BTN = ".fileview-acts .fileview-outline-btn";
@@ -197,5 +197,111 @@ test("in a browser, in the chat modal under render.ts's own key handlers: ArrowD
     assert.equal(composer, "", "no key reached the composer");
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
+  });
+});
+
+// ── the review's round 1: the popover's width against the room left of the button, the closers' keyboard hand-over, an
+// image-only heading's row, the button over the failure pane ─────────────────────────────────────────────────────────────
+const H45 = "Slice 6: reaching a section without scrolling";                                          // 45 characters
+const H60 = "A section heading of about sixty characters would carry this";                           // 60
+const H90 = "When a plan or a build report names a section with, yes, a ninety character heading like this";   // 93
+const wide = (i: number): string => `Paragraph ${i}: lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore.`;
+/** A note whose headings are wider than the room between the card's left edge and the Outline button's right edge. */
+const LONG_HEADS = ["Title", H45, H60, H90, "Short", "Last"].map((h, i) => (i === 0 ? "# " : i % 2 ? "## " : "### ") + h + "\n\n" + wide(i + 1) + "\n").join("\n") + Array.from({ length: 12 }, (_, i) => wide(i + 7) + "\n").join("\n");
+/** A note with one heading whose only content is a picture. */
+const IMG_NOTE = "# T\n\n" + wide(1) + "\n\n## ![Figure one](figs/a.png)\n\n" + wide(2) + "\n\n## After\n\n" + Array.from({ length: 30 }, (_, i) => wide(i + 3) + "\n").join("\n");
+type RowsRead = { inCard: boolean; popLeft: number; popRight: number; popWidth: number; cardWidth: number; btnRight: number; gapUnderBtn: number; styleLeft: string; rows: Array<{ text: string; textLeftInCard: number; rowRightInCard: number; overflow: string; height: number; title: string }> };
+/** In the page: the popover's box against the card's, and each row's TEXT box (a Range's rect, laid out past the row's clip)
+ *  and row box from the card's left edge. */
+function readRows(): RowsRead {
+  const pop = document.querySelector(".fileview-outline") as HTMLElement, card = document.querySelector(".fileview") as HTMLElement, btn = document.querySelector(".fileview-outline-btn") as HTMLElement;
+  const c = card.getBoundingClientRect(), p = pop.getBoundingClientRect(), b = btn.getBoundingClientRect();
+  const rows = (Array.from(pop.querySelectorAll(".fileview-outline-row")) as HTMLElement[]).map((r) => {
+    const rg = document.createRange(); rg.selectNodeContents(r); const t = rg.getBoundingClientRect(); const rr = r.getBoundingClientRect();
+    return { text: (r.textContent || "").slice(0, 14), textLeftInCard: Math.round(t.left - c.left), rowRightInCard: Math.round(rr.right - c.left), overflow: getComputedStyle(r).textOverflow, height: Math.round(rr.height * 10) / 10, title: r.title };
+  });
+  return { inCard: p.left >= c.left - 0.5 && p.right <= c.right + 0.5, popLeft: Math.round(p.left - c.left), popRight: Math.round(p.right - c.left), popWidth: Math.round(p.width), cardWidth: Math.round(c.width), btnRight: Math.round(b.right - c.left), gapUnderBtn: Math.round((p.top - b.bottom) * 10) / 10, styleLeft: pop.style.left, rows };
+}
+const activeName = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? a.tagName + "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "none"; });
+/** Press PageDown and wait for the body's scrollTop to pass `from` (Chromium may animate a keyboard scroll); false when it never does. */
+const pageDownMoves = (page: any, from: number): Promise<boolean> => page.keyboard.press("PageDown").then(() => page.waitForFunction((v: number) => (document.querySelector(".fileview-body") as HTMLElement).scrollTop > v, from, { timeout: 3000 }).then(() => true, () => false));
+const popoverUp = (page: any): Promise<boolean> => page.evaluate(() => !!document.querySelector(".fileview-outline"));
+
+test("in a browser (review round 1): a note with a heading wider than the room left of the button opens a popover that lies inside the card with every row's text starting inside it (before: the box began left of the card and its overflow clipped the start of every row, the short ones to blank strips), at pane 900 and 380 px and in the chat modal, while the forty-two-heading note keeps its right anchor under the button; closing the popover by a second click on the button, by a window resize or by the panel's reload hands the keyboard to the body and PageDown scrolls (before: the keyboard stayed on the button, or fell to the document's body); an image-only heading's row reads its picture's alt text at a text row's height; the fetch-failure pane hides the button", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, w, h] of [["pane", 900, 700], ["pane", 380, 640], ["chat", 1000, 700]] as Array<["pane" | "chat", number, number]>) {
+      const what = mode + " " + w + "px (long headings)";
+      const { page, errors } = await openViewer(browser, mode, w, h, { docs: { [REPORT]: LONG_HEADS } });
+      await page.click(BTN); await frames(page, 2);
+      const r: RowsRead = await page.evaluate(readRows);
+      assert.equal(r.rows.length, 6, what + ": one row per heading");
+      assert.ok(r.inCard, what + ": the popover lies inside the card (read left " + r.popLeft + ", right " + r.popRight + " of a card starting at 0; before the fix the box started " + "left of the card and was clipped)");
+      assert.ok(r.popLeft >= 7.5, what + ": its left edge is at the card's margin or right of it: " + r.popLeft);
+      for (const row of r.rows) assert.ok(row.textLeftInCard >= r.popLeft, what + ": the row \"" + row.text + "\" starts inside the popover (text left " + row.textLeftInCard + ", popover left " + r.popLeft + "; before the fix the short rows were wholly left of the card's edge)");
+      assert.equal(r.rows[0].text, "Title", what + ": the first row reads the title"); assert.equal(r.rows[4].text, "Short"); assert.equal(r.rows[5].text, "Last");
+      assert.ok(r.popWidth <= r.cardWidth - 16 + 1, what + ": the popover's width is capped at the card's less 16 px (" + r.popWidth + " of " + r.cardWidth + ")");
+      assert.ok(r.rows[3].title.length > 80 && r.rows[3].rowRightInCard <= r.popRight + 0.5 && r.rows[3].overflow === "ellipsis", what + ": the ninety-character row's box ends inside the popover, its text clipped with an ellipsis, and it carries its whole text as its title");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+    // the forty-two-heading note in the chat modal: the popover is placed from its containing block, the fixed overlay the card
+    // is inset in, so it hangs 4 px under the button with its right edge at the button's (before: 18 px too high, over the
+    // button's lower half, and 25 px left of the anchor)
+    const chat = await openViewer(browser, "chat", 1000, 700, { docs: { [REPORT]: OUTLINE_NOTE } });
+    await chat.page.click(BTN); await frames(chat.page, 2);
+    const inChat: RowsRead = await chat.page.evaluate(readRows);
+    assert.ok(inChat.inCard, "chat modal: the usual note's popover lies inside the card");
+    assert.ok(Math.abs(inChat.popRight - inChat.btnRight) <= 1, "chat modal: right-anchored under the button (popover right " + inChat.popRight + ", button right " + inChat.btnRight + "; before: 25 px left of it)");
+    assert.ok(Math.abs(inChat.gapUnderBtn - 4) <= 1, "chat modal: 4 px under the button (read " + inChat.gapUnderBtn + "; before: over the button's lower half)");
+    assert.deepEqual(chat.errors, [], "chat modal: no page errors");
+    await chat.page.close();
+    // the forty-two-heading note at pane 900: the popover keeps its right anchor under the button (the fix touches only a box that would start left of the card)
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: OUTLINE_NOTE } });
+    await page.click(BTN); await frames(page, 2);
+    const ok: RowsRead = await page.evaluate(readRows);
+    assert.ok(ok.inCard && ok.popLeft > 8, "the usual note's popover lies inside the card, away from its left margin (left " + ok.popLeft + ")");
+    assert.ok(Math.abs(ok.popRight - ok.btnRight) <= 1, "…right-anchored under the button (popover right " + ok.popRight + ", button right " + ok.btnRight + ")");
+    assert.ok(Math.abs(ok.gapUnderBtn - 4) <= 1, "…4 px under it (read " + ok.gapUnderBtn + ")");
+    assert.equal(ok.styleLeft, "", "…with no left anchor set");
+    // the toggle: a second click on the button closes the popover; the keyboard goes to the body and PageDown scrolls
+    await page.click(BTN); await frames(page, 2);
+    assert.equal(await popoverUp(page), false, "the second click closed the popover");
+    assert.equal(await activeName(page), BODY, "…and the body holds the keyboard (before: the button the click focused kept it, and PageDown scrolled nothing)");
+    assert.equal(await pageDownMoves(page, 0), true, "PageDown scrolls the note after the toggle close");
+    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+    // the window resize closer (a zoom, a window drag): the popover held the keyboard; the body takes it
+    await page.click(BTN); await frames(page, 1);
+    assert.equal(await activeName(page), "DIV.fileview-outline", "the popover holds the keyboard when open");
+    await page.setViewportSize({ width: 860, height: 700 }); await frames(page, 3);
+    assert.equal(await popoverUp(page), false, "the window resize closed the popover");
+    assert.equal(await activeName(page), BODY, "…and the body holds the keyboard (before: the document's body, and PageDown scrolled nothing)");
+    assert.equal(await pageDownMoves(page, 0), true, "PageDown scrolls the note after the resize close");
+    await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+    // the paint closer: the Comments panel's poll reloads the file under the open popover (the seam's reload, the poll's path)
+    await page.click(BTN); await frames(page, 1);
+    const paints: number = await page.evaluate(() => (window as any).__paints);
+    await page.evaluate((m: string) => { (window as any).__mtime = m; (window as any).__seam.reload(); }, MT2);
+    await paintsReach(page, paints + 1); await frames(page, 3);
+    assert.equal(await popoverUp(page), false, "the reload's paint closed the popover");
+    assert.equal(await activeName(page), BODY, "…and the body holds the keyboard (before: the document's body)");
+    assert.equal(await pageDownMoves(page, 0), true, "PageDown scrolls the note after the reload's close");
+    assert.deepEqual(errors, [], "no page errors (the usual note)");
+    await page.close();
+    // an image-only heading: its row reads the alt text at a text row's height (before: an 8 px padding-only strip with an empty title)
+    const img = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: IMG_NOTE } });
+    await img.page.click(BTN); await frames(img.page, 2);
+    const rows: RowsRead = await img.page.evaluate(readRows);
+    assert.deepEqual(rows.rows.map((x) => x.text), ["T", "Figure one", "After"], "the image-only heading's row reads its picture's alt text");
+    assert.equal(rows.rows[1].title, "Figure one", "…and carries it as its title");
+    assert.ok(Math.abs(rows.rows[1].height - rows.rows[0].height) <= 1, "…at a text row's height (read " + rows.rows[1].height + " against " + rows.rows[0].height + "; before: 8 px)");
+    await img.page.keyboard.press("Escape"); await frames(img.page, 2);
+    // the failure pane: the file gone, the panel's reload paints the 404 pane, and the Outline button goes with the headings it listed
+    assert.ok(await img.page.evaluate(() => (document.querySelector(".fileview-outline-btn") as HTMLElement).getClientRects().length > 0), "the button shows over the Rendered note");
+    await img.page.evaluate((p: string) => { delete (window as any).__docs[p]; (window as any).__seam.reload(); }, REPORT);
+    await img.page.waitForFunction(() => !!document.querySelector(".fileview-body > .fileview-err"), null, { timeout: 10000 });
+    await frames(img.page, 2);
+    assert.equal(await img.page.evaluate(() => (document.querySelector(".fileview-outline-btn") as HTMLElement).getClientRects().length), 0, "the Outline button is hidden over the failure pane (before: shown, and a click flashed it and opened nothing)");
+    assert.deepEqual(img.errors, [], "no page errors (the image heading and the failure pane)");
+    await img.page.close();
   });
 });

@@ -68,7 +68,7 @@ class El {
   childNodes!: Array<El | Txt>;
   attrs = new Map<string, string>();
   listeners: Reg[] = [];
-  hidden = false; disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
+  hidden = false; _disabled = false; title = ""; type = ""; value = ""; placeholder = ""; spellcheck = true; wrap = "";
   src = ""; alt = ""; href = ""; download = ""; target = ""; rel = "";
   innerHTML = "";
   style: Record<string, string> = {};
@@ -151,6 +151,12 @@ class El {
   }
   dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   click(): void { this.dispatchEvent(new Ev("click")); }
+  get disabled(): boolean { return this._disabled; }
+  /** A browser drops the focus off a control the moment it is disabled (Chromium: synchronously, to the document's body), so
+   *  the changed-on-disk bar's Reload, focused by its click and disabled by its own handler, has lost the keyboard before its
+   *  landing. The review's round 1: as a plain field the stand-in kept the focus on the disabled button, and case 14 passed
+   *  over a path the browser never takes (the landing-time read found the button; in a browser it found the document's body). */
+  set disabled(v: boolean) { this._disabled = v; if (v && doc.activeElement && this.contains(doc.activeElement)) doc.activeElement = doc.body; }
   focus(): void { doc.activeElement = this; }
   blur(): void { if (doc.activeElement === this) doc.activeElement = null; }
   scrollIntoView(): void { this.scrolled++; }
@@ -626,9 +632,9 @@ test("changed on disk: a reload another ask ran (the seam's reload(): the Commen
   assert.equal(barOf(wrap), null); assert.equal(ctx.text(), PY3); assert.equal(ctx.mtimeNs(), MT3);
 });
 
-test("changed on disk: while editing no HEAD runs and the editor's entry takes the bar with the other notices; Cancel brings the probe back and the bar with it; after the close no event sends anything", async (t) => {
+test("changed on disk: while editing no HEAD runs and the editor's entry takes the bar with the other notices; Cancel brings the bar back at once with no HEAD and hands the keyboard to the body, and the probe asks again on the next focus; after the close no event sends anything", async (t) => {
   visibleAfter(t);
-  const { fv, wrap, ctx } = await open(APP, t);
+  const { fv, wrap, ctx, body } = await open(APP, t);
   disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
   focusWindow(); await settle();
   assert.equal(readBar(wrap).text, CHANGED);
@@ -639,11 +645,17 @@ test("changed on disk: while editing no HEAD runs and the editor's entry takes t
   const n = heads();
   focusWindow(); visibility(false); await settle();
   assert.equal(heads(), n, "editing: the probe stands down (the save's fence has its own Reload)");
-  acts.querySelectorAll("button").find((x) => x.textContent === "Cancel")!.click(); await settle();
+  const cancel = acts.querySelectorAll("button").find((x) => x.textContent === "Cancel")!;
+  cancel.focus();                                          // a real click focuses the button
+  cancel.click(); await settle();
   assert.equal(ctx.editing(), false);
+  assert.equal(readBar(wrap).text, CHANGED, "Cancel brings the bar back at once: the file that shows is still the one it was raised under, and the exit is the event (review round 1: the old text came back with no line above it until the next focus)");
+  assert.equal(readBar(wrap).disabled, false, "…with its Reload armed");
+  assert.equal(heads(), n, "…and without a HEAD: nothing new is known");
+  assert.equal(doc.activeElement, body, "the exit's repaint is a paint the reader asked for: the body takes the keyboard from the button the click focused (review round 1: it stayed on the hidden Cancel, and PageDown scrolled nothing)");
   focusWindow(); await settle();
   assert.equal(heads(), n + 1, "the edit over, the probe asks again");
-  assert.equal(readBar(wrap).text, CHANGED, "the file still moved: the bar is back");
+  assert.equal(readBar(wrap).text, CHANGED, "the file still moved: the bar stands (one bar: the HEAD's raise replaced nothing)");
   fv.closeFileView();
   assert.equal(doc.getElementById("romp-fileview"), null);
   const m = heads();
@@ -693,16 +705,19 @@ test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HE
   assert.equal(ctx.mtimeNs(), MT3, "a failed landing lends no mtime"); assert.equal(paints, 3, "and no paint");
 });
 
-test("changed on disk: the Reload button holds the keyboard at its click (a click focuses a button), and the landing that removes the bar hands it to the body, so PageDown reads on; a bar another ask's landing clears while a box in the aside holds the keyboard leaves it there; a failed Reload keeps it on the re-armed button", async (t) => {
+test("changed on disk: the Reload button holds the keyboard at its click (a click focuses a button), the click's disable drops it to the document's body (the browser's rule), and the landing that removes the bar hands it to the body, so PageDown reads on; a bar another ask's landing clears while a box in the aside holds the keyboard leaves it there; a failed Reload puts it back on the re-armed button", async (t) => {
   const { wrap, ctx, body } = await open(APP, t);
   disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
   focusWindow(); await settle();
   const btn = reloadButton(wrap);
   btn.focus();                                             // a real click focuses the button; the stand-in's click() moves nothing, so the focus is put there first
   assert.equal(doc.activeElement, btn);
-  btn.click(); await settle();
+  btn.click();
+  assert.equal(btn.disabled, true, "acknowledged at the click");
+  assert.equal(doc.activeElement, doc.body, "the disable dropped the focus to the document's body at once (the stand-in's disabled setter is the browser's rule), so a read at the landing would find no holder");
+  await settle();
   assert.equal(barOf(wrap), null, "the landing took the bar"); assert.equal(ctx.mtimeNs(), MT2);
-  assert.equal(doc.activeElement, body, "the body took the keyboard the removed button held (before the consolidation it fell to the document's body and stayed there)");
+  assert.equal(doc.activeElement, body, "the body took the keyboard the button held at its click (review round 1: read at the landing, after the disable's drop, the consolidation's hand-over never fired in a browser and PageDown after every Reload scrolled nothing)");
   // another ask's landing (the seam's reload(): the panel's poll) clears the bar while the panel's box holds the keyboard:
   // the button never held it, so nothing moves
   const aside = new El("div"); const box = aside.appendChild(new El("textarea"));
@@ -722,7 +737,7 @@ test("changed on disk: the Reload button holds the keyboard at its click (a clic
   delete disk[APP];                                        // gone by the time the GET runs
   btn2.click(); await settle();
   assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn2.disabled, false, "armed again");
-  assert.equal(doc.activeElement, btn2, "and the button keeps the keyboard: nothing was removed");
+  assert.equal(doc.activeElement, btn2, "and the re-armed button takes the keyboard back (the disable had dropped it to the document's body; nothing was removed)");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

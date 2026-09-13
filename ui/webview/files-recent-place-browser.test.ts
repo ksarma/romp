@@ -5,8 +5,10 @@
 // click hands it back (openFileView's `place`), so the same block is at the top and the body's scrollTop is the
 // pre-close value within a pixel (the plan's acceptance). Then the note rewritten below the block (the span is still a
 // block of the text: the same seat), rewritten above it (the span is no block of the new text: the numeric scrollTop,
-// clamped), a page reload (localStorage survives), a second note opened OVER the first (the replace path writes the
-// first's place; both rows hold theirs), and a relay re-open with no row (the viewer's own in-page memory). The
+// clamped), a page reload (localStorage survives, and the shell's relay as the FIRST open after it returns to the block
+// and keeps the row's record: the pane reads the row's record for every open, not for the row's click alone; the Slice 6
+// review, round 1), a second note opened OVER the first (the replace path writes the first's place; both rows hold
+// theirs), and a relay re-open with no row (the viewer's own in-page memory). The
 // record holds no text: its JSON in localStorage names no word of the note. Skips LOUDLY without a playwright
 // browser (CI installs none). Synthetic values only: the notes-api world, a placeholder session id, invented notes.
 import { test } from "node:test";
@@ -120,7 +122,7 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
 }
 const near = (a: number, b: number, tol = 1) => Math.abs(a - b) <= tol;
 
-test("in a browser: a note reopened from Recent returns to its block and its scrollTop; the row's record holds spans and pixels, never text; a change below the block keeps the seat, a change above falls to the clamped scrollTop; the record survives a page reload", async (t) => {
+test("in a browser: a note reopened from Recent returns to its block and its scrollTop; the row's record holds spans and pixels, never text; a change below the block keeps the seat, a change above falls to the clamped scrollTop; the record survives a page reload, and the relay's open after it returns to the block and keeps the record", async (t) => {
   await inBrowser(t, async (h) => {
     await h.open(REPORT);
     assert.equal((await h.top())!.scrollTop, 0, "a first open starts at the top");
@@ -160,15 +162,30 @@ test("in a browser: a note reopened from Recent returns to its block and its scr
     assert.ok(near(now.scrollTop, before.scrollTop, 2), "the clamped scrollTop stands in: " + JSON.stringify(now) + " vs " + before.scrollTop);
     assert.notEqual(now.text.slice(0, 13), "Paragraph 40:", "…and the block under the eye is the one at that pixel now, not block 40 (the record holds no text to find it by)");
     await h.close();
-    // ── a page reload: localStorage survives, the row reopens to the block (the note back as it was)
+    // ── a page reload: localStorage survives (the row's record is the pre-reload one), and the FIRST open after it is the
+    // shell's relay, a chat click on the same path (the routine order on a kernel restart, which reloads the panes): the
+    // viewer's in-page map is empty, so the row's record seats the block, and the relay open's close keeps the record on
+    // the row (the Slice 6 review, round 1: with the row's click alone handing the place back, the relay opened the note
+    // at the top and its leave wrote the top over the row, so the row's own click then landed at the top as well)
     h.docs[REPORT] = LONG; h.mtime.v = MT;
     await h.reopen("report.md"); await h.putAtTop("Paragraph 40"); const again = (await h.top())!; await h.close();
+    const stored = (await h.recent())[0].place;
     await h.page.reload();
     await h.page.waitForFunction(() => (window as any).__posts.some((m: any) => m && m.type === "ready"));
     await h.page.locator("#files-empty .fs-row").first().waitFor({ timeout: 5000 });
+    assert.deepEqual((await h.recent())[0].place, stored, "the record survives the reload as it was");
+    await h.open(REPORT);                                            // the relay, not the row
+    now = (await h.top())!;
+    assert.equal(now.text.slice(0, 13), "Paragraph 40:", "after a reload, the relay's open returns to the block: " + JSON.stringify(now));
+    assert.ok(near(now.scrollTop, again.scrollTop), "scrollTop " + now.scrollTop + " vs " + again.scrollTop);
+    await h.close();
+    const kept = (await h.recent())[0].place;
+    assert.equal(kept.start, stored.start, "the relay open's close keeps block 40 on the row: " + JSON.stringify(kept));
+    assert.equal(kept.atTop, false); assert.ok(near(kept.scrollTop, again.scrollTop));
+    // …and the row's click after that lands there as well
     await h.reopen("report.md");
     now = (await h.top())!;
-    assert.equal(now.text.slice(0, 13), "Paragraph 40:", "after a reload: " + JSON.stringify(now));
+    assert.equal(now.text.slice(0, 13), "Paragraph 40:", "the row's click after the relay: " + JSON.stringify(now));
     assert.ok(near(now.scrollTop, again.scrollTop));
     await h.close();
   });
