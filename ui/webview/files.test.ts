@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { asIdentity, parseRecent, rememberRecent, RECENT_MAX, type RecentFile } from "./files-recent";
+import { asIdentity, asPlace, parseRecent, rememberRecent, placeRecent, RECENT_MAX, type RecentFile, type RecentPlace } from "./files-recent";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -20,17 +20,21 @@ const ESBUILD = fs.readFileSync(path.resolve(process.cwd(), "esbuild.js"), "utf8
 // synthetic rows: the notes-api demo world, placeholder sids, TESTHOST for the remote
 const SID = "11111111-2222-3333-4444-555555555555";
 const SID2 = "11111111-2222-3333-4444-666666666666";
-const row = (p: string, sid: string | null, name = "web", t = 1): RecentFile =>
-  ({ path: p, sid, identity: { name, color: { bg: "#123456", fg: "#ffffff" } }, t });
+const row = (p: string, sid: string | null, name = "web", t = 1, place: RecentPlace | null = null): RecentFile =>
+  ({ path: p, sid, identity: { name, color: { bg: "#123456", fg: "#ffffff" } }, t, place });
+// a reader's place as the viewer records it (file-view.ts RememberedPlace; contract C2): a span, pixels, a view, an mtime, a time; no text
+const PLACE: RecentPlace = { start: 1200, end: 1480, top: -12.5, atTop: false, view: "rendered", mtimeNs: "1757145600000000001", scrollTop: 3312, t: 7 };
 
 test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the feed's", () => {
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
-  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}, \{/);
+  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);\n\}, \{/,
+    "…and the link's target the relay carries, validated by the viewer's readAt (it crossed a frame; Slice 6 of plans/markdown-viewer.md)");
   // …and the third argument is the pane's opener for a link inside the shown file (file-view-links.test.ts pins its shape)
   assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
     "the browser opens here too, owing the shell no restore (browse-route.test.ts pins the contract)");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,/);
+  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void/, "a link inside a shown file hands the host its target (C1)");
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const guard = "if (onRelay) { onRelay(m); return; }";
   // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
@@ -53,12 +57,15 @@ test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its ow
 test("the relay guard, executed: onRelay takes the message and short-circuits the feed's arms; no onRelay, the feed route", () => {
   const branch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const body = 'var viaRelay = false; (function () { if (m.romp === "viewFile"' + branch + "} })(); return viaRelay;";
-  const fn = new Function("m", "onRelay", "openFileView", "window", body) as
-    (m: unknown, onRelay: ((m: unknown) => void) | undefined, open: (p: string, sid: string | null) => boolean, w: unknown) => boolean;
+  // readAt (file-view.ts): the receiver's validation of the relay's `at` (Slice 6 of plans/markdown-viewer.md); a stand-in here
+  // that passes an object through and refuses the rest, so the branch's call shape is what is under test, not the validator
+  const readAt = (x: unknown) => (x && typeof x === "object" ? x : null);
+  const fn = new Function("m", "onRelay", "openFileView", "window", "readAt", body) as
+    (m: unknown, onRelay: ((m: unknown) => void) | undefined, open: (p: string, sid: string | null, opts: unknown) => boolean, w: unknown, readAt: (x: unknown) => unknown) => boolean;
   const run = (m: unknown, onRelay: ((m: unknown) => void) | undefined, verdict = true) => {
-    const opened: Array<[string, string | null]> = [], posted: unknown[] = [];
+    const opened: Array<[string, string | null, unknown]> = [], posted: unknown[] = [];
     const win = { parent: { postMessage: (x: unknown) => posted.push(x) } };   // embedded: parent !== window
-    const viaRelay = fn(m, onRelay, (p, sid) => { opened.push([p, sid]); return verdict; }, win);
+    const viaRelay = fn(m, onRelay, (p, sid, opts) => { opened.push([p, sid, opts]); return verdict; }, win, readAt);
     return { opened, posted, viaRelay };
   };
   const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
@@ -70,7 +77,9 @@ test("the relay guard, executed: onRelay takes the message and short-circuits th
   assert.equal(pane.viaRelay, false, "…nor its relay flag");
   assert.deepEqual(pane.posted, [], "…nor its viewFileOpened ack");
   const feed = run(msg, undefined);
-  assert.deepEqual(feed.opened, [["/repo/notes-api/src/app.py", SID]], "no contract of its own: the feed route opens");
+  assert.deepEqual(feed.opened, [["/repo/notes-api/src/app.py", SID, { at: null }]], "no contract of its own: the feed route opens, with no target");
+  const aimed = run({ ...msg, at: { heading: "results" } }, undefined);
+  assert.deepEqual(aimed.opened, [["/repo/notes-api/src/app.py", SID, { at: { heading: "results" } }]], "…and with the relay's target, read through readAt (C1)");
   assert.equal(feed.viaRelay, true);
   assert.deepEqual(feed.posted, [{ romp: "viewFileOpened" }], "and acks the shell so it arms its pane restore");
   const veto = run(msg, undefined, false);
@@ -86,8 +95,8 @@ test("the relay guard, executed: onRelay takes the message and short-circuits th
 test("the session chip resolves from what the relay carried, cached per sid, else the kernel's stub", () => {
   assert.match(SRC, /setFileViewIdentity\(\(id\) => identities\.get\(id\) \?\? hostStub\(id\)\);/);
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId, line, frag })") >= 0
-    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId, line, frag })"),
+  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId, at, place })") >= 0
+    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId, at, place })"),
     "the cache is filled BEFORE the open, so the title bar's chip resolves on the first paint");
   assert.match(openFn, /if \(sid && identity\) identities\.set\(sid, identity\);/);
   assert.doesNotMatch(SRC, /sessionsMeta|tabMeta|sessions\.get/, "the pane has no session list of its own");
@@ -95,15 +104,31 @@ test("the session chip resolves from what the relay carried, cached per sid, els
 
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
-  assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\) \}\);/);
+  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
+  assert.match(SRC, /openFile: \(p, sid, at\) => openHere\(p, sid, null, null, at\),/, "a link inside the shown file hands its target on (Slice 6 of plans/markdown-viewer.md)");
+  assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\), place: null \}\);/, "the entry brings no place: rememberRecent keeps the row's (a relay re-open after the leave stored one)");
   assert.match(SRC, /let recent: RecentFile\[\] = parseRecent\(readStore\(\)\);/, "persisted per browser");
   assert.match(SRC, /"No file open"/);
   // the rows wear the viewer's title-bar classes, so a path and its chip read as they do above an open file
   for (const cls of ['"fileview-name"', '"fileview-dir"', '"fileview-base"', '"fileview-sess"']) assert.ok(SRC.includes(cls), cls);
   assert.match(SRC, /sess\.replaceChildren\(\.\.\.hostNameNodes\(r\.identity\.name, r\.sid\)\)/);
   // delegated on the stable container (actions.ts): a repaint between mousedown and mouseup still lands
-  assert.match(SRC, /delegate\(empty, \{\n\s*open: \(x\) => \{ const r = recent\[Number\(x\.dataset\.i\)\]; if \(r\) openHere\(r\.path, r\.sid, r\.identity\); \},/);
+  assert.match(SRC, /delegate\(empty, \{\n\s*open: \(x\) => \{ const r = recent\[Number\(x\.dataset\.i\)\]; if \(r\) openHere\(r\.path, r\.sid, r\.identity, null, null, r\.place\); \},/,
+    "the row's click hands the viewer the place the row stored (Slice 6 of plans/markdown-viewer.md, item 3)");
+  // the leave: the viewer's onLeave writes the record on the file's row (placeRecent) and persists the list; a file the pane
+  // did not open has no row and gets nothing (executed: the host's arrow, lifted, over a list and a store recorder)
+  const leave = /onLeave: (\(p, sid, rec\) => \{ recent = placeRecent\(recent, p, sid, rec\); writeStore\(\); \}),/.exec(SRC);
+  assert.ok(leave, "the host's onLeave, as files.ts spells it");
+  const writes: number[] = [];
+  const world = new Function("placeRecent", "writeStore", "list", "let recent = list; const run = " + leave![1] + "; return { run, get recent() { return recent; } };")(
+    placeRecent, () => { writes.push(1); }, [row("/repo/notes-api/a.md", SID), row("/repo/notes-api/b.md", SID2)]) as { run: (p: string, sid: string | null, rec: RecentPlace) => void; recent: RecentFile[] };
+  world.run("/repo/notes-api/a.md", SID, PLACE);
+  assert.deepEqual(world.recent.map((r) => [r.path, r.place]), [["/repo/notes-api/a.md", PLACE], ["/repo/notes-api/b.md", null]], "the record lands on its row alone");
+  assert.equal(writes.length, 1, "…and the store is written once");
+  world.run("/repo/notes-api/zzz.md", SID, PLACE);
+  assert.deepEqual(world.recent.map((r) => r.place), [PLACE, null], "no row, nothing invented");
+  assert.equal(writes.length, 2);
+  assert.match(VIEW, /onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void/, "the host callback the viewer calls at a close, a replace-open and pagehide (C2)");
   assert.match(SRC, /row\.dataset\.act = "open"; row\.dataset\.i = String\(i\);/);
 });
 
@@ -272,8 +297,8 @@ test("parseRecent tolerates junk: a corrupt store costs the list, never the pane
   ]);
   const got = parseRecent(raw);
   assert.deepEqual(got, [
-    { path: "/repo/notes-api/a.md", sid: SID, identity: { name: "web", color: { bg: "#123456", fg: "#fff" } }, t: 5 },
-    { path: "/repo/notes-api/b.md", sid: null, identity: null, t: 0 },
+    { path: "/repo/notes-api/a.md", sid: SID, identity: { name: "web", color: { bg: "#123456", fg: "#fff" } }, t: 5, place: null },
+    { path: "/repo/notes-api/b.md", sid: null, identity: null, t: 0, place: null },
   ]);
   // an overlong store is capped on read, so a bloated entry cannot grow the list past the cap
   const many = JSON.stringify(Array.from({ length: RECENT_MAX + 5 }, (_, i) => ({ path: "/p" + i, sid: null })));
@@ -288,4 +313,61 @@ test("asIdentity validates the relayed identity to the chip's shape; anything el
   assert.equal(asIdentity({ color: { bg: "#123456", fg: "#fff" } }), null, "no name, no chip — never invented");
   assert.equal(asIdentity(null), null);
   assert.equal(asIdentity("web"), null);
+});
+
+// ── the reader's place on a row (plans/markdown-viewer.md, Slice 6, item 3) ─────────────────────────
+// The viewer hands the pane the place of a file being left (initFileView's onLeave: the top block's source span and
+// pixel offset, the view, the file's mtime, the numeric scrollTop, the time); the pane stores it on the file's row
+// and hands it back when the row is clicked (openFileView's `place`), so a note reopened from Recent returns to
+// where it was read. The record is validated field by field on read, as the identity is; never a word of the file.
+test("parseRecent keeps a well-formed place on its row and drops a malformed one, keeping the row", () => {
+  const raw = JSON.stringify([
+    { path: "/repo/notes-api/a.md", sid: SID, t: 5, place: PLACE },
+    { path: "/repo/notes-api/b.md", sid: SID, t: 4, place: "3312" },                                  // a string: no place
+    { path: "/repo/notes-api/c.md", sid: SID, t: 3, place: { ...PLACE, start: 1500 } },               // end before start: no place
+    { path: "/repo/notes-api/d.md", sid: SID, t: 2, place: { ...PLACE, start: -1 } },                 // a negative offset
+    { path: "/repo/notes-api/e.md", sid: SID, t: 1, place: (({ mtimeNs, ...rest }) => rest)(PLACE) },   // a missing field
+    { path: "/repo/notes-api/f.md", sid: SID, t: 1, place: { ...PLACE, view: "source" } },            // a view the viewer has no name for
+    { path: "/repo/notes-api/g.md", sid: SID, t: 1, place: { ...PLACE, scrollTop: -4 } },             // a scrollTop below the top
+    { path: "/repo/notes-api/h.md", sid: SID, t: 1, place: { ...PLACE, top: "12" } },                 // a pixel offset as a string
+    { path: "/repo/notes-api/i.md", sid: SID, t: 1, place: { ...PLACE, atTop: 1 } },                  // a truthy number is not the boolean
+    { path: "/repo/notes-api/j.md", sid: SID, t: 1, place: { ...PLACE, t: NaN } },                    // NaN serialises to null: no time
+    { path: "/repo/notes-api/k.md", sid: SID, t: 1 },                                                 // no place at all
+  ]);
+  const got = parseRecent(raw);
+  assert.equal(got.length, 8, "the cap, not the malformed places, bounds the list (RECENT_MAX rows)");
+  assert.deepEqual(got[0].place, PLACE, "a well-formed record survives whole");
+  for (const r of got.slice(1)) assert.equal(r.place, null, r.path + ": a malformed record costs the place, never the row");
+  assert.deepEqual(got.map((r) => r.path.slice(-4, -3)), ["a", "b", "c", "d", "e", "f", "g", "h"], "every row kept, in order");
+  // the validator alone, and what it never does: widen the record with a field it does not know
+  assert.deepEqual(asPlace({ ...PLACE, source: "lorem ipsum", text: "dolor" }), PLACE, "a stray text field is dropped on read: nothing but the eight fields reaches the store");
+  assert.deepEqual(asPlace({ ...PLACE, top: 0, scrollTop: 0, atTop: true, view: "raw" }), { ...PLACE, top: 0, scrollTop: 0, atTop: true, view: "raw" }, "the top of a file in the Raw view is a place too");
+  assert.equal(asPlace(null), null); assert.equal(asPlace(PLACE.start), null); assert.equal(asPlace({ ...PLACE, end: Infinity }), null);
+});
+
+test("rememberRecent carries the newest record, and a re-open that brings none keeps the row's", () => {
+  let list: RecentFile[] = [];
+  list = rememberRecent(list, row("/repo/notes-api/a.md", SID, "web", 1));
+  assert.equal(list[0].place, null, "a first open has no place yet");
+  list = placeRecent(list, "/repo/notes-api/a.md", SID, PLACE);
+  assert.deepEqual(list[0].place, PLACE, "the leave writes the record on the row");
+  // the shell's relay re-opens the same file: openHere builds an entry with no place AFTER the viewer's leave stored one
+  list = rememberRecent(list, row("/repo/notes-api/a.md", SID, "web-2", 2));
+  assert.deepEqual(list.map((r) => [r.identity!.name, r.place]), [["web-2", PLACE]], "the row moves up, its identity refreshes, its place stays");
+  // an entry that brings a record wins
+  const later = { ...PLACE, start: 2000, end: 2300, scrollTop: 5000, t: 9 };
+  list = rememberRecent(list, row("/repo/notes-api/a.md", SID, "web-2", 3, later));
+  assert.deepEqual(list[0].place, later);
+  // another session's row for the same path is another row, with a place of its own
+  list = rememberRecent(list, row("/repo/notes-api/a.md", SID2, "api", 4));
+  assert.deepEqual(list.map((r) => [r.sid, r.place]), [[SID2, null], [SID, later]]);
+  // placeRecent writes the matching row and no other; no such row, the list stands
+  const placed = placeRecent(list, "/repo/notes-api/a.md", SID2, PLACE);
+  assert.deepEqual(placed.map((r) => [r.sid, r.place]), [[SID2, PLACE], [SID, later]]);
+  assert.deepEqual(placeRecent(list, "/repo/notes-api/zzz.md", SID, PLACE), list, "nothing is invented for a file the pane did not open");
+  assert.notEqual(placed, list, "a new list, not a write into the old one");
+  // the record's JSON, as localStorage will hold it: the eight fields and nothing that could hold the file's text
+  const json = JSON.stringify(placed[0]);
+  assert.deepEqual(Object.keys(JSON.parse(json).place).sort(), ["atTop", "end", "mtimeNs", "scrollTop", "start", "t", "top", "view"]);
+  assert.doesNotMatch(json, /source|text|quote|lorem/, "no text field, no quote");
 });
