@@ -447,7 +447,9 @@ function unframeImage(img: HTMLElement, marks: string[]): void {
 // returns the element among the marks. The panel then treats it as one of its marks (a control that opens the card, tabIndex
 // and role set by the pass, the margin layout's box, the arrivals dot, owns) with one difference: where a mark is unwrapped, the
 // element is stripped in place (stripBlockPaint), since unwrapping it would hoist KaTeX's root into the page as a top-level
-// node the block pairing meets. The sheets dress the classes on the formula's box (styles.css and feed.css, the .fc-hl region).
+// node the block pairing meets; the strip takes its tabindex, which blurs a box holding the keyboard, so the pass gives the
+// focus back to the box it stamps again as it gives a mark's successor the focus (refocusMark reads the focus, not the node).
+// The sheets dress the classes on the formula's box (styles.css and feed.css, the .fc-hl region).
 const BLOCK_PAINT_CLASSES = ["fc-hl-block", "fc-presel-block"];
 const isMarkEl = (n: Element): boolean => n.tagName.toUpperCase() === "MARK";
 const isBlockPaint = (n: Element): boolean => BLOCK_PAINT_CLASSES.some((c) => n.classList.contains(c));
@@ -3578,7 +3580,9 @@ class Panel {
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
-    // aside's controls, so the mark's own successor takes it back once painted (refocusMark)
+    // aside's controls, so the mark's own successor takes it back once painted (refocusMark). A display formula's
+    // stamped box is stripped in place instead, and the strip's removal of its tabindex drops the focus the same way,
+    // so refocusMark reads the focus, not the element's presence, and the box, stamped again, takes it back too
     const held = this.heldMark();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
@@ -3850,11 +3854,18 @@ class Panel {
     if (!a.dataset || !a.dataset.act || !a.dataset.id) return null;
     return { act: a.dataset.act, id: a.dataset.id, k: this.ownMarks(a.dataset.act, a.dataset.id).indexOf(a), at: a };
   }
-  /** After a repaint: the held mark left the body, so its successor — our mark for the same subject at the same
-   *  place — takes the focus, without scrolling. A mark that stayed (nothing repainted it) keeps it; a subject the
-   *  repaint no longer paints (the change was decided, the comment resolved) leaves the focus where the browser put it. */
+  /** After a repaint: the held mark lost the keyboard, so its successor, our mark for the same subject at the same place,
+   *  takes the focus, without scrolling. A mark that stayed and kept the focus (nothing repainted it) is left alone; a subject
+   *  the repaint no longer paints (the change was decided, the comment resolved) leaves the focus where the browser put it. The
+   *  test is the focus itself, not the element's presence in the body: a mark is unwrapped and painted again, a new node, so
+   *  the held element's absence would say it; a display formula's stamped box (Slice 8, item 5) is stripped in place and
+   *  stamped again, the SAME element, and the strip's removal of its tabindex drops the focus to the body at once (Chromium
+   *  blurs an element a tabindex change makes unfocusable, synchronously, and the attribute set again focuses nothing), so its
+   *  successor is itself. Before this the box's presence stood for its focus, and a peer's comment landing by the poll left
+   *  the keyboard on the body, Enter opening nothing, while the box kept its Tab stop (the Slice 8 review, round 4;
+   *  md-config-math-block-paint-browser.test.ts measures the blur, file-comments-block-paint.test.ts models it). */
   private refocusMark(held: { act: string; id: string; k: number; at: Element }): void {
-    if (this.ctx.body().contains(held.at)) return;
+    if (this.ctx.body().contains(held.at) && document.activeElement === held.at) return;
     const next = this.ownMarks(held.act, held.id);
     if (next.length) next[Math.min(Math.max(held.k, 0), next.length - 1)].focus({ preventScroll: true });
   }

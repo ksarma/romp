@@ -16,7 +16,12 @@
 // holds an emoji beside an entity (an astral character the per-cell fallback shows): the served comment and deletion point on
 // later cells land in their own cells and a real drag's Save posts the exact slice, where the build's head, counting a hole's
 // characters by code point, shifted every later cell of the table by one code unit and stored a quote spanning the pipe into
-// the next row. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
+// the next row. A leg of the review's round 4 serves a table whose header row is two formulas alone over the REAL KaTeX fill:
+// a real drag from the paragraph before the table to past the second header formula's glyphs is refused with the one-cell
+// sentence and Switch to Raw preselects `$h$ | $k$`, the table's covered cells (before: the composer quoted `Intro para. |
+// $h$ | $k$` with Save, the pipe between two cells inside a Rendered quote, since a cell holding a formula alone had no record
+// and the count never saw two), while a drag to past the first formula's glyphs maps `Intro para.\n\n| $h$`, one cell and the
+// prose before it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
 // only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -348,6 +353,91 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
     await frames(page, 4);
     const writes = (await posted(page)).filter((x: any) => x.type === "fileComments" && x.verb === "comment");
     assert.deepEqual(writes.map((w: any) => [w.args.anchor.quote, w.args.hintOffset]), [["ue3", ASTRAL.indexOf("ue3")]], "the stored quote is the exact source slice at the cell's offset (before: `e3 | u` one character after)");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── the Slice 8 review, round 4: a header row of formulas alone, dragged into from the prose before the table ──
+const FORMULAS = "Intro para.\n\n| $h$ | $k$ |\n|---|---|\n| $a$ | $b$ |\n\nAfter.\n";
+/** In the page: the box of the first character of the paragraph holding `start`, and the right edge of the n-th KaTeX formula
+ *  inside the table (its `.katex-html` box), the drag's two points. */
+function proseToFormulaPoints(spec: { start: string; katexIndex: number }): { sx: number; sy: number; ex: number; ey: number } {
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const texts: Text[] = [];
+  const w = document.createTreeWalker(md, NodeFilter.SHOW_TEXT);
+  for (let t = w.nextNode(); t; t = w.nextNode()) texts.push(t as Text);
+  const sNode = texts.find((t) => t.data.startsWith(spec.start));
+  if (!sNode) throw new Error("start not in the view's text: " + spec.start);
+  const r = document.createRange(); r.setStart(sNode, 0); r.setEnd(sNode, 1);
+  const a = r.getBoundingClientRect();
+  const boxes = Array.from(md.querySelectorAll("table .katex .katex-html")) as HTMLElement[];
+  const k = boxes[spec.katexIndex];
+  if (!k) throw new Error("no formula " + spec.katexIndex + " in the table (" + boxes.length + ")");
+  const b = k.getBoundingClientRect();
+  return { sx: a.left + Math.min(1.5, a.width / 3), sy: a.top + a.height / 2, ex: b.right + 2, ey: b.top + b.height / 2 };
+}
+/** A real drag from the first character of `start` to just past the n-th formula's glyphs inside the table. */
+async function dragProseToFormula(page: any, start: string, katexIndex: number): Promise<string> {
+  await page.evaluate(() => { getSelection()!.removeAllRanges(); });
+  const pts = await page.evaluate(proseToFormulaPoints, { start, katexIndex });
+  await frames(page, 1);
+  await page.mouse.move(pts.sx, pts.sy);
+  await page.mouse.down();
+  await page.mouse.move((pts.sx + pts.ex) / 2, (pts.sy + pts.ey) / 2, { steps: 3 });
+  await page.mouse.move(pts.ex, pts.ey, { steps: 6 });
+  await page.mouse.up();
+  await frames(page, 2);
+  return page.evaluate(() => String(getSelection()));
+}
+
+test("in a browser, the real viewer and panel on the Files pane over a table whose header row is two formulas alone, rendered by the real KaTeX fill: a REAL drag from the paragraph before the table to past the second header formula's glyphs is refused with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects `$h$ | $k$`, the table's covered cells, with the composer quoting it and Save offered (the review's round 4; before: the composer quoted `Intro para. | $h$ | $k$` with Save, two cells and the pipe between them inside a Rendered quote, since a cell holding a formula alone had no record and the one-cell count never saw two); a drag to past the FIRST header formula's glyphs maps one cell and the prose before it, the control", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    const html = pageHtml("pane", { [REPORT]: FORMULAS }, MT);
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+    await page.goto(ORIGIN + "/");
+    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, withComments([], 0)]);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md table .katex .katex-html").length === 4 && !document.querySelector(".fileview-md .md-math-inline"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await openPanel(page);
+    const cells = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md th, .fileview-md td")).map((c) => (c.textContent || "").trim()));
+    assert.deepEqual(cells, ["h", "k", "a", "b"], "every cell a formula alone, KaTeX's glyphs");
+    // two formula-only header cells: refused, the Raw view on the cells' span
+    const two = await dragProseToFormula(page, "Intro para.", 1);
+    assert.ok(two.startsWith("Intro para.") && two.includes("k"), "the drag selected the paragraph and both header formulas: " + JSON.stringify(two));
+    await floatShown(page);
+    await page.click(".fc-float");
+    await frames(page, 2);
+    const c1 = await composerState(page);
+    assert.equal(c1.open, true, "the composer opens");
+    assert.equal(c1.refused, ONE_CELL, "the one-cell sentence (before: no refusal, the quote `Intro para. | $h$ | $k$` with Save): " + JSON.stringify(c1));
+    assert.equal(c1.rawTitle, "Raw view, with this passage selected", "the Raw button promises the passage");
+    assert.equal(c1.save, null, "no Save under the refusal");
+    await page.click('.fc-composer [data-act="fcraw"]');
+    await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+    await frames(page, 3);
+    const p = await preselRead(page);
+    assert.equal(squash(p.text), squash("$h$ | $k$"), "the Raw view preselects the table's covered cells, the pipe between them (not the prose, not the formula alone): " + JSON.stringify(p));
+    assert.equal(p.rows, 1, "one row");
+    const c2 = await composerState(page);
+    assert.deepEqual([c2.refused, c2.quote, c2.save], [null, "$h$ | $k$", true], "the refusal is answered, the composer quotes the span, Save is offered from Raw");
+    await page.click('.fc-composer [data-act="fccancel"]');
+    await frames(page, 2);
+    await toRendered(page);
+    // the control: one formula-only header cell and the prose before it map
+    const one = await dragProseToFormula(page, "Intro para.", 0);
+    assert.ok(one.startsWith("Intro para.") && one.includes("h") && !one.includes("k"), "the drag selected the paragraph and the first header formula: " + JSON.stringify(one));
+    await floatShown(page);
+    await page.click(".fc-float");
+    await frames(page, 2);
+    const c3 = await composerState(page);
+    assert.deepEqual([c3.open, c3.refused, c3.quote, c3.save], [true, null, "Intro para. | $h$", true], "one cell and the prose before it map, the formula with its delimiters inside the quote: " + JSON.stringify(c3));
+    await page.click('.fc-composer [data-act="fccancel"]');
+    await frames(page, 2);
     assert.deepEqual(errors, [], "no script error");
     await page.close();
   });

@@ -13,7 +13,11 @@
 // round 2's guard read the raw's split artifact as the one-blank-line fence's line and placed the note's end in the pre's row); a
 // fence's trailing blank line, whose row marked's renderer folds, goes to the END of the pre's last row (red over 2136fa7d2 with
 // the point after `x = 1`, two rows above the rows the blank and whitespace lines between show; the second test's trail scene,
-// card-only there, re-pinned to the same row's end). Synthetic values only: invented notes, no real session text.
+// card-only there, re-pinned to the same row's end). The review's round 4 added the sixth test and re-pinned one point of the
+// third: the container's indent or `> ` marker before a fence's FIRST content line is that line's, in its row (red over a git
+// archive of 90c6ff242, where the opener's hole ran to the first line's first character past the indent and those bytes kept
+// their card while the same bytes before every later line placed in the line's row). Synthetic values only: invented notes, no
+// real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -260,14 +264,15 @@ test("a fence whose lines all show nothing finds its pre by ORDER among the bloc
   const before = "- Item:\n\n  ```\n  \n  ```\n\n  between\n\n  ```\n  a = 1\n  b = 2\n  ```\n\n  after\n";
   const bb = buildRendered(before);
   assert.deepEqual(allOf(bb, "PRE").map(rowTexts), [[""], ["a = 1", "b = 2"]], "the item's two pres: the blank fence's one row, the text fence's two");
-  // the blank line's line feed: the item's indent before it has no index in the item's view (its text lines are the raw lines'
-  // suffixes), so a fence's FIRST line begins, for the map, at its first text index, the line feed of a blank one, and the opener's
-  // hole runs to there; a point on that indent keeps its card as one on any first line's indent does (round 1's rule, not this one's)
+  // the blank line's line feed, and the item's indent before it: the indent has no index in the item's view (its text lines are the
+  // raw lines' suffixes), and since the review's round 4 the first line runs from the byte after the opener's line feed, so a point
+  // on that indent is the line's and goes into its row as one on a later line's indent does (before: the opener's hole ran to the
+  // line's first text index, the line feed, and the indent's point kept its card; the sixth test holds the shapes)
   const bBlank = at(before, "  ```") + 8;
   assert.equal(before.slice(bBlank - 3, bBlank + 1), "\n  \n");
-  assert.deepEqual(paintChangesRendered(El(bb), before, [del("first", bBlank), del("first-indent", bBlank - 2), del("text", at(before, "b = 2") + 1)], () => ({})), { painted: ["first", "text"], unpainted: ["first-indent"] });
-  assert.deepEqual([placeOf(bb, pointOf(bb, "first")), placeOf(bb, pointOf(bb, "text"))], [{ pre: 0, row: 0 }, { pre: 1, row: 1 }], "the blank fence's point in the first pre, the control in the second");
-  assert.ok(hasClass(pointOf(bb, "first").parentNode!, "ct") && (pointOf(bb, "first").parentNode as FakeElement).childNodes.length === 1, "the empty cell holds the point alone");
+  assert.deepEqual(paintChangesRendered(El(bb), before, [del("first", bBlank), del("first-indent", bBlank - 2), del("text", at(before, "b = 2") + 1)], () => ({})), { painted: ["first", "first-indent", "text"], unpainted: [] }, "the indent's point places too (before: unpainted)");
+  assert.deepEqual([placeOf(bb, pointOf(bb, "first")), placeOf(bb, pointOf(bb, "first-indent")), placeOf(bb, pointOf(bb, "text"))], [{ pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 1, row: 1 }], "the blank fence's point and its indent's in the first pre, the control in the second");
+  assert.ok(hasClass(pointOf(bb, "first").parentNode!, "ct") && (pointOf(bb, "first").parentNode as FakeElement).childNodes.length === 2, "the empty cell holds the two points alone");
   unpaintChanges(El(bb));
   const after = "- Item:\n\n  ```\n  a = 1\n  b = 2\n  ```\n\n  between\n\n  ```\n    \n  ```\n\n  after\n";
   const ab = buildRendered(after);
@@ -343,4 +348,48 @@ test("a deletion point on a fence's trailing blank line, whose row marked's rend
   const z = at(text, "z = 3");
   assert.deepEqual(paintChangesRendered(El(xb), text, [del("t", z + 6)], () => ({})), { painted: ["t"], unpainted: [] });
   assert.deepEqual([placeOf(xb, pointOf(xb, "t")), around(pointOf(xb, "t"))], [{ pre: 0, row: 0 }, ["z = 3", ""]], "after the last character, as before");
+});
+
+test("a deletion point on the container's indent, or on a quote's `> ` marker, before a nested fence's FIRST content line places in that line's row, as one before every later line does (the review's round 4; before: those bytes lay strictly inside the opener's hole, whose end was the first line's first character past the indent, and kept their card, so a session's deletion of a blank first line's two spaces kept its card while the same deletion on a blank second line painted in its row, and the Raw view put both on their lines): a list item's fence, the indent before `a = 1` in row 0 before its first character and before a blank first line in the empty row 0; a quote's fence, the `>` and the space before `a = 1` in row 0; the opener's line feed, its backticks and the closer's indent keep their cards as before; the later lines' indent and marker in their own rows as before", () => {
+  const S1 = "- item\n\n  ```\n  a = 1\n  b = 2\n  ```\n";
+  const b1 = buildRendered(S1);
+  assert.deepEqual(rowTexts(allOf(b1, "PRE")[0]), ["a = 1", "b = 2"]);
+  const aInd = at(S1, "  a = 1"), bInd = at(S1, "  b = 2"), open1 = at(S1, "```"), close1 = at(S1, "  ```", 1);
+  assert.equal(S1[open1 + 3], "\n", "the opener's line feed");
+  const r1 = paintChangesRendered(El(b1), S1, [del("a-ind0", aInd), del("a-ind1", aInd + 1), del("a", aInd + 2), del("b-ind0", bInd), del("b-ind1", bInd + 1), del("open-lf", open1 + 3), del("open-tick", open1 + 1), del("close-ind", close1)], () => ({}));
+  assert.deepEqual(r1, { painted: ["a-ind0", "a-ind1", "a", "b-ind0", "b-ind1"], unpainted: ["open-lf", "open-tick", "close-ind"] }, "the first line's indent places (before: unpainted); the fence lines and the closer's indent keep their cards");
+  assert.deepEqual(["a-ind0", "a-ind1", "a", "b-ind0", "b-ind1"].map((id) => placeOf(b1, pointOf(b1, id))), [{ pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 1 }, { pre: 0, row: 1 }], "the first line's indent in row 0 (before: card-only), the second's in row 1 as before");
+  for (const id of ["a-ind0", "a-ind1", "a"]) assert.deepEqual(around(pointOf(b1, id)), ["", "a = 1"], id + ": before the line's first character");
+  for (const id of ["b-ind0", "b-ind1"]) assert.deepEqual(around(pointOf(b1, id)), ["", "b = 2"], id + ": before the line's first character");
+  unpaintChanges(El(b1));
+  const S2 = "- item\n\n  ```\n  \n  b = 2\n  ```\n";
+  const b2 = buildRendered(S2);
+  assert.deepEqual(rowTexts(allOf(b2, "PRE")[0]), ["", "b = 2"], "the blank first line's row is empty");
+  const blankInd = at(S2, "```") + 4;
+  assert.equal(S2.slice(blankInd, blankInd + 3), "  \n", "the blank first line: its indent, then its line feed");
+  const r2 = paintChangesRendered(El(b2), S2, [del("bl-ind0", blankInd), del("bl-ind1", blankInd + 1), del("bl-lf", blankInd + 2), del("b-ind0", blankInd + 3), del("b-ind1", blankInd + 4)], () => ({}));
+  assert.deepEqual(r2, { painted: ["bl-ind0", "bl-ind1", "bl-lf", "b-ind0", "b-ind1"], unpainted: [] }, "the blank first line's indent places (before: unpainted)");
+  assert.deepEqual(["bl-ind0", "bl-ind1", "bl-lf", "b-ind0", "b-ind1"].map((id) => placeOf(b2, pointOf(b2, id))), [{ pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 1 }, { pre: 0, row: 1 }], "the blank first line's three bytes in its empty row 0, the second line's indent in row 1");
+  assert.ok(hasClass(pointOf(b2, "bl-ind0").parentNode!, "ct") && (pointOf(b2, "bl-ind0").parentNode as FakeElement).childNodes.length === 3, "the empty cell holds the three points alone");
+  unpaintChanges(El(b2));
+  // the failure scenario: a session strips the blank first line's two spaces
+  const hunk: ChangePaint = { id: "strip", kind: "del", curFrom: blankInd, curTo: blankInd, oldText: "  ", author: "web" };
+  assert.deepEqual(paintChangesRendered(El(b2), S2, [hunk], () => ({})), { painted: ["strip"], unpainted: [] }, "the deletion of the blank first line's indent paints (before: card-only, while the same hunk on a blank second line painted)");
+  assert.deepEqual(placeOf(b2, pointOf(b2, "strip")), { pre: 0, row: 0 });
+  unpaintChanges(El(b2));
+  const S4 = "> ```\n> a = 1\n> b = 2\n> ```\n";
+  const b4 = buildRendered(S4);
+  assert.deepEqual(rowTexts(allOf(b4, "PRE")[0]), ["a = 1", "b = 2"]);
+  const aMark = at(S4, "> a = 1"), bMark = at(S4, "> b = 2");
+  const r4 = paintChangesRendered(El(b4), S4, [del("a-mark", aMark), del("a-space", aMark + 1), del("a", aMark + 2), del("b-mark", bMark), del("b-space", bMark + 1), del("open-lf", aMark - 1), del("open-tick", 3)], () => ({}));
+  assert.deepEqual(r4, { painted: ["a-mark", "a-space", "a", "b-mark", "b-space"], unpainted: ["open-lf", "open-tick"] }, "the first line's marker and space place (before: unpainted); the opener's line feed and backticks keep their cards");
+  assert.deepEqual(["a-mark", "a-space", "a", "b-mark", "b-space"].map((id) => placeOf(b4, pointOf(b4, id))), [{ pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 0 }, { pre: 0, row: 1 }, { pre: 0, row: 1 }], "the first line's `> ` in row 0 (before: card-only), the second's in row 1 as before");
+  for (const id of ["a-mark", "a-space"]) assert.deepEqual(around(pointOf(b4, id)), ["", "a = 1"], id + ": before the line's first character");
+  unpaintChanges(El(b4));
+  // the top-level control: the opener's line feed stays card-only, the first line's first character places in row 0
+  const S0 = "```\na = 1\nb = 2\n```\n";
+  const b0 = buildRendered(S0);
+  assert.deepEqual(paintChangesRendered(El(b0), S0, [del("lf", 3), del("a", 4)], () => ({})), { painted: ["a"], unpainted: ["lf"] }, "a top-level fence: the opener's line feed card-only, the first character in the row");
+  assert.deepEqual(placeOf(b0, pointOf(b0, "a")), { pre: 0, row: 0 });
+  unpaintChanges(El(b0));
 });

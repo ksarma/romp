@@ -296,6 +296,91 @@ test("Rendered deletion points at a table's END where its raw ends with the last
   unpaintChanges(El(eb));
 });
 
+// ── 1c. a table or a fence that BEGINS a list item: the text before it is the previous item's, not the item's own ──────────────
+
+test("Rendered deletion points at the first character of a table or a fence that BEGINS a list item (the review's round 4): a list is one block, so the text before the block is the PREVIOUS item's, and the point sits before the block's first character, inside the item's own table's first header cell (or before the code's first character), as at a top-level table's or fence's; before, it sat after the previous item's text, inside that item's table's last cell when that item was a table too, a cell the change is not in (main 696229f84: card-only there, the table a hole), and after `Item one` for a prose item before an item that is a table or a fence, or after `Parent` for a sub-item that begins with a table; a table in the outer item after a nested list, whose text before is the sub-item's, sits before its first cell too; a table after its own item's text keeps round 2's rule, the control", () => {
+  const liOf = (n: FakeNode): FakeElement | null => { let p = n.parentNode; while (p && !(p.nodeType === 1 && (p as FakeElement).tagName === "LI")) p = p.parentNode; return p as FakeElement | null; };
+  const scenes: Array<[string, string, string, string, string]> = [
+    // label, source, the block's first characters, the text right after the point, the element the point stands in
+    ["two items each a table", "- | a |\n  |---|\n  | b |\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a table (tight)", "- Item one\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a table (loose)", "- Item one\n\n- | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a parent item's text, then a sub-item that is a table", "- Parent\n  - | c |\n    |---|\n    | d |\n", "| c |", "c", "TH"],
+    ["a sub-item's text, then a table in the outer item", "- Outer\n  - sub\n\n  | c |\n  |---|\n  | d |\n", "| c |", "c", "TH"],
+    ["a prose item, then an item that is a fence", "- Item one\n- ```\n  code\n  ```\n", "```", "code", "PRE"],
+  ];
+  for (const [label, source, first, next, tag] of scenes) {
+    const box = buildRendered(source);
+    const lis = withTag(box, "LI");
+    assert.equal(lis.length, 2, label + ": two items");
+    assert.equal(withTag(box, tag === "PRE" ? "PRE" : "TABLE").length, label.startsWith("two items") ? 2 : 1, label + ": the block is lexed");
+    const r = paintChangesRendered(El(box), source, [del("first", at(source, first)), del("in", at(source, first) + 1)], stylesFor);
+    assert.deepEqual(r, { painted: ["first"], unpainted: ["in"] }, label + ": the block's first character places, one character in keeps its card (the pipe's row outside every cell, the opener's backticks)");
+    const pt = point(box, "first");
+    assert.ok(inside(pt, tag), label + ": inside the block's own " + tag + " (before: " + (label.startsWith("two items") ? "inside the previous item's table's last cell, after `b`" : "after the previous item's text") + ")");
+    const li = liOf(pt);
+    assert.ok(li, label + ": inside an item");
+    const blockLi = tag === "TH" ? liOf(withTag(box, "TH").find((h) => h.textContent === next)!) : liOf(withTag(box, "PRE")[0]);
+    assert.equal(li, blockLi, label + ": in the item that holds the block, not the item whose text stands before it");
+    assert.notEqual(li, lis.find((l) => l !== blockLi), label + ": not in the other item");
+    const post = around(blockOf(box, pt), pt)[1];
+    assert.ok(post.startsWith(next), label + ": right before the block's first character: " + JSON.stringify(post.slice(0, 8)));
+    assert.equal(withClass(box, "fc-del").length, 1, label + ": one point in the body");
+    unpaintChanges(El(box));
+  }
+  // the control: a table after its own item's text sits after that text (round 2's rule, test 1)
+  const own = "- Item one\n\n  | a | b |\n  |---|---|\n  | 1 | 2 |\n";
+  const ob = buildRendered(own);
+  assert.deepEqual(paintChangesRendered(El(ob), own, [del("own", at(own, "| a |"))], stylesFor), { painted: ["own"], unpainted: [] });
+  assert.ok(!inside(point(ob, "own"), "TABLE") && around(blockOf(ob, point(ob, "own")), point(ob, "own"))[0].endsWith("Item one"), "after the item's own text before the table");
+  unpaintChanges(El(ob));
+});
+
+// ── 1d. a CRLF ending's two bytes are one position outside code too ─────────────────────────────────────────────────────────────
+
+test("Rendered deletion points at either byte of a CRLF line ending outside code (the review's round 4, pinning round 3's rule, which normalizes the LF byte to the CR's position at the top of renderedSpot, for every block; before round 3 the CR byte sat after the line's last character while the LF byte sat before the NEXT line's first character, in the next list item for an item's ending): a paragraph's soft break, a quote's soft break, an unordered item's ending and an ordered item's ending each put both bytes after the line's last character, in the line's own block or item; a heading's ending, a blank line's two bytes (unpainted) and the end of the file are the controls", () => {
+  const liOf = (n: FakeNode): FakeElement | null => { let p = n.parentNode; while (p && !(p.nodeType === 1 && (p as FakeElement).tagName === "LI")) p = p.parentNode; return p as FakeElement | null; };
+  /** The offset of the CR right after `s` in `src`, which must be followed by CRLF. */
+  const crAfter = (src: string, s: string): number => { const i = at(src, s) + s.length; assert.equal(src.slice(i, i + 2), "\r\n", s + ": followed by CRLF"); return i; };
+  const C1 = "Para one\r\nline two.\r\n\r\nNext para.\r\n\r\n- item one\r\n- item two\r\n";
+  const b1 = buildRendered(C1);
+  const pCr = crAfter(C1, "Para one"), iCr = crAfter(C1, "item one"), blankCr = crAfter(C1, "line two.") + 2;
+  assert.equal(C1.slice(blankCr, blankCr + 2), "\r\n", "the blank line's two bytes");
+  const r1 = paintChangesRendered(El(b1), C1, [del("para-cr", pCr), del("para-lf", pCr + 1), del("item1-cr", iCr), del("item1-lf", iCr + 1), del("blank-cr", blankCr), del("blank-lf", blankCr + 1), del("eof", C1.length)], stylesFor);
+  assert.deepEqual(r1, { painted: ["para-cr", "para-lf", "item1-cr", "item1-lf", "eof"], unpainted: ["blank-cr", "blank-lf"] }, "the endings' bytes place, the blank line's do not");
+  for (const id of ["para-cr", "para-lf"]) {
+    const pt = point(b1, id);
+    assert.equal((pt.parentNode as FakeElement).tagName, "P", id + ": in the paragraph");
+    assert.deepEqual(around(pt.parentNode!, pt), ["Para one", "\nline two."], id + ": after the line's last character (before round 3, the LF byte: before `line two.`)");
+  }
+  const lis = withTag(b1, "LI");
+  for (const id of ["item1-cr", "item1-lf"]) {
+    const pt = point(b1, id);
+    assert.equal(liOf(pt), lis[0], id + ": in the first item (before round 3, the LF byte: in the second, before `item two`)");
+    assert.deepEqual(around(lis[0], pt), ["item one", ""], id + ": after the item's last character");
+  }
+  assert.equal(liOf(point(b1, "eof")), lis[1], "the end of the file: after the last item's text, the block's end");
+  unpaintChanges(El(b1));
+  const C2 = "# Head\r\n\r\n> q one\r\n> q two\r\n\r\n1. first\r\n2. second\r\n";
+  const b2 = buildRendered(C2);
+  const hCr = crAfter(C2, "Head"), qCr = crAfter(C2, "q one"), oCr = crAfter(C2, "first");
+  const r2 = paintChangesRendered(El(b2), C2, [del("head-cr", hCr), del("head-lf", hCr + 1), del("q-cr", qCr), del("q-lf", qCr + 1), del("ol-cr", oCr), del("ol-lf", oCr + 1)], stylesFor);
+  assert.deepEqual(r2, { painted: ["head-cr", "head-lf", "q-cr", "q-lf", "ol-cr", "ol-lf"], unpainted: [] });
+  for (const id of ["head-cr", "head-lf"]) assert.deepEqual([(point(b2, id).parentNode as FakeElement).tagName, around(point(b2, id).parentNode!, point(b2, id))], ["H1", ["Head", ""]], id + ": the control, after the title on both trees");
+  for (const id of ["q-cr", "q-lf"]) {
+    const pt = point(b2, id);
+    assert.ok(inside(pt, "BLOCKQUOTE") && (pt.parentNode as FakeElement).tagName === "P", id + ": in the quote's paragraph");
+    assert.deepEqual(around(pt.parentNode!, pt), ["q one", "\nq two"], id + ": after the line's last character (before round 3, the LF byte: before `q two`)");
+  }
+  const ols = withTag(b2, "LI");
+  for (const id of ["ol-cr", "ol-lf"]) {
+    const pt = point(b2, id);
+    assert.equal(liOf(pt), ols[0], id + ": in the first item (before round 3, the LF byte: in the second, before `second`)");
+    assert.deepEqual(around(ols[0], pt), ["first", ""], id + ": after the item's last character");
+  }
+  unpaintChanges(El(b2));
+});
+
 // ── 1b. a fence: its lines are positioned (Slice 8), its fence lines are nothing's but at their edges ──────────────────────────
 
 test("Rendered deletion points and a fenced code block (Slice 8, item 4): at the opener's first character the point places before the code's first character, inside the opener's info string it stays unpainted; at a line's end it sits after the line's last character, on a blank code line before the next line's first character (this pre has no rows; with the viewer's rows the point goes into the blank line's own row, anchor-map-code-lines.test.ts); at the line feed before the closer after the last code character, on the closer's backticks unpainted, on the blank line after the block unpainted (nothing's rows); an empty fence takes no point anywhere; an indented block's lines place at their indent (before Slice 8: the whole block a hole, every point inside it unpainted)", () => {

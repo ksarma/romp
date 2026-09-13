@@ -129,16 +129,29 @@ class TheViewerDoesIt(unittest.TestCase):
     def test_a_selection_across_two_cells_is_refused_with_the_raw_view_offered_on_the_span(self):
         # one constant since the Slice 8 review's round 3, when the rule gained a second refusal: the pass's, over the cells the
         # selection's positioned characters lie in, and the one over a covered formula's widened span (a cell holding a formula
-        # alone emits no character); both offer the Raw view on the exact span
+        # alone emits no character); both offer the Raw view on the exact span of the table's covered cells: since the review's
+        # round 4 the pass's span is widened by a formula the selection covered whole inside the same table, and the covered
+        # formula's is the first covered cell's start through the last's end (round 3 offered the whole widened span, the same
+        # span for its shapes, which lay inside the table)
         self.assertIn('const ONE_CELL = "%s";' % ONE_CELL, self.am, "the one-cell rule's sentence, the constant its refusals share")
         offers = re.findall(r"refuse\(ONE_CELL,\s*\{(.*?)\}\s*\);", self.am, re.S)
         self.assertEqual(len(offers), 2, "the pass's refusal and the covered formula's, each with an offer")
         for offer in offers:
             self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
-        self.assertIn("rawRange: { start: s, end: e }", offers[0])
-        self.assertIn("blockStartOffset: s", offers[0], "the panel's search for the span begins at the span, not at the table")
-        self.assertIn("rawRange: { start, end }", offers[1], "the covered formula's: the widened span, the formula with its delimiters")
-        self.assertIn("blockStartOffset: start", offers[1])
+            self.assertIn("rawRange: { start: s, end: e }", offer, "the exact span, the table's covered cells")
+            self.assertIn("blockStartOffset: s", offer, "the panel's search for the span begins at the span, not at the table")
+        # the pass's span takes in a covered formula of the same table (the loop right before its refusal); the covered
+        # formula's (coveredCells, defined earlier in the function) is clipped to the table's cells
+        pass_offer = self.am[self.am.index("for (const tb of blk.tables) {"):]
+        pass_offer = pass_offer[:pass_offer.index("refuse(ONE_CELL, {")]
+        self.assertIn("if (span.start < s) s = span.start;", pass_offer, "the pass's start widens to a covered formula before it")
+        self.assertIn("if (span.end > e) e = span.end;", pass_offer, "...and its end to one after it")
+        self.assertIn("if (hs < ts || hs >= te) continue;", pass_offer, "a formula in another table is not this offer's")
+        covered = self.am[self.am.index("const coveredCells = (start: number, end: number): MapRefusal | null => {"):]
+        covered = covered[:covered.index("refuse(ONE_CELL, {")]
+        self.assertIn("const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));", covered,
+                      "the covered formula's offer: the first covered cell's start through the last's end")
+        self.assertIn("if (cells.length < 2) continue;", covered, "two or more of the table's cells in the span refuse")
 
     def test_a_formula_touched_from_rendered_is_refused_in_the_same_shape(self):
         self.assertIn('const FORMULA_TOUCHED = "%s";' % FORMULA_TOUCHED, self.am)

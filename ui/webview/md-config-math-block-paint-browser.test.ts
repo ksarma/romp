@@ -31,8 +31,14 @@
 // the person, delivered as the reply to the panel's status ask) puts the arrivals dot on the stamped box (data-new, markNew) as it
 // puts it on a mark, and under print media the dot comes off the box as it comes off the mark (before: the dot's rule, four
 // selectors deep, outranked the print strip's bare block class, so a `background: none` at three left its background-image, and
-// the box printed a 6 px accent dot while every mark printed bare). Skips LOUDLY without a playwright browser (CI installs
-// none), as the other browser legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
+// the box printed a 6 px accent dot while every mark printed bare). One leg from round 4: the keyboard on the stamped box
+// across a peer's comment landing by the panel's poll. The pass strips the box in place and stamps the SAME element again, and
+// the strip's removal of its tabindex blurs it at once (the engine's rule, measured in the leg's page: a focused element whose
+// tabindex is removed loses the focus to the body, and the attribute set again focuses nothing), so the pass's refocus reads the
+// focus itself and gives it back to the box, as it gives a mark's successor the focus (before: the refocus stood down on the
+// box's presence in the body, so the keyboard fell to the body and Enter opened nothing while the box kept tabindex 0). Skips
+// LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values only: an invented
+// note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -464,6 +470,67 @@ test("a comment of the session's on `$$ ... $$` arriving after the open, beside 
       assert.match(back.mark.bgImage, DOT, what + ": ...and on the mark");
       assert.deepEqual(errors, [], what + ": no script error");
       await page.close();
+    }
+  });
+});
+
+// ── round 4: the keyboard on the stamped box across a landing ──
+const PARA_BEFORE = comment("Para before the formula.", 5);   // the mark before the formula in the Tab order: Tab from it lands on the box
+const ARRIVED_TITLE = sessionComment("Title", 13);            // a second arrival, for the landing while the box holds the keyboard
+/** What holds the keyboard: the tag, up to two class tokens and the data-id (`BODY.fileview-pane` when the focus fell to the body). */
+const active = (page: any): Promise<string> => page.evaluate(() => {
+  const a = document.activeElement as HTMLElement | null;
+  return a ? a.tagName + (a.className ? "." + String(a.className).split(/\s+/).filter(Boolean).slice(0, 2).join(".") : "") + (a.dataset && a.dataset.id ? "#" + a.dataset.id : "") : "null";
+});
+const BOX_FOCUSED = "SPAN.katex-display.fc-hl-block#" + id(FORMULA);
+
+test("the keyboard on the stamped box across a peer's comment landing by the poll, on the Files pane at 900 px and in the chat modal (the Slice 8 review, round 4): the box reached by Tab from the paragraph's mark, or focused by a click on the glyphs, holds the keyboard after the landing's pass stripped it in place and stamped the SAME element again, as the paragraph mark's successor holds it (the control), and Enter on it then opens its card; the engine's rule behind it, a focused element blurred at once when its tabindex is removed and not refocused when it is set again, is measured in the same page (before: the pass's refocus stood down on the box's presence in the body, so the keyboard fell to the body and Enter opened nothing while the box kept tabindex 0)", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, width] of [["pane", 900], ["chat", 1000]] as [Mode, number][]) {
+      const what = mode + " " + width + "px";
+      const M = '.fileview-body mark.fc-hl[data-id="' + id(PARA_BEFORE) + '"]';
+      const B = '.fileview-body .katex-display.fc-hl-block[data-id="' + id(FORMULA) + '"]';
+      const served = [FINAL, FORMULA, PARA_BEFORE];
+      const { page, errors } = await openWith(browser, mode, width, false, withComments(served, 1));
+      await markPainted(page, id(FORMULA)); await markPainted(page, id(PARA_BEFORE));
+      // 0. the engine's rule, in this page
+      const rule = await page.evaluate(() => {
+        const s = document.createElement("span"); s.textContent = "probe"; s.tabIndex = 0; document.body.appendChild(s); s.focus();
+        const focused = document.activeElement === s;
+        s.removeAttribute("tabindex"); const afterRemove = document.activeElement === s ? "SPAN" : document.activeElement!.tagName;
+        s.tabIndex = 0; const afterReadd = document.activeElement === s ? "SPAN" : document.activeElement!.tagName;
+        s.remove(); return { focused, afterRemove, afterReadd };
+      });
+      assert.deepEqual(rule, { focused: true, afterRemove: "BODY", afterReadd: "BODY" }, what + ": the engine blurs a focused element whose tabindex is removed, at once, and the attribute set again focuses nothing");
+      // 1. the control: the paragraph's mark holding the keyboard when a peer's comment lands; its successor, a new node, holds it after
+      await page.evaluate((sel: string) => { const m = document.querySelector(sel) as any; m.__old = true; m.focus(); }, M);
+      assert.equal(await active(page), "MARK.fc-hl#" + id(PARA_BEFORE), what + ": the paragraph's mark focused");
+      await deliver(page, withComments([...served, ARRIVED_PARA], 2), [id(ARRIVED_PARA)]);
+      assert.equal(await page.evaluate((sel: string) => !(document.querySelector(sel) as any).__old, M), true, what + ": the landing's pass wrapped the mark again (a new node)");
+      assert.equal(await active(page), "MARK.fc-hl#" + id(PARA_BEFORE), what + ": the control: the mark's successor holds the keyboard");
+      // 2. Tab from the mark reaches the box (a keyboard user's path); a landing while it holds the keyboard
+      await page.keyboard.press("Tab"); await frames(page, 1);
+      assert.equal(await active(page), BOX_FOCUSED, what + ": Tab from the mark lands on the box");
+      await page.evaluate((sel: string) => { (document.querySelector(sel) as any).__old = true; }, B);
+      await deliver(page, withComments([...served, ARRIVED_PARA, ARRIVED_TITLE], 3), [id(ARRIVED_TITLE)]);
+      const box = await page.evaluate((sel: string) => { const b = document.querySelector(sel) as HTMLElement | null; return b ? { same: !!(b as any).__old, tab: b.getAttribute("tabindex"), role: b.getAttribute("role") } : null; }, B);
+      assert.deepEqual(box, { same: true, tab: "0", role: "button" }, what + ": the box stripped in place and stamped again: the same element, a control again");
+      assert.equal(await active(page), BOX_FOCUSED, what + ": the box holds the keyboard after the landing (before: BODY, the box's presence in the body taken for its focus)");
+      // 3. Enter on it is its click: the card opens
+      assert.equal((await readCard(page, id(FORMULA))).open, false, what + ": the formula's card folded before Enter");
+      await page.keyboard.press("Enter"); await frames(page, 2);
+      assert.equal((await readCard(page, id(FORMULA))).open, true, what + ": Enter on the box opens its card (before: nothing, the keyboard on the body)");
+      assert.deepEqual(errors, [], what + ": no script error");
+      await page.close();
+      // 4. a fresh page: the box focused by a real click on the glyphs (the press's end leaves the keyboard on it), then a landing
+      const again = await openWith(browser, mode, width, false, withComments(served, 4));
+      await markPainted(again.page, id(FORMULA));
+      await clickFormula(again.page, id(FORMULA));
+      assert.equal(await active(again.page), BOX_FOCUSED, what + ": the click leaves the keyboard on the box");
+      await deliver(again.page, withComments([...served, ARRIVED_PARA], 5), [id(ARRIVED_PARA)]);
+      assert.equal(await active(again.page), BOX_FOCUSED, what + ": ...and the landing leaves it there (before: BODY)");
+      assert.deepEqual(again.errors, [], what + ": no script error on the second page");
+      await again.page.close();
     }
   });
 });

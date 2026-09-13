@@ -463,6 +463,40 @@ test("one cell and the prose after the table maps, the row's closing pipe and li
   assert.equal(FIX.slice(intoNext.rawRange!.start, intoNext.rawRange!.end), "GET /notes | 1");
 });
 
+test("a drag from one table through the prose between into the next, two top-level tables or two in one list item, maps only from the first table's last cell into the next table's first header cell (the two mapping shapes joined: the quote carries the first table's closing pipe, the prose and the next table's opening pipe, as a Raw selection over the same characters mints); into any other cell of the next table (a later header cell, or a body cell, whose span holds the header's cells), or from any earlier cell of the first, the one-cell rule refuses on that table's span with the Raw view offered there and blockStartOffset the span's start; the prose between into the next table's first header cell and into its body cell are the controls (the review's round 4 pin of round 2's record, which had said a cell of the next table)", () => {
+  // the check, per shape: `from` to `to` maps with `quote`, or refuses with the one-cell sentence and the Raw view on `span`
+  const check = (box: FakeElement, src: string, from: string, to: string, quote: string | null, span: string | null): void => {
+    const r = mapSpan(box, src, from, to);
+    if (quote !== null) { assert.equal(ok(r, from + " to " + to).quote, quote, from + " to " + to + ": the two shapes joined"); return; }
+    const b = bad(r, from + " to " + to + " maps where the one-cell rule refuses");
+    assert.match(b.reason, ONE_CELL, from + " to " + to + ": " + b.reason);
+    assert.equal(b.rawHasQuote, true, from + " to " + to + ": the Raw view is offered on the span");
+    assert.equal(src.slice(b.rawRange!.start, b.rawRange!.end), span, from + " to " + to + ": the refusing table's span");
+    assert.equal(b.blockStartOffset, b.rawRange!.start, from + " to " + to + ": the search begins at the span's start");
+  };
+  // two top-level tables (the fixture's first and second), each its own block
+  const box = buildRendered(FIX);
+  check(box, FIX, "180 ms", "Method", "180 ms |\n\nEvery route above returns JSON.\n\n| Method", null);
+  check(box, FIX, "180 ms", "Path", null, "Method | Path");
+  check(box, FIX, "180 ms", "/notes/{id}", null, "Method | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id}");
+  check(box, FIX, "180 ms", "90 ms", null, "Method | Path | Budget |\n|:-------|:----:|-------:|\n| GET | /notes/{id} | 90 ms");
+  check(box, FIX, "POST /notes", "Method", null, "POST /notes | 180 ms");
+  check(box, FIX, "120 ms", "Method", null, "120 ms |\n| POST /notes | 180 ms");
+  // two tables in one list item: one block, two TableSpans (the round 2 finding's shape, synthetic)
+  const item = "- Item:\n\n  | X1 | X2 |\n  |----|----|\n  | x-a | x-b |\n\n  between\n\n  | Y1 | Y2 |\n  |----|----|\n  | y-a | y-b |\n\nafter\n";
+  const li = buildRendered(item);
+  assert.equal(allOf(li, "TABLE").length, 2, "two tables in the item");
+  check(li, item, "x-b", "Y1", "x-b |\n\n  between\n\n  | Y1", null);
+  check(li, item, "x-b", "Y2", null, "Y1 | Y2");
+  check(li, item, "x-b", "y-a", null, "Y1 | Y2 |\n  |----|----|\n  | y-a");
+  check(li, item, "x-b", "y-b", null, "Y1 | Y2 |\n  |----|----|\n  | y-a | y-b");
+  check(li, item, "x-a", "Y1", null, "x-a | x-b");
+  check(li, item, "X2", "Y1", null, "X2 |\n  |----|----|\n  | x-a | x-b");
+  // the controls: the prose between into the next table's first header cell maps, into its body cell refuses on the same span
+  check(li, item, "between", "Y1", "between\n\n  | Y1", null);
+  check(li, item, "between", "y-a", null, "Y1 | Y2 |\n  |----|----|\n  | y-a");
+});
+
 test("the one-cell rule counts a cell holding a formula alone, and a formula that begins the next cell's text (the review's round 3): a selection from `a1` to the end of the next cell's `$x$` glyphs, or released on the <td> past them, refuses with the one-cell sentence and the Raw view offered on `a1 | $x$` (before: it mapped, the quote carrying the pipe the person did not select as text, since a formula emits no character, the cell holding one alone has no record and the count saw one cell); the mirror, from the glyphs of a first cell's `$yz$` into `b1`, or from the <td> before them, refuses on `$yz$ | b1`; from `a1` into the `$x$` that begins the next cell's text `$x$ here` refuses on `a1 | $x$`; within one cell the words and the formula still map (`count $xy$`), `a1` alone maps, a boundary at the glyphs' start covers none of the formula, a boundary strictly inside the glyphs names the formula, and a last cell holding a formula alone runs into the prose after the table as the last-cell-into-prose rule maps it", () => {
   const SRC = "Intro paragraph.\n\n| A | B | C |\n|---|---|---|\n| count $xy$ here | a1 | $x$ |\n\nMiddle paragraph.\n\n| D | E |\n|---|---|\n| $yz$ | b1 |\n\n| F | G |\n|---|---|\n| e1 | $w$ |\n\nAfter.\n";
   const box = buildRendered(SRC);

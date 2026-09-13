@@ -14,7 +14,11 @@
 // comment's id in front as `data-id`; coverBox) and a click opens both cards while each card's Scroll finds the box (before: the
 // later paint's id overwrote the earlier's); and the strip takes off the block classes a selector named and no other, the
 // highlight's attributes going with its class alone, so the pending target's unpaint leaves a highlight standing on a box the
-// two share (before: Cancel stripped both classes and every attribute). Nodes hide their edges at construction (hideEdges,
+// two share (before: Cancel stripped both classes and every attribute). One case from round 4: the box holding the keyboard
+// when a status lands is stripped in place, and the strip's removal of its tabindex blurs it (the engine's rule, which the
+// stand-in models in El.removeAttribute; md-config-math-block-paint-browser.test.ts measures it), so the pass gives the focus
+// back to the box it stamps again, as it gives a mark's successor the focus (before: refocusMark stood down on the box's
+// presence in the body, and the keyboard stayed on the body). Nodes hide their edges at construction (hideEdges,
 // ui/test-dom-shim.ts). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -155,7 +159,10 @@ class El {
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   getAttribute(k: string): string | null { return this.attrs.has(k) ? (this.attrs.get(k) as string) : null; }
   hasAttribute(k: string): boolean { return this.attrs.has(k); }
-  removeAttribute(k: string): void { this.attrs.delete(k); }
+  /** The engine's rule (Chromium, measured over the real viewer in md-config-math-block-paint-browser.test.ts): an element made
+   *  unfocusable by the removal of its tabindex is blurred at once, the focus falling to the body, and the attribute set again
+   *  focuses nothing (the Slice 8 review, round 4). */
+  removeAttribute(k: string): void { this.attrs.delete(k); if (k === "tabindex" && doc.activeElement === this) doc.activeElement = doc.body; }
   contains(n: El | Txt | null): boolean { for (let x: El | Txt | null = n; x; x = x.parentNode) if (x === this) return true; return false; }
   private fits(c: Compound): boolean {
     return (!c.tag || c.tag === this.tagName) && c.classes.every((k) => this.classes.includes(k))
@@ -245,7 +252,8 @@ const store = new Map<string, string>();
 
 // ── the viewer stand-in: the RENDERED body as marked and the math fill leave it (a heading, a paragraph, the filled display
 //    formula's `.katex-display` with its `.katex` root, a paragraph), the seam as closures, the poll's HEAD answers ──
-type World = { ctx: FileViewActionCtx; posted: any[]; main: El; body: El; md: El; hooks: { rendered: Array<() => void>; close: Array<() => void> }; mtimes: Record<string, string>; close(): void };
+type Saved = { mtimeNs: string; logged: boolean };
+type World = { ctx: FileViewActionCtx; posted: any[]; main: El; body: El; md: El; hooks: { rendered: Array<() => void>; close: Array<() => void>; saved: Array<(info: Saved) => void> }; mtimes: Record<string, string>; close(): void };
 let cur: World | null = null;
 (globalThis as any).fetch = async (url: string) => {
   if (url.includes("/sessions")) return { json: async () => [] };
@@ -273,13 +281,13 @@ function world(): World {
   main.appendChild(body);
   doc.body.appendChild(main);
   renderMd(md);
-  const w = { posted: [] as any[], main, body, md, hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> }, mtimes: {} as Record<string, string> } as World;
+  const w = { posted: [] as any[], main, body, md, hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void>, saved: [] as Array<(info: Saved) => void> }, mtimes: {} as Record<string, string> } as World;
   w.ctx = {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => DOC, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
-    onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
+    onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ },
@@ -508,4 +516,57 @@ test("the pending target's unpaint leaves a highlight's stamp on the box the two
   assert.ok(unpaint.includes("unwrapMarks(held, marks.filter((c) => BLOCK_PAINT_CLASSES.includes(c)));"), "the classes the selector named");
   const repaint = SRC.split("  private repaintPreselPass(): void {")[1].split("\n  }\n")[0];
   assert.equal((repaint.match(/this\.unpaint\("\.fc-presel, \.fc-presel-block"\);/g) || []).length, 3, "the pending target's three unpaints name its classes alone, so a highlight's stamp on a shared box stands through them");
+});
+
+// ── the review's round 4: the keyboard on the stamped box across a status landing ──
+/** A status landing on the open panel, as the poll's lands: the seam's save signal makes the panel re-ask (its onSaved refreshes;
+ *  the poll's own ask is a timer's), and the ask is answered with `s`, whose store the pass then paints. */
+async function land(w: World, s: Status): Promise<void> {
+  const asks = () => w.posted.filter((m) => m.type === "fileComments" && m.verb === "status").length;
+  const before = asks();
+  for (const cb of w.hooks.saved) cb({ mtimeNs: "1757145600000000001", logged: true });
+  await flush();
+  assert.equal(asks(), before + 1, "the panel re-asked status on the save signal");
+  answer(w, s); await flush(); await flush();
+}
+/** A comment of the session's (another author) on the note's passage `quote`: an arrival, as a peer's comment lands. */
+const peer = (quote: string, k: number): StoreComment => ({ ...commentOn(quote, k), author: "api", authorId: SID } as unknown as StoreComment);
+
+test("the keyboard on the stamped box across a status landing (the Slice 8 review, round 4): the box focused, a peer's comment lands as a status reply and the pass strips the box in place, its tabindex removal blurring it (the engine's rule, which the stand-in models), and stamps the SAME element again; after the pass the box holds the keyboard, as a paragraph mark's successor holds it (the control), and Enter on it opens its card; a box whose comment the landing resolved is stripped for good and leaves the focus where the engine put it (before: refocusMark stood down on the box's presence in the body, so the keyboard stayed on the body while the box kept its Tab stop and Enter opened nothing)", async (t: TestContext) => {
+  const w = world(); t.after(() => { doc.activeElement = null; w.close(); });
+  const P = commentOn(BEFORE, 1), A = commentOn(FORMULA_Q, 2);
+  await openPanel(w, withComments([P, A]));
+  const d = display(w);
+  assert.deepEqual([d.getAttribute("data-id"), d.getAttribute("tabindex")], [A.id, "0"], "the box stamped by the pass, a control");
+  // the stand-in's rule, as the engine has it: a focused element whose tabindex is removed is blurred at once, and the attribute set again focuses nothing
+  const probe = el("span"); probe.tabIndex = 0; w.md.appendChild(probe); probe.focus();
+  assert.equal(doc.activeElement, probe);
+  probe.removeAttribute("tabindex"); assert.equal(doc.activeElement, doc.body, "the stand-in blurs on the tabindex removal, the focus on the body");
+  probe.tabIndex = 0; assert.equal(doc.activeElement, doc.body, "...and the attribute set again focuses nothing"); probe.remove();
+  // the control: a paragraph's mark holding the keyboard when a peer's comment lands; its successor, a new node, holds it after
+  const m1 = w.md.querySelector('mark.fc-hl[data-id="' + P.id + '"]'); assert.ok(m1, "the paragraph's mark");
+  m1!.focus(); assert.equal(doc.activeElement, m1);
+  const C1 = peer(AFTER, 3);
+  await land(w, withComments([P, A, C1]));
+  const m2 = w.md.querySelector('mark.fc-hl[data-id="' + P.id + '"]'); assert.ok(m2, "the mark painted again");
+  assert.notEqual(m2, m1, "the control: a mark is unwrapped and wrapped again, a new node");
+  assert.equal(doc.activeElement, m2, "the control: the mark's successor holds the keyboard");
+  assert.ok(w.md.querySelector('mark.fc-hl[data-id="' + C1.id + '"]'), "the landed comment painted by the pass");
+  // the box holding the keyboard when the next lands: stripped in place (blurred) and stamped again, the same element, and refocused
+  d.focus(); assert.equal(doc.activeElement, d, "the box focused, as Tab from the mark leaves it");
+  const C2 = peer("Report", 4);
+  await land(w, withComments([P, A, C1, C2]));
+  assert.equal(display(w), d, "the box is the same element, stripped in place and stamped again");
+  assert.deepEqual([d.getAttribute("data-id"), d.getAttribute("tabindex"), d.getAttribute("role")], [A.id, "0", "button"], "...a control again");
+  assert.ok(w.md.querySelector('mark.fc-hl[data-id="' + C2.id + '"]'), "the second landed comment painted by the pass");
+  assert.equal(doc.activeElement, d, "the box holds the keyboard after the pass (before: the body, the box's presence in the body taken for its focus)");
+  // Enter on the refocused box is its click: the card opens
+  assert.equal(cardState(w, A.id).open, false, "the formula's card folded before Enter");
+  dispatch(d, new Ev("keydown", { key: "Enter" })); await flush();
+  assert.equal(cardState(w, A.id).open, true, "Enter on the box opens its card (before: nothing, the keyboard on the body)");
+  // the comment resolved elsewhere: the landing strips the box for good, no successor takes the keyboard, and the focus stays where the blur left it
+  d.focus(); assert.equal(doc.activeElement, d);
+  await land(w, withComments([P, { ...A, resolved: true } as StoreComment, C1, C2]));
+  assert.deepEqual([d.classList.contains("fc-hl-block"), d.getAttribute("tabindex"), d.getAttribute("data-id")], [false, null, null], "the box bare: its comment resolved");
+  assert.equal(doc.activeElement, doc.body, "no successor: the focus stays where the engine put it, as for a resolved comment's mark");
 });
