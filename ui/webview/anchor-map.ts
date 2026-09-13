@@ -4847,6 +4847,34 @@ function sameItem(blk: Block, j: number, k: number): boolean {
   const itemOf = (i: number): DNode | null => { const at = nthNonWs(blk.dom[0], i); return itemAbove(blk, at ? at.t : null); };
   return itemOf(j) === itemOf(k);
 }
+/** Whether content of the block's own item or quote stands before `el` (its `<table>` or `<pre>`) with no positioned character of
+ *  the block's among it, `jt` the text node holding the block's last positioned character before the offset (null for none). The
+ *  container is the nearest `<li>` or `<blockquote>` above `el` inside the block's nodes, else the block's node holding `el` (an
+ *  html wrapper's element); `el` itself among the block's nodes, a top-level table or fence, has none. The container's nodes before
+ *  `el` in document order, an ancestor of `el` descended, are content when one is an element or a text with a non-whitespace
+ *  character: a formula's glyphs and a picture among them, which the walks skip or which shows no text (a zero-text hole), and a
+ *  footnote reference's number, a hole's character. The positioned characters of the container before `el` stand in it exactly when
+ *  `jt` does: every positioned character of the container before `el` precedes the offset, else the offset would not be the start
+ *  edge's, and the last of them before the offset is `jt`, the characters standing in source order. The start edge's test for a
+ *  block that begins neither its item nor its quote (edgeSpot; the Slice 8 review's closing pass). */
+function unpositionedBefore(blk: Block, el: DNode, jt: DNode | null): boolean {
+  const isItem = (x: DNode): boolean => isElement(x) && (x.tagName.toUpperCase() === "LI" || x.tagName.toUpperCase() === "BLOCKQUOTE");
+  let container: DNode | null = null;
+  for (let x = el.parentNode; x && !container; x = x.parentNode) if (isItem(x) || blk.dom.indexOf(x) >= 0) container = x;
+  if (!container) return false;
+  const under = (n: DNode, root: DNode): boolean => { for (let x: DNode | null = n; x; x = x.parentNode) if (x === root) return true; return false; };
+  if (jt && under(jt, container)) return false;
+  const contentBefore = (n: DNode): boolean => {
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (c === el) return false;
+      if (under(el, c)) return contentBefore(c);
+      if (isElement(c) || (isText(c) && stripWs(c.data) !== "")) return true;
+    }
+    return false;
+  };
+  return contentBefore(container);
+}
 /** The n-th element of `tag` under the block's nodes in document order, paired with the n-th of the walk's `count` records of that
  *  kind (a `<table>` per TableSpan, a `<pre>` per CodeSpan: the renderer emits one per token in walk order, the pairing
  *  blankCodeLineSpot makes for the pres); null when the counts disagree (a `<pre>` no code token emitted, the fill's belt for a
@@ -4888,7 +4916,9 @@ function lineEndAt(source: string, off: number): number {
  *  adjacency rule, which placed the point before the block's first positioned character, inside the fence's first row or the
  *  table's first header cell, a row or a cell the change is not in, where round 4's fence-line edge and main 696229f84's hole
  *  rule placed it after the prose; before a sub-item's fence or before an indented block after a blank line the same offsets sat
- *  so since the build). A hole's characters between the two (a footnote reference's number ending the prose, which stands
+ *  so since the build). A line before the block with no positioned character at all, a formula alone or a picture alone, has no
+ *  rule here: its offsets are the start edge's below, which keeps their point on its card (the review's closing pass). A hole's
+ *  characters between the two (a footnote reference's number ending the prose, which stands
  *  before the offset; a code block the reading could not place after it) leave the point after the prose's character; an offset
  *  inside such a hole is the hole's and keeps its card. With the next positioned character elsewhere, the same paragraph's
  *  next line or the next item's text, the offset is renderedSpot's rule's, as on main: a paragraph's trailing whitespace at a
@@ -4910,7 +4940,14 @@ function lineEndAt(source: string, off: number): number {
  *  docstring names; the review's round 6), never after a character of another table or code block (two tables in one item with
  *  nothing between, a fence after a table: the point sat inside the earlier block's last cell or row); else before the block's
  *  first positioned character, a table's first header cell's first or the code's first (a top-level block, or one that begins an
- *  item, whose text before is the previous item's); and where that character does not exist, the first header cell showing
+ *  item, whose text before is the previous item's); where the block begins neither its item nor its quote, content of the item
+ *  standing before it with no positioned character of the block's among it (a formula alone, a picture alone or a footnote
+ *  reference alone on the line before; unpositionedBefore), the point keeps its card, as main 696229f84 kept it, its table a hole,
+ *  at every offset from the hole's end through the line's ending, the blank line and the indent to the block's first character,
+ *  and inside a formula's TeX, which the hole rule does not catch, a formula's hole having no character (the review's closing
+ *  pass; rounds 2 to 6 placed it before the block's first positioned character, inside the first header cell or the fence's first
+ *  row, a cell or a row the change is not in, and in the second item of two, whose text before is the first item's, where main
+ *  had placed it after that text); and where that character does not exist, the first header cell showing
  *  nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
  *  showing nothing (or the fence empty), the point keeps its card, as a point inside such a cell does (before round 5: before the
  *  block's first positioned character wherever it stood, the second header cell's or the body row's first cell's, a cell the
@@ -4968,12 +5005,19 @@ function edgeSpot(idx: RenderedIndex, blk: Block, offset: number, j: number, k: 
   // characters between it and the block (a footnote reference's number ending the text before would stand between)
   let prose = j >= 0 && !blk.tables.some((t) => within(pj, t)) && !blk.codes.some((c) => within(pj, c));
   for (let i = j + 1; prose && i < (k < 0 ? blk.pos.length : k); i++) { const h = blk.holes[-blk.pos[i] - 1]; if (h && nOf(idx, h.startN) < s) prose = false; }
+  // the block's element, the n-th `<table>` or `<pre>` under the block's nodes (null when the counts disagree), and the text node
+  // holding the positioned character before the offset
+  const el = tb ? nthBlockElement(blk, "TABLE", blk.tables.indexOf(tb), blk.tables.length) : nthBlockElement(blk, "PRE", blk.codes.indexOf(cs as CodeSpan), blk.codes.length);
+  const atJ = j >= 0 ? nthNonWs(blk.dom[0], j) : null;
   if (prose) {
-    const el = tb ? nthBlockElement(blk, "TABLE", blk.tables.indexOf(tb), blk.tables.length) : nthBlockElement(blk, "PRE", blk.codes.indexOf(cs as CodeSpan), blk.codes.length);
-    const at = nthNonWs(blk.dom[0], j);
-    const same = el && at ? itemAbove(blk, at.t) === itemAbove(blk, el) : k >= 0 && within(pk, span) && sameItem(blk, j, k);
+    const same = el && atJ ? itemAbove(blk, atJ.t) === itemAbove(blk, el) : k >= 0 && within(pk, span) && sameItem(blk, j, k);
     if (same) return placeAfter(j);
   }
+  // the block begins neither its item nor its quote, and no positioned character of the item's stands before it (a formula alone, a
+  // picture alone or a footnote reference alone on the line before): nothing to place the point after, and the block's first
+  // character is inside a cell or a row the change is not in, so the point keeps its card, as main 696229f84 kept it (the review's
+  // closing pass; rounds 2 to 6 placed it before the block's first positioned character, the rule for a block that begins its item)
+  if (el && unpositionedBefore(blk, el, atJ ? atJ.t : null)) return null;
   return kf >= 0 ? nthNonWs(blk.dom[0], kf) : null;
 }
 
@@ -4994,7 +5038,9 @@ function edgeSpot(idx: RenderedIndex, blk: Block, offset: number, j: number, k: 
  *  none (a zero-text hole, KaTeX's glyphs a control), so it is not caught by it: at the top level a display
  *  formula's block has no mapped text and a point inside the formula keeps its card, but inside a quote or
  *  a list item a point in its TeX or on its closer is placed before the first character of the paragraph
- *  after it, a pre-existing edge of Slice 5's hole, identical on main 696229f84 (the Slice 8 review, round
+ *  after it (a table or a fence after it instead: on its card since the review's closing pass, edgeSpot's
+ *  start edge for a block whose item holds no positioned character before it), a pre-existing edge of
+ *  Slice 5's hole, identical on main 696229f84 (the Slice 8 review, round
  *  3: recorded in the plan's Slice 8 note and routed to a follow-up, whose shape is a check like the fence
  *  line's below for the formula's span). The two bytes of a CRLF ending are one position in EVERY block:
  *  normalizeSource maps N's line feed to the CR's offset, so a point at the LF byte is placed as the CR's
@@ -5061,9 +5107,12 @@ function renderedSpot(idx: RenderedIndex, offset: number): Spot | null {
     if (nOf(idx, p) < offset) j = i; else { k = i; break; }
   }
   if (j < 0 && k < 0) return null;   // a block with no mapped text, or a cell with none
-  // At the edge of a table or a fenced code block, outside every cell, the point is that block's own (edgeSpot): the table's
-  // first character and the bytes before it on its line, a fence's opener and the bytes before it, and a code block's inner
-  // edge past its last positioned character (the review's rounds 4 and 5); a cell's own span was scanned above.
+  // At the edge of a table or a code block, outside every cell, the point is that block's own (edgeSpot, whose docstring states
+  // the rules): a code block's inner edge, the trailing whitespace and line feed of its last line and of every inner line, after
+  // the line's last character; the line before a table or a code block, past its prose's last character, after the prose; and
+  // the start edge, the table's first character or the fence's opener and the bytes before it past the line ending before, after
+  // the same item's prose, before the block's first positioned character, or on its card (the review's rounds 2 to 6 and its
+  // closing pass); a cell's own span was scanned above. An offset at no edge falls to the adjacency rule below.
   if (!cell) { const e = edgeSpot(idx, blk, offset, j, k); if (e !== undefined) return e; }
   const gapFrom = j < 0 ? lo : j + 1, gapTo = k < 0 ? hiK : k;
   let after: boolean;

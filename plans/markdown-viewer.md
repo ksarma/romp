@@ -3780,14 +3780,17 @@ whitespace and line feed place after the line's last character in its own row, w
 the build; the trailing whitespace and line feed of the prose line before a nested fence or table place after the
 prose, the Raw view's row, where round 5 had put them in the fence's first row or the first header cell; and a fenced
 block the reading could not place counts for the start edge, and a point inside a hole before a placed block keeps its
-card, where round 5's search latched onto the later fence. The items below are numbered as the build was planned: 1
-the cells, 2 the code lines, 3 the one-cell rule, 4 the change marks and the deletion points inside a fence or a
-table, 5 the display formula under a highlight (the Slice 4 note's item 10, routed here through the Slice 5 note's
-(e)), 6 the records; a reference to an item below is to that numbering, and "the brief" is the Slice 8 build brief of
-2026-09-11, whose fifteen open questions are cited by number with the default the build took. The standing rule for
-the build: these changes cause the file-comments feature no trouble, which item 6's last entry states as the
-guarantees every test family re-verifies. Where the code as built departs from the text above, why, and which test
-holds each rule:
+card, where round 5's search latched onto the later fence. Its closing pass, at the review's cap of six rounds,
+changed one more, recorded under items 1 and 4: a table or a fence after a line holding no positioned character, a
+formula alone or a picture alone in its own item or quote, keeps the point of that line's ending, of the blank line,
+of the indent and of its own first character on its card, as main did, where rounds 2 to 6 painted it inside the
+block. The items below are numbered as the build was planned: 1 the cells, 2 the code lines, 3 the one-cell rule, 4
+the change marks and the deletion points inside a fence or a table, 5 the display formula under a highlight (the Slice
+4 note's item 10, routed here through the Slice 5 note's (e)), 6 the records; a reference to an item below is to that
+numbering, and "the brief" is the Slice 8 build brief of 2026-09-11, whose fifteen open questions are cited by number
+with the default the build took. The standing rule for the build: these changes cause the file-comments feature no
+trouble, which item 6's last entry states as the guarantees every test family re-verifies. Where the code as built
+departs from the text above, why, and which test holds each rule:
 1. *Item 1, a table cell maps from Rendered.* A table was one hole over its raw in the anchor map: every cell's text
    went through `putHole` with a negative position, so a selection in a cell refused as "touches a table" with the Raw
    view offered on an `indexOf` of the selected text, and a change inside a cell painted through the fallback's
@@ -3852,11 +3855,13 @@ holds each rule:
    does, where rounds 2 to 4 placed it before the table's first POSITIONED character, the second header cell's or the
    body row's first cell's, and the table of formulas alone or of pictures alone that begins an item, whose point
    round 4 placed after the previous item's text, inside that item's pre or its table's last cell, or before the next
-   item's, main having kept the card after a fence or a table item; anchor-map-block-edge-points.test.ts, item 4). A
-   cell that begins with an escaped pipe maps its whole-cell quote from the pipe, without the backslash (`\| lead`
-   stores `| lead`, `\|` alone `|`), and the one-cell offer for a span begun in such a cell starts there too: the
-   inline walk positions an escape's shown character at the escaped character's index, Slice 5's convention for every
-   block (anchor-map.test.ts pins the rendered `*` mapping to the source `*`, not the backslash; a paragraph's `\# not
+   item's, main having kept the card after a fence or a table item; anchor-map-block-edge-points.test.ts, item 4),
+   and, the item's or the quote's content before the table a formula alone or a picture alone, no positioned character
+   of the item's, on its card (the review's closing pass; item 4). A cell that begins with an escaped pipe maps its
+   whole-cell quote from the pipe, without the backslash (`\| lead` stores `| lead`, `\|` alone `|`), and the one-cell
+   offer for a span begun in such a cell starts there too: the inline walk positions an escape's shown character at
+   the escaped character's index, Slice 5's convention for every block (anchor-map.test.ts pins the rendered `*`
+   mapping to the source `*`, not the backslash; a paragraph's `\# not
    heading` maps `# not heading` on main 696229f84 too), an interior or a trailing escape staying inside the quote
    with its backslash; recorded by the review's round 5 and routed to a follow-up (an escape at a selection's edge
    taking its backslash), the cell mapping being no place to change a walk-wide convention. A table-part tag inside a
@@ -4091,7 +4096,14 @@ holds each rule:
    item sits after the item's text as on main (round 5's search by the opener's hole skipped it and latched onto the
    later fence, so the point kept its card, or, with that fence right after, sat before its code), and a point inside
    a hole whose characters stand before a placed fence or table in the same block keeps its card, the hole rule's
-   (round 5's start edge placed it before the block's first character); a point on a code line that shows no character
+   (round 5's start edge placed it before the block's first character); since the review's closing pass a point on the
+   line before a nested table or fence that holds no positioned character, a formula alone or a picture alone (a
+   footnote reference alone the same rule's), from the hole's end through the line's ending, the blank line and the
+   indent to the block's first character, and inside the formula's TeX, keeps its card, as main 696229f84 kept it, its
+   table a hole, the block beginning neither its item nor its quote with no positioned character of the item's before
+   it (`edgeSpot`'s `unpositionedBefore`; rounds 2 to 6 placed it before the block's first positioned character,
+   inside the first header cell or the fence's first row, a cell or a row the change is not in, and in the second item
+   after a text item, where main had placed it after that item's text); a point on a code line that shows no character
    (a blank line, one of whitespace alone) places in the line's own row, at its column among the row's whitespace or
    in the empty cell, through a per-line record on the Block (`CodeSpan` and `CodeLine`, `Emitter.codes`) and
    `renderedSpot`'s `blankCodeLineSpot`, which finds the row from the nearest line of the block that shows a character
@@ -4129,59 +4141,75 @@ holds each rule:
    `blankCodeLineSpot` reads the first line from its raw line's start, `lineStartAt`; the opener's line feed and
    backticks and the closer's indent stay card-only; anchor-map-blank-fence-points.test.ts's sixth test, its third
    re-pinned). A deletion point inside a nested display formula's TeX or on its closer, in a quote or a list item, is
-   placed before the first character of the paragraph after the formula, while at the top level it keeps its card: the
-   hole rule reads a hole through its characters and a formula's hole has none; identical on main 696229f84 and
-   outside this slice's items (the review's round 3), recorded in `renderedSpot`'s docstring and routed to a follow-up
-   (a check like the fence line's in `renderedSpot` over the formula's span). anchor-map-blank-fence-points.test.ts
-   (6, new: the one-blank-line fence's point in the pre's one row and the empty fence unchanged; a whitespace-only
-   line at columns 0, 2 and 4, two whitespace lines each in their own row, a blank then a whitespace line, the folded
-   trailing blank line at the end of the pre's last row and an undressed pre card-only; the pairing by order in a list
-   item holding an all-blank fence before or after a fence with text, and the count guard beside the belt's pre, the
-   point falling to the nearest character after the item's text as on main; the unclosed fences at the end of the note
-   card-only; and the folded trailing blank line behind blank and whitespace rows, two trailing blank lines in the one
-   empty last row, the review's round 3; and the indent or marker before a nested fence's first line in that line's
-   row, a list item's fence with a text or a blank first line and a quote's `> ` marker, the review's round 4) holds
-   it. anchor-map-block-edge-points.test.ts (6, new, the review's round 5: a fence's closer edge with trailing
-   whitespace on the last code line, in an ordered item, a fence item before a text item or a fence item, a sub-item's
-   fence before the outer item's text, the CRLF twin and an indented block, with the Files pane's rows and undressed,
-   the top-level, quote, same-item-text and last-item fences the controls; the trailing blank line undressed; two
-   tables, a table then a fence, a fence then a table and two fences in one item; a table of formulas or of pictures
-   alone, an entity first cell, a one-blank-line fence or an empty fence beginning an item, card-only, the blank
-   line's own point in its row; a formula-first, picture-first, empty or entity first header cell's table start,
-   card-only; and a hole cell's own edge points, round 4's rule) holds the round 5 rules.
-   anchor-map-line-edge-points.test.ts (3, new, the review's round 6: the line before a nested fence or a table at
-   every offset past the prose's last character through the line ending, an item's, a quote's, the CRLF twin, a blank
-   line between, a table, a sub-item's fence, an indented block and a footnote reference ending the prose, with the
-   start edge's bytes, a sub-item's opener, the blank line before an indented block and a point inside the reference
-   as controls; an inner code line's trailing whitespace, tab and line feed in ten fences, the adjacent offset, the
-   next line's first character, a point at a character, the last line and a line with no trailing whitespace as
-   controls; and the unplaceable fence under a `fences` tokenizer override, its opener, the indent and the blank line
-   before it, in an item and in a quote, a point inside the hole card-only, with no later fence, the later fence's own
-   opener and marked's own fence as controls; with the Files pane's rows and undressed alike) holds the round 6 rules.
-   Recorded by the review's round 6 and routed to a follow-up, no code change: a paragraph's trailing whitespace at a
-   list item's end, past the first trailing space or at the line feed, places its point before the NEXT item's first
-   character, in that item, where the Raw view keeps it on the item's row, identical on main 696229f84 and outside
-   this slice's items (prose before prose; the adjacency rule's, `renderedSpot`); a table's first character's point in
-   a list item, with a display formula between the item's prose and the table, sits after the prose above the
-   formula's box, the formula's hole having no character to stand between, identical on main 696229f84, whose hole
-   rule placed it there too (the fix shape is the formula-span check the round 3 record names); and the blank line
-   before an indented block in a list item places its point before the block's first character, in its first row,
-   round 5's rule that an indented block has no start edge, where main placed it after the item's text (the indent
-   before the first line stays the line's either way). A Raw quote spanning the delimiter row paints the header cells
-   and the body cell either side of the row that renders nothing, where Slice 5 pinned "paints nothing and the card
-   keeps Reveal" (open question 5, the default: the quote covers those cells). The fallback needle's quirks the Slice
-   5 note left (a `*` opening in one cell and closing in another read as emphasis, a `>` lost at a quoted code line's
-   start, a fence line's backticks dropped) bite only on the quotes the fallback still serves: a fence line's, the
-   delimiter row's, a cell the per-cell fallback holds, a code block the placement could not read. The hole at a
-   range's edge stays unpainted for the holes that remain (a formula's zero text, a footnote reference's number, a
-   callout's title, the front matter); tables and code have left the rule's neighbourhood (open question 11, the
-   default). anchor-map.test.ts (38, the fence's and the table's deletion points place, the html block's and the blank
-   line's stay unplaced), anchor-map-rendered-points.test.ts (8, one new over a fenced block's points and the nested
-   table's re-pin, one new for the table's end, the review's round 3, and two new in its round 4: a table or a fence
-   that begins a list item, and a CRLF note's soft breaks and item endings outside code),
-   anchor-map-boundary-points.test.ts (8, the cell's and the fence's bare deletions place, the html block's stays
-   card-only), anchor-map-block-edges.test.ts (5, the nested fence's edge kept, now by the fence line's hole) and
-   anchor-map-fallback-markup.test.ts (25, the delimiter-row quote's cells) hold it.
+   placed before the first character of the paragraph after the formula (a table or a fence after the formula instead:
+   on its card since the review's closing pass, the start edge's rule above), while at the top level it keeps its
+   card: the hole rule reads a hole through its characters and a formula's hole has none; identical on main 696229f84
+   and outside this slice's items (the review's round 3), recorded in `renderedSpot`'s docstring and routed to a
+   follow-up (a check like the fence line's in `renderedSpot` over the formula's span).
+   anchor-map-blank-fence-points.test.ts (6, new: the one-blank-line fence's point in the pre's one row and the empty
+   fence unchanged; a whitespace-only line at columns 0, 2 and 4, two whitespace lines each in their own row, a blank
+   then a whitespace line, the folded trailing blank line at the end of the pre's last row and an undressed pre
+   card-only; the pairing by order in a list item holding an all-blank fence before or after a fence with text, and
+   the count guard beside the belt's pre, the point falling to the nearest character after the item's text as on main;
+   the unclosed fences at the end of the note card-only; and the folded trailing blank line behind blank and
+   whitespace rows, two trailing blank lines in the one empty last row, the review's round 3; and the indent or marker
+   before a nested fence's first line in that line's row, a list item's fence with a text or a blank first line and a
+   quote's `> ` marker, the review's round 4) holds it. anchor-map-block-edge-points.test.ts (6, new, the review's
+   round 5: a fence's closer edge with trailing whitespace on the last code line, in an ordered item, a fence item
+   before a text item or a fence item, a sub-item's fence before the outer item's text, the CRLF twin and an indented
+   block, with the Files pane's rows and undressed, the top-level, quote, same-item-text and last-item fences the
+   controls; the trailing blank line undressed; two tables, a table then a fence, a fence then a table and two fences
+   in one item; a table of formulas or of pictures alone, an entity first cell, a one-blank-line fence or an empty
+   fence beginning an item, card-only, the blank line's own point in its row; a formula-first, picture-first, empty or
+   entity first header cell's table start, card-only; and a hole cell's own edge points, round 4's rule) holds the
+   round 5 rules. anchor-map-line-edge-points.test.ts (4, new, the review's round 6: the line before a nested fence or
+   a table at every offset past the prose's last character through the line ending, an item's, a quote's, the CRLF
+   twin, a blank line between, a table, a sub-item's fence, an indented block and a footnote reference ending the
+   prose, with the start edge's bytes, a sub-item's opener, the blank line before an indented block and a point inside
+   the reference as controls; an inner code line's trailing whitespace, tab and line feed in ten fences, the adjacent
+   offset, the next line's first character, a point at a character, the last line and a line with no trailing
+   whitespace as controls; and the unplaceable fence under a `fences` tokenizer override, its opener, the indent and
+   the blank line before it, in an item and in a quote, a point inside the hole card-only, with no later fence, the
+   later fence's own opener and marked's own fence as controls; and the review's closing pass: a formula alone or a
+   picture alone on the line before a nested table or fence, an item's with and without a blank line, a picture, a
+   display formula, a quote's, before a fence, a second item's after a text item, with the item's prose after the
+   table, and a footnote reference alone, at every offset from the hole's end through the block's first character and
+   inside the formula's TeX, card-only, with a sub-item's table under a formula-alone item, an item's prose then its
+   formula then the table, and a top-level formula paragraph then a top-level table as controls; with the Files pane's
+   rows and undressed alike) holds the round 6 rules and the closing pass's. Recorded by the review's round 6 and
+   routed to a follow-up, no code change: a paragraph's trailing whitespace at a list item's end, past the first
+   trailing space or at the line feed, places its point before the NEXT item's first character, in that item, where
+   the Raw view keeps it on the item's row, identical on main 696229f84 and outside this slice's items (prose before
+   prose; the adjacency rule's, `renderedSpot`), and the same offsets place so when an EMPTY fence, or a fence of one
+   blank line, stands between that prose and the next item and ends the item, the fence having no positioned character
+   for the line-before rule to stop at, so they fall to the same adjacency rule, identical on main 696229f84 (prose
+   after such a fence in the same item takes the point instead, before its first character; the review's closing
+   pass); a table's first character's point in a list item, with a display formula between the item's prose and the
+   table, sits after the prose above the formula's box, the formula's hole having no character to stand between,
+   identical on main 696229f84, whose hole rule placed it there too (the fix shape is the formula-span check the round
+   3 record names); and the blank line before an indented block in a list item places its point before the block's
+   first character, in its first row, round 5's rule that an indented block has no start edge, where main placed it
+   after the item's text (the indent before the first line stays the line's either way). Recorded by the review's
+   closing pass and routed to the same follow-up, no code change: under an outer item holding a formula alone, a
+   sub-item's table takes the outer line's line feed and the sub-item's indent and marker into its first header cell,
+   before its first character, where its first pipe sits by round 4's rule for a table that begins its item; main
+   696229f84 kept the card on every one of them, and the closing pass's rule leaves them, the table beginning its own
+   item (a rule for those bytes needs the block's item line, and a ruling on whether the pipe stays before the cell).
+   A Raw quote spanning the delimiter row paints the header cells and the body cell either side of the row that
+   renders nothing, where Slice 5 pinned "paints nothing and the card keeps Reveal" (open question 5, the default: the
+   quote covers those cells). The fallback needle's quirks the Slice 5 note left (a `*` opening in one cell and
+   closing in another read as emphasis, a `>` lost at a quoted code line's start, a fence line's backticks dropped)
+   bite only on the quotes the fallback still serves: a fence line's, the delimiter row's, a cell the per-cell
+   fallback holds, a code block the placement could not read. The hole at a range's edge stays unpainted for the holes
+   that remain (a formula's zero text, a footnote reference's number, a callout's title, the front matter); tables and
+   code have left the rule's neighbourhood (open question 11, the default). anchor-map.test.ts (38, the fence's and
+   the table's deletion points place, the html block's and the blank line's stay unplaced),
+   anchor-map-rendered-points.test.ts (8, one new over a fenced block's points and the nested table's re-pin, one new
+   for the table's end, the review's round 3, and two new in its round 4: a table or a fence that begins a list item,
+   and a CRLF note's soft breaks and item endings outside code), anchor-map-boundary-points.test.ts (8, the cell's and
+   the fence's bare deletions place, the html block's stays card-only), anchor-map-block-edges.test.ts (5, the nested
+   fence's edge kept, now by the fence line's hole) and anchor-map-fallback-markup.test.ts (25, the delimiter-row
+   quote's cells) hold it.
 5. *Item 5, the display formula under a highlight takes a block class on its box* (open question 4, the default:
    built). A display formula is a block of its own line, which no inline mark can wrap (the pairing reads the root's
    children, and a mark between `.katex-display` and its `.katex` breaks KaTeX's layout), so a comment on `$$ ... $$`
@@ -4342,7 +4370,7 @@ holds each rule:
    every browser leg over headless Chromium and the real bundles, 0 skipped, counted on every run): anchor-map-cells
    (17, new), anchor-map-cells-browser (6 legs, new, the sixth the review's round 5), anchor-map-cells-formulas (6,
    new: the review's rounds 4 and 5), anchor-map-block-edge-points (6, new: the review's round 5),
-   anchor-map-line-edge-points (3, new: the review's round 6), anchor-map-code-lines (16, new),
+   anchor-map-line-edge-points (4, new: the review's round 6 and its closing pass), anchor-map-code-lines (16, new),
    anchor-map-code-lines-browser (5 legs, new), anchor-map-blank-fence-points (6, new), anchor-map (38, six re-pinned
    and one re-titled), anchor-map-obsidian (31, four re-pinned, three new and the first-obstacle test re-titled),
    anchor-map-wrappers (38, six re-pinned), anchor-map-fallback-markup (25, one re-pinned and the code cases
@@ -4376,7 +4404,8 @@ holds each rule:
    c68f52212 (the build's head; cd3a06501 before the rebase), the review round 2's over one of d8a55bb7e (round 1's
    fix commit), the review round 3's over one of 2136fa7d2 (round 2's fix commit), the review round 4's over one of
    90c6ff242 (round 3's fix commit), the review round 5's over one of 8ae3fda02 (round 4's fix commit), the review
-   round 6's over one of 43dbcc722 (round 5's fix commit), and says how in its commit; the guards say they are guards.
+   round 6's over one of 43dbcc722 (round 5's fix commit), the review's closing pass's over one of b69116e26 (round
+   6's fix commit), and says how in its commit; the guards say they are guards.
    The guarantees the families re-verify: highlights are measured `<mark class="fc-hl">` elements over the range's
    text nodes with their data-act, id, tabIndex, role and title, the margin layout reading their boxes, plus one
    element that is not a mark, the stamped `.katex-display` box, which the panel records among its marks, strips in
