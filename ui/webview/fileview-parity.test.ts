@@ -37,8 +37,8 @@ const RULES = [
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
   "a.fileview-gh-note {", ".fileview-body {",
   ".fileview-body:focus {", ".fileview-body:focus-visible {",   // the body holds the keyboard (Slice 6 of plans/markdown-viewer.md, item 1): no ring for a paint's focus, the accent ring for a Tab's
-  // the Outline's dropdown in the menu tokens and its button's open state (Slice 6, item 2): the card is its containing block on both pages; the
-  // open state keys on the button's own class (the Comments panel's Show more and Reject all are .fileview-btn with aria-expanded too; review round 1)
+  // the Outline's dropdown in the menu tokens and its button's open state (Slice 6, item 2): placed from its offsetParent, the overlay #romp-fileview,
+  // on both pages (the card is not its containing block: container-type gives it no layout containment); the open state keys on the button's own class (the Comments panel's Show more and Reject all are .fileview-btn with aria-expanded too; review round 1)
   ".fileview-outline {", ".fileview-outline:focus {", ".fileview-outline-row {", ".fileview-outline-row:hover, .fileview-outline-row.current {", '.fileview-outline-btn[aria-expanded="true"] {',
   "@property --fv-body-w {", ".fileview-md {",
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)

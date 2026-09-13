@@ -1588,6 +1588,29 @@ test("an open at a heading the note does not have lands nowhere and says so in t
   assert.equal(errBar(r.body), null);
 });
 
+test("an open at a heading on a file that is not markdown (a todo's `src/app.py#l12`, the section spelling of a line slip, or `src/app.py#main`): the file has no sections and no Rendered toggle to wait for, so its first text paint judges the target and the notice names the section, the name decoded (review round 2: before, the target was never spent and the file opened silently at its top, the very open the notice exists to name)", async (t) => {
+  withFrames(t);
+  const o = await open(APP, t, SID, { at: { heading: "#l12" } });
+  assert.equal(o.ctx.mode(), "raw", "a code file's one text view");
+  assert.equal(frames.length, 1, "the landing is judged one frame after the paint, as a note's is (before the fix: no frame queued, the target held for a Rendered toggle that never comes)");
+  assert.equal(errBar(o.body), null, "nothing said before the frame");
+  flushFrames();
+  assert.equal(errBar(o.body)?.textContent, 'No section named "l12" in this file.', "the notice names the section");
+  assert.ok(aboveRow(o.body), "as a card row above the body");
+  assert.equal(o.body.scrolled, 0, "and nothing scrolled: never a silent landing at the top");
+  assert.equal(frames.length, 0, "the heading was spent");
+  // the name percent-decoded, as for a note
+  o.fv.openFileView(APP, SID, { at: { heading: "main%20loop" } });
+  await settle(); flushFrames();
+  const body2 = doc.getElementById("romp-fileview")!.querySelector(".fileview-body")!;
+  assert.equal(errBar(body2)?.textContent, 'No section named "main loop" in this file.');
+  // a note's Raw view still waits for the Rendered toggle (the case above): only a file with no Rendered view is judged in Raw
+  const r = await open(REPORT, t, SID, { at: { heading: "l12" } }, true);
+  assert.equal(r.ctx.mode(), "raw");
+  assert.equal(frames.length, 0, "a markdown file's Raw paint queues no landing");
+  assert.equal(errBar(r.body), null);
+});
+
 test("an open at a source offset: the block holding it is scrolled to the centre in the Rendered view, the row in Raw (a .py file, or a markdown file under the Raw preference); an offset past the end lands on the last block or row and says so in the notice bar", async (t) => {
   withFrames(t);
   const o = await open(REPORT, t, SID, { at: { offset: DOC.indexOf("We recommend") } });

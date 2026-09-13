@@ -4237,18 +4237,24 @@ body.filebrowse-open { overflow: hidden; }
   background: var(--accent-wash); font-weight: 600; }
 .fileview-btn.on:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
-/* The Outline's dropdown (file-view.ts openOutline; Slice 6 of plans/markdown-viewer.md, item 2): a rendered note's headings
-   under the Outline button, in the menu vocabulary (ui/CLAUDE.md: the --menu-* tokens and the menu's 12px, .ctx-menu the
-   reference; a hex never sits here). A child of the card positioned absolutely: .fileview's container-type gives the card
-   layout containment, which makes it the containing block of this box, so the top and right file-view.ts sets from the
-   button's box are card offsets and the card's overflow: hidden clips it; the width and height caps (the card's width and
-   the body's height, each less a margin) are set inline at the open too. Rows are one line each, an ellipsis at the box's
+/* The Outline's dropdown (file-view.ts openOutline; Slice 6 of plans/markdown-viewer.md, item 2): a rendered note's
+   headings under the Outline button, in the menu vocabulary (ui/CLAUDE.md: the --menu-* tokens and the menu's 12px,
+   .ctx-menu the reference; a hex never sits here). A child of the card positioned absolutely, and the card is NOT its
+   containing block: .fileview is unpositioned and its container-type (inline-size) gives it no layout containment in
+   Chromium, so the box is placed against its offsetParent, the viewer's overlay #romp-fileview (fixed on the chat and
+   feed pages, relative in the Files pane), and the top and right file-view.ts sets from the button's box are offsets
+   from that overlay's padding edge (the review's round 1: written as card offsets, they sat the box 18 px high and 25 px
+   left in the chat and feed modals, where the card is inset from the overlay). Nor does the card's overflow: hidden clip
+   the box (an overflow clips an absolutely positioned descendant only through its containing block; the review's round 2
+   probed a box placed at the overlay's corner, outside the card, and it stayed hit-testable), so what keeps it inside
+   the card is the caps set inline at the open (the card's width and the body's height, each less a margin, and never
+   past the card's bottom) and the re-anchor at the card's left margin. Rows are one line each, an ellipsis at the box's
    width, indented by their depth under the note's shallowest heading (--fv-ol-depth, set per row); the current row (the
    keyboard's) and the hovered one wear the one menu wash; the popover holds the focus and shows no ring of its own, the
-   current row being the cue. The button wears the pressed toggle's dress while the popover is up (aria-expanded), keyed on
-   its own class and never on the bar button's: the Comments panel's Show more and Reject all are .fileview-btn too and carry
-   aria-expanded (file-comments.ts clipRow, renderChangesFoot), and a bare .fileview-btn rule dressed them as pressed toggles
-   (Slice 6 review round 1). Mirrored in feed.css; fileview-parity.test.ts holds every head byte-equal. */
+   current row being the cue. The button wears the pressed toggle's dress while the popover is up (aria-expanded), keyed
+   on its own class and never on the bar button's: the Comments panel's Show more and Reject all are .fileview-btn too
+   and carry aria-expanded (file-comments.ts clipRow, renderChangesFoot), and a bare .fileview-btn rule dressed them as
+   pressed toggles (Slice 6 review round 1). Mirrored in feed.css; fileview-parity.test.ts holds every head byte-equal. */
 .fileview-outline { position: absolute; z-index: 5; box-sizing: border-box; min-width: 12em; overflow: auto; padding: 4px;
   background: var(--menu-bg); color: var(--menu-fg); border: 1px solid var(--menu-border); border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu); font-size: 12px; line-height: 1.4; }

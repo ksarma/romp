@@ -738,6 +738,52 @@ test("changed on disk: the Reload button holds the keyboard at its click (a clic
   btn2.click(); await settle();
   assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn2.disabled, false, "armed again");
   assert.equal(doc.activeElement, btn2, "and the re-armed button takes the keyboard back (the disable had dropped it to the document's body; nothing was removed)");
+  // …but only while nothing holds it: the reader who moved to a box during the failed GET's flight keeps the keyboard there (review
+  // round 2: the re-armed button took it from the box, the next keystrokes landed on the button and a Space fired Reload again)
+  btn2.click();                                            // the click holds the keyboard again (btn2 is the active element); the disable drops it
+  assert.equal(doc.activeElement, doc.body);
+  box.focus();                                             // mid-flight, the reader clicks into the panel's box and types
+  await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn2.disabled, false, "armed again");
+  assert.equal(doc.activeElement, box, "the box keeps the keyboard (before the fix: the re-armed button took it back, unconditionally on the click's record)");
+});
+
+test("changed on disk: the bar's Reload overtaken by another ask during its flight (the seam's reload(): the Comments panel's poll saw the move too, or the deletion): the newer fetch's failed landing re-arms the button, since the overtaken GET reads nothing and never lands (before: the bar stood over the failure pane with its button disabled at Reloading for the rest of the open, no later event re-arming it); the late answer of the overtaken GET changes nothing; a newer fetch's landing that brings the moved file clears the bar as before", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  const slow = heldText(PY2);
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2, text: slow.text };
+  const btn = reloadButton(wrap);
+  btn.click(); await settle();                             // the bar's ask: its GET's body read waits on the test
+  assert.equal(btn.disabled, true); assert.equal(btn.textContent, "Reloading");
+  delete disk[APP];                                        // gone by the time the poll asks
+  ctx.reload(); await settle();                            // the panel's poll asked its own reload: a newer fetch, and it 404s
+  assert.ok(body.querySelector(".fileview-err"), "the newer fetch's failure pane is in the body");
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands over it");
+  assert.equal(btn.disabled, false, "…with its button armed again (before the fix: disabled at Reloading, the failure being another fetch's and the bar's own ask never landing)");
+  assert.equal(btn.textContent, "Reload");
+  assert.equal(ctx.mtimeNs(), MT, "a failed landing lends no mtime");
+  slow.release(); await settle();                          // the overtaken GET answers late: it reads nothing and never lands
+  assert.ok(body.querySelector(".fileview-err"), "the pane stands"); assert.equal(btn.disabled, false, "the button stays armed"); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(paints, 1, "the open's paint alone: neither failure painted text, and the overtaken answer painted nothing");
+  // the way out the re-armed button offers: the file is back, the click lands it and clears the bar
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
+  btn.click(); await settle();
+  assert.equal(barOf(wrap), null, "the bar's own landing clears it"); assert.equal(ctx.text(), PY3); assert.equal(ctx.mtimeNs(), MT3); assert.equal(paints, 2);
+  // the other face: the bar's ask overtaken by a poll's reload that lands the moved file clears the bar (the later landing rules, as before)
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED);
+  const slow2 = heldText(PY3);
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4, text: slow2.text };
+  reloadButton(wrap).click(); await settle();
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
+  ctx.reload(); await settle();
+  assert.equal(barOf(wrap), null, "the newer fetch landed the moved file: the bar goes"); assert.equal(ctx.mtimeNs(), MT4);
+  slow2.release(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT4, "the late answer changes nothing");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

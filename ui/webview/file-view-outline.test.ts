@@ -492,7 +492,7 @@ test("the list: one click opens a menu-role popover in the card with one menuite
   assert.equal(popover(o), null, "no popover before the click");
   const pop = openOutline(o);
   assert.equal(pop.getAttribute("role"), "menu"); assert.equal(pop.tabIndex, -1, "focusable by script, not a Tab stop");
-  assert.ok(pop.parentNode === o.card, "a child of the viewer's card (positioned from the button's box; the card is its containing block)");
+  assert.ok(pop.parentNode === o.card, "a child of the viewer's card (positioned from the button's box as offsets from its offsetParent, the overlay: the card is not its containing block)");
   assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "true");
   assert.ok(doc.activeElement === pop, "the popover holds the keyboard");
   for (const k of ["top", "right", "maxWidth", "maxHeight"]) assert.match(String(pop.style[k]), /^-?\d+(\.\d+)?px$/, "the popover's " + k + " is set inline from the boxes at the open");
@@ -624,6 +624,24 @@ test("closers: a press outside the popover closes it and a press on the button d
   assert.equal(again.parentNode, null, "the popover left with the card");
 });
 
+test("closers (review round 2): the fetch pipeline's failure pane closes an open popover too: with the popover up and holding the keyboard, the file gone and the panel's reload painting the 404 pane leave no popover, the button hidden and reading collapsed, and the body holding the keyboard the popover held (before: the catch painted the pane without renderBody's closer, so the popover stood over the pane with its 42 stale rows and the keyboard, the hidden button reading expanded)", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const pop = openOutline(o);
+  assert.ok(doc.activeElement === pop, "the popover holds the keyboard");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "true");
+  assert.equal(rowsOf(pop).length, 42);
+  const painted = paints;
+  delete disk[REPORT];                                     // gone by the time the poll's reload asks
+  o.ctx.reload(); await settle();
+  assert.equal(paints, painted, "a failure paints no text");
+  assert.ok(o.body.querySelector(".fileview-err"), "the failure pane is in the body");
+  assert.equal(popover(o), null, "the pane's paint closed the popover (before the fix: it stood over the pane with its stale rows)");
+  assert.equal(pop.parentNode, null, "\u2026and the popover left the card");
+  assert.equal(outlineBtn(o).hidden, true, "the button is hidden over the pane (review round 1)");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false", "\u2026and reads collapsed (before: expanded, on a hidden button)");
+  assert.ok(doc.activeElement === o.body, "the body took the keyboard the popover held (the paint closer's rule; before: the browser's fixup left it on the document's body)");
+});
+
 test("file-view.ts and the two sheets: the button's label is the exported OUTLINE_LABEL with the menu's aria; the popover is built at the open (not at a paint) and read off the Rendered DOM through one query; every paint closes it and the text paint syncs the button; the pick closes, lands through scrollToFragment and takes the keyboard, in that order; Escape is taken and stopped; both exits run closeOutline; the sheets carry the popover's rules in the menu tokens, byte-equal, with no dark literal", () => {
   assert.match(VIEW, /export const OUTLINE_LABEL = "Outline";/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
@@ -649,7 +667,19 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.ok(chat.length > 200, "the Outline's rules are in styles.css");
   assert.equal(chat, feed, "…and byte-equal in feed.css");
   for (const tok of ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover", "--radius-menu", "--shadow-menu"]) assert.ok(chat.includes("var(" + tok + ")"), "the popover reads " + tok);
-  assert.match(chat, /\.fileview-outline \{ position: absolute;/, "positioned inside the card (its containing block through the card's layout containment)");
+  assert.match(chat, /\.fileview-outline \{ position: absolute;/, "positioned absolutely, from its offsetParent (the overlay #romp-fileview: the card's container-type gives it no layout containment)");
+  // the sheets' comment says where the box is placed from, in agreement with openOutline's own comment and the browser leg: its offsetParent, the
+  // overlay, never the card (round 1 placed the box from the card's edges on the belief that container-type gives layout containment, which sat it
+  // 18 px high and 25 px left in the chat and feed modals; round 2 found both sheets and the parity list still saying so after the fix)
+  const note = (css: string): string => { const b = css.indexOf("\n.fileview-outline {"), a = css.lastIndexOf("/* The Outline's dropdown", b); return a < 0 ? "" : css.slice(a, b); };
+  for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
+    const n = note(css);
+    assert.ok(n.length > 200, sheet + ": the Outline comment stands over the rules");
+    assert.match(n, /offsetParent/, sheet + ": the comment names the box the offsets are read against");
+    assert.match(n, /#romp-fileview/, sheet + ": ...the viewer's overlay");
+    assert.match(n, /no layout containment/, sheet + ": ...and why the card is not it");
+    for (const stale of [/gives the card\s+layout containment/, /makes it the containing block/, /are card offsets/, /overflow: hidden clips it/]) assert.doesNotMatch(n, stale, sheet + ": the comment no longer says the card is the containing block");
+  }
   assert.match(chat, /font-size: 12px;/, "the menu's size (ui/CLAUDE.md)");
   assert.match(chat, /\.fileview-outline-row \{ padding: 4px 10px 4px calc\(10px \+ var\(--fv-ol-depth, 0\) \* 1\.1em\);/, "the depth indent from the row's variable");
   assert.match(chat, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/, "one line per row");

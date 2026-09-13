@@ -402,7 +402,12 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       const lines = !!(opts && (opts.lineSuffix || opts.targetSuffix));   // the surface reads a line after a token…
       const sections = !!(opts && opts.targetSuffix);                     // …and, on a todo's surfaces, a section too
       // a line reference a URI token swallowed (`file:///a.md:12`) is the suffix, not the path, where the surface reads lines;
-      // a section it swallowed (`file:///a.md#results`) likewise where it reads sections
+      // a section it swallowed (`file:///a.md#results`) likewise where it reads sections. Where the surface reads lines
+      // alone (the viewer's own walk over a shown file's text, file-view-links.ts linkifyFileText) the swallowed section
+      // stays in the path, so the link opens `/a.md#results` and the kernel answers 404, where a bare `docs/a.md#results`
+      // on the same line links the file and leaves `#results` as prose. Pre-existing (the same on the base Slice 6 was
+      // built on) and outside the slice's items: recorded in plans/markdown-viewer.md's Slice 6 section and routed to a
+      // follow-up (the 2026-09-13 review, round 2), not changed here.
       if (isUri && lines) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
       if (isUri && sections) { const tail = URI_FRAG_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
       const span = spanHolding(u, start, start + tok.length);

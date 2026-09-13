@@ -295,12 +295,21 @@ test("in a browser (review round 1): a note with a heading wider than the room l
     assert.equal(rows.rows[1].title, "Figure one", "…and carries it as its title");
     assert.ok(Math.abs(rows.rows[1].height - rows.rows[0].height) <= 1, "…at a text row's height (read " + rows.rows[1].height + " against " + rows.rows[0].height + "; before: 8 px)");
     await img.page.keyboard.press("Escape"); await frames(img.page, 2);
-    // the failure pane: the file gone, the panel's reload paints the 404 pane, and the Outline button goes with the headings it listed
+    // the failure pane: the file gone, the panel's reload paints the 404 pane, and the Outline button goes with the headings it listed;
+    // a popover open at that moment goes with them too (review round 2: it stood over the pane with its stale rows and the keyboard, the
+    // hidden button reading expanded), and the body takes the keyboard the popover held, as after every other paint closer
     assert.ok(await img.page.evaluate(() => (document.querySelector(".fileview-outline-btn") as HTMLElement).getClientRects().length > 0), "the button shows over the Rendered note");
+    await img.page.click(BTN); await frames(img.page, 1);
+    const openBefore = await img.page.evaluate(() => ({ popover: !!document.querySelector(".fileview-outline"), expanded: (document.querySelector(".fileview-outline-btn") as HTMLElement).getAttribute("aria-expanded"), active: (document.activeElement as HTMLElement).className }));
+    assert.deepEqual(openBefore, { popover: true, expanded: "true", active: "fileview-outline" }, "the popover is open and holds the keyboard when the file goes");
     await img.page.evaluate((p: string) => { delete (window as any).__docs[p]; (window as any).__seam.reload(); }, REPORT);
     await img.page.waitForFunction(() => !!document.querySelector(".fileview-body > .fileview-err"), null, { timeout: 10000 });
     await frames(img.page, 2);
     assert.equal(await img.page.evaluate(() => (document.querySelector(".fileview-outline-btn") as HTMLElement).getClientRects().length), 0, "the Outline button is hidden over the failure pane (before: shown, and a click flashed it and opened nothing)");
+    const overPane = await img.page.evaluate(() => ({ popover: !!document.querySelector(".fileview-outline"), rows: document.querySelectorAll(".fileview-outline-row").length, expanded: (document.querySelector(".fileview-outline-btn") as HTMLElement).getAttribute("aria-expanded"), active: (document.activeElement as HTMLElement).className }));
+    assert.equal(overPane.popover, false, "the popover closed with the pane's paint (before the fix: it stood over the pane with " + overPane.rows + " stale rows)");
+    assert.equal(overPane.expanded, "false", "the hidden button reads collapsed (before: expanded)");
+    assert.equal(overPane.active, "fileview-body", "the body took the keyboard the popover held (the paint closer's rule)");
     assert.deepEqual(img.errors, [], "no page errors (the image heading and the failure pane)");
     await img.page.close();
   });

@@ -612,7 +612,7 @@ test("a record read in the Rendered view seats by span under the Raw preference 
 });
 
 // ── pagehide writes without retiring the viewer; editing and media write nothing ──────────────────────
-test("the window's pagehide writes the record with the viewer still up, and the close writes again; nothing is written while the editor holds the body, so the memory keeps what the last text view left (here: nothing); a picture and a missing file write nothing", async (t) => {
+test("the window's pagehide writes the record with the viewer still up, and the close writes again; while the editor holds the body the leave writes the place of the text view Edit replaced, read at Edit (review round 2: before, nothing was written and the reopen fell to the top); a picture and a missing file write nothing", async (t) => {
   const P = notePath("pagehide");
   const o = await open(P, NOTE, t);
   o.body.scrollTop = 490;
@@ -626,7 +626,8 @@ test("the window's pagehide writes the record with the viewer still up, and the 
   const back = await reopen(o.fv, P);
   assert.equal(back.body.scrollTop, 530, "the later record is the memory's");
   o.fv.closeFileView();
-  // editing: the buffer is not the text, so the leave writes nothing
+  // editing: the buffer is not the text, so the leave writes the place of the text view Edit replaced, read at Edit (before the
+  // review's round 2 it wrote nothing: a first read closed from the editor was forgotten, a re-read fell to the read before it)
   const E = notePath("editing");
   const e = await open(E, NOTE, t);
   e.body.scrollTop = 490;
@@ -634,11 +635,17 @@ test("the window's pagehide writes the record with the viewer still up, and the 
   await settle();
   assert.ok(e.body.querySelector(".fileview-cm"), "the editor holds the body");
   const n1 = leaves.length;
+  win.dispatchEvent(new Event("pagehide"));
+  assert.equal(leaves.length, n1 + 1, "a page hidden while editing writes the pre-Edit place");
+  assert.equal(leaves[n1].rec.scrollTop, 490); assert.equal(leaves[n1].rec.view, "rendered", "…of the view the reader read, before Edit's Raw switch");
+  assert.deepEqual({ ...leaves[n1].rec, t: 0 }, { start: NOTE_SPANS[12].start, end: NOTE_SPANS[12].end, top: -10, atTop: false, view: "rendered", mtimeNs: MT, scrollTop: 490, t: 0 }, "block 12, ten pixels in");
   e.fv.closeFileView();
   assert.equal(doc.getElementById("romp-fileview"), null, "closed (no unsaved change: no ask)");
-  assert.equal(leaves.length, n1, "no record while editing");
+  assert.equal(leaves.length, n1 + 2, "the close from the editor writes it too (before: no record while editing)");
+  assert.equal(leaves[n1 + 1].rec.scrollTop, 490);
+  store.delete("romp:fileviewFmt");                        // Edit saved the Raw preference; cleared, the reopen paints the view the record was read in
   const e2 = await reopen(e.fv, E);
-  assert.equal(e2.body.scrollTop, 0, "nothing remembered for the path: the top");
+  assert.equal(e2.body.scrollTop, 490, "the reopen returns to the place before Edit (before the fix: the top, nothing remembered for the path)");
   e.fv.closeFileView();
   // a picture: no text view, no record; a missing file: the failure pane, no record
   const pic = await open(PLOT, new Uint8Array([0x89, 0x50, 0x4e, 0x47]), t);
@@ -649,6 +656,44 @@ test("the window's pagehide writes the record with the viewer still up, and the 
   await settle();
   pic.fv.closeFileView();
   assert.equal(leaves.length, n2, "a fetch failure writes no record");
+});
+
+// ── the key: a relative path is one file per session ───────────────────────────────────────────────
+test("the memory's key (review round 2): a RELATIVE path carries the session, since the kernel resolves it against the session's cwd and two sessions' docs/report.md are two files (before: session B's file, never read here, opened at session A's place); an absolute or ~ path is one file for every session and its key stays the path; placeKey says so", async (t) => {
+  const fv = await mod();
+  const SID_B = "22222222-3333-4444-5555-666666666666";
+  assert.equal(fv.placeKey("/repo/notes-api/docs/report.md", SID), "/repo/notes-api/docs/report.md", "an absolute path: the path alone");
+  assert.equal(fv.placeKey("~/notes/report.md", SID), "~/notes/report.md", "a ~ path: the kernel expands it for every session alike");
+  assert.equal(fv.placeKey("docs/report.md", SID), "docs/report.md\u0000" + SID, "a relative path: the session folded in");
+  assert.equal(fv.placeKey("docs/report.md", null), "docs/report.md\u0000", "…with no session, an empty one (still apart from the absolute spelling)");
+  // session A reads the relative path to block 12 and closes; session B's open of the same relative path is another file: the top
+  const REL = "docs/report-rel.md";
+  const a = await open(REL, NOTE, t);
+  a.body.scrollTop = 490;
+  a.fv.closeFileView();
+  assert.equal(fv.openFileView(REL, SID_B), true, "session B's open happened"); await settle();
+  const b = current(fv);
+  assert.equal(b.body.scrollTop, 0, "session B's file, never read here, opens at its top (before the fix: at session A's place, 490)");
+  b.body.scrollTop = 200;
+  fv.closeFileView();
+  // …and each session's own place stands
+  const a2 = await reopen(fv, REL);
+  assert.equal(a2.body.scrollTop, 490, "session A's reopen returns to A's place (before the fix: B's newer record, 200, won the path's one key)");
+  fv.closeFileView();
+  assert.equal(fv.openFileView(REL, SID_B), true); await settle();
+  assert.equal(current(fv).body.scrollTop, 200, "session B's reopen returns to B's");
+  fv.closeFileView();
+  // the host hears the leave with the path as written and the session, as before
+  const last = leaves[leaves.length - 1];
+  assert.equal(last.path, REL); assert.equal(last.sid, SID_B);
+  // an absolute path: one file for every session, so the key is shared and B's open seats A's place
+  const ABS = notePath("shared");
+  const s1 = await open(ABS, NOTE, t);
+  s1.body.scrollTop = 330;
+  s1.fv.closeFileView();
+  assert.equal(fv.openFileView(ABS, SID_B), true); await settle();
+  assert.equal(current(fv).body.scrollTop, 330, "the absolute path's place is shared across sessions (the same bytes are the same file)");
+  fv.closeFileView();
 });
 
 // ── the source: where the write and the seat sit ─────────────────────────────────────────────────
@@ -665,9 +710,12 @@ test("file-view.ts: runLeave runs once the close guard has passed in closeFileVi
   assert.match(initFn, /window\.addEventListener\("pagehide", \(\) => \{ if \(leaveLive\) leaveLive\(\); \}\);/, "pagehide runs it and keeps it, installed once with the module's other window listeners");
   assert.equal((VIEW.match(/"pagehide"/g) || []).length, 1, "one listener");
   assert.equal((openFn.match(/seat\(kept\);[^\n]*\n\s*landRemembered\(\);/g) || []).length, 2, "the remembered seat follows the paint's own seat in the SVG Source branch and the text branch");
-  assert.match(openFn, /let pendingPlace: RememberedPlace \| null = at === null \? newerPlace\(opts\?\.place, rememberedPlaces\.get\(path\)\) : null;/, "a target stands the memory down; else the later of the host's and the memory's");
+  assert.match(openFn, /const memKey = placeKey\(path, sid\);[^\n]*\n\s*let pendingPlace: RememberedPlace \| null = at === null \? newerPlace\(opts\?\.place, rememberedPlaces\.get\(memKey\)\) : null;/, "a target stands the memory down; else the later of the host's and the memory's, read by the file's key (placeKey: the path, and the session for a relative path)");
   assert.match(openFn, /const landRemembered = \(\) => \{\n\s*if \(pendingPlace === null \|\| shownText === null\) return;\n\s*const rec = pendingPlace; pendingPlace = null;/, "spent once, at a text paint");
-  assert.match(openFn, /leaveLive = \(\) => \{\n\s*if \(editing \|\| shownText === null \|\| !textShowing\(\)\) return;\n\s*const p = keptPlace\(\);\n\s*if \(!p\) return;\n\s*const rec = rememberedPlaceOf\(p, mtimeNs, body\.scrollTop\);\n\s*rememberedPlaces\.set\(path, rec\);/, "the write: the editor and a non-text body stand it down; one keptPlace read");
+  assert.match(openFn, /const liveRecord = \(\): RememberedPlace \| null => \{\n\s*if \(shownText === null \|\| !textShowing\(\)\) return null;\n\s*const p = keptPlace\(\);\n\s*return p \? rememberedPlaceOf\(p, mtimeNs, body\.scrollTop\) : null;\n\s*\};/, "the live record: a non-text body writes nothing; one keptPlace read");
+  assert.match(openFn, /leaveLive = \(\) => \{\n\s*const rec = editing \? editPlace : liveRecord\(\);\n\s*if \(!rec\) return;\n\s*rememberedPlaces\.set\(memKey, rec\);/, "the write: the place read at Edit while the editor is up, else the live one, by the file's key");
+  assert.match(openFn, /if \(refused\) \{ noteBar\(refused\); return; \}\n\s*editPlace = liveRecord\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(isMd && fmt\.md === "rendered"\) \{ fmt\.md = "raw"; saveFmt\(fmt\); \}/, "enterEdit reads the place past the guard and before the Raw switch (the view the reader read)");
+  assert.match(openFn, /editing = false; dirty = false; ta = null;\n\s*editPlace = null;/, "exitEdit clears it: the text view is back and the leave reads it live");
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{/);
   assert.match(VIEW, /export type RememberedPlace = \{ start: number; end: number; top: number; atTop: boolean; view: "rendered" \| "raw"; mtimeNs: string; scrollTop: number; t: number \};/);

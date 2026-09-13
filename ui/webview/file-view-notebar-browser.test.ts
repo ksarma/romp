@@ -292,14 +292,49 @@ test("in a browser, the real module (review round 1): with the changed-on-disk b
   });
 });
 
-test("in a browser, the real module (review round 1): a relayed open into a Files iframe that did not hold the page's focus sends the open's GET and no HEAD (before: the landing's body.focus() moved the focus into the frame, its window fired `focus`, and the probe answered with a HEAD of the file it had just fetched); the probe is live for the next focus; a same-frame open sends one GET as before", { timeout: 120000 }, async (t) => {
+// ── the review's round 2: the keyboard across the dashboard's frames ─────────────────────────────────────────────────────
+// A relayed open (a click in the chat or the Waiting pane, with File links open in set to the Files pane) lands in a Files
+// iframe that does not hold the page's focus. Round 1 found the landing's `body.focus()` moving the focus into the frame
+// and its window's `focus` event read by the changed-on-disk probe as the reader's return (GET then HEAD on every
+// cross-frame open); `takingKeyboard` now stands the probe aside for the viewer's own call. Round 2 reversed what that
+// landing does when the person is TYPING in the sibling frame (the brief's "never over the composer", and the chat
+// composer in the same-origin sibling frame is the composer): takeKeyboard reads the top window's active iframe and its
+// document's active element, and a textarea, a text input or a contenteditable there keeps the keyboard; the body is a Tab
+// stop all the same and takes it on its own gestures, a click on it being the reader's real return, which asks once. Any
+// other holder in the sibling frame (its body after a click on the transcript's text, a focused control) yields as before,
+// so the cross-frame take still fires and the round 1 gate is still what keeps the HEAD count at 0 in those cells.
+type Holder = { name: string; sel: string | null; typing: boolean; cell: string };
+const HOLDERS: Holder[] = [
+  { name: "chat-body", sel: "p", typing: false, cell: "the chat frame's body holds the focus (a click on the transcript's text, then a relay open)" },
+  { name: "chat-control", sel: "#send", typing: false, cell: "a control in the chat frame holds the focus (a focused button, then a relay open)" },
+  { name: "files", sel: null, typing: false, cell: "the Files iframe holds the focus (a same-frame open)" },
+  { name: "composer", sel: "#composer-input", typing: true, cell: "the chat composer holds the focus mid-sentence (a middle-click on a path pill relays the open)" },
+  { name: "input", sel: "#search", typing: true, cell: "a text input in the chat frame holds the focus mid-word" },
+  { name: "editable", sel: "#note", typing: true, cell: "a contenteditable in the chat frame holds the focus mid-word" },
+];
+/** The chat frame's holder as the frame sees it: the active element's tag and id, whether the frame's document has the focus, and the box's text. */
+const readHolder = (fa: any, sel: string | null): Promise<{ tag: string; id: string; hasFocus: boolean; text: string }> => fa.evaluate((s: string | null) => {
+  const a = document.activeElement as HTMLElement | null;
+  const box = s ? (document.querySelector(s) as HTMLElement | null) : null;
+  const text = !box ? "" : "value" in box ? String((box as HTMLInputElement).value) : box.textContent || "";
+  return { tag: a ? a.localName : "none", id: a ? a.id : "", hasFocus: document.hasFocus(), text };
+}, sel);
+type Landing = { heads: number; active: string; hasFocus: boolean; bar: boolean; tabIndex: number };
+/** The Files frame after a landing: the HEAD count, who holds the keyboard ("document body" for the document's own), the frame's focus, the bar, the body's Tab stop. */
+const readLanding = (fb: any): Promise<Landing> => fb.evaluate(() => {
+  const a = document.activeElement as HTMLElement | null;
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  return { heads: (window as any).__heads, active: !a || a === document.body ? "document body" : a.className, hasFocus: document.hasFocus(), bar: !!document.getElementById("fileview-save-err"), tabIndex: body.tabIndex };
+});
+
+test("in a browser, the real module (review rounds 1 and 2): a relayed open into a Files iframe that did not hold the page's focus: from the chat frame's body or a focused control there the landing takes the keyboard across the frames and sends the open's GET and no HEAD (before round 1: the landing's body.focus() fired the frame's window `focus` and the probe answered with a HEAD of the file it had just fetched), the next window focus asking once; from a typing box there (the composer's textarea, a text input, a contenteditable) the box keeps the keyboard and the next keystroke lands in it (before round 2: the body took it mid-sentence), the body is a Tab stop, and a click on it takes the keyboard and asks once; a same-frame open sends one GET as before", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
-    // a shell stand-in: a chat iframe holding a composer, and the Files pane's page (real-viewer-leg's, body.fileview-pane) beside it
-    const chat = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input"></textarea><p>chat pane stand-in</p></body></html>';
+    // a shell stand-in: a chat iframe holding a composer, a text input, a contenteditable and a button, and the Files pane's
+    // page (real-viewer-leg's, body.fileview-pane) beside it, all on one origin as the dashboard's frames are
+    const chat = '<!DOCTYPE html><html><body style="margin:8px"><textarea id="composer-input"></textarea><input id="search" type="text"><div id="note" contenteditable="true" style="min-height:1em;border:1px solid #888"></div><button id="send" type="button">Send</button><p>chat pane stand-in</p></body></html>';
     const top = `<!DOCTYPE html><html><body style="margin:0"><div id="shell" style="height:20px">shell stand-in</div><iframe id="a" src="${ORIGIN}/a" style="width:300px;height:560px"></iframe><iframe id="b" src="${ORIGIN}/b" style="width:660px;height:560px"></iframe></body></html>`;
     const files = pageHtml("pane", { [REPORT]: LONG }, MT);
-    for (const holder of ["chat", "files"] as const) {
-      const cell = holder === "chat" ? "the chat iframe holds the focus (a relay open)" : "the Files iframe holds the focus (a same-frame open)";
+    for (const { name, sel, typing, cell } of HOLDERS) {
       const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
       const errors: string[] = [];
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -311,22 +346,49 @@ test("in a browser, the real module (review round 1): a relayed open into a File
       const fa = page.frames().find((f: any) => f.url() === ORIGIN + "/a"), fb = page.frames().find((f: any) => f.url() === ORIGIN + "/b");
       assert.ok(fa && fb, cell + ": both iframes loaded");
       await fb.waitForFunction(() => typeof (window as any).FV !== "undefined", null, { timeout: 10000 });
-      if (holder === "chat") await fa.click("#composer-input"); else await fb.click("body", { position: { x: 5, y: 5 } });
+      // the holder: a click in the chat frame (and, in a typing box, two typed characters), or a click on the Files page
+      if (sel === null) await fb.click("body", { position: { x: 5, y: 5 } }); else await fa.click(sel);
+      if (typing) await page.keyboard.type("ab");
+      const holder = await readHolder(fa, sel);
+      if (name === "chat-body") assert.equal(holder.tag, "body", cell + ": the chat document's body is its active element");
+      else if (sel !== null) assert.equal(holder.id, sel.slice(1), cell + ": the chat frame's active element is the one the cell names");
+      assert.equal(holder.hasFocus, sel !== null, cell + ": the chat document " + (sel !== null ? "holds" : "does not hold") + " the page's focus before the open");
+      if (typing) assert.equal(holder.text, "ab", cell + ": the typed characters landed in the box");
       const before = await fb.evaluate(() => ({ hasFocus: document.hasFocus(), heads: (window as any).__heads }));
-      assert.equal(before.hasFocus, holder === "files", cell + ": the Files document " + (holder === "files" ? "holds" : "does not hold") + " the focus before the open");
+      assert.equal(before.hasFocus, sel === null, cell + ": the Files document " + (sel === null ? "holds" : "does not hold") + " the focus before the open");
       assert.equal(before.heads, 0, cell + ": no HEAD before the open");
+      // the relayed open, as the Files pane's relay branch calls it
       await fb.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
       await fb.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
       await frames(fb, 3);
-      const after = await fb.evaluate(() => ({ heads: (window as any).__heads, active: (document.activeElement as HTMLElement).className, hasFocus: document.hasFocus(), bar: !!document.getElementById("fileview-save-err") }));
-      assert.equal(after.active, "fileview-body", cell + ": the open's landing gave the body the keyboard");
-      assert.equal(after.hasFocus, true, cell + ": …so the Files document holds the page's focus after the open");
-      assert.equal(after.heads, 0, cell + ": the open sent no HEAD (before the fix a cross-frame open cost GET then HEAD: the window focus the viewer's own focus call fired read as the reader's return)");
+      const after = await readLanding(fb);
+      const chatAfter = await readHolder(fa, sel);
+      assert.equal(after.heads, 0, cell + ": the open sent no HEAD" + (typing ? "" : " (before round 1 a cross-frame open cost GET then HEAD: the window focus the viewer's own focus call fired read as the reader's return)"));
       assert.equal(after.bar, false, cell + ": no bar");
-      // the probe is live: the reader's return (a window focus) asks once
-      await fb.evaluate(() => { window.dispatchEvent(new Event("focus")); });
-      await fb.waitForFunction(() => (window as any).__heads > 0, null, { timeout: 5000 });
-      assert.equal(await fb.evaluate(() => (window as any).__heads), 1, cell + ": one HEAD for the focus event");
+      assert.equal(after.tabIndex, 0, cell + ": the body is a Tab stop");
+      if (typing) {
+        assert.equal(after.active, "document body", cell + ": the body did not take the keyboard from a box being typed in (before round 2: it took it, and the composer lost the sentence)");
+        assert.equal(after.hasFocus, false, cell + ": …so the Files document does not hold the page's focus after the open");
+        assert.equal(chatAfter.id, sel!.slice(1), cell + ": the box still holds the keyboard");
+        assert.equal(chatAfter.hasFocus, true, cell + ": …in the chat frame, which holds the page's focus");
+        await page.keyboard.type("z");
+        assert.equal((await readHolder(fa, sel)).text, "abz", cell + ": the next keystroke lands in the box (before round 2: on the file's body, and the character was lost)");
+        // the body takes the keyboard on its own gesture: a click on it, the reader's real return to the Files pane, which asks once
+        await fb.click(".fileview-body", { position: { x: 30, y: 30 } });
+        await fb.waitForFunction(() => (document.activeElement as HTMLElement | null)?.className === "fileview-body", null, { timeout: 5000 });
+        assert.equal((await readLanding(fb)).hasFocus, true, cell + ": a click on the body gives it the keyboard and the Files document the page's focus");
+        await fb.waitForFunction(() => (window as any).__heads > 0, null, { timeout: 5000 });
+        assert.equal(await fb.evaluate(() => (window as any).__heads), 1, cell + ": the click's window focus, the reader's return, asked once");
+        assert.equal((await readHolder(fa, sel)).hasFocus, false, cell + ": the chat frame gave the focus up to the click");
+      } else {
+        assert.equal(after.active, "fileview-body", cell + ": the open's landing gave the body the keyboard" + (sel === null ? "" : " across the frames (nothing of the reader's was being typed)"));
+        assert.equal(after.hasFocus, true, cell + ": …so the Files document holds the page's focus after the open");
+        if (sel !== null) assert.equal(chatAfter.hasFocus, false, cell + ": the chat frame gave it up");
+        // the probe is live: the reader's return (a window focus) asks once
+        await fb.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+        await fb.waitForFunction(() => (window as any).__heads > 0, null, { timeout: 5000 });
+        assert.equal(await fb.evaluate(() => (window as any).__heads), 1, cell + ": one HEAD for the focus event");
+      }
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
     }

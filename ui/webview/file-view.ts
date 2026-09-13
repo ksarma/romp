@@ -353,8 +353,9 @@ export function placeFromRemembered(rec: RememberedPlace, source: string): Place
   if (b < 0 || spans[b].start !== rec.start) return null;
   return { source, view: rec.view, start: spans[b].start, end: spans[b].end, top: rec.top, height: 0, atTop: rec.atTop, prev: null, next: null };
 }
-// The memory: one record per path for the page's lifetime (keyed by the path as openFileView receives it, not by
-// session: the same bytes are the same file for every session), written at the moments the reader leaves a file
+// The memory: one record per file for the page's lifetime, keyed by the path as openFileView receives it (placeKey, below:
+// the same bytes are the same file for every session that names an absolute path; a relative path, which the kernel resolves
+// against the session's cwd, carries the session in its key), written at the moments the reader leaves a file
 // (closeFileView, the replace path of either open, the window's pagehide) and read at the next open of the path with
 // no target. The Files pane persists what it hears through `onLeave` (initFileView's host) in its Recent entry and
 // hands it back as `opts.place`; the chat modal and the feed viewer persist nothing, and this map covers a switch
@@ -371,6 +372,41 @@ function newerPlace(a: RememberedPlace | null | undefined, b: RememberedPlace | 
   if (!a) return b ?? null;
   if (!b) return a;
   return b.t > a.t ? b : a;
+}
+/** The memory's key for a file: the path as openFileView receives it, and for a RELATIVE path the session too, since the kernel
+ *  resolves such a path against the SESSION's cwd (_resolve_open_path: neither `/`- nor `~`-rooted), so `docs/report.md` in two
+ *  sessions on two repos names two files (the review's round 2: the second session's file, never read, opened at the first's
+ *  place). An absolute or `~` path stays the key alone: the same bytes are the same file for every session that names it. */
+export function placeKey(path: string, sid: string | null | undefined): string {
+  return /^[/~]/.test(path) ? path : path + "\u0000" + (sid ?? "");
+}
+// The keyboard rule's reach into a sibling frame (plans/markdown-viewer.md Slice 6, item 1: the body takes the keyboard unless
+// the composer holds it). In the Files iframe the chat composer is in another document, and this document's activeElement is
+// its own body whenever the page's focus is elsewhere, so the same-document gate saw nothing to yield to and body.focus()
+// pulled the page's focus into this frame, out of a box being typed in (the review's round 2: a relayed open, a Reload's
+// landing and a Save's ack each cut a sentence). So when this document does not hold the focus, the focused frame is read
+// through the top window down to its own active element, and a typing target there keeps the keyboard; any other holder
+// (the chat's body after a plain click) yields as the document's body does. Frames the read cannot see (another origin, a
+// host with no top) or a read that throws take the keyboard as before.
+const NON_TEXT_INPUTS = new Set(["button", "checkbox", "radio", "submit", "reset", "file", "range", "color", "image", "hidden"]);
+function isTypingTarget(a: Element): boolean {
+  if (a.localName === "textarea") return true;
+  if (a.localName === "input") return !NON_TEXT_INPUTS.has((a.getAttribute("type") || "text").toLowerCase());
+  return (a as HTMLElement).isContentEditable === true;
+}
+function typingInPeerFrame(): boolean {
+  try {
+    if (typeof document.hasFocus !== "function" || document.hasFocus()) return false;
+    const top = window.top;
+    if (!top || top === window) return false;
+    let a: Element | null = top.document.activeElement;
+    for (let hops = 0; a && a.localName === "iframe" && hops < 16; hops++) {
+      const inner = (a as HTMLIFrameElement).contentDocument;
+      if (!inner || inner === document) return false;
+      a = inner.activeElement;
+    }
+    return a !== null && isTypingTarget(a);
+  } catch { return false; }
 }
 // Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
 // reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
@@ -888,10 +924,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The open's target (`at`, one of At: a line, a source offset or a heading; plans/markdown-viewer.md Slice 6, item 4).
   // A heading (a sibling link's `#fragment`, `[see](report.md#results)`: data-frag on the path link, file-view-links.ts
   // linkMarkdownAnchors; a todo's `docs/report.md#results` through the relay) lands after the FIRST rendered paint, once,
-  // through scrollToFragment; a Raw view has no ids to land on, so the landing waits for the Rendered toggle rather than
-  // being spent (review find on #958, 2026-09-07). A heading the note does not have lands nowhere and says so in the
-  // notice bar (CLAUDE.md, fail loudly: a silent open at the top would read as the file's truth). The line and the
-  // offset are spent on the first text landing instead (pendingLine and pendingOffset, with the fetch below).
+  // through scrollToFragment; a Raw view of a markdown file has no ids to land on, so the landing waits for the Rendered
+  // toggle rather than being spent (review find on #958, 2026-09-07), while a file that is not markdown has no Rendered
+  // toggle to wait for and its first text paint spends the heading (the review's round 2: `src/app.py#l12`, the section
+  // spelling of a line slip, opened the file silently at its top). A heading the file does not have lands nowhere and says
+  // so in the notice bar (CLAUDE.md, fail loudly: a silent open at the top would read as the file's truth). The line and
+  // the offset are spent on the first text landing instead (pendingLine and pendingOffset, with the fetch below).
   const at: At | null = opts?.at ?? null;
   let pendingHeading: string | null = at !== null && "heading" in at && at.heading ? at.heading : null;
   document.body.classList.add("fileview-open");
@@ -1192,7 +1230,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     pop.addEventListener("focusout", (e: FocusEvent) => {
       const to = e.relatedTarget as Node | null;
       if (to && (pop.contains(to) || outlineBtn.contains(to))) return;
-      closeOutlineKeeping(to === null);   // the keyboard went to another element: it stays there; to nothing (the window lost the focus): the body holds it for the return
+      // to another element: it stays there. A null relatedTarget names two moves: the window losing the focus, where this
+      // document's activeElement still reads the popover during focusout and the body takes the keyboard for the return, and a
+      // move into another frame (the chat composer beside the Files pane), where the browser has cleared this document's active
+      // element before focusout fires, so `held` reads false and the frame's own holder keeps it (the review's round 2;
+      // file-view-keyboard-frames-browser.test.ts pins the second, closeOutlineKeeping reads the holder and never a flag)
+      closeOutlineKeeping(to === null);
     });
     const onDown = (e: Event): void => {
       const t = e.target as Node | null;
@@ -1357,14 +1400,23 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // window fires `focus` synchronously inside it, which the changed-on-disk probe below would read as the reader's return
   // and answer with a HEAD of the file the landing just fetched (the review's round 1: GET then HEAD for every cross-frame
   // open, one GET for a same-frame one); the probe stands aside for a focus event the viewer's own call fired.
+  // The chat composer beside a Files iframe is the composer too: this document's activeElement is its own body whenever the
+  // page's focus is in another frame, so the gate also reads the focused frame's own active element through the top window
+  // (typingInPeerFrame, above the open) and yields to a typing target there; a non-typing holder there yields as the
+  // document's body does. Every hand-over runs through this one gate: the open's landing, the toggles, the Outline's closers,
+  // the editor's exit at a Save's ack and the changed-on-disk bar's drop at a Reload's landing (the review's round 2).
   let takingKeyboard = false;
   const takeKeyboard = (): void => {
     if (editing || !wrap.isConnected) return;
     const a = document.activeElement;
     if (a && a !== document.body && !bar.contains(a)) return;
+    if (typingInPeerFrame()) return;
     takingKeyboard = true;
     try { body.focus({ preventScroll: true }); } finally { takingKeyboard = false; }
   };
+  /** Nothing holds the keyboard: this document's activeElement is null or its body, and no box in a sibling frame is being typed
+   *  in (the disable's drop and a click elsewhere both land the focus on a document's body; the bar's re-armed Reload reads this). */
+  const keyboardIdle = (): boolean => { const a = document.activeElement; return (a === null || a === document.body) && !typingInPeerFrame(); };
   let keyboardPending = true;                          // the open's first landing takes the keyboard; a reload's does not
   const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
@@ -1562,7 +1614,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // known). And its source is not kept, so a block the text moved (placeFromRemembered null) is not followed: the
   // numeric scrollTop is written and the browser clamps it. An unchanged file at the same width comes back to the pixel
   // the browser snaps to; the seat's clamp, if any, is not held (a place at the file's end reads as what shows there).
-  let pendingPlace: RememberedPlace | null = at === null ? newerPlace(opts?.place, rememberedPlaces.get(path)) : null;
+  const memKey = placeKey(path, sid);                 // the path, and the session for a relative one (placeKey)
+  let pendingPlace: RememberedPlace | null = at === null ? newerPlace(opts?.place, rememberedPlaces.get(memKey)) : null;
   // A record read inside a fold the reader had opened (an author's <details>, a folded `[!type]-` callout, the front matter)
   // meets a reopen that paints every fold as authored (foldKeeper is per open, and the record carries no fold state), so the
   // remembered block has no shown box: seatPlaceOutcome's last resort walked back through the fold's hidden paragraphs to
@@ -1571,9 +1624,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // place (the review's round 1); and a block that IS a shut fold (a callout is one block) seated its summary at the edge
   // and then took the reader's depth into its open content over a box a summary tall. So the folds above the block's
   // elements are opened first, as the offset landing and a `#` link open them (revealFragmentTarget), and a fold that is
-  // the block itself is opened when the record's edge was inside it (a depth in the record's view): the reader had those
-  // folds open, since a shut fold's content is never at the edge, and the seat is then the exact one. A record read in the
-  // other view (a Raw row inside a fold Rendered shuts) opens the fold too, and shows the passage the reader had.
+  // the block itself is opened when the record's edge lay in its content (a depth in the record's view past the shut box
+  // the reopen paints, its summary): the reader had those folds open, since a shut fold's content is never at the edge, and
+  // the seat is then the exact one; a depth inside the summary's own height says nothing, since the summary straddles the edge
+  // the same open or shut, and the fold stays as authored (the review's round 2: a shut callout whose summary straddled the
+  // edge came back open, thirty paragraphs taller). A record read in the other view (a Raw row inside a fold Rendered shuts)
+  // opens the fold too, and shows the passage the reader had.
   const revealRemembered = (p: Place, depth: number): void => {
     const md = body.querySelector(".fileview-md");
     if (!md || shownText === null) return;
@@ -1581,7 +1637,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (b < 0) return;
     for (const e of renderedBlockElements(md, shownText, b)) {
       revealFragmentTarget(e);
-      if (depth > 0 && e.localName === "details" && !e.hasAttribute("open")) e.setAttribute("open", "");
+      // the fold's own shut box (its summary) shows the same open or shut, so only a depth past it says the content was showing
+      if (depth > 0 && e.localName === "details" && !e.hasAttribute("open") && depth >= e.getBoundingClientRect().height - 0.5) e.setAttribute("open", "");
     }
   };
   const landRemembered = () => {
@@ -1600,12 +1657,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // lesson), at this file's mtime and scrollTop, into the module's map and the host's ear. Never while the editor is up
   // (its buffer is not the text) and never without a text view (a picture, a PDF frame, the loader, a failed fetch): a
   // host that hears onLeave always has a record to store, and the path's last record stands until a text view is left.
-  leaveLive = () => {
-    if (editing || shownText === null || !textShowing()) return;
+  // While the editor is up its buffer is not the text, so the leave writes the place of the text view the editor replaced,
+  // read at Edit (editPlace, set by enterEdit before the Raw switch and cleared by exitEdit): a close from the editor with a
+  // clean buffer, a page hidden while editing and the conflict bar's Reload wrote nothing before, and the next open fell to the
+  // top, or to the place of the read before this one (the review's round 2).
+  let editPlace: RememberedPlace | null = null;
+  const liveRecord = (): RememberedPlace | null => {
+    if (shownText === null || !textShowing()) return null;
     const p = keptPlace();
-    if (!p) return;
-    const rec = rememberedPlaceOf(p, mtimeNs, body.scrollTop);
-    rememberedPlaces.set(path, rec);
+    return p ? rememberedPlaceOf(p, mtimeNs, body.scrollTop) : null;
+  };
+  leaveLive = () => {
+    const rec = editing ? editPlace : liveRecord();
+    if (!rec) return;
+    rememberedPlaces.set(memKey, rec);
     if (leaveHost) { try { leaveHost(path, sid ?? null, rec); } catch { /* a host's store must never cost the leave */ } }
   };
   let placeFrame = 0;
@@ -1818,7 +1883,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
-    if (rendered && pendingHeading !== null) {
+    if ((rendered || !isMd) && pendingHeading !== null) {   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
       const h = pendingHeading; pendingHeading = null;
       requestAnimationFrame(() => {
         if (!wrap.isConnected || scrollToFragment(body, h)) return;
@@ -2237,6 +2302,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const pending = trackedEdit ? trackedEdit.begin() : null;
     const refused = trackedRefusal(pending);
     if (refused) { noteBar(refused); return; }
+    editPlace = liveRecord();                   // the reader's place in the text view the editor replaces, for a leave while it is up (leaveLive); read before the Raw switch below, of the view they read
     // markdown edits from its Raw view (what you edit is what raw shows): switched here, past the guard, so a refused
     // Edit leaves the Rendered view it was clicked from standing under the refusal, not a Raw choice saved and unpainted
     if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
@@ -2298,6 +2364,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   const exitEdit = () => {
     editing = false; dirty = false; ta = null;
+    editPlace = null;                           // the text view is back: a leave reads it live again
     cm?.destroy(); cm = null;
     applied = { accepted: [], rejected: [] };   // the decisions went with the editor; the next mount starts its own afresh
     editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
@@ -2524,7 +2591,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the moment it is disabled (Chromium, synchronously, to the document's body), so a read at the landing found the body
   // and handed nothing over, and PageDown after every Reload scrolled nothing until a click (the review's round 1; the
   // consolidation's read at the landing modelled a removal's fixup the click never reached). A failed Reload removes
-  // nothing and re-arms the button, and puts the keyboard back on it when the click had it (rearmDiskBar).
+  // nothing and re-arms the button, and puts the keyboard back on it when the click had it and nothing holds it since
+  // (rearmDiskBar). The hand-over here runs through takeKeyboard's gate, so a box the reader moved to during the GET's flight,
+  // in this document or in the chat frame beside a Files pane, keeps the keyboard (the review's round 2).
   const dropDiskBar = (): void => {
     if (diskBarUp()) {
       const held = diskBar!.held || diskBar!.el.contains(document.activeElement);
@@ -2552,15 +2621,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // A landing that stands (fetchFile, text or media), `my` its fetch: the bar goes when the landed mtime differs from the
   // one it was raised under, or when the landing is the bar's own ask; another ask's landing under the same mtime (a GET
   // that was out before the write) keeps it, since the moved file is still not what shows.
+  // The bar's own ask, or any fetch newer than it: fetchSeq is monotonic and a fetch a newer one overtook reads nothing and never
+  // lands (fetchFile's `my !== fetchSeq`), so once the Comments panel's poll asks its own reload during the bar's flight the bar's
+  // ask can land only through that newer fetch, whose bytes or failure are the bar's answer too (the review's round 2: the poll's
+  // GET after a deletion met the 404 pane, and the bar stood over it with its button disabled at "Reloading" for the rest of the
+  // open, every later focus HEAD returning on the standing bar).
+  const ownAsk = (my: number): boolean => diskBar !== null && diskBar.asked > 0 && my >= diskBar.asked;
   const settleDiskBar = (my: number): void => {
-    if (diskBar && (mtimeMoved(diskBar.under, mtimeNs) || my === diskBar.asked)) dropDiskBar();
+    if (diskBar && (mtimeMoved(diskBar.under, mtimeNs) || ownAsk(my))) dropDiskBar();
   };
-  // The bar's own ask failed (the failure pane in the body says why): the button is armed again, so the bar is no dead end.
+  // The bar's ask failed (the failure pane in the body says why): the button is armed again, so the bar is no dead end. The click's
+  // keyboard, dropped by the disable, goes back on the re-armed button only while nothing holds it (keyboardIdle): a reader who
+  // moved to a box during the flight, in this document or the chat's, keeps it (the review's round 2: the re-armed button took the
+  // keyboard from the box, and the next Space fired Reload again).
   const rearmDiskBar = (my: number): void => {
-    if (!diskBar || my !== diskBar.asked || !diskBarUp()) return;
-    diskBar.btn.disabled = false; diskBar.btn.textContent = "Reload"; diskBar.asked = 0;
-    if (diskBar.held) diskBar.btn.focus({ preventScroll: true });   // the click's keyboard, dropped by the disable, back on the re-armed button
-    diskBar.held = false;
+    const d = diskBar;
+    if (!d || !ownAsk(my) || !diskBarUp()) return;
+    d.btn.disabled = false; d.btn.textContent = "Reload"; d.asked = 0;
+    if (d.held && keyboardIdle()) d.btn.focus({ preventScroll: true });
+    d.held = false;
   };
   const probe = (): void => {
     if (takingKeyboard || probeOut || probeStopped || editing || !mtimeNs || !wrap.isConnected || document.hidden) return;   // takingKeyboard: a window focus the viewer's own body.focus() fired (takeKeyboard, above), not the reader's return
@@ -2638,7 +2717,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     for (let k = b; k >= 0 && !target; k--) target = renderedBlockElements(md, src, k)[0];
     for (let k = b + 1; k < spans.length && !target; k++) target = renderedBlockElements(md, src, k)[0];
     if (!target) return;
-    revealFragmentTarget(target);
+    revealFragmentTarget(target);                                                                          // the folds above the block (a `#` link's revealing steps)
+    if (target.localName === "details" && !target.hasAttribute("open")) target.setAttribute("open", "");   // …and the block that IS a fold (a callout is one block): the offset names its content, which the shut summary hides (the review's round 2)
     target.scrollIntoView({ block: "center" });
   };
   let pendingOffset: number | null = at !== null && "offset" in at && at.offset >= 0 ? Math.floor(at.offset) : null;
@@ -2752,6 +2832,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         offer.addEventListener("click", () => startDownload(dlUrl, offer));
         why.appendChild(offer);
       }
+      closeOutline();                                           // the popover's rows were read off the DOM the pane replaces (the paint closer's rule; the review's round 2: a popover open at a failed reload stood over the pane, the hidden button reading expanded)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
     }));

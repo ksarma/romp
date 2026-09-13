@@ -12,7 +12,12 @@
 // record read in Raw inside the fold's rows and reopened under the Rendered preference (the fold opened, the block at the
 // edge), and the control: a fold left shut at the leave stays shut and the block after it comes back exactly. The reopen is
 // the same page's (closeFileView, then openFileView of the path: the module's memory hands the record back, as a Recent row
-// would through opts.place). Before the fix: red at the first "after" read over a git archive of d91f0c19d. Skips LOUDLY
+// would through opts.place). Before the fix: red at the first "after" read over a git archive of d91f0c19d. The review's round
+// 2 (the third test): a fold the reader left SHUT with its summary straddling the body's edge came back OPEN, since the block's
+// own depth, read off the straddling summary, was taken as proof the content had been showing; now the block's own fold opens
+// only for a depth past its shut box (a callout and the front matter, at both widths, stay shut; the open callout read inside
+// still comes back open), and an open at an offset inside a shut callout opens the callout, where revealFragmentTarget opened
+// ancestors alone and centred the shut summary over a hidden passage (red over a git archive of c88444f85). Skips LOUDLY
 // without a playwright browser (CI installs none), as the other legs do. Synthetic values only: an invented report,
 // /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
@@ -48,6 +53,37 @@ function putAbove([text, above]: [string, number]): void {
   body.scrollTop += p.getBoundingClientRect().top - body.getBoundingClientRect().top + above;
 }
 const read = (page: any): Promise<Shown> => page.evaluate(shownTop);
+/** The callout note with the front matter above it: two folds, both shut as authored. */
+const FM_NOTE = "---\ntitle: Report\ntags: [alpha, beta]\nowner: nobody\n---\n\n" + CALLOUT_NOTE;
+/** In the page: scroll the body so the first `<details>` matching `sel` has its box top `above` px above the body's edge. */
+function putFoldAbove([sel, above]: [string, number]): void {
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const d = document.querySelector(sel) as HTMLElement;
+  body.scrollTop += d.getBoundingClientRect().top - body.getBoundingClientRect().top + above;
+}
+type FoldRead = { open: boolean; top: number; bottom: number; summaryTop: number; summaryBottom: number; scrollTop: number; scrollHeight: number; edgeText: string };
+/** In the page: the first `<details>` matching `sel`: its state, its box and its summary's against the body's edge, the body's numbers
+ *  and the text of the first block whose box ends below the edge. */
+function readFold(sel: string): FoldRead {
+  const body = document.querySelector(".fileview-body") as HTMLElement; const br = body.getBoundingClientRect();
+  const d = document.querySelector(sel) as HTMLElement; const r = d.getBoundingClientRect(); const sr = (d.querySelector("summary") as HTMLElement).getBoundingClientRect();
+  const edge = (Array.from(body.querySelectorAll(".fileview-md > *")) as HTMLElement[]).find((e) => e.getBoundingClientRect().bottom > br.top + 0.5);
+  const round = (x: number) => Math.round(x * 10) / 10;
+  return { open: d.hasAttribute("open"), top: round(r.top - br.top), bottom: round(r.bottom - br.top), summaryTop: round(sr.top - br.top), summaryBottom: round(sr.bottom - br.top),
+    scrollTop: body.scrollTop, scrollHeight: body.scrollHeight, edgeText: edge ? (edge.textContent || "").trim().slice(0, 12) : "" };
+}
+type OffsetRead = { foldOpen: boolean; shown: boolean; inBox: boolean; centreTag: string; centreText: string };
+/** In the page: after an open at an offset, the callout's state, whether the paragraph holding the offset is shown inside the body's box,
+ *  and what sits at the body's centre. */
+function readOffsetLanding(text: string): OffsetRead {
+  const body = document.querySelector(".fileview-body") as HTMLElement; const br = body.getBoundingClientRect();
+  const d = document.querySelector(".fileview-md details") as HTMLElement;
+  const p = (Array.from(body.querySelectorAll(".fileview-md p")) as HTMLElement[]).find((e) => (e.textContent || "").indexOf(text) === 0)!;
+  const pr = p.getBoundingClientRect();
+  const c = document.elementFromPoint((br.left + br.right) / 2, (br.top + br.bottom) / 2);
+  return { foldOpen: d.hasAttribute("open"), shown: typeof p.checkVisibility === "function" ? p.checkVisibility() : pr.height > 0, inBox: pr.bottom > br.top && pr.top < br.bottom,
+    centreTag: c ? c.localName : "", centreText: c ? (c.textContent || "").trim().slice(0, 12) : "" };
+}
 /** Close the viewer and open the same path again in the same page (the module's memory hands the record back), then wait for
  *  the reopen's paint. `raw` false switches the stored preference to Rendered first (a person's Rendered choice on the reopen). */
 async function reopen(page: any, opts: { rendered?: boolean } = {}): Promise<void> {
@@ -148,5 +184,89 @@ test("in a browser, at 900 px: a place read in the Raw view inside the fold's ro
     assert.ok(after.top <= 0.5 && after.top >= -1, "its top at the edge (the depth is the other view's and is not applied): read " + after.top);
     assert.deepEqual(errors, [], "no page errors");
     await page.close();
+  });
+});
+
+
+test("in a browser, at 900 and 380 px (review round 2): a fold the reader left SHUT with its summary straddling the body's edge stays shut on the reopen, the scrollTop and the scrollHeight unchanged (before: the block's own depth, read off the straddling summary, opened it, and the callout's thirty paragraphs came back shown), for a folded callout and for the front matter; the callout opened and read inside still comes back open; and an open at an offset inside a shut callout opens the callout with the passage shown (before: the shut summary was centred over the hidden passage)", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const CALLOUT = ".fileview-md details.md-callout", FM = ".fileview-md details.md-frontmatter";
+    for (const [w, h] of [[900, 520], [380, 520]] as Array<[number, number]>) {
+      const what = "pane " + w + "px";
+      // the shut callout, its box top 6 px and then 14 px above the edge (the summary straddles it; the fold's content is not at the edge)
+      for (const above of [6, 14]) {
+        const { page, errors } = await openViewer(browser, "pane", w, h, { docs: { [REPORT]: CALLOUT_NOTE } });
+        await page.evaluate(putFoldAbove, [CALLOUT, above]); await frames(page, 2);
+        const before: FoldRead = await page.evaluate(readFold, CALLOUT);
+        assert.equal(before.open, false, what + " (callout " + above + " above): the scene starts with the callout shut");
+        assert.ok(before.top < 0 && before.summaryBottom > 0, what + " (callout " + above + " above): its summary straddles the edge (box top " + before.top + ", summary bottom " + before.summaryBottom + ")");
+        await reopen(page);
+        const after: FoldRead = await page.evaluate(readFold, CALLOUT);
+        assert.equal(after.open, false, what + " (callout " + above + " above): a fold left shut stays shut on the reopen (before the fix: open, the depth into the summary read as a depth into the content)");
+        assert.equal(after.scrollHeight, before.scrollHeight, what + " (callout " + above + " above): the document is the same height (before: the callout's thirty paragraphs came back shown)");
+        near(after.scrollTop, before.scrollTop, what + " (callout " + above + " above): the scrollTop is back");
+        near(after.top, before.top, what + " (callout " + above + " above): the summary is at the same place");
+        assert.deepEqual(errors, [], what + ": no page errors");
+        await page.close();
+      }
+      // the front matter, shut as authored, its box top 8 px above the edge (the reader scrolled a little into the note's head)
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, h, { docs: { [REPORT]: FM_NOTE } });
+        assert.equal(await page.evaluate(() => !!document.querySelector(".fileview-md details.md-frontmatter")), true, what + " (front matter): the front matter renders as a fold");
+        await page.evaluate(putFoldAbove, [FM, 8]); await frames(page, 2);
+        const before: FoldRead = await page.evaluate(readFold, FM);
+        assert.equal(before.open, false, what + " (front matter): shut at the leave"); assert.ok(before.top < 0 && before.summaryBottom > 0, what + " (front matter): its summary straddles the edge");
+        await reopen(page);
+        const after: FoldRead = await page.evaluate(readFold, FM);
+        assert.equal(after.open, false, what + " (front matter): stays shut (before the fix: open)");
+        assert.equal(after.scrollHeight, before.scrollHeight, what + " (front matter): the same document height");
+        near(after.scrollTop, before.scrollTop, what + " (front matter): the scrollTop is back");
+        assert.deepEqual(errors, [], what + " (front matter): no page errors");
+        await page.close();
+      }
+      // the callout the reader OPENED, with its summary straddling the edge and the content under it: the depth is inside the summary's
+      // own height, which says nothing, so the fold comes back as authored (shut) and the passage under the summary is the next section's;
+      // the record has no fold state to say otherwise (the plan's item 3; a follow-up), and the reader's edge block is unchanged
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, h, { docs: { [REPORT]: CALLOUT_NOTE } });
+        await page.click(CALLOUT + " > summary"); await frames(page, 2);
+        await page.evaluate(putFoldAbove, [CALLOUT, 6]); await frames(page, 2);
+        const before: FoldRead = await page.evaluate(readFold, CALLOUT);
+        assert.equal(before.open, true, what + " (open callout, summary straddling): the scene starts open");
+        await reopen(page);
+        const after: FoldRead = await page.evaluate(readFold, CALLOUT);
+        near(after.top, before.top, what + " (open callout, summary straddling): the summary is at the same place on the reopen");
+        assert.equal(after.edgeText, before.edgeText, what + " (open callout, summary straddling): the same block at the edge");
+        assert.deepEqual(errors, [], what + " (open callout, summary straddling): no page errors");
+        await page.close();
+      }
+      // the callout the reader opened and read INSIDE (Paragraph 25 twenty px above the edge): the depth is far past the shut box, so the
+      // fold comes back open with the passage at the edge, as the first test asserts; here as the control that the refinement kept it
+      {
+        const { page, errors } = await openViewer(browser, "pane", w, h, { docs: { [REPORT]: CALLOUT_NOTE } });
+        await page.click(CALLOUT + " > summary"); await frames(page, 2);
+        await page.evaluate(putAbove, ["Paragraph 25", 20]); await frames(page, 2);
+        await reopen(page);
+        const after = (await read(page))!;
+        assert.equal(after.foldOpen, true, what + " (callout read inside): the reopen opened the callout");
+        assert.equal(after.text, "Paragraph 25", what + " (callout read inside): the remembered paragraph is at the edge");
+        assert.deepEqual(errors, [], what + " (callout read inside): no page errors");
+        await page.close();
+      }
+      // an open at an offset inside the shut callout: the block holding the offset IS the callout, and it is opened before the scroll
+      {
+        const offset = CALLOUT_NOTE.indexOf("Paragraph 25");
+        assert.ok(offset > 0);
+        const { page, errors } = await openViewer(browser, "pane", w, h, { docs: { [REPORT]: CALLOUT_NOTE }, openOpts: { at: { offset } } });
+        await frames(page, 4);
+        const landed: OffsetRead = await page.evaluate(readOffsetLanding, "Paragraph 25");
+        assert.equal(landed.foldOpen, true, what + " (offset in a shut callout): the callout was opened for the offset (before the fix: shut, its summary centred)");
+        assert.equal(landed.shown, true, what + " (offset in a shut callout): the paragraph holding the offset is shown");
+        assert.equal(landed.inBox, true, what + " (offset in a shut callout): …inside the body's box (before: hidden under the shut summary)");
+        assert.notEqual(landed.centreTag, "summary", what + " (offset in a shut callout): the body's centre is not the shut summary (read " + landed.centreTag + " \"" + landed.centreText + "\")");
+        assert.deepEqual(errors, [], what + " (offset in a shut callout): no page errors");
+        await page.close();
+      }
+    }
   });
 });
