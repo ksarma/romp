@@ -216,12 +216,21 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   assert.deepEqual(pane.toggles, [["files", true]], "the Files pane comes forward; the feed is not touched");
   assert.deepEqual(pane.tabs, [], "DESKTOP: no mobile tab switch — the column is already visible, and show() would only persist a stale romp-mobile-tab");
   assert.equal(pane.from, undefined, "…and nothing to remember");
-  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity, todoId: null }],
-    "a chat click names no todo — the pane sees null, never undefined");
+  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity, todoId: null, at: null }],
+    "a chat click names no todo and no target: the pane sees null, never undefined");
   assert.deepEqual(pane.posted["f-feed"], [], "nothing reaches the feed");
   // a Waiting-on-you detail link names the todo the path came from (plans/file-review.md Slice 0); forwarded as-is
   const fromTodo = run({ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity, todoId: "t1" });
-  assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1" }]);
+  assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1", at: null }]);
+  // a todo link's target after its path (Slice 6 of plans/markdown-viewer.md): the forwarder copies `at` WHOLE, whatever
+  // its shape (the receiver validates it, file-view.ts readAt; files.ts hands readAt(m.at) to the open); both forwarders
+  // rebuild the message field by field, so a field not copied is dropped in transit
+  for (const at of [{ heading: "results" }, { line: 12 }, { offset: 400 }, { bogus: 1 }]) {
+    const aimed = run({ romp: "viewFile", pane: "pane", path: "docs/report.md", sid: SID, identity, todoId: "t1", at });
+    assert.deepEqual((aimed.posted["f-files"][0] as any).at, at, "the Files branch forwards at " + JSON.stringify(at));
+    const feedAimed = run({ romp: "viewFile", pane: "feed", path: "docs/report.md", sid: SID, at });
+    assert.deepEqual(feedAimed.posted["f-feed"], [{ romp: "viewFile", path: "docs/report.md", sid: SID, at }], "the feed branch forwards at too");
+  }
   assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
   // MOBILE (one tab at a time): the relay brings the Files tab forward and remembers the tab the click came
   // from; the Files pane's viewer close (files.ts posts filesViewerClosed) puts that tab back, once
@@ -253,7 +262,7 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   // the feed route: a click with pane:"feed" (or none) takes the else branch exactly as before
   for (const m of [{ romp: "viewFile", pane: "feed", path: "/p", sid: SID }, { romp: "viewFile", path: "/p", sid: SID }]) {
     const feed = run(m);
-    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID }]);
+    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID, at: null }]);
     assert.deepEqual(feed.posted["f-files"], []);
     assert.deepEqual(feed.tabs, ["feed"]);
     assert.equal(feed.pend, false, "the feed pane was on, so nothing is stashed — but the stash IS written by this route");

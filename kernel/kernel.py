@@ -54767,6 +54767,9 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // from — which is forwarded as-is so the viewer can tie its work back to the todo; a chat click carries
 // none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
 // was-off / ack / restore machinery below applies to this branch.
+// `at` (Slice 6 of plans/markdown-viewer.md) is the place the link named after its path, a line or a heading,
+// forwarded as-is too and validated where it lands (file-view.ts readAt); both forwarders here rebuild the
+// message field by field, so a field not copied would be dropped in transit.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
   // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
@@ -54774,7 +54777,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
   try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
-  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*');}catch(e){}}
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
@@ -54790,7 +54793,7 @@ else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
   if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
-  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
+  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*');}catch(e){}}
 // the Files pane's viewer closed (files.ts posts it on the viewer element's removal): on a phone, where the
 // pane branch above switched tabs to show it, go back to the tab the click came from; on desktop the column
 // simply shows its recent list again. The remembered tab is dropped either way (a rotation to desktop in

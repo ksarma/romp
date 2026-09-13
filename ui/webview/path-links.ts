@@ -253,7 +253,11 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // a gate can read the token's line; `resolve` names what a token opens when the surface knows its
 // own place (the viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or
 // GitHub's `#L12`) right after a token into the link (data-line) instead of leaving it as prose, off a file://
-// URI too (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `unit` names
+// URI too (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `targetSuffix`
+// reads the same line grammar AND a section written after the path, `docs/report.md#results`, into the link
+// (data-frag, the fragment percent-decoded and its trailing sentence punctuation left out as a token's is), the
+// shape a user todo's text or detail names a place in a file with (plans/markdown-viewer.md, Slice 6; the chat's
+// transcript walk keeps the line shape alone, since the kernel's verdict there is on the bare path); `unit` names
 // the element whose text nodes are scanned as ONE string (the viewer's row: a highlight's spans cut a line's
 // text into several nodes, and a token is what the LINE says, never what one node says). Absent, the walk is
 // exactly the chat's.
@@ -262,6 +266,7 @@ export interface PathLinkOptions {
   accept?: (tok: string, ctx: { text: string; at: number }) => boolean;
   resolve?: (tok: string) => string;
   lineSuffix?: boolean;
+  targetSuffix?: boolean;
   unit?: string;
 }
 // A line reference written after a path: `path:12`, `path:12:4` (a column, dropped), `path#L12`, `path#L12-L20`
@@ -272,6 +277,39 @@ const URI_LINE_TAIL_RE = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
 // The same reference AT a position of the unit's text (sticky, lastIndex set): read in place, so the walk never
 // slices the rest of the text per token, which was quadratic over a body that is one unit (the 2026-09-07 review).
 const LINE_SUFFIX_AT_RE = new RegExp(LINE_SUFFIX_RE.source.replace(/^\^/, ""), "y");
+// A section written after a path (`targetSuffix`): `#` and the run to the next space or `#`, unless the run is a line
+// reference's `L12` (read by the line arm above first; `#L12abc`, which that arm refuses, is not a section either).
+// Sticky, read in place at the token's end like the line. The viewer lands it through fragmentTarget
+// (file-view-links.ts): an author's id, or the heading whose slug it is, so `#results`, `#Results` and `#Evidence%20Results`
+// all reach their heading. A `#` glued to prose with no path before it is never seen here: the walk reads a suffix
+// only at a linked token's end.
+export const FRAG_SUFFIX_RE = /^#(?!L\d)([^\s#]+)/;
+const FRAG_SUFFIX_AT_RE = new RegExp(FRAG_SUFFIX_RE.source.replace(/^\^/, ""), "y");
+// The same section at the END of a file:// URI token (the URI arm swallows `#results` as it swallows `:12`).
+const URI_FRAG_TAIL_RE = /#[^\s#]+$/;
+/** A section read off a suffix match: percent-decoded (a malformed escape keeps the spelling as written), the trailing
+ *  sentence punctuation left to the prose as a token's is (`see docs/a.md#results.` names `results`), or null when
+ *  nothing is left. */
+function fragmentOf(raw: string): { frag: string; used: number } | null {
+  const trail = trailingPunct(raw);
+  const kept = trail ? raw.slice(0, raw.length - trail[0].length) : raw;
+  if (!kept) return null;
+  let frag = kept;
+  try { frag = decodeURIComponent(kept); } catch { /* a malformed escape: the spelling as written */ }
+  return { frag, used: kept.length };
+}
+/** What a path link points at inside its file, read off the attributes the walk (or the viewer's own pass,
+ *  file-view-links.ts) wrote: `data-line` (a positive integer) as a line, else `data-frag` as a heading, else nothing.
+ *  The one reader the hosts share (render.ts openLinkedPath, waiting.ts's delegates): the same two names the viewer's
+ *  body delegate reads for a link inside a shown file, so a target means one thing wherever it is clicked. The shape
+ *  is the viewer's `At` (file-view.ts) by structure, minus the offset no link carries. */
+export type LinkTarget = { line: number } | { heading: string };
+export function linkTarget(el: HTMLElement): LinkTarget | null {
+  const ln = Number(el.dataset.line);
+  if (Number.isInteger(ln) && ln > 0) return { line: ln };
+  const frag = el.dataset.frag;
+  return frag ? { heading: frag } : null;
+}
 
 /** One text node's place in its unit's joined text. `dead`: inside a link (or, in the chat, a fenced block): the
  *  scan READS it, so a token glued to it is seen whole, but never marks in it. */
@@ -361,8 +399,12 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       if (trail) tok = tok.slice(0, tok.length - trail[0].length);
       if (!tok) continue;
       const isUri = isFileUri(tok);
-      // a line reference a URI token swallowed (`file:///a.md:12`) is the suffix, not the path, where the surface reads lines
-      if (isUri && opts && opts.lineSuffix) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
+      const lines = !!(opts && (opts.lineSuffix || opts.targetSuffix));   // the surface reads a line after a token…
+      const sections = !!(opts && opts.targetSuffix);                     // …and, on a todo's surfaces, a section too
+      // a line reference a URI token swallowed (`file:///a.md:12`) is the suffix, not the path, where the surface reads lines;
+      // a section it swallowed (`file:///a.md#results`) likewise where it reads sections
+      if (isUri && lines) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
+      if (isUri && sections) { const tail = URI_FRAG_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
       const span = spanHolding(u, start, start + tok.length);
       if (!span) continue;                          // across a node's edge, or inside a link: as it is
       if (!isUri && !looksLikeFilePath(tok) && !(span.inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc.: leave as prose
@@ -376,10 +418,19 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it);
       // one the highlight cut into another node stays prose
       let suffix: RegExpExecArray | null = null;
-      if (opts && opts.lineSuffix) { LINE_SUFFIX_AT_RE.lastIndex = start + tok.length; suffix = LINE_SUFFIX_AT_RE.exec(text); }
+      if (lines) { LINE_SUFFIX_AT_RE.lastIndex = start + tok.length; suffix = LINE_SUFFIX_AT_RE.exec(text); }
       if (suffix && start + tok.length + suffix[0].length > span.end) suffix = null;
+      let used = suffix ? suffix[0].length : 0;
       if (suffix) { link.textContent = tok + suffix[0]; link.dataset.line = suffix[1] || suffix[2]; link.setAttribute("title", link.getAttribute("title") + ":" + link.dataset.line); }
-      const last = start + tok.length + (suffix ? suffix[0].length : 0);
+      // a section written after it (`#results`) rides the same way where the surface reads sections (the viewer lands on
+      // the heading once the file is open); the same refusal when the highlight cut it
+      else if (sections) {
+        FRAG_SUFFIX_AT_RE.lastIndex = start + tok.length;
+        const m2 = FRAG_SUFFIX_AT_RE.exec(text);
+        const sec = m2 && start + tok.length + m2[0].length <= span.end ? fragmentOf(m2[1]) : null;
+        if (sec) { used = 1 + sec.used; link.textContent = tok + m2![0].slice(0, used); link.dataset.frag = sec.frag; link.setAttribute("title", link.getAttribute("title") + "#" + sec.frag); }
+      }
+      const last = start + tok.length + used;
       let list = marks.get(span);
       if (!list) { list = []; marks.set(span, list); }
       list.push({ start, end: last, el: link });

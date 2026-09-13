@@ -59,8 +59,9 @@ import { parseAgentNotif, notifHead, type AgentNotif } from "./agent-notif";
 import { injectedHead, type InjectedSource } from "./injected-source";
 import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
-import { openFileClick } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
+import { openFileClick, type At } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
 import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";
+import { linkTarget, type PathLinkOptions } from "./path-links";   // a todo link's target (`docs/a.md#results`, `docs/a.md:12`): the one reader the hosts share (Slice 6 of plans/markdown-viewer.md)
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
@@ -1520,8 +1521,12 @@ document.addEventListener("click", (e) => {
 // as all-off, which the framed gate makes moot anyway.
 // `ev` is the click that asked (a middle-click arrives through onMiddleClick), read by openFileClick for
 // the own-tab gesture; a caller with no gesture (a programmatic open) passes none.
+// `at` (Slice 6 of plans/markdown-viewer.md, item 4): the place the link named after its path (a todo's
+// `docs/report.md#results` or `docs/report.md:12`, read off the span by openLinkedPath), carried to the viewer here
+// through openFileClick and to a pane's viewer as the relay's `at` (the shell copies the field, kernel.py; the
+// receiver validates it, file-view.ts readAt); a link with none passes null.
 let panesOn: Record<string, boolean> = {};
-function openPath(path: string, sid?: string | null, ev?: MouseEvent | null): void {
+function openPath(path: string, sid?: string | null, ev?: MouseEvent | null, at: At | null = null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
     const to = sid || activeId || null;
@@ -1543,15 +1548,19 @@ function openPath(path: string, sid?: string | null, ev?: MouseEvent | null): vo
     // from; the feed resolves its own and ignores it. Looked up, never invented: a sid neither list names
     // sends null, and the receiving resolver falls to the kernel's stub. It carries no gesture: a relayed
     // open is always the target pane's viewer.
-    const relay = route === "here" ? undefined : (p: string, s: string | null) => {
+    const relay = route === "here" ? undefined : (p: string, s: string | null, a: At | null) => {
       const meta = s ? (sessions.get(s) ?? tabMeta.get(s)) : undefined;
       window.parent.postMessage({ romp: "viewFile", path: p, sid: s, pane: route,
-        identity: meta && meta.name ? { name: meta.name, color: meta.color ?? null } : null }, "*");
+        identity: meta && meta.name ? { name: meta.name, color: meta.color ?? null } : null, at: a }, "*");
     };
-    openFileClick(ev, path, to, relay);   // the gesture, then the viewer here or the relay to the pane
+    openFileClick(ev, path, to, relay, at);   // the gesture, then the viewer here or the relay to the pane
     return;
   }
-  vscodeApi.postMessage(sid ? { type: "openFile", path, id: sid } : { type: "openFile", path });
+  // the host's editor arm reads `line` (extension.ts openFileInEditor, 1-based); a heading or an offset has no editor
+  // equivalent and posts nothing extra, so the editor opens the file at its top
+  const m: Record<string, unknown> = sid ? { type: "openFile", path, id: sid } : { type: "openFile", path };
+  if (at && "line" in at) m.line = at.line;
+  vscodeApi.postMessage(m);
 }
 
 // A middle-click on a path pill is the same open with its gesture (a PDF then takes a browser tab of its
@@ -1993,7 +2002,7 @@ function linkifyImgPaths(root: HTMLElement, paths: string[]): void {
 // it), the active tab otherwise; a file:// URI names an absolute path and sends none.
 function openLinkedPath(a: HTMLElement, e?: MouseEvent | null): void {
   const open = a.dataset.path || "", relative = a.dataset.rel === "1", sid = a.dataset.sid ?? null;
-  openPath(open, relative ? (sid ?? activeId) : null, e);   // the gesture rides along: a Cmd/Ctrl- or middle-clicked PDF takes its own tab (openFileClick)
+  openPath(open, relative ? (sid ?? activeId) : null, e, linkTarget(a));   // the gesture rides along: a Cmd/Ctrl- or middle-clicked PDF takes its own tab (openFileClick); so does the target the link named after its path
 }
 // The transcript's links are bound per span, exactly as the chat always did, and the click stops there:
 // a path inside a fold head or a card must open the file, not toggle its container, and must never ALSO
@@ -2014,14 +2023,19 @@ function bindPathLink(a: HTMLElement): HTMLElement {
 // mention, which suits a message body and the detail fold but not a one-line row (the compact form,
 // ui/CLAUDE.md); the detail, one click away, keeps the figure. The line is the fold's click target
 // (.ut-text, data-act uttoggle), and a link inside it opens the file rather than toggling the fold: the
-// delegate routes a click to the NEAREST data-act (actions.ts).
+// delegate routes a click to the NEAREST data-act (actions.ts). Both walks read a TARGET after the path
+// (path-links.ts `targetSuffix`; Slice 6 of plans/markdown-viewer.md): `docs/report.md:12` rides as data-line and
+// `docs/report.md#results` as data-frag, so the click opens the file at that line or heading (openLinkedPath reads
+// them into the open's `at`). A todo names the place it wants looked at; the transcript's own walk keeps the bare
+// path, since the kernel's verdict there (pathLinks) is on the path alone. The option is spelled inline at both
+// sites, not as a shared constant: the tests lift these two functions out of this file and run them as written.
 function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
   linkifyUrls(node);
-  linkifyPathTokens(node, sid);
+  linkifyPathTokens(node, sid, undefined, { targetSuffix: true });
 }
 function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {
   linkifyUrls(node);
-  linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true);
+  linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true, { targetSuffix: true });
 }
 // The file a todo NAMES (the todo-file follow-on, 2026-09-07): the record's own `file`, the absolute path the
 // kernel resolved when the todo was filed, trails the row's text and the Reply modal's quoted line as a chip —
@@ -2086,8 +2100,10 @@ function todoLinkChip(link: string): HTMLElement {
 // path-links.ts's; the map is threaded through to it.)
 // `delegated`: leave the spans unbound; the caller's document routes their data-act to the body
 // delegate's openpath (the todo card and its Reply modal, linkTodoDetailPaths); the transcript binds.
+// `walkOpts`: the shared walk's options (path-links.ts PathLinkOptions), for a surface that reads a target after a
+// path (a todo's detail, `targetSuffix`); the transcript's callers pass none, so its walk is exactly as it was.
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
-    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null, delegated = false): void {
+    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null, delegated = false, walkOpts?: PathLinkOptions): void {
   const bind = delegated ? (a: HTMLElement) => a : bindPathLink;
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
   // 2026-08-16, on mobile, wanting to tap through to a dashboard link a session sent). Bare URLs
@@ -2128,7 +2144,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   // — the kernel's pathLinks verdict narrowing it when the event carries one — and hands back the hits in
   // document order; this document binds each click (unless delegated) and reads the hits for the figure
   // pass below.
-  for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks)) {
+  for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks, walkOpts)) {
     bind(link);
     if (verified) kernelVerified.add(open);   // the kernel stat'd it this build
     if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {

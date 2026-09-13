@@ -860,8 +860,9 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   // the opener: the host's when registered (the Files pane), else the viewer in place
   assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, at: At \| null\) => void =\n\s*\(path, sid, at\) => \{ openFileView\(path, sid, \{ at \}\); \};/);
   assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
-  assert.match(FILES, /openFile: \(p, sid, line, frag\) => openHere\(p, sid, null, null, line, frag\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section");
-  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{\n\s*if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);
+  assert.match(FILES, /openFile: \(p, sid, at\) => openHere\(p, sid, null, null, at\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section (the open's `at`, Slice 6 of plans/markdown-viewer.md)");
+  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, at: At \| null = null/);
+  assert.match(FILES, /if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, at/);   // B1 adds the Recent row's `place` beside it
   // the panel's change mark cancels the anchor's activation as its comment mark does; the keyboard route lands on the same handlers
   assert.match(FC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); if \(this\.dragClick\(ev\)\) return; this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
   assert.match(FC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\);/);
@@ -898,7 +899,7 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
 });
 
 test("source: the shared walk's options, the line units and the anchor marker live in path-links.ts, defaults unchanged for the chat; the module writes attributes, never markup", () => {
-  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
+  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/);   // targetSuffix: a todo surface's section arm (Slice 6 of plans/markdown-viewer.md; path-links.test.ts); the viewer's pass keeps lineSuffix
   assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);
   assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/, "a link, and an inline SVG (an element put inside SVG text does not render)");
   assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat still skips fenced blocks");
@@ -930,7 +931,7 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/, "no unit: every node its own unit, the chat's walk as it was");
   assert.match(LINKS, /const span = spanHolding\(u, start, start \+ tok\.length\);\n\s*if \(!span\) continue;/, "a token across a node's edge is left as it is");
   assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start \}\)\) continue;/);
-  assert.match(LINKS, /if \(isUri && opts && opts\.lineSuffix\) \{ const tail = URI_LINE_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}/);
+  assert.match(LINKS, /if \(isUri && lines\) \{ const tail = URI_LINE_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}/);   // `lines`: lineSuffix or targetSuffix (Slice 6)
   assert.match(LINKS, /export const LINE_SUFFIX_RE = \/\^\(\?::\(\\d\+\)\(\?::\\d\+\)\?\|#L\(\\d\+\)\(\?:-L\?\\d\+\)\?\)\(\?!\[\\w\/\]\)\/;/);
   assert.match(LINKS, /export function markPathLink\(a: HTMLElement, open: string, relative = false, sid\?: string \| null\): HTMLElement \{\n\s*const cls = a\.getAttribute\("class"\) \|\| "";\n\s*if \(!\(" " \+ cls \+ " "\)\.includes\(" file-uri-link "\)\) a\.setAttribute\("class", \(cls \? cls \+ " " : ""\) \+ "file-uri-link"\);\n\s*a\.setAttribute\("title", "Open " \+ open\);/, "attributes, so an SVG <a> is marked too");
   assert.match(LINKS, /const a = el\("span", "file-uri-link"\);\n\s*a\.textContent = raw;[^\n]*\n\s*return markPathLink\(a, open, relative, sid\);/, "openPathLink mints and marks");

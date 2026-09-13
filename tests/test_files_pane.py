@@ -207,7 +207,7 @@ class Relay(unittest.TestCase):
         branch = "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("//"))
         self.assertIn("window.__rompPaneToggle&&window.__rompPaneToggle('files',true)", branch)
         self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('files')", branch)
-        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*')", branch)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*')", branch)
         for tok in ("__rompFeedWasOff", "viewFileOpened", "viewFileClosed", "'f-feed'"):
             self.assertNotIn(tok, branch, tok + " belongs to the feed route")
 
@@ -228,6 +228,27 @@ class Relay(unittest.TestCase):
         files = (UI / "files.ts").read_text()
         self.assertIn('typeof m.todoId === "string" ? m.todoId : null', files)
         self.assertIn("openFileView(path, sid, { todoId, at, place })", files)   # `at`: the link's target; `place`: a Recent row's (Slice 6 of plans/markdown-viewer.md)
+
+    def test_both_forwarders_copy_the_open_at_target_and_the_pane_validates_it(self):
+        """Slice 6 of plans/markdown-viewer.md (item 4): a todo link's target after its path (`docs/report.md#results`,
+        `docs/report.md:12`) rides the viewFile relay as `at`. The shell rebuilds the message field by field in BOTH
+        forwarders, so each must copy the field or the target is dropped in transit; the pane reads it through the
+        viewer's validator (file-view.ts readAt), since the message crossed a frame. The relay comment defines it."""
+        js = km._LANDING_SETTINGS_JS
+        head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
+        pane = js.split(head)[1].split("else if(m.romp==='viewFile')")[0]
+        code = "\n".join(l for l in pane.splitlines() if not l.lstrip().startswith("//"))
+        self.assertIn("at:m.at||null", code)
+        feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')", feed)
+        lines = js.split(head)[0].rstrip("\n").split("\n")
+        start = len(lines)
+        while start > 0 and lines[start - 1].lstrip().startswith("//"):
+            start -= 1
+        self.assertIn("`at`", "\n".join(lines[start:]), "the comment directly above the pane branch defines `at`")
+        files = (UI / "files.ts").read_text()
+        self.assertIn("readAt(m.at)", files)
+        self.assertIn("openFile: (p, sid, at) => openHere(p, sid, null, null, at),", files)
 
     def test_the_relay_comment_names_the_todo_id_referent_a_user_todo_never_an_ask(self):
         """CONTEXT.md (User todo, Avoid) lists "ask" because the feed payload's `asks` field already means the
@@ -251,7 +272,7 @@ class Relay(unittest.TestCase):
         feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
         self.assertIn("window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');", feed)
         self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", feed)
-        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*')", feed)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')", feed)
 
     def test_the_quote_seed_forward_sits_in_the_same_listener(self):
         # file-view.ts composerWindow posts editorSelection UP from a pane without a composer; the shell

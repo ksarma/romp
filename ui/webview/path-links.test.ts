@@ -286,3 +286,120 @@ test("a stand-in node enumerates its primitives alone, and a dump of it names ne
     assert.ok(!dump.includes("parentNode") && !dump.includes("parentElement") && !dump.includes("childNodes"), "the dump stops at the node");
   }
 });
+
+// ── 3. a target after the path: `targetSuffix` (plans/markdown-viewer.md, Slice 6) ─────────────────
+// A user todo's text or detail names a place in a file as `docs/report.md#results` or `docs/report.md:12`; under
+// `targetSuffix` the walk reads the line grammar `lineSuffix` reads (data-line) and one more arm, the section
+// (data-frag), the two attributes the viewer's body delegate reads off a link inside a shown file (file-view.ts;
+// contract C3). The chat's default walk and the viewer's `lineSuffix` walk leave a `#section` as prose, as before.
+type Marked = { text: string; path: string | undefined; line: string | undefined; frag: string | undefined; title: string };
+async function walk(text: string, opts?: Record<string, unknown>, cls = "ut-detail"): Promise<{ links: Marked[]; texts: string[] }> {
+  const { linkifyPathTokens } = await import("./path-links");
+  const d = new Elm("div"); d.className = cls;
+  d.textContent = text;
+  linkifyPathTokens(d as unknown as HTMLElement, SID, undefined, opts);
+  return { links: d.spans.map((s) => ({ text: s.textContent, path: s.dataset.path, line: s.dataset.line, frag: s.dataset.frag, title: s.title })), texts: d.texts };
+}
+test("targetSuffix: a line after the path rides in the link as lineSuffix reads it; a section rides as data-frag; the shown text grows by the suffix", async () => {
+  const opts = { targetSuffix: true };
+  let r = await walk("see docs/a.md:12 next", opts);
+  assert.deepEqual(r.links, [{ text: "docs/a.md:12", path: "docs/a.md", line: "12", frag: undefined, title: "Open docs/a.md:12" }]);
+  assert.deepEqual(r.texts, ["see ", " next"], "the suffix is the link's, not the prose's");
+  r = await walk("see docs/a.md:12:4 next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.line]), [["docs/a.md:12:4", "12"]], "a column rides in the text and is dropped from the line, as lineSuffix has it");
+  r = await walk("see docs/a.md#results next", opts);
+  assert.deepEqual(r.links, [{ text: "docs/a.md#results", path: "docs/a.md", line: undefined, frag: "results", title: "Open docs/a.md#results" }]);
+  assert.deepEqual(r.texts, ["see ", " next"]);
+  r = await walk("see docs/a.md#L7 next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.line, l.frag]), [["docs/a.md#L7", "7", undefined]], "GitHub's line anchor is a line, never a section");
+  r = await walk("see docs/a.md#L7-L9 next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.line, l.frag]), [["docs/a.md#L7-L9", "7", undefined]], "a range: its first line");
+  r = await walk("see docs/a.md#L7abc next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.line, l.frag]), [["docs/a.md", undefined, undefined]], "`#L7abc` is neither a line (the line arm refuses it) nor a section (the L-digits start is the line arm's)");
+  assert.deepEqual(r.texts, ["see ", "#L7abc next"]);
+  r = await walk("see docs/a.md#l12 next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.line, l.frag]), [["docs/a.md#l12", undefined, "l12"]], "a lowercase l is no line anchor: a heading slugged `l12`");
+  r = await walk("see docs/a.md#Evidence%20Results next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag, l.title]), [["docs/a.md#Evidence%20Results", "Evidence Results", "Open docs/a.md#Evidence Results"]], "percent-decoded: the viewer slugs it to the heading");
+  r = await walk("see docs/a.md#results.", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag]), [["docs/a.md#results", "results"]], "the sentence's period is the prose's, as after a bare token");
+  assert.deepEqual(r.texts, ["see ", "."]);
+  r = await walk("(see docs/a.md#results), then", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag]), [["docs/a.md#results", "results"]]);
+  assert.deepEqual(r.texts, ["(see ", "), then"]);
+  r = await walk("see docs/a.md# next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag]), [["docs/a.md", undefined]], "a bare `#` names no section");
+  assert.deepEqual(r.texts, ["see ", "# next"]);
+  r = await walk("see docs/a.md#one#two next", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag]), [["docs/a.md#one", "one"]], "a second `#` ends the section");
+  assert.deepEqual(r.texts, ["see ", "#two next"]);
+  r = await walk("see docs/a.md#results", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.frag]), [["docs/a.md#results", "results"]], "at the end of the text");
+  assert.deepEqual(r.texts, ["see "]);
+  r = await walk("see #results and and/or#x here", opts);
+  assert.deepEqual(r.links, [], "a `#` with no path before it, or after a token that is prose, is never a section: the suffix is read only at a linked token's end");
+  // a file:// URI swallows the suffix into the token (its own grammar admits `:` and `#`): the suffix is cut back out
+  r = await walk("see file:///repo/notes-api/docs/a.md#results now", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.frag]), [["file:///repo/notes-api/docs/a.md#results", "/repo/notes-api/docs/a.md", "results"]]);
+  r = await walk("see file:///repo/notes-api/docs/a.md:12 now", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.line, l.frag]), [["file:///repo/notes-api/docs/a.md:12", "/repo/notes-api/docs/a.md", "12", undefined]]);
+  r = await walk("see file:///repo/notes-api/docs/a.md#L3 now", opts);
+  assert.deepEqual(r.links.map((l) => [l.path, l.line, l.frag]), [["/repo/notes-api/docs/a.md", "3", undefined]]);
+});
+
+test("controls: the chat's default walk and the viewer's lineSuffix walk leave a `#section` as prose, exactly as before", async () => {
+  for (const opts of [undefined, { lineSuffix: true }]) {
+    const r = await walk("see docs/a.md#results and docs/b.md:12 next", opts);
+    assert.deepEqual(r.links.map((l) => [l.text, l.line, l.frag]),
+      opts ? [["docs/a.md", undefined, undefined], ["docs/b.md:12", "12", undefined]] : [["docs/a.md", undefined, undefined], ["docs/b.md", undefined, undefined]],
+      "opts " + JSON.stringify(opts));
+    assert.deepEqual(r.texts, opts ? ["see ", "#results and ", " next"] : ["see ", "#results and ", ":12 next"]);
+    const u = await walk("see file:///repo/notes-api/docs/a.md#results now", opts);
+    assert.deepEqual(u.links.map((l) => [l.text, l.path, l.frag]), [["file:///repo/notes-api/docs/a.md#results", "/repo/notes-api/docs/a.md#results", undefined]],
+      "the URI arm keeps its swallowed `#results` in the path, as it did: only targetSuffix cuts it");
+  }
+});
+
+test("a section a highlight span cut into another node is refused as a line is: the link stops at the path", async () => {
+  const { linkifyPathTokens } = await import("./path-links");
+  const d = new Elm("div"); d.className = "ut-text";
+  const t1 = new TextNode("see docs/a.md#res"); t1.parentElement = d;
+  const hl = new Elm("span"); hl.className = "hl"; hl.textContent = "ults"; hl.parentElement = d;
+  const t2 = new TextNode(" next"); t2.parentElement = d;
+  d.childNodes = [t1, hl, t2];
+  linkifyPathTokens(d as unknown as HTMLElement, SID, undefined, { targetSuffix: true, unit: ".ut-text" });
+  const link = d.spans.find((s) => s.className.includes("file-uri-link"))!;
+  assert.ok(link, "the path itself links");
+  assert.equal(link.textContent, "docs/a.md");
+  assert.equal(link.dataset.frag, undefined, "the cut section stays prose in its pieces");
+  assert.deepEqual(d.texts, ["see ", "#res", " next"]);
+  // the same text in one node, for contrast
+  const w = await walk("see docs/a.md#results next", { targetSuffix: true, unit: ".ut-text" }, "ut-text");
+  assert.deepEqual(w.links.map((l) => l.frag), ["results"]);
+});
+
+test("linkTarget reads a link's data-line as a line, else its data-frag as a heading, else nothing: the one reader the hosts share", async () => {
+  const { linkTarget, FRAG_SUFFIX_RE, LINE_SUFFIX_RE } = await import("./path-links");
+  const at = (dataset: Record<string, string>) => linkTarget({ dataset } as unknown as HTMLElement);
+  assert.deepEqual(at({ line: "12" }), { line: 12 });
+  assert.deepEqual(at({ frag: "results" }), { heading: "results" });
+  assert.deepEqual(at({ line: "12", frag: "results" }), { line: 12 }, "a line wins where both stand (the walk writes one or the other)");
+  assert.deepEqual(at({ line: "0", frag: "results" }), { heading: "results" }, "a line that is no line falls to the section");
+  assert.deepEqual(at({ line: "abc" }), null);
+  assert.deepEqual(at({ line: "1.5" }), null, "a positive integer, as the viewer reads it");
+  assert.deepEqual(at({ frag: "" }), null);
+  assert.deepEqual(at({}), null);
+  // the arm's grammar, at source and by behaviour
+  assert.match(LINKS, /export const FRAG_SUFFIX_RE = \/\^#\(\?!L\\d\)\(\[\^\\s#\]\+\)\/;/);
+  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
+  assert.equal(FRAG_SUFFIX_RE.exec("#L12"), null, "the line arm's shape is never a section");
+  assert.equal(LINE_SUFFIX_RE.exec("#L12")![2], "12");
+  assert.equal(FRAG_SUFFIX_RE.exec("#Lx")![1], "Lx", "an L not followed by a digit is a section (a heading named Lx)");
+  assert.equal(FRAG_SUFFIX_RE.exec("#a b")![1], "a", "to the first space");
+  // the line arm is tried first in the walk, so `#L12` reaches the line and never this arm
+  assert.match(LINKS, /if \(lines\) \{ LINE_SUFFIX_AT_RE\.lastIndex = start \+ tok\.length; suffix = LINE_SUFFIX_AT_RE\.exec\(text\); \}/);
+  assert.match(LINKS, /else if \(sections\) \{\n\s*FRAG_SUFFIX_AT_RE\.lastIndex = start \+ tok\.length;/);
+  assert.match(LINKS, /const lines = !!\(opts && \(opts\.lineSuffix \|\| opts\.targetSuffix\)\);/, "targetSuffix reads the line grammar too");
+  assert.match(LINKS, /const sections = !!\(opts && opts\.targetSuffix\);/);
+  assert.doesNotMatch(LINKS, /text\.slice\(start \+ tok\.length/, "the section is read in place (sticky), never off a slice of the rest of the unit");
+});

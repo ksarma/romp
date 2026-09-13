@@ -58,12 +58,13 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
 
 /** Open `path` here: cache the identity so the chip resolves, open the shared viewer, and record the file
  *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
+ *  `at` is the place the link named after its path (a todo's `docs/report.md#results` or `:12`, a `:line` or
+ *  `#section` link inside a shown file), validated by the viewer's readAt where it crossed a frame (the relay);
+ *  `place` is the reader's place a Recent row stored for the file (files-recent.ts RecentPlace, the viewer's
+ *  RememberedPlace by structure), handed back so the note returns to where it was read; the relay and a link inside
+ *  a shown file pass none (Slice 6 of plans/markdown-viewer.md).
  *  `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent
- *  list does not — a re-open is no longer that todo). `at` is the place the link named after its path (a todo's
- *  `docs/report.md#results` or `:12`, a `:line` or `#section` link inside a shown file), validated by the viewer's
- *  readAt where it crossed a frame (the relay); `place` is the reader's place a Recent row stored for the file
- *  (files-recent.ts RecentPlace, the viewer's RememberedPlace by structure), handed back so the note returns to where
- *  it was read; the relay and a link inside a shown file pass none (Slice 6 of plans/markdown-viewer.md). */
+ *  list does not — a re-open is no longer that todo). */
 function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null, place: RecentPlace | null = null): void {
   if (sid && identity) identities.set(sid, identity);
   if (!openFileView(path, sid, { todoId, at, place })) return;

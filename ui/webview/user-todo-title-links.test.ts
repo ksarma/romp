@@ -23,6 +23,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { linkTarget } from "./path-links";   // the lifted handlers read a link's target through it (Slice 6 of plans/markdown-viewer.md)
 
 const requireCjs = createRequire(__filename);
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -187,15 +188,15 @@ function listHandler(opened: Opened[]): Handler {
   const end = map.indexOf("\n    },", at);
   assert.ok(at > 0 && end > at, "anchors not found: the list delegate's openpath moved; re-anchor");
   const src = map.slice(at, end + "\n    }".length).trim().replace(/^openpath:\s*/, "");
-  const fn = new Function("openTodoPath", transpile("const h = " + src + ";") + "\nreturn h;");
-  return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid])) as Handler;
+  const fn = new Function("openTodoPath", "linkTarget", transpile("const h = " + src + ";") + "\nreturn h;");
+  return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid]), linkTarget) as Handler;
 }
 function modalHandler(opened: Opened[], sid: string, todoId: string): Handler {
   const ln = WAITING.split("\n").find((l) => l.includes("delegate(box, { openpath: "));
   assert.ok(ln, "anchor not found: the Reply modal's delegate moved; re-anchor");
   const src = ln!.slice(ln!.indexOf("openpath: ") + "openpath: ".length, ln!.lastIndexOf(" });"));
-  const fn = new Function("openTodoPath", "sid", "todoId", transpile("const h = " + src + ";") + "\nreturn h;");
-  return fn((p: string, s: string, t: string) => opened.push([p, s, t]), sid, todoId) as Handler;
+  const fn = new Function("openTodoPath", "sid", "todoId", "linkTarget", transpile("const h = " + src + ";") + "\nreturn h;");
+  return fn((p: string, s: string, t: string) => opened.push([p, s, t]), sid, todoId, linkTarget) as Handler;
 }
 
 // the row as rowEl builds it when the todo has detail: .ut-item[data-sid][data-tid] > .ut-line >
@@ -275,8 +276,8 @@ function chatHost(opened: ChatOpened[], activeId: string | null): { openpath: Ha
   assert.ok(ln, "anchor not found: the body delegate's openpath moved; re-anchor");
   const handler = ln!.trim().replace(/^openpath:\s*/, "").replace(/,$/, "");
   const code = transpile(liftRender("onMiddleClick") + liftRender("openLinkedPath") + liftRender("bindPathLink") + "const openpath = " + handler + ";");
-  const fn = new Function("openPath", "activeId", code + "\nreturn { openpath, bindPathLink };");
-  return fn((p: string, sid: string | null) => opened.push([p, sid]), activeId);
+  const fn = new Function("openPath", "activeId", "linkTarget", code + "\nreturn { openpath, bindPathLink };");
+  return fn((p: string, sid: string | null) => opened.push([p, sid]), activeId, linkTarget);
 }
 // the card as renderTodo builds it: .ut-item > .ut-line > .ut-text.ut-has-detail[data-act=uttoggle][data-tid]
 // (the linked line, then the hint), and the detail fold beneath, both marked by the real matcher
@@ -369,8 +370,8 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   // (linkifyFileUris with the figure pass, delegated); both mark through path-links.ts and bind NOTHING:
   // the body delegate's openpath is the click (the tests above drive it)
   // (the URL pass runs first in both, since 2026-09-08: url-links.test.ts pins it; a URL is dead text to the path walk)
-  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid\);\n\}/);
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
   assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the body delegate opens a path link in the todo card, the Reply modal or the pinned-notes strip, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
   assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");

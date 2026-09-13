@@ -323,7 +323,8 @@ test("a click on the chip posts the viewFile message a detail link posts: path, 
   shellPosts.length = 0;
   const chip = row("t1").querySelector(".wt-file")!;
   chip.dispatch("click");
-  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: FILE, sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1" }]);
+  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: FILE, sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1", at: null }],
+    "the chip is the bare file: no target after it, so `at` rides as null (Slice 6 of plans/markdown-viewer.md)");
   assert.equal(shellPosts[0][1], "*");
   assert.ok(chip.classList.contains("romp-acted"), "the delegate's press flash: the click acknowledged");
   // Enter on the focused chip is its click (the path link's key handler): the same message again
@@ -340,7 +341,7 @@ test("the detail's linkified path still opens beside the chip, with the same ses
   assert.deepEqual(links.map((l) => l.textContent), ["docs/design.md"], "the relative path in the detail is linked as before");
   assert.equal(detail.textContent, DETAIL, "the detail reads as written");
   links[0].dispatch("click");
-  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1" }]);
+  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1", at: null }]);
   assert.equal(r.querySelectorAll(".wt-file").length, 1, "one chip, not one per path");
   assert.equal(r.querySelector(".ut-text")!.querySelector(".file-uri-link"), null, "the one-line text names no path: nothing linked there");
 });
@@ -356,7 +357,7 @@ test("the Reply modal shows the same chip under the quoted line and opens it thr
   assert.equal(chip.textContent, "design.md"); assert.equal(chip.title, FILE);
   assert.equal(chip.dataset.act, "openpath"); assert.equal(chip.dataset.path, FILE);
   chip.dispatch("click");
-  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: FILE, sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1" }], "the modal's closure names the session and the todo");
+  assert.deepEqual(viewFiles(), [{ romp: "viewFile", pane: "pane", path: FILE, sid: SID, identity: { name: "api", color: COLOR }, todoId: "t1", at: null }], "the modal's closure names the session and the todo");
   assert.ok(doc.getElementById("ut-reply-prompt"), "the modal stays up behind the file");
   // the detail's link in the modal opens too, from the same closure
   shellPosts.length = 0;

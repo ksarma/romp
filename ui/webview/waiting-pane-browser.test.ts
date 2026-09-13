@@ -41,8 +41,8 @@ const ROWS = [{ sid: SID, name: "api", color: { bg: "#123456", fg: "#ffffff" }, 
 // ── the source leg ────────────────────────────────────────────────────────────────────────────────
 type Fn = (rows: unknown[], w: unknown, path: string, sid: string, todoId: string) => void;
 function openTodoPath(): Fn {
-  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string): void {")[1].split("\n}")[0];
-  return new Function("rows", "window", "path", "sid", "todoId", body) as Fn;
+  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string, at: LinkTarget | null = null): void {")[1].split("\n}")[0];
+  return new Function("rows", "window", "path", "sid", "todoId", "at", body) as Fn;
 }
 class ShellIFrame { constructor(public contentWindow: { focus(): void } | null) {} }
 // the shell as the pane reads it: an iframe of the SHELL's realm, and the shell's pane toggle on its window

@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { linkTarget } from "./path-links";   // the lifted handlers read a link's target through it (Slice 6 of plans/markdown-viewer.md)
 
 const requireCjs = createRequire(__filename);
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -100,15 +101,15 @@ function listHandler(opened: Opened[]): Handler {
   const end = map.indexOf("\n    },", at);
   assert.ok(at > 0 && end > at, "anchors not found — the list delegate's openpath moved; re-anchor");
   const src = map.slice(at, end + "\n    }".length).trim().replace(/^openpath:\s*/, "");
-  const fn = new Function("openTodoPath", transpile("const h = " + src + ";") + "\nreturn h;");
-  return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid])) as Handler;
+  const fn = new Function("openTodoPath", "linkTarget", transpile("const h = " + src + ";") + "\nreturn h;");
+  return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid]), linkTarget) as Handler;
 }
 function modalHandler(opened: Opened[], sid: string, todoId: string): Handler {
   const line = WAITING.split("\n").find((l) => l.includes("delegate(box, { openpath: "));
   assert.ok(line, "anchor not found — the Reply modal's delegate moved; re-anchor");
   const src = line!.slice(line!.indexOf("openpath: ") + "openpath: ".length, line!.lastIndexOf(" });"));
-  const fn = new Function("openTodoPath", "sid", "todoId", transpile("const h = " + src + ";") + "\nreturn h;");
-  return fn((p: string, s: string, t: string) => opened.push([p, s, t]), sid, todoId) as Handler;
+  const fn = new Function("openTodoPath", "sid", "todoId", "linkTarget", transpile("const h = " + src + ";") + "\nreturn h;");
+  return fn((p: string, s: string, t: string) => opened.push([p, s, t]), sid, todoId, linkTarget) as Handler;
 }
 
 // the row as rowEl builds it: .wt-item.ut-item[data-sid][data-tid] > .ut-detail, the detail's text
@@ -147,6 +148,45 @@ test("the Reply modal's own delegate opens the same three spans with its closure
   const h = modalHandler(opened, SID, TID);
   for (const s of dd.spans) h(s);
   assert.deepEqual(opened, OPENS.map((p): Opened => [p, SID, TID]));
+});
+
+// A target after the path (Slice 6 of plans/markdown-viewer.md): waiting.ts marks a todo's detail with `targetSuffix`, so
+// `docs/report.md#results` carries data-frag and `docs/report.md:12` data-line; both delegates read them through
+// path-links.ts linkTarget and hand openTodoPath the target as its fourth argument, which rides the relay as `at`.
+type OpenedAt = [string, string, string, unknown];
+test("a target after a detail's path reaches openTodoPath from both delegates: a heading, a line, and nothing for a bare path", async () => {
+  const { linkifyPathTokens } = await import("./path-links");
+  const { delegate } = await import("./actions");
+  const withAt = (opened: OpenedAt[]) => (p: string, sid: string, tid: string, at: unknown) => opened.push([p, sid, tid, at]);
+  const text = "read docs/report.md#results, then docs/report.md:12 and docs/design.md";
+  const mark = (d: Elm) => { d.textContent = text; linkifyPathTokens(d as unknown as HTMLElement, SID, undefined, { targetSuffix: true }); };
+  const want: OpenedAt[] = [["docs/report.md", SID, TID, { heading: "results" }], ["docs/report.md", SID, TID, { line: 12 }], ["docs/design.md", SID, TID, null]];
+  // the list: the lifted handler over the row's ids
+  const listOpened: OpenedAt[] = [];
+  const map = WAITING.slice(WAITING.indexOf("delegate(list, {"), WAITING.indexOf("// A tap anywhere that is NOT an armed Dismiss"));
+  const at = map.indexOf("\n    openpath: (x) => {"), end = map.indexOf("\n    },", at);
+  const src = map.slice(at, end + "\n    }".length).trim().replace(/^openpath:\s*/, "");
+  const listH = new Function("openTodoPath", "linkTarget", transpile("const h = " + src + ";") + "\nreturn h;")(withAt(listOpened), linkTarget) as Handler;
+  const list = new Elm("div");
+  delegate(list as unknown as HTMLElement, { openpath: listH as any });
+  const item = new Elm("div"); item.className = "wt-item ut-item"; item.dataset.sid = SID; item.dataset.tid = TID;
+  const d = new Elm("div"); d.className = "ut-detail open"; mark(d); item.appendChild(d); list.appendChild(item);
+  assert.deepEqual(d.spans.map((x) => [x.textContent, x.dataset.line, x.dataset.frag]), [["docs/report.md#results", undefined, "results"], ["docs/report.md:12", "12", undefined], ["docs/design.md", undefined, undefined]],
+    "the shown text keeps the suffix; the attributes carry it");
+  for (const x of d.spans) list.click(x);
+  assert.deepEqual(listOpened, want);
+  // the Reply modal: its one-line delegate over its closure
+  const modalOpened: OpenedAt[] = [];
+  const line = WAITING.split("\n").find((l) => l.includes("delegate(box, { openpath: "))!;
+  const msrc = line.slice(line.indexOf("openpath: ") + "openpath: ".length, line.lastIndexOf(" });"));
+  const modalH = new Function("openTodoPath", "sid", "todoId", "linkTarget", transpile("const h = " + msrc + ";") + "\nreturn h;")(withAt(modalOpened), SID, TID, linkTarget) as Handler;
+  const dd = new Elm("div"); dd.className = "ut-detail open"; mark(dd);
+  for (const x of dd.spans) modalH(x);
+  assert.deepEqual(modalOpened, want);
+  // the source: waiting.ts marks with targetSuffix and reads through linkTarget at both sites
+  assert.match(WAITING, /linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);/);
+  assert.equal((WAITING.match(/linkTarget\(x\)/g) || []).length, 2, "both delegates read the target off the clicked link");
+  assert.match(WAITING, /import \{ linkTarget, type LinkTarget \} from "\.\/path-links";/);
 });
 
 test("a marked span with no row around it is a no-op in the list: the row is the source of both ids", async () => {
