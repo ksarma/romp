@@ -16,7 +16,8 @@
 // drive, marked's output under the one configuration parsed as a browser parses a fragment, the KaTeX fill stood in for, and
 // every fence cut into rows as the Files pane cuts it (wrapLinesHtml) or left undressed where the scene says so. Every case that
 // changes behaviour fails over a git archive of 8ae3fda02, round 4's fix commit, at the assertion its title names; the hole
-// cell's pins fail over one of 90c6ff242, round 3's. Synthetic values only: invented notes, no real session text.
+// cell's pins (test 6) pin round 4's rule, so they are green over 8ae3fda02 by design and fail over one of 90c6ff242, round 3's:
+// the file runs 5 of 6 red over 8ae3fda02, not 6 of 6. Synthetic values only: invented notes, no real session text.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { marked } from "marked";
@@ -334,7 +335,7 @@ test("a deletion point at a table's first character whose FIRST header cell show
   assert.deepEqual([w3!.cell, w3!.after.startsWith("b")], [{ tag: "TH", col: 1, row: -1 }, true], "a point inside the second header cell: in that cell, as before");
 });
 
-// ── item 1: a cell the per-cell fallback holds keeps its edge points on the card (round 4's rule, pinned) ──
+// ── item 1: a cell the per-cell fallback holds keeps its edge points on the card (round 4's rule, pinned: green over 8ae3fda02, red over 90c6ff242) ──
 
 test("a cell the per-cell fallback holds (an entity): a deletion point at its first position or its last keeps its card, as a point strictly inside does (the review's round 4, read from the code then and pinned here in round 5: round 3 placed the first after the previous cell's last character and the last before the next cell's first, cells the change is not in), in a body row's first cell, in the header's first cell, in the table's last cell with no final line feed, in a list item's table's last cell, and in two entity cells of one column; the positioned cells beside them place in their own cells, the controls", () => {
   const A = "| H0 | A0 | B0 |\n|---|---|---|\n| x\\y &amp; | pa0 | pb0 |\n| ra0 | rb0 | rc0 |\n";

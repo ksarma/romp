@@ -4865,47 +4865,97 @@ function lineEndAt(source: string, off: number): number {
 }
 /** A change's point at the edge of a table or a code block inside its block (renderedSpot), `j` and `k` the block's positioned
  *  characters before and at or past `offset` (-1 for none): the placement, null for the card, undefined when the offset is at no
- *  such edge. Two edges (the Slice 8 review, rounds 2 to 5).
+ *  such edge. Three edges (the Slice 8 review, rounds 2 to 6).
  *  The INNER edge of a code block: an offset past the opener's line (an indented block's first character) through the last
  *  line's ending, with no positioned character of the block at or past it (the trailing whitespace of the last code line and the line
- *  feed that ends it, the closer hole's first position; a trailing blank line the pre has no row for): the point sits after the
- *  block's last positioned character, its own, whatever follows the block (round 4 applied the same-item test below to this edge
- *  too, so a fence that ended a list item put the point before the NEXT item's text, or inside the next item's pre, when the last
- *  code line carried trailing whitespace; round 3 and before had it after the character). A positioned character of the block at
- *  or past the offset (a later line's), or none of the block's before it (a fence whose lines all show nothing, the pre with no
- *  row for the line), leaves the point to renderedSpot's rules against the nearest character, the recorded fallback.
+ *  feed that ends it, the closer hole's first position; a trailing blank line the pre has no row for), or on the line of the
+ *  block's positioned character before it, past that character through the line's ending, with the block's next positioned
+ *  character on a later line (an inner code line's trailing whitespace and the line feed that ends it, a blank or whitespace-only
+ *  line after it or not): the point sits after that character, its own line's, whatever follows (round 4 applied the same-item
+ *  test below to the last line's edge too, so a fence that ended a list item put the point before the NEXT item's text, or inside
+ *  the next item's pre, when the last code line carried trailing whitespace; round 3 and before had it after the character; the
+ *  inner line's is the review's round 6: through round 5 those offsets fell to renderedSpot's adjacency rule, which placed the
+ *  point before the next line's first character, one row down, or two past a blank line, where the Raw view keeps it on its
+ *  line, the adjacent offset and the CRLF ending's LF byte alone sitting after the character). A positioned character of the
+ *  block on the offset's own line at or past it (a point inside a line, before or after a character of the same row), or none of
+ *  the block's before it (a fence whose lines all show nothing, the pre with no row for the line), leaves the point to
+ *  renderedSpot's rules against the nearest character, the recorded fallback.
+ *  THE LINE BEFORE a table or a code block: an offset on the line of the block's prose before it, past the prose's last
+ *  positioned character through the line's ending (its trailing whitespace, its line feed, both bytes of a CRLF), with the next
+ *  positioned character on a later line inside a table or a code block: the point sits after that prose character, the Raw
+ *  view's row, whatever block that character opens and whichever item it stands in, so the block's first row or its first header
+ *  cell never holds a point from the line before it (the review's round 6; round 5 left these offsets to renderedSpot's
+ *  adjacency rule, which placed the point before the block's first positioned character, inside the fence's first row or the
+ *  table's first header cell, a row or a cell the change is not in, where round 4's fence-line edge and main 696229f84's hole
+ *  rule placed it after the prose; before a sub-item's fence or before an indented block after a blank line the same offsets sat
+ *  so since the build). A hole's characters between the two (a footnote reference's number ending the prose, which stands
+ *  before the offset; a code block the reading could not place after it) leave the point after the prose's character; an offset
+ *  inside such a hole is the hole's and keeps its card. With the next positioned character elsewhere, the same paragraph's
+ *  next line or the next item's text, the offset is renderedSpot's rule's, as on main: a paragraph's trailing whitespace at a
+ *  list item's end places its point before the NEXT item's first character, in that item, identical on main 696229f84 and
+ *  outside Slice 8's items (the review's round 6; recorded in the plan's Slice 8 note and routed to a follow-up).
  *  The START edge: the next table's or fenced block's first character (the leading pipe, the opener's first backtick) and the
  *  bytes before it past the line ending after `j` (a blank line, the item's marker, a container's indent), nothing positioned or
- *  unpositioned between. The point is that block's own: after the prose before it when that prose stands in the same list item
- *  (or both in none: a quote's text before its table), never after a character of another table or code block (two tables in one
- *  item with nothing between, a fence after a table: the point sat inside the earlier block's last cell or row); else before the
- *  block's first positioned character, a table's first header cell's first or the code's first (a top-level block, or one that
- *  begins an item, whose text before is the previous item's); and where that character does not exist, the first header cell
- *  showing nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
+ *  unpositioned between; a code block the reading could not place (walkCode's hole, a CodeSpan with no line) counts as a fenced
+ *  block here, its raw's first character its first (the review's round 6; before, the search for the next block skipped it and
+ *  latched onto a later fence of the same block, so the point at the unplaceable fence's first character kept its card, or sat
+ *  before the later fence's code, where main 696229f84's hole rule placed it after the text before; marked's own tokenizer yields
+ *  no such block, so the shape needs a tokenizer override); an offset strictly inside a hole whose characters stand before the
+ *  block (a table the reading could not lay out, an unplaceable code block, with a placed fence after it in the same item) is the
+ *  hole's, never the edge's, and keeps its card (round 6; round 5 placed it before the later block's first character). The point
+ *  is that block's own: after the prose before it when that prose stands in the same list item (or both in none: a quote's text
+ *  before its table; a display formula between that prose and the block, a zero-text hole, does not stand between, so the point
+ *  sits after the prose above the formula's box, identical on main 696229f84, whose hole rule placed it there too, outside Slice
+ *  8's items, recorded in the plan's Slice 8 note and routed to a follow-up beside the formula-span check renderedSpot's
+ *  docstring names; the review's round 6), never after a character of another table or code block (two tables in one item with
+ *  nothing between, a fence after a table: the point sat inside the earlier block's last cell or row); else before the block's
+ *  first positioned character, a table's first header cell's first or the code's first (a top-level block, or one that begins an
+ *  item, whose text before is the previous item's); and where that character does not exist, the first header cell showing
+ *  nothing (a formula alone, a picture, an empty cell, a cell the per-cell fallback holds) or the fenced block's lines all
  *  showing nothing (or the fence empty), the point keeps its card, as a point inside such a cell does (before round 5: before the
  *  block's first positioned character wherever it stood, the second header cell's or the body row's first cell's, a cell the
  *  change is not in, and with none in the block's item after the previous item's text or before the next item's; main 696229f84
- *  kept the card for a table, its whole a hole). The same-item test reads the block's element, the n-th `<table>` or `<pre>` under
- *  the block's nodes (nthBlockElement); when the counts disagree it reads the block's first positioned character, and with none
- *  the point keeps its card. An indented code block has no start edge: the indent before its first line is that line's. */
+ *  kept the card for a table, its whole a hole). The same-item test reads the block's element, the n-th `<table>` or `<pre>`
+ *  under the block's nodes (nthBlockElement); when the counts disagree it reads the block's first positioned character, and with
+ *  none the point keeps its card. An indented code block the reading placed has no start edge: the indent before its first line
+ *  is that line's. */
 function edgeSpot(idx: RenderedIndex, blk: Block, offset: number, j: number, k: number): Spot | null | undefined {
   const src = idx.source;
   const within = (p: number, s: { startN: number; endN: number }): boolean => nOf(idx, s.startN) <= p && p < nOf(idx, s.endN);
   const pj = j >= 0 ? nOf(idx, blk.pos[j]) : -1, pk = k >= 0 ? nOf(idx, blk.pos[k]) : -1;
   const placeAfter = (i: number): Spot | null => { const at = nthNonWs(blk.dom[0], i); return at ? { t: at.t, off: at.off + 1 } : null; };
   const opener = (cs: CodeSpan): Hole | undefined => blk.holes.find((h) => h.reason === FENCE_LINE && h.startN === cs.startN);
+  // the hole over the raw of a code block the reading could not place (walkCode), a CodeSpan with no line: the start edge's block
+  // as a fenced block is, its first character the hole's (the review's round 6)
+  const unplaced = (cs: CodeSpan): Hole | undefined => cs.lines.length ? undefined : blk.holes.find((h) => (h.reason === CODE_HOLE || h.reason === INDENTED_CODE_HOLE) && h.startN === cs.startN);
+  const inBlock = (p: number): boolean => blk.tables.some((t) => within(p, t)) || blk.codes.some((c) => within(p, c));
+  // whether the offset lies strictly inside a hole whose characters stand between j and k (a footnote reference's number, a code
+  // block or a table the reading could not place): such a point is the hole's, never an edge's, and keeps its card by
+  // renderedSpot's hole rule (the review's round 6; round 5's start edge placed it before the next block's first character)
+  const insideHole = (): boolean => {
+    for (let i = j + 1; i < (k < 0 ? blk.pos.length : k); i++) { const h = blk.holes[-blk.pos[i] - 1]; if (h && nOf(idx, h.startN) < offset && offset < nOf(idx, h.endN)) return true; }
+    return false;
+  };
+  const lineEnd = j >= 0 ? lineEndAt(src, pj) : -1;   // the ending of the line the positioned character before the offset stands on
   for (const cs of blk.codes) {
     // past the opener's line (an indented block's first character) through the last line's ending, the fence's closer hole's
     // first position or an indented block's raw's end (its trailing line feed is the lexer's, off the raw)
     const op = opener(cs);
     if (!cs.lines.length || offset < nOf(idx, op ? op.endN : cs.startN) || offset > nOf(idx, cs.lines[cs.lines.length - 1].endN)) continue;
-    return j >= 0 && within(pj, cs) && !(k >= 0 && within(pk, cs)) ? placeAfter(j) : undefined;
+    if (j < 0 || !within(pj, cs)) return undefined;
+    // the last line's edge: no positioned character of the block at or past the offset; an inner line's: the offset on the line
+    // of the character before it, through its ending, and the block's next positioned character on a later line (round 6)
+    return !(k >= 0 && within(pk, cs)) || (offset <= lineEnd && pk > lineEnd) ? placeAfter(j) : undefined;
   }
-  if (j >= 0 && offset <= lineEndAt(src, pj)) return undefined;
+  // the line before a table or a code block: the offset on the line of the prose's last positioned character, past it, and the
+  // next positioned character on a later line inside a table or a code block (round 6); a hole's characters between them do not
+  // move the point (a footnote reference's number ending the prose stands before the offset, a block the reading could not
+  // place after it), unless the offset is inside the hole; the same offsets before anything else are renderedSpot's rule's
+  if (j >= 0 && offset <= lineEnd) return k >= 0 && pk > lineEnd && inBlock(pk) && !inBlock(pj) && !insideHole() ? placeAfter(j) : undefined;
   let tb: TableSpan | null = null, cs: CodeSpan | null = null, s = Infinity;
   for (const t of blk.tables) { const ts = nOf(idx, t.startN); if (ts >= offset && ts < s) { s = ts; tb = t; cs = null; } }
-  for (const c of blk.codes) { const cst = nOf(idx, c.startN); if (opener(c) && cst >= offset && cst < s) { s = cst; cs = c; tb = null; } }
-  if ((!tb && !cs) || (k >= 0 && pk < s)) return undefined;
+  for (const c of blk.codes) { const cst = nOf(idx, c.startN); if ((opener(c) || unplaced(c)) && cst >= offset && cst < s) { s = cst; cs = c; tb = null; } }
+  if ((!tb && !cs) || (k >= 0 && pk < s) || insideHole()) return undefined;
   const span = (tb || cs) as { startN: number; endN: number };
   let kf = -1;
   if (tb) {
