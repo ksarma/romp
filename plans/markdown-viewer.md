@@ -3767,7 +3767,15 @@ inside a cell places against the cell's own characters alone, and a table or a f
 its point before its first character, not after the previous item's text (items 1 and 4); a container's indent or
 marker before a nested fence's first content line is that line's (item 4); the CRLF rule's reach outside code is
 recorded and pinned (item 4); and a display formula's stamped box takes the keyboard back after a repaint (item 5).
-The items below are numbered as the build was planned: 1 the cells, 2 the code lines, 3 the one-cell rule, 4 the
+Its round 5 changed four more, each recorded under its item below: the one-cell rule counts a table's cells by source
+span against the selection's span, so a formula-only or picture-only cell the drag ran through counts wherever the
+drag's ends fell, and the offer is the covered cells' span (item 3); a fence's closer edge is the fence's own, a point
+on the last code line's trailing whitespace or at its line feed sitting after the last code character whatever follows
+the fence (item 4); a table's or a fence's start edge places after the same item's prose alone, never after another
+table's or code block's characters, and a block with no positioned character where the rule looks, a table whose first
+header cell shows nothing or a fence whose lines all show nothing, keeps its first character's point on its card
+(items 1 and 4); and a cell the per-cell fallback holds keeps its edge points on the card, round 4's rule pinned (item
+1). The items below are numbered as the build was planned: 1 the cells, 2 the code lines, 3 the one-cell rule, 4 the
 change marks and the deletion points inside a fence or a table, 5 the display formula under a highlight (the Slice 4
 note's item 10, routed here through the Slice 5 note's (e)), 6 the records; a reference to an item below is to that
 numbering, and "the brief" is the Slice 8 build brief of 2026-09-11, whose fifteen open questions are cited by number
@@ -3823,23 +3831,47 @@ departs from the text above, why, and which test holds each rule:
    ending with its line feed keeps the end of the file after it at the block's end, after the last cell's character,
    as after a paragraph's; `TableSpan.endsLf`, anchor-map-rendered-points.test.ts's second test), never beside the
    words after the table, a point at or before the table's first character sitting after the text before the table
-   when the block holds such text in the same list item, or in no item (a quote's text before its table; `sameItem`),
-   and, at a top-level table's, whose block holds nothing before it, or at a table that begins a list item, where the
-   text before it is the previous item's, before the first header cell's first character, the block's or the item's
-   edge, as a top-level fence's opener sits before the code's first character (before this slice that point kept its
-   card, the table a hole; the review's round 2 recorded it, anchor-map-rendered-points.test.ts's first test extended
-   with both tables; its round 4 the item that begins with a table, before which the point was painted after the
-   previous item's text, inside that item's table's last cell when it was a table too, and the same for a fence that
-   begins an item, the file's third test). A mark's `padding: 0 2px` inside a cell (open question 15, the default:
-   accept and measure): the table is `width: max-content`, each column as wide as its widest cell's content, and the
-   padding adds 4 px to the marked cell's, so a mark in a column's widest cell widens a table under its `max-width`
-   cap by 4 px, 4 px more per nesting level, and a mark in any other cell of the column widens nothing. Read in
-   Chromium at pane 900, at pane 380 and in the chat modal at 1000, the same at each: on the probe fixture's
-   two-column table (anchor-map-fixtures/wrappers-plain.md, where `cell three` is the first column's widest cell)
-   173.4 px bare and with `cell one` marked, 177.4 px with `cell three` marked; on a table whose marked cell is its
-   column's widest, 158.9 px bare, 162.9 px with the cell marked, and 170.9 px when a quote over the whole row marks
-   both cells and a second comment on the first cell nests in it (8 px in that column, 4 in the other). The build's
-   record of 173.4 px both times was the fixture's `cell one`, the narrower cell's case; the review round 1
+   when the block holds such text in the same list item, or in no item (a quote's text before its table; `edgeSpot`),
+   that text being prose and not another table's or code block's characters (the review's round 5; before, two tables
+   in one item with nothing between placed the second's point inside the first's last cell, after `b`, and a fence
+   after a table or a table after a fence inside the earlier block's cell or row), and, at a top-level table's, whose
+   block holds nothing before it, or at a table that begins a list item, where the text before it is the previous
+   item's, before the first header cell's first character, the block's or the item's edge, as a top-level fence's
+   opener sits before the code's first character (before this slice that point kept its card, the table a hole; the
+   review's round 2 recorded it, anchor-map-rendered-points.test.ts's first test extended with both tables; its round
+   4 the item that begins with a table, before which the point was painted after the previous item's text, inside that
+   item's table's last cell when it was a table too, and the same for a fence that begins an item, the file's third
+   test; its round 5 the first header cell that shows nothing, a formula alone, a picture, an empty cell or the
+   per-cell fallback's hole, whose table's first character keeps the point on its card as a point inside such a cell
+   does, where rounds 2 to 4 placed it before the table's first POSITIONED character, the second header cell's or the
+   body row's first cell's, and the table of formulas alone or of pictures alone that begins an item, whose point
+   round 4 placed after the previous item's text, inside that item's pre or its table's last cell, or before the next
+   item's, main having kept the card after a fence or a table item; anchor-map-block-edge-points.test.ts, item 4). A
+   cell that begins with an escaped pipe maps its whole-cell quote from the pipe, without the backslash (`\| lead`
+   stores `| lead`, `\|` alone `|`), and the one-cell offer for a span begun in such a cell starts there too: the
+   inline walk positions an escape's shown character at the escaped character's index, Slice 5's convention for every
+   block (anchor-map.test.ts pins the rendered `*` mapping to the source `*`, not the backslash; a paragraph's `\# not
+   heading` maps `# not heading` on main 696229f84 too), an interior or a trailing escape staying inside the quote
+   with its backslash; recorded by the review's round 5 and routed to a follow-up (an escape at a selection's edge
+   taking its backslash), the cell mapping being no place to change a walk-wide convention. A table-part tag inside a
+   cell (`<td>`, `<th>`, `<tr>`, `<thead>`, `<tbody>`, `<caption>`, `<col>`, `<colgroup>`) with text after its closer
+   makes the browser's parser restructure the table (the text foster-parented before it, the row split), so the
+   block's nodes no longer pair with the walk's blocks and the table and every later block of the note refuse as a
+   block whose rendered text does not match the file, and `<plaintext>` in a cell removes the rest of the note from
+   the Rendered view: identical on main 696229f84, the pairing's and the sanitizer's, outside this slice's items, the
+   refusal the safe direction; recorded by the review's round 5 and routed to a follow-up (the pairing re-synced after
+   a restructured table, or the sanitizer dropping a table-part tag out of place); the other inline-HTML shapes probed
+   in a cell (a nested `<table>`, `<template>`, `<select>`, `<iframe>`, `<textarea>`, `<xmp>`) refuse the hole cell
+   alone with the entity sentence, the cells beside it mapping. A mark's `padding: 0 2px` inside a cell (open question
+   15, the default: accept and measure): the table is `width: max-content`, each column as wide as its widest cell's
+   content, and the padding adds 4 px to the marked cell's, so a mark in a column's widest cell widens a table under
+   its `max-width` cap by 4 px, 4 px more per nesting level, and a mark in any other cell of the column widens
+   nothing. Read in Chromium at pane 900, at pane 380 and in the chat modal at 1000, the same at each: on the probe
+   fixture's two-column table (anchor-map-fixtures/wrappers-plain.md, where `cell three` is the first column's widest
+   cell) 173.4 px bare and with `cell one` marked, 177.4 px with `cell three` marked; on a table whose marked cell is
+   its column's widest, 158.9 px bare, 162.9 px with the cell marked, and 170.9 px when a quote over the whole row
+   marks both cells and a second comment on the first cell nests in it (8 px in that column, 4 in the other). The
+   build's record of 173.4 px both times was the fixture's `cell one`, the narrower cell's case; the review round 1
    re-measured. So a comment on a column's longest cell moves the table's right edge by 4 px when the panel opens or
    the comment lands; the padding is the comments feature's standing mark, and the layout-neutral mark (the Slice 5
    note's item 10 (f)) stays the owner's standing call about the comments feature. A mark's side padding inside a
@@ -3865,12 +3897,17 @@ departs from the text above, why, and which test holds each rule:
    whitespace, the paint and the deletion points by position, the shapes marked accepts, the 1,000-row table timed, an
    astral character in a hole cell leaving the later cells their own offsets, the one-cell rule counting a cell
    holding a formula alone and a formula that begins a cell's text, the review's round 3, and the two-table shape's
-   both outcomes, the review's round 4), anchor-map-cells-formulas.test.ts (4, new, the review's round 4: a deletion
+   both outcomes, the review's round 4), anchor-map-cells-formulas.test.ts (6, new, the review's round 4: a deletion
    point inside an inline formula that ends a cell's text placed in the cell's own row and cell; the one-cell rule
    over formula-only cells, from the prose before a table into an all-formula header row and across two formula-only
    cells into the prose after; the pass's Raw offer widened by a formula covered whole in the same table and not by
-   one in another table; two formula-only cells selected alone refused by the one-cell rule) and
-   anchor-map-cells-browser.test.ts (5 legs, new, over the real viewer and panel: a real drag over `cell one` at pane
+   one in another table; two formula-only cells selected alone refused by the one-cell rule; and the review's round 5:
+   the count by source span, a formula-only or picture-only cell the drag ran through counted wherever the drag's ends
+   fell, from the prose before a table through an all-formula header row into a body cell, from a positioned cell
+   through a trailing formula-only or picture-only cell into the prose after, a whole table of formulas, two tables,
+   the offers reaching the formula-only cells, and the text twins, the pad-to-pad drag, the drag to a cell's pad past
+   a picture, the empty trailing cell and the last-cell-into-prose rule as controls) and
+   anchor-map-cells-browser.test.ts (6 legs, new, over the real viewer and panel: a real drag over `cell one` at pane
    900 and 380 and in the chat modal, the composer's quote and Save, the posted anchor the exact slice at the cell's
    offset, the mark in the `<td>` and on the Raw row, a fresh open painting both views; the two-cell drag refused with
    item 3's sentence and Switch to Raw preselecting the row's span; the width read; the table timed in Chromium; over
@@ -3878,7 +3915,9 @@ departs from the text above, why, and which test holds each rule:
    cells and a real drag's Save posting the cell's own slice; a real drag from the paragraph before a table into the
    second formula of an all-formula header row refused with item 3's sentence, Switch to Raw preselecting `$h$ | $k$`
    and the composer quoting it with Save offered, and the same drag into the first formula mapping with the pipe, the
-   review's round 4) hold it.
+   review's round 4; a real drag from the positioned cell beside a picture-only or a formula-only last cell into the
+   paragraph after the table refused with item 3's sentence, Switch to Raw preselecting `pl-a | ![p](x.png)` and `fl-a
+   | $n$`, and the cell alone mapping, the review's round 5) hold it.
 2. *Item 2, a code line maps from Rendered.* A code block was one hole over its raw the same way: a selection in a
    line refused as "touches a code block" (an indented block as "an indented code block") and a change inside a fence
    painted through the fallback's ordinal. Now `walkCode` reads the raw line by line as marked lays it out: the
@@ -3978,6 +4017,20 @@ departs from the text above, why, and which test holds each rule:
    formula's sentence with the Raw offer on the first formula alone). anchor-map-cells.test.ts's one-cell formula
    test, anchor-map-cells-formulas.test.ts and the browser leg's all-formula header row hold it (the review's round
    4); a last cell holding a formula alone into the prose after the table maps as the last-cell-into-prose rule says.
+   Round 4's count still saw a formula-only cell only through a formula the selection covered at its start or its end,
+   the pass counting positioned characters, so a formula-only or picture-only cell the span merely ran through was
+   never counted and the pass's offer left it out: a drag from the prose before a table through an all-formula header
+   row into a positioned body cell, from a positioned cell through a trailing formula-only or picture-only cell into
+   the prose after, over a whole table of formulas between two paragraphs, or from one table's cell through the prose
+   between into the next table's positioned second cell mapped with the pipes and the delimiter row inside the quote,
+   and a drag over `| fb-d | fb-e | $n$ |` into the prose after offered `fb-d | fb-e`. Since the review's round 5 the
+   pass counts every table of the span's blocks by SOURCE SPAN against the selection's span (`cellsRule`: the first
+   positioned character's offset in the first block, the last's plus one in the last, the block's whole extent
+   between, widened by the covered formulas), the one rule the covered-formula check reads too, so a cell that emits
+   no positioned character counts where its source lies inside the span wherever the drag's ends fall, and the offer
+   is the covered cells' span clipped to the selection's; a drag ended on a cell's pad past a picture selects no
+   character of that cell and maps the positioned cell alone, and an empty trailing cell, which has no record, is not
+   counted (recorded). anchor-map-cells-formulas.test.ts's fifth and sixth tests and the browser leg's sixth hold it.
    A drag from one table's last cell through the prose between into the next table's first header cell, two top-level
    tables or two in one list item, is those two shapes joined and maps, both tables' pipes inside the quote as a Raw
    selection over the same characters mints; refusing it would be a rule of its own, a selection covering the cells of
@@ -3985,11 +4038,13 @@ departs from the text above, why, and which test holds each rule:
    (a later header cell, or a body cell, whose span holds the header's cells), or from any earlier cell of the first,
    the drag covers two cells of that table and the one-cell rule refuses it on that table's span, the Raw view offered
    there (the review's round 4; round 2's record had said a cell of the next table, which holds for its first header
-   cell alone). The check is one scan of the table's cells per selection. anchor-map-cells.test.ts (the four shapes
-   with their offers, one cell into prose, and the two-table shape's both outcomes over the fixture's two top-level
-   tables and over two tables in one list item) and the browser leg's two-cell drag hold it;
-   anchor-map-obsidian.test.ts's first-obstacle test (31) and anchor-map-wrappers.test.ts (38) are re-pinned where
-   their spans now meet the rule or now map, each flip stated with its before in the commit.
+   cell alone; since round 5 a formula-only first header cell of the next table counts with the positioned cell after
+   it, where round 4's count, over positioned characters, mapped that drag). The check is one scan of the table's
+   cells per selection. anchor-map-cells.test.ts (the four shapes with their offers, one cell into prose, and the
+   two-table shape's both outcomes over the fixture's two top-level tables and over two tables in one list item) and
+   the browser leg's two-cell drag hold it; anchor-map-obsidian.test.ts's first-obstacle test (31) and
+   anchor-map-wrappers.test.ts (38) are re-pinned where their spans now meet the rule or now map, each flip stated
+   with its before in the commit.
 4. *Item 4, the change marks and the deletion points inside a fence or a table take the exact path.* This follows from
    items 1 and 2 with no code of its own (open question 10, the default): an insertion or a substitution inside a cell
    or a line paints by the change's own position with no count, where the fallback's ordinal had marked it under the
@@ -4002,11 +4057,19 @@ departs from the text above, why, and which test holds each rule:
    its card. A deletion point inside a cell or a line places before or after the nearest positioned character of the
    cell or the row, of the cell's own characters since the review's round 4 (item 1); a point at a top-level fence's
    opener places before the code's first character, one at a nested fence's opener or in the indentation before it
-   sits after the text before the fence when that text is the same list item's or a quote's (`sameItem`) and before
-   the code's first character when the fence begins an item (the review's round 4; before, after the previous item's
-   text), one at the line feed after the last code line sits after that character, and one at a table's first
-   character after the text before the table under the same rule or, at a top-level table's or one that begins an
-   item, before the first header cell's first character (item 1); a point on a code line that shows no character (a
+   sits after the text before the fence when that text is the same list item's or a quote's, and prose, not another
+   table's or code block's characters (`edgeSpot`; the review's round 4 the same-item rule, its round 5 the reach),
+   and before the code's first character when the fence begins an item (the review's round 4; before, after the
+   previous item's text), a fence whose lines all show nothing, or an empty fence, that begins an item keeping its
+   opener's point on its card, there being no code character to place it before (the review's round 5; round 4 placed
+   it after the previous item's text or before the next item's), one at the line feed after the last code line, or on
+   that line's trailing whitespace, sits after that character in the fence's own item whatever follows the fence, an
+   indented block's likewise (the review's round 5; round 4's same-item test, applied to the closer edge too, placed
+   such a point before the next item's text when the fence ended its item and the last line carried trailing
+   whitespace, while the line feed right after the last character sat after it by adjacency, and the indented block's
+   point sat there on every tree before), and one at a table's first character after the text before the table under
+   the same rule or, at a top-level table's or one that begins an item, before the first header cell's first
+   character, and, that cell showing nothing, on its card (item 1); a point on a code line that shows no character (a
    blank line, one of whitespace alone) places in the line's own row, at its column among the row's whitespace or in
    the empty cell, through a per-line record on the Block (`CodeSpan` and `CodeLine`, `Emitter.codes`) and
    `renderedSpot`'s `blankCodeLineSpot`, which finds the row from the nearest line of the block that shows a character
@@ -4056,21 +4119,28 @@ departs from the text above, why, and which test holds each rule:
    card-only; and the folded trailing blank line behind blank and whitespace rows, two trailing blank lines in the one
    empty last row, the review's round 3; and the indent or marker before a nested fence's first line in that line's
    row, a list item's fence with a text or a blank first line and a quote's `> ` marker, the review's round 4) holds
-   it. A Raw quote spanning the delimiter row paints the header cells and the body cell either side of the row that
-   renders nothing, where Slice 5 pinned "paints nothing and the card keeps Reveal" (open question 5, the default: the
-   quote covers those cells). The fallback needle's quirks the Slice 5 note left (a `*` opening in one cell and
-   closing in another read as emphasis, a `>` lost at a quoted code line's start, a fence line's backticks dropped)
-   bite only on the quotes the fallback still serves: a fence line's, the delimiter row's, a cell the per-cell
-   fallback holds, a code block the placement could not read. The hole at a range's edge stays unpainted for the holes
-   that remain (a formula's zero text, a footnote reference's number, a callout's title, the front matter); tables and
-   code have left the rule's neighbourhood (open question 11, the default). anchor-map.test.ts (38, the fence's and
-   the table's deletion points place, the html block's and the blank line's stay unplaced),
-   anchor-map-rendered-points.test.ts (8, one new over a fenced block's points and the nested table's re-pin, one new
-   for the table's end, the review's round 3, and two new in its round 4: a table or a fence that begins a list item,
-   and a CRLF note's soft breaks and item endings outside code), anchor-map-boundary-points.test.ts (8, the cell's and
-   the fence's bare deletions place, the html block's stays card-only), anchor-map-block-edges.test.ts (5, the nested
-   fence's edge kept, now by the fence line's hole) and anchor-map-fallback-markup.test.ts (25, the delimiter-row
-   quote's cells) hold it.
+   it. anchor-map-block-edge-points.test.ts (6, new, the review's round 5: a fence's closer edge with trailing
+   whitespace on the last code line, in an ordered item, a fence item before a text item or a fence item, a sub-item's
+   fence before the outer item's text, the CRLF twin and an indented block, with the Files pane's rows and undressed,
+   the top-level, quote, same-item-text and last-item fences the controls; the trailing blank line undressed; two
+   tables, a table then a fence, a fence then a table and two fences in one item; a table of formulas or of pictures
+   alone, an entity first cell, a one-blank-line fence or an empty fence beginning an item, card-only, the blank
+   line's own point in its row; a formula-first, picture-first, empty or entity first header cell's table start,
+   card-only; and a hole cell's own edge points, round 4's rule) holds the round 5 rules. A Raw quote spanning the
+   delimiter row paints the header cells and the body cell either side of the row that renders nothing, where Slice 5
+   pinned "paints nothing and the card keeps Reveal" (open question 5, the default: the quote covers those cells). The
+   fallback needle's quirks the Slice 5 note left (a `*` opening in one cell and closing in another read as emphasis,
+   a `>` lost at a quoted code line's start, a fence line's backticks dropped) bite only on the quotes the fallback
+   still serves: a fence line's, the delimiter row's, a cell the per-cell fallback holds, a code block the placement
+   could not read. The hole at a range's edge stays unpainted for the holes that remain (a formula's zero text, a
+   footnote reference's number, a callout's title, the front matter); tables and code have left the rule's
+   neighbourhood (open question 11, the default). anchor-map.test.ts (38, the fence's and the table's deletion points
+   place, the html block's and the blank line's stay unplaced), anchor-map-rendered-points.test.ts (8, one new over a
+   fenced block's points and the nested table's re-pin, one new for the table's end, the review's round 3, and two new
+   in its round 4: a table or a fence that begins a list item, and a CRLF note's soft breaks and item endings outside
+   code), anchor-map-boundary-points.test.ts (8, the cell's and the fence's bare deletions place, the html block's
+   stays card-only), anchor-map-block-edges.test.ts (5, the nested fence's edge kept, now by the fence line's hole)
+   and anchor-map-fallback-markup.test.ts (25, the delimiter-row quote's cells) hold it.
 5. *Item 5, the display formula under a highlight takes a block class on its box* (open question 4, the default:
    built). A display formula is a block of its own line, which no inline mark can wrap (the pairing reads the root's
    children, and a mark between `.katex-display` and its `.katex` breaks KaTeX's layout), so a comment on `$$ ... $$`
@@ -4229,7 +4299,8 @@ departs from the text above, why, and which test holds each rule:
    Slice 5 note at 119), identical on main 696229f84; this note has none, so a width check over the whole plan flags
    lines no item of this slice wrote. Tests, by file (every new node test on the shim's stand-ins with `hideEdges`;
    every browser leg over headless Chromium and the real bundles, 0 skipped, counted on every run): anchor-map-cells
-   (17, new), anchor-map-cells-browser (5 legs, new), anchor-map-cells-formulas (4, new: the review's round 4),
+   (17, new), anchor-map-cells-browser (6 legs, new, the sixth the review's round 5), anchor-map-cells-formulas (6,
+   new: the review's rounds 4 and 5), anchor-map-block-edge-points (6, new: the review's round 5),
    anchor-map-code-lines (16, new), anchor-map-code-lines-browser (5 legs, new), anchor-map-blank-fence-points (6,
    new), anchor-map (38, six re-pinned and one re-titled), anchor-map-obsidian (31, four re-pinned, three new and the
    first-obstacle test re-titled), anchor-map-wrappers (38, six re-pinned), anchor-map-fallback-markup (25, one
@@ -4253,15 +4324,16 @@ departs from the text above, why, and which test holds each rule:
    tools/file-comments-host-anchors.test.mjs (15, one new), tests/test_file_comments_e2e.py (27, two new),
    tests/test_guide_files_cells_and_code_lines.py (8, new; one pin re-aimed at the shared `ONE_CELL` constant and its
    two refusals in the review's round 3, and at the round 4 offers, the pass's widened by a covered formula of the
-   same table and the covered formula's the table's covered cells' span),
-   tests/test_file_review_plan_boundary_points.py (12, two re-aimed with plans/file-review.md's follow-on note clause
-   and its Tests bullet, which say the deletion inside a fence or a cell, card-only before, places since this slice),
-   tests/test_markdown_viewer_plan_note_counts.py (5, new). Every case that changes behaviour fails over a `git
-   archive` of 6020e9309 (the head the branch was cut from; the base since the rebase, 696229f84, differs from it in
-   this plan and in reader-place.ts among the files the slice touches) and, where the file bundles there, of the
-   fork's main at the build, 213fde5fa, the review round 1's over one of c68f52212 (the build's head; cd3a06501 before
-   the rebase), the review round 2's over one of d8a55bb7e (round 1's fix commit), the review round 3's over one of
-   2136fa7d2 (round 2's fix commit), the review round 4's over one of 90c6ff242 (round 3's fix commit), and says how
+   same table and the covered formula's the table's covered cells' span, and in round 5 at the one rule both read,
+   `cellsRule`, counting the cells by source span), tests/test_file_review_plan_boundary_points.py (12, two re-aimed
+   with plans/file-review.md's follow-on note clause and its Tests bullet, which say the deletion inside a fence or a
+   cell, card-only before, places since this slice), tests/test_markdown_viewer_plan_note_counts.py (5, new). Every
+   case that changes behaviour fails over a `git archive` of 6020e9309 (the head the branch was cut from; the base
+   since the rebase, 696229f84, differs from it in this plan and in reader-place.ts among the files the slice touches)
+   and, where the file bundles there, of the fork's main at the build, 213fde5fa, the review round 1's over one of
+   c68f52212 (the build's head; cd3a06501 before the rebase), the review round 2's over one of d8a55bb7e (round 1's
+   fix commit), the review round 3's over one of 2136fa7d2 (round 2's fix commit), the review round 4's over one of
+   90c6ff242 (round 3's fix commit), the review round 5's over one of 8ae3fda02 (round 4's fix commit), and says how
    in its commit; the guards say they are guards. The guarantees the families re-verify: highlights are measured
    `<mark class="fc-hl">` elements over the range's text nodes with their data-act, id, tabIndex, role and title, the
    margin layout reading their boxes, plus one element that is not a mark, the stamped `.katex-display` box, which the

@@ -347,3 +347,78 @@ test("a selection whose characters are two cells holding a formula alone, and no
   const table = allOf(b4, "TABLE")[0];
   expectOneCell(M(b4, F4, { node: table, offset: 0 }, { node: table, offset: table.childNodes.length }), F4, "$h$ | $k$ |\n|---|---|\n| $x$ | $y$", "the table from its start to its end");
 });
+
+// ── item 3, the review's round 5: the one-cell rule counts a table's cells by SOURCE SPAN, wherever the drag's ends fall ──
+
+test("the one-cell rule counts the cells the selection's source span covers, a cell holding a formula alone among them, wherever the drag's ends fall (the review's round 5; round 4 counted such a cell only through a formula the selection covered at its START or its END, and the pass counted positioned characters, so a formula-only cell the span merely ran through was never counted and the offer stopped at the positioned characters): from the prose before a table through an all-formula header row into a body cell, `Intro para.` to the end of `a`, refuses on `$h$ | $k$ |\n|---|---|\n| a` (before: mapped, the pipes and the delimiter row inside the quote), from mid-paragraph and to mid-cell and the drag reversed the same, to the end of `b` on the whole row (before: refused with the offer `a | b`, the header's cells left out), and to the end of `After.` on the whole table; from a positioned header cell through an all-formula body row into the prose after, `B` to the end of `After.`, refuses on `B |\n|---|---|\n| $x$ | $y$` (before: mapped), `A` to the same on the whole table (before: the offer `A | B`); a whole table of formulas between two paragraphs refuses on the table (before: mapped, the table inside the quote); a positioned cell through a trailing formula-only cell into the prose after refuses on `fl-a | $n$` (before: mapped), and through two rows on `fb-d | fb-e | $n$` (before: the offer `fb-d | fb-e`); the prose before a formula-first header row into the second header cell refuses on `$m$ | FF2` (before: mapped) and into a body cell offers `$m$ | FF2 |\n|---|---|\n| ff-a` (before: `FF2 |\n|---|---|\n| ff-a`); a header-only table's positioned cell through its formula cell into the prose after refuses on `a | $x$` (before: mapped); two tables, the first's cell through the prose between into the second's positioned second cell, refuses on the second table's `$y$ | cee` (before: mapped); the controls, unchanged: the same drags over the text twins refuse as before, a formula-only last cell into the prose after maps, one cell alone maps, the pad before the first of two formula-only cells to the pad after the second refuses (round 4's pin), and one table's last cell into the next table's formula-only FIRST header cell maps, the recorded two-tables rule", () => {
+  const S1 = "Intro para.\n\n| $h$ | $k$ |\n|---|---|\n| a | b |\n\nAfter.\n";
+  const b1 = buildRendered(S1);
+  const t1 = allOf(b1, "TD");
+  const tA = t1[0].childNodes[0] as FakeText, tB = t1[1].childNodes[0] as FakeText;
+  assert.deepEqual([allOf(b1, "TH").map((t) => t.textContent), t1.map((t) => t.textContent)], [["h", "k"], ["a", "b"]]);
+  expectOneCell(M(b1, S1, point(b1, "Intro"), endOf(tA)), S1, "$h$ | $k$ |\n|---|---|\n| a", "Intro to the end of `a` under an all-formula header row (before: mapped `Intro para.\\n\\n| $h$ | $k$ |\\n|---|---|\\n| a`)");
+  expectOneCell(M(b1, S1, point(b1, "para."), endOf(tA)), S1, "$h$ | $k$ |\n|---|---|\n| a", "from mid-paragraph");
+  expectOneCell(M(b1, S1, point(b1, "Intro"), { node: tA, offset: 1 }), S1, "$h$ | $k$ |\n|---|---|\n| a", "to mid-cell (the offer clipped to the selected character)");
+  expectOneCell(M(b1, S1, endOf(tA), point(b1, "Intro")), S1, "$h$ | $k$ |\n|---|---|\n| a", "the drag reversed");
+  expectOneCell(M(b1, S1, point(b1, "Intro"), endOf(tB)), S1, "$h$ | $k$ |\n|---|---|\n| a | b", "to the end of `b`: the whole row in the offer (before: `a | b`, the header's formula cells left out)");
+  expectOneCell(M(b1, S1, point(b1, "Intro"), point(b1, "After.", true)), S1, "$h$ | $k$ |\n|---|---|\n| a | b", "to the end of `After.`: the whole table (before: `a | b`)");
+  const K1 = "Intro para.\n\n| h | k |\n|---|---|\n| a | b |\n\nAfter.\n";
+  const kb = buildRendered(K1);
+  expectOneCell(M(kb, K1, point(kb, "Intro"), endOf(allOf(kb, "TD")[0].childNodes[0] as FakeText)), K1, "h | k |\n|---|---|\n| a", "the text twin refuses as before");
+  const S2 = "Intro paragraph.\n\n| A | B |\n|---|---|\n| $x$ | $y$ |\n\nAfter.\n";
+  const b2 = buildRendered(S2);
+  expectOneCell(M(b2, S2, point(b2, "B"), point(b2, "After.", true)), S2, "B |\n|---|---|\n| $x$ | $y$", "`B` to the end of `After.` through an all-formula body row (before: mapped `B |\\n|---|---|\\n| $x$ | $y$ |\\n\\nAfter.`)");
+  expectOneCell(M(b2, S2, point(b2, "After.", true), point(b2, "B")), S2, "B |\n|---|---|\n| $x$ | $y$", "the drag reversed");
+  expectOneCell(M(b2, S2, point(b2, "A"), point(b2, "After.", true)), S2, "A | B |\n|---|---|\n| $x$ | $y$", "`A` to the end of `After.`: the whole table in the offer (before: `A | B`)");
+  expectOneCell(M(b2, S2, point(b2, "B"), point(b2, "After.")), S2, "B |\n|---|---|\n| $x$ | $y$", "`B` to the START of `After.`, the end snapping back beside `$y$`: refused before too, the control");
+  const x2 = allOf(b2, "TD");
+  expectOneCell(M(b2, S2, { node: x2[0], offset: 0 }, { node: x2[1], offset: x2[1].childNodes.length }), S2, "$x$ | $y$", "the pad before `$x$` to the pad after `$y$`: round 4's pin, unchanged");
+  const S3 = "Intro.\n\n| $h$ | $k$ |\n|---|---|\n| $x$ | $y$ |\n\nAfter.\n";
+  const b3 = buildRendered(S3);
+  expectOneCell(M(b3, S3, point(b3, "Intro"), point(b3, "After.", true)), S3, "$h$ | $k$ |\n|---|---|\n| $x$ | $y$", "a whole table of formulas between two paragraphs (before: mapped, the table inside the quote)");
+  const FL = "| FL1 | FL2 |\n|---|---|\n| fl-a | $n$ |\n\nAfter the formula-last table.\n";
+  const bl = buildRendered(FL);
+  expectOneCell(M(bl, FL, point(bl, "fl-a"), point(bl, "After the formula-last table.", true)), FL, "fl-a | $n$", "`fl-a` through the trailing formula-only cell into the prose after (before: mapped `fl-a | $n$ |\\n\\nAfter the formula-last table.`)");
+  assert.equal(ok(M(bl, FL, startOf(glyphsOf(allOf(bl, "TD")[1], "n")), point(bl, "After the formula-last table.", true)), "the `$n$` glyphs into the prose after").quote, "$n$ |\n\nAfter the formula-last table.", "a formula-only last cell into the prose after maps, the last-cell-into-prose rule");
+  assert.equal(ok(mapText(bl, FL, "fl-a"), "fl-a alone").quote, "fl-a", "one cell alone maps");
+  const TX = "| FL1 | FL2 |\n|---|---|\n| fl-a | tx |\n\nAfter the text-last table.\n";
+  const bx = buildRendered(TX);
+  expectOneCell(M(bx, TX, point(bx, "fl-a"), point(bx, "After the text-last table.", true)), TX, "fl-a | tx", "the text twin refuses as before");
+  const FB = "| FB1 | FB2 | FB3 |\n|---|---|---|\n| fb-a | $m$ | fb-c |\n| fb-d | fb-e | $n$ |\n\nAfter the formula-body table.\n";
+  const bb = buildRendered(FB);
+  expectOneCell(M(bb, FB, point(bb, "fb-e"), point(bb, "After the formula-body table.", true)), FB, "fb-e | $n$", "`fb-e` through `$n$` into the prose after (before: mapped)");
+  expectOneCell(M(bb, FB, point(bb, "fb-d"), point(bb, "After the formula-body table.", true)), FB, "fb-d | fb-e | $n$", "`fb-d` to the prose after: the offer reaches the formula-only cell (before: `fb-d | fb-e`)");
+  const FF = "Before the formula-first table.\n\n| $m$ | FF2 |\n|---|---|\n| ff-a | ff-b |\n";
+  const bf = buildRendered(FF);
+  expectOneCell(M(bf, FF, point(bf, "Before"), point(bf, "FF2", true)), FF, "$m$ | FF2", "the prose before into the second header cell over a formula-first one (before: mapped `Before the formula-first table.\\n\\n| $m$ | FF2`)");
+  expectOneCell(M(bf, FF, point(bf, "Before"), point(bf, "ff-a", true)), FF, "$m$ | FF2 |\n|---|---|\n| ff-a", "the prose before into a body cell: the offer begins at the formula-only first cell (before: `FF2 |\\n|---|---|\\n| ff-a`)");
+  const Q1 = "Intro\n\n| a | $x$ |\n|---|---|\n\nAfter the table.\n";
+  const bq = buildRendered(Q1);
+  expectOneCell(M(bq, Q1, point(bq, "a"), point(bq, "After the table.", true)), Q1, "a | $x$", "a header-only table's positioned cell through its formula cell into the prose after (before: mapped `a | $x$ |\\n|---|---|\\n\\nAfter the table.`)");
+  const Q4 = "| aaa |\n|---|\n\nmid sentence.\n\n| $y$ | cee |\n|---|---|\n";
+  const b4 = buildRendered(Q4);
+  expectOneCell(M(b4, Q4, point(b4, "aaa"), point(b4, "cee", true)), Q4, "$y$ | cee", "one table's cell through the prose between into the next table's positioned SECOND cell: the second table's two cells refuse on its span (before: mapped `aaa |\\n|---|\\n\\nmid sentence.\\n\\n| $y$ | cee`)");
+  expectOneCell(M(b4, Q4, point(b4, "mid"), point(b4, "cee", true)), Q4, "$y$ | cee", "the prose between into that cell: the same");
+  assert.equal(ok(M(b4, Q4, point(b4, "aaa"), endOf(glyphsOf(allOf(b4, "TH")[1], "y"))), "aaa to the end of the `$y$` glyphs").quote, "aaa |\n|---|\n\nmid sentence.\n\n| $y$", "one table's last cell into the next table's formula-only FIRST header cell maps, the recorded two-tables rule");
+});
+
+test("the one-cell rule counts a cell holding a picture alone by its source span too (the review's round 5; a picture emits no character and is no formula, so neither count saw the cell): a positioned cell through a trailing picture-only cell into the prose after refuses on `pl-a | ![p](x.png)` (before: mapped, the pipe and the raw image markup inside the quote), the prose before a picture-only header row into a body cell refuses on the header's cells through the body cell (before: mapped), a header cell through a picture-first body cell into the next refuses as before; the controls: one cell alone maps, the drag to the cell pad past the picture maps the positioned cell alone (the span is the positioned characters'), and an EMPTY trailing cell has no record and is not counted (recorded)", () => {
+  const PL = "| PL1 | PL2 |\n|-----|-----|\n| pl-a | ![p](x.png) |\n\nAfter the picture-last table.\n";
+  const bl = buildRendered(PL);
+  const tl = allOf(bl, "TD");
+  assert.deepEqual(tl.map((t) => shape(t)), [["#text(pl-a)"], ["IMG."]], "the picture cell holds the image alone");
+  expectOneCell(M(bl, PL, point(bl, "pl-a"), point(bl, "After the picture-last table.", true)), PL, "pl-a | ![p](x.png)", "`pl-a` through the picture-only cell into the prose after (before: mapped `pl-a | ![p](x.png) |\\n\\nAfter the picture-last table.`)");
+  expectOneCell(M(bl, PL, point(bl, "PL2"), point(bl, "pl-a", true)), PL, "PL2 |\n|-----|-----|\n| pl-a", "the header cell into `pl-a`: refused as before");
+  assert.equal(ok(mapText(bl, PL, "pl-a"), "pl-a alone").quote, "pl-a");
+  assert.equal(ok(M(bl, PL, point(bl, "pl-a"), { node: tl[1], offset: tl[1].childNodes.length }), "pl-a to the pad past the picture").quote, "pl-a", "the drag to the cell pad past the picture selects no character of that cell: one cell maps");
+  const PH = "Before the picture-header table.\n\n| ![p](x.png) | ![q](y.png) |\n|---|---|\n| ph-a | ph-b |\n\nAfter the picture-header table.\n";
+  const bh = buildRendered(PH);
+  expectOneCell(M(bh, PH, point(bh, "Before"), point(bh, "ph-a", true)), PH, "![p](x.png) | ![q](y.png) |\n|---|---|\n| ph-a", "the prose before through a picture-only header row into `ph-a` (before: mapped, two pictures, two pipes and the delimiter row inside the quote)");
+  expectOneCell(M(bh, PH, point(bh, "ph-a"), point(bh, "ph-b", true)), PH, "ph-a | ph-b", "two body cells: refused as before");
+  const PF = "| PF1 | PF2 |\n|---|---|\n| ![p](x.png) | pf-b |\n\nAfter the picture-first table.\n";
+  const bf = buildRendered(PF);
+  expectOneCell(M(bf, PF, point(bf, "PF2"), point(bf, "pf-b", true)), PF, "PF2 |\n|---|---|\n| ![p](x.png) | pf-b", "a header cell through the picture-first body cell into `pf-b`: refused as before, the picture inside the offer");
+  const EL = "| EL1 | EL2 |\n|-----|-----|\n| el-a |  |\n\nAfter the empty-last table.\n";
+  const be = buildRendered(EL);
+  assert.equal(ok(M(be, EL, point(be, "el-a"), point(be, "After the empty-last table.", true)), "el-a into the prose after").quote, "el-a |  |\n\nAfter the empty-last table.", "an empty trailing cell has no record: one cell and the prose after map, the recorded rule");
+});

@@ -21,8 +21,13 @@
 // sentence and Switch to Raw preselects `$h$ | $k$`, the table's covered cells (before: the composer quoted `Intro para. |
 // $h$ | $k$` with Save, the pipe between two cells inside a Rendered quote, since a cell holding a formula alone had no record
 // and the count never saw two), while a drag to past the first formula's glyphs maps `Intro para.\n\n| $h$`, one cell and the
-// prose before it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
-// only: an invented note, /repo/notes-api paths, the placeholder sid.
+// prose before it. A leg of the review's round 5 serves a note with a table whose last body cell is a picture alone and one whose
+// last body cell is a formula alone (the real KaTeX fill): a real drag from the positioned cell beside either into the paragraph
+// after the table is refused with the one-cell sentence and Switch to Raw preselects the two cells, `pl-a | ![p](x.png)` and
+// `fl-a | $n$` (before: the composer quoted the cells with the pipe and the prose after them, Save offered, and the save posted
+// that quote, since a cell that emits no positioned character was counted only through a formula at the drag's end), while a
+// drag over the positioned cell alone maps it. Skips LOUDLY without a playwright browser (CI installs none), as the other browser
+// legs do. Synthetic values only: an invented note, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -436,6 +441,62 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
     await frames(page, 2);
     const c3 = await composerState(page);
     assert.deepEqual([c3.open, c3.refused, c3.quote, c3.save], [true, null, "Intro para. | $h$", true], "one cell and the prose before it map, the formula with its delimiters inside the quote: " + JSON.stringify(c3));
+    await page.click('.fc-composer [data-act="fccancel"]');
+    await frames(page, 2);
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
+  });
+});
+
+// ── the Slice 8 review, round 5: a picture-only or formula-only cell the drag runs THROUGH, counted by its source span ──
+const EDGE_CELLS = "Intro para.\n\n| PL1 | PL2 |\n|-----|-----|\n| pl-a | ![p](x.png) |\n\nAfter the picture-last table.\n\n| FL1 | FL2 |\n|-----|-----|\n| fl-a | $n$ |\n\nAfter the formula-last table.\n";
+
+test("in a browser, the real viewer and panel on the Files pane over a table whose last body cell is a picture alone and one whose last body cell is a formula alone, rendered by the real KaTeX fill: a REAL drag from the positioned cell beside either into the paragraph after the table is refused with the one-cell sentence, the Raw button promising the passage, and Switch to Raw preselects the two cells, `pl-a | ![p](x.png)` and `fl-a | $n$`, with the composer quoting them and Save offered (the review's round 5; before: the composer quoted the cells with the pipe between them and the prose after, Save offered, and the save posted that quote, since a cell emitting no positioned character was counted only through a formula at the drag's end and the pass counted positioned characters); a drag over the positioned cell alone maps it, the control", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
+    const errors: string[] = [];
+    page.on("pageerror", (e: Error) => { errors.push(e.message); });
+    const html = pageHtml("pane", { [REPORT]: EDGE_CELLS }, MT);
+    await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+    await page.goto(ORIGIN + "/");
+    await page.evaluate(([p, sid, st]: [string, string, unknown]) => { (window as any).__status = st; (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID, withComments([], 0)]);
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-md table .katex .katex-html").length === 1 && !document.querySelector(".fileview-md .md-math-inline"), null, { timeout: 10000 });
+    await frames(page, 2);
+    await openPanel(page);
+    const cells = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md td")).map((c) => [(c.textContent || "").trim(), c.querySelectorAll("img").length, c.querySelectorAll(".katex").length]));
+    assert.deepEqual(cells, [["pl-a", 0, 0], ["", 1, 0], ["fl-a", 0, 0], ["n", 0, 1]], "the two tables' body cells: a positioned cell, then a picture alone; a positioned cell, then a formula alone");
+    for (const [label, start, end, span] of [["the picture-last table", "pl-a", "After the picture-last table.", "pl-a | ![p](x.png)"], ["the formula-last table", "fl-a", "After the formula-last table.", "fl-a | $n$"]] as const) {
+      const selected = await dragRendered(page, start, end);
+      assert.ok(selected.startsWith(start) && selected.endsWith(end), label + ": the drag selected the cell and the paragraph after: " + JSON.stringify(selected));
+      await floatShown(page);
+      await page.click(".fc-float");
+      await frames(page, 2);
+      const c1 = await composerState(page);
+      assert.equal(c1.open, true, label + ": the composer opens");
+      assert.equal(c1.refused, ONE_CELL, label + ": the one-cell sentence (before: no refusal, the quote with the pipe and the prose after, Save offered): " + JSON.stringify(c1));
+      assert.equal(c1.rawTitle, "Raw view, with this passage selected", label + ": the Raw button promises the passage");
+      assert.equal(c1.save, null, label + ": no Save under the refusal");
+      await page.click('.fc-composer [data-act="fcraw"]');
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+      await frames(page, 3);
+      const p = await preselRead(page);
+      assert.equal(squash(p.text), squash(span), label + ": the Raw view preselects the two cells, the pipe between them, and not the prose: " + JSON.stringify(p));
+      assert.equal(p.rows, 1, label + ": one row");
+      const c2 = await composerState(page);
+      assert.deepEqual([c2.refused, c2.quote, c2.save], [null, span, true], label + ": the refusal is answered, the composer quotes the span, Save is offered from Raw");
+      await page.click('.fc-composer [data-act="fccancel"]');
+      await frames(page, 2);
+      await toRendered(page);
+    }
+    // the control: the positioned cell alone maps
+    const one = await dragRendered(page, "pl-a", "pl-a");
+    assert.equal(one, "pl-a", "the drag selected the cell alone");
+    await floatShown(page);
+    await page.click(".fc-float");
+    await frames(page, 2);
+    const c3 = await composerState(page);
+    assert.deepEqual([c3.open, c3.refused, c3.quote, c3.save], [true, null, "pl-a", true], "one cell maps: " + JSON.stringify(c3));
     await page.click('.fc-composer [data-act="fccancel"]');
     await frames(page, 2);
     assert.deepEqual(errors, [], "no script error");

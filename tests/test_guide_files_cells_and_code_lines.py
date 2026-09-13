@@ -127,31 +127,34 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertIn("walkCode(t as Tokens.Code, view.sub(p, p + raw.length), em);", self.am)
 
     def test_a_selection_across_two_cells_is_refused_with_the_raw_view_offered_on_the_span(self):
-        # one constant since the Slice 8 review's round 3, when the rule gained a second refusal: the pass's, over the cells the
-        # selection's positioned characters lie in, and the one over a covered formula's widened span (a cell holding a formula
-        # alone emits no character); both offer the Raw view on the exact span of the table's covered cells: since the review's
-        # round 4 the pass's span is widened by a formula the selection covered whole inside the same table, and the covered
-        # formula's is the first covered cell's start through the last's end (round 3 offered the whole widened span, the same
-        # span for its shapes, which lay inside the table)
+        # one constant since the Slice 8 review's round 3, when the rule gained a second reading: the pass's, over the cells of every
+        # table in the span's blocks, and the one over a covered formula's table the pass does not reach (coveredCells, for a table
+        # with no positioned character in the selection, and for a selection whose characters are the covered formulas alone); since
+        # the review's round 5 both read ONE rule (cellsRule) that counts the table's cells by SOURCE SPAN against the selection's
+        # span, widened by a formula the selection covered whole at either end, so a cell that emits no positioned character (a
+        # formula alone, a picture alone) counts wherever the drag's ends fell, and both offer the Raw view on the exact span of the
+        # table's covered cells, the first covered cell's start through the last's end, clipped to the selection's (round 4 had the
+        # pass count positioned characters and widen its own offer; round 3 offered the whole widened span)
         self.assertIn('const ONE_CELL = "%s";' % ONE_CELL, self.am, "the one-cell rule's sentence, the constant its refusals share")
         offers = re.findall(r"refuse\(ONE_CELL,\s*\{(.*?)\}\s*\);", self.am, re.S)
-        self.assertEqual(len(offers), 2, "the pass's refusal and the covered formula's, each with an offer")
-        for offer in offers:
-            self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
-            self.assertIn("rawRange: { start: s, end: e }", offer, "the exact span, the table's covered cells")
-            self.assertIn("blockStartOffset: s", offer, "the panel's search for the span begins at the span, not at the table")
-        # the pass's span takes in a covered formula of the same table (the loop right before its refusal); the covered
-        # formula's (coveredCells, defined earlier in the function) is clipped to the table's cells
-        pass_offer = self.am[self.am.index("for (const tb of blk.tables) {"):]
-        pass_offer = pass_offer[:pass_offer.index("refuse(ONE_CELL, {")]
-        self.assertIn("if (span.start < s) s = span.start;", pass_offer, "the pass's start widens to a covered formula before it")
-        self.assertIn("if (span.end > e) e = span.end;", pass_offer, "...and its end to one after it")
-        self.assertIn("if (hs < ts || hs >= te) continue;", pass_offer, "a formula in another table is not this offer's")
-        covered = self.am[self.am.index("const coveredCells = (start: number, end: number): MapRefusal | null => {"):]
-        covered = covered[:covered.index("refuse(ONE_CELL, {")]
-        self.assertIn("const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));", covered,
-                      "the covered formula's offer: the first covered cell's start through the last's end")
-        self.assertIn("if (cells.length < 2) continue;", covered, "two or more of the table's cells in the span refuse")
+        self.assertEqual(len(offers), 1, "one refusal, cellsRule's, read by the pass and by the covered formula's check")
+        offer = offers[0]
+        self.assertIn("rawHasQuote: true", offer, "the Raw view is offered on the span, so Save works from Raw")
+        self.assertIn("rawRange: { start: s, end: e }", offer, "the exact span, the table's covered cells")
+        self.assertIn("blockStartOffset: s", offer, "the panel's search for the span begins at the span, not at the table")
+        rule = self.am[self.am.index("const cellsRule = (blk: Block, tb: TableSpan, start: number, end: number): MapRefusal | null => {"):]
+        rule = rule[:rule.index("refuse(ONE_CELL, {")]
+        self.assertIn(".filter((x) => nOf(idx, x.startN) < end && nOf(idx, x.endN) > start);", rule, "the cells are counted by source span against the selection's")
+        self.assertIn("if (cells.length < 2) return null;", rule, "two or more of the table's cells in the span refuse")
+        self.assertIn("const s = Math.max(start, nOf(idx, cells[0].startN)), e = Math.min(end, nOf(idx, cells[cells.length - 1].endN));", rule,
+                      "the offer: the first covered cell's start through the last's end, clipped to the selection's span")
+        # the pass reads the rule for every table of the block against the selection's span there, widened by the covered formulas;
+        # the covered formula's check reads it for the formula's table
+        self.assertIn("const sp = widened(b === bs ? nOf(idx, blk.pos[from]) : -Infinity, b === be ? nOf(idx, blk.pos[to - 1]) + 1 : Infinity);", self.am,
+                      "the pass's span in the block: its first positioned character's offset in the first block, its last's plus one in the last, the block's whole extent between")
+        self.assertIn("for (const tb of blk.tables) { const r = cellsRule(blk, tb, sp.start, sp.end); if (r) return r; }", self.am, "every table of the block against that span")
+        self.assertIn("const r = tb ? cellsRule(fh.blk, tb, start, end) : null;", self.am, "the covered formula's table against the widened span")
+        self.assertNotIn("if (x.startK < t && x.endK > f) hit++;", self.am, "the count over positioned characters, round 4's, is gone")
 
     def test_a_formula_touched_from_rendered_is_refused_in_the_same_shape(self):
         self.assertIn('const FORMULA_TOUCHED = "%s";' % FORMULA_TOUCHED, self.am)
