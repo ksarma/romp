@@ -211,7 +211,7 @@ export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number)
 // from the attribute alone). A caller may bracket the apply (the third argument; the identity default runs it bare): both
 // viewers read the reader's place before it and seat it after, and the local viewer's bracket also re-places the comments
 // panel's cards (the seam's reflow).
-function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (apply: () => void) => void = (apply) => apply()): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
+function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (apply: () => void, keyboard: boolean) => void = (apply) => apply()): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
   let pct = loadTextSize();
   const down = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
   down.type = "button"; down.textContent = "A−"; down.title = "Smaller text (Ctrl/Cmd + wheel)";
@@ -233,11 +233,15 @@ function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (a
     atEnd(up, pct === TEXT_SIZES[TEXT_SIZES.length - 1]);
   };
   apply();                                                    // on the root before the bytes land: the first paint is at size
-  // one step: store it and apply it; a step that changes nothing (an end of the table, a reset at the default) does nothing
-  const set = (n: number) => { if (n === pct) return; pct = n; saveTextSize(n); step(apply); };
-  down.addEventListener("click", () => set(stepTextSize(pct, -1)));
-  up.addEventListener("click", () => set(stepTextSize(pct, 1)));
-  reset.addEventListener("click", () => set(TEXT_SIZE_DEFAULT));
+  // one step: store it and apply it; a step that changes nothing (an end of the table, a reset at the default) does nothing.
+  // `keyboard`: the step came from a key on the focused button (Enter, Space: the browser's synthesized click carries
+  // detail 0, a pointer's click its count), which the viewer's keyboard rule reads (openFileView takeKeyboard): a keyboard
+  // user pressing A+ three times must find the button still under the focus for the second and third press
+  // (file-view-text-size.test.ts); a pointer's step and a wheel step hand the keyboard to the body.
+  const set = (n: number, keyboard = false) => { if (n === pct) return; pct = n; saveTextSize(n); step(apply, keyboard); };
+  down.addEventListener("click", (e) => set(stepTextSize(pct, -1), e.detail === 0));
+  up.addEventListener("click", (e) => set(stepTextSize(pct, 1), e.detail === 0));
+  reset.addEventListener("click", (e) => set(TEXT_SIZE_DEFAULT, e.detail === 0));
   // Ctrl/Cmd + wheel over the BODY (not the bar): the browser's page zoom is the same gesture, so it is taken
   // over the viewer's text only, and only with the modifier held over a text body; a plain wheel scrolls as
   // ever, and the keyboard's Ctrl+plus/minus stays the browser's. Non-passive, so the page zoom can be
@@ -981,7 +985,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.type = "button";
       b.textContent = mode === "rendered" ? "Rendered" : "Raw";
       b.title = mode === "rendered" ? "The prose the markdown means" : "The file's actual bytes";
-      b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); });
+      b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); takeKeyboard(); });   // the paint, then the keyboard (takeKeyboard: the button holds it)
       segBtns.push([mode, b]);
       acts.appendChild(b);
     }
@@ -1002,10 +1006,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // new information (CLAUDE.md), and no paint happened (the factory's set returns before the bracket on an unchanged step).
   // textShowing, the predicate the control and the bracket read, is declared below with the seam (its media gate is the
   // clause upstream's lacks); the thunks defer the reads to the first paint and the first press.
-  const textSize = textSizeControl(box, () => textShowing(), (apply) => {
+  const textSize = textSizeControl(box, () => textShowing(), (apply, keyboard) => {
     const kept = textShowing() ? keptPlace() : null;   // the top block before the text grows or shrinks around it
     apply();
-    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); }
+    if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); if (!keyboard) takeKeyboard(); }   // then the keyboard, after the seat: a pointer's or a wheel's step hands it to the body (a wheel step leaves a mark that holds it); a key on the button keeps it there, so the next press steps again
   });
   for (const b of textSize.buttons) acts.appendChild(b);
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
@@ -1017,11 +1021,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   srcBtn.addEventListener("click", () => {
     if (svgText === null) {
       if (!mediaBlob) return;
-      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); });
+      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); takeKeyboard(); });
       return;
     }
     svgSource = !svgSource;
     renderBody();
+    takeKeyboard();
   });
   acts.appendChild(srcBtn);
 
@@ -1082,12 +1087,37 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  // A Tab stop, so the scroll box can hold the keyboard (plans/markdown-viewer.md Slice 6, item 1): PageDown, Space, the
+  // arrows, Home and End then scroll it natively, and takeKeyboard below gives it the keyboard after a paint the reader asked
+  // for. Set once per open and never touched again: the Comments panel's press-time strip (file-comments.ts pressedMarks)
+  // takes the tabindex off the MARKS it walks up from a press, never off this body, so the attribute stands through a press
+  // and a press inside the body lands the browser's focus here, the nearest focusable ancestor, where it used to fall to
+  // the document's body (file-view-focus-body-browser.test.ts reads both mid-press).
+  body.tabIndex = 0;
   // A fetch landing rebuilds the body with no gesture of the reader's behind it (a reload the Comments panel's poll asked
   // for after a session's write). A press under way on a fence's Copy, or anywhere in the body, must outlive that swap: a
   // pressed node removed before the mouseup dispatches no click at all (actions.ts, the header), so the landing waits while
   // a pointer is pressed over the body and runs on the release (ui/CLAUDE.md, click-safe option 2;
   // file-view-copy-held-browser.test.ts). The reader's own paints (a view swap, the editor) follow clicks already released.
   const hold = pressHold(body);
+  // ── the keyboard (plans/markdown-viewer.md Slice 6, item 1) ── The body takes the keyboard after a paint the reader did
+  // not type through: the open's first landing (keyboardOnLanding, text or media, spent once) and a paint the reader asked
+  // for from the viewer's own chrome (the Rendered/Raw toggle, a text-size step, the SVG Source toggle). The gate is who
+  // holds the keyboard at that moment, read from document.activeElement and never from a flag: nothing, the document's body,
+  // or a control in the viewer's own bar (the button whose click caused the paint) yields to the body; anything else keeps
+  // it: the chat's composer, the Comments panel's boxes and controls in the aside, the editor's textarea or CodeMirror (the
+  // editor owns the body while it is up), a highlight or a card, a link inside the body, an element outside the card. A
+  // reload's landing (the panel's poll asked it), the panel's own repaints (setMode) and a settings pick never call this:
+  // the reader may be tabbed onto a mark or typing. preventScroll: the seat has placed the body and the focus must not move
+  // it. Escape still closes through the document's onKey below, from the body as from the document's body.
+  const takeKeyboard = (): void => {
+    if (editing || !wrap.isConnected) return;
+    const a = document.activeElement;
+    if (a && a !== document.body && !bar.contains(a)) return;
+    body.focus({ preventScroll: true });
+  };
+  let keyboardPending = true;                          // the open's first landing takes the keyboard; a reload's does not
+  const keyboardOnLanding = (): void => { if (!keyboardPending) return; keyboardPending = false; takeKeyboard(); };
   // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the sibling file in
   // this same viewer, and its `[top](#evidence)` links land on their heading: mdBlock's file kind sorts every anchor
   // through file-view-links.ts (a path link with the joined path, a section link, a dead link that says why), and
@@ -2240,6 +2270,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         }
         svgText = null;   // any decode on hand was the OLD bytes': the next Source toggle decodes this blob
         renderBody();
+        keyboardOnLanding();                     // the open's first paint (a picture, a PDF frame): the body takes the keyboard
         return;
       }
       text = t;
@@ -2247,6 +2278,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
+      keyboardOnLanding();                       // the open's first paint: the body takes the keyboard (never a reload's landing)
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)

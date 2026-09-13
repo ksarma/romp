@@ -1550,6 +1550,12 @@ a.fileview-gh-note { border-style: dashed; }
    playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
 @property --fv-body-w { syntax: "*"; inherits: false; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* the body is a Tab stop and takes the keyboard after the open's first paint (file-view.ts takeKeyboard; Slice 6 of
+   plans/markdown-viewer.md): no ring for the focus a paint gave it (a frame around the whole scroll box on every open would
+   read as an error), the accent ring when the keyboard reached it (a Tab from the bar), inset so the scrollbar keeps its edge.
+   Mirrored in feed.css; fileview-parity.test.ts holds both rules byte-equal. */
+.fileview-body:focus { outline: none; }
+.fileview-body:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
    and because they are a sibling element a selection of the code copies without dragging them along */
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }

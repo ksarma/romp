@@ -28,8 +28,11 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string; ctrlKey: boolean; metaKey: boolean;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) {
+  deltaY: number; deltaMode: number;             // a wheel's (the text-size step over the body, textSizeControl bindWheel)
+  detail: number;                                // a click's count: 0 for the click a key synthesizes on a button, as the browser sets it
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; deltaY?: number; deltaMode?: number; detail?: number } = {}) {
     this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey;
+    this.deltaY = init.deltaY || 0; this.deltaMode = init.deltaMode || 0; this.detail = init.detail ?? 0;
     hideEdges(this);
   }
   preventDefault(): void { this.defaultPrevented = true; }
@@ -80,6 +83,7 @@ class El {
   style: Record<string, string> = {};
   onclick: ((ev: Ev) => void) | null = null;
   scrolled = 0;                                  // scrollIntoView calls (scrollToOffset's visible effect)
+  focused = 0;                                   // focus() calls (takeKeyboard's visible effect; Slice 6 of plans/markdown-viewer.md, item 1)
   constructor(tag: string) {
     this.tagName = tag.toUpperCase();
     Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false, configurable: true });
@@ -109,7 +113,10 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
+  set textContent(v: string) { for (const c of this.childNodes) { this.dropFocusIn(c); c.parentNode = null; } this.childNodes.length = 0; if (v !== "") this.appendChild(new Txt(v)); }
+  /** The browser's focus fixup: a removed subtree that held the active element leaves the keyboard on the document's body
+   *  (so a paint that rebuilds a focused mark reads here as it does in Chromium; the keyboard cases below). */
+  private dropFocusIn(n: El | Txt): void { if (n instanceof El && doc.activeElement && n.contains(doc.activeElement)) doc.activeElement = doc.body; }
   private detach(n: El | Txt): void { const p = n.parentNode; if (p) { const i = p.childNodes.indexOf(n); if (i >= 0) p.childNodes.splice(i, 1); n.parentNode = null; } }
   appendChild<T extends El | Txt>(n: T): T { this.detach(n); this.childNodes.push(n); n.parentNode = this; return n; }
   prepend(...ns: Array<El | Txt>): void { for (const n of ns.slice().reverse()) { this.detach(n); this.childNodes.unshift(n); n.parentNode = this; } }
@@ -119,9 +126,9 @@ class El {
     const i = this.childNodes.indexOf(ref);
     this.childNodes.splice(i < 0 ? this.childNodes.length : i, 0, n); n.parentNode = this; return n;
   }
-  removeChild<T extends El | Txt>(n: T): T { this.detach(n); return n; }
-  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) x.parentNode = null; this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
-  remove(): void { this.detach(this); }
+  removeChild<T extends El | Txt>(n: T): T { this.dropFocusIn(n); this.detach(n); return n; }
+  replaceChildren(...c: Array<El | Txt>): void { for (const x of this.childNodes) { this.dropFocusIn(x); x.parentNode = null; } this.childNodes.length = 0; for (const x of c) this.appendChild(x); }
+  remove(): void { this.dropFocusIn(this); this.detach(this); }
   normalize(): void {   // unpainting a mark leaves adjacent text nodes; join them, as the browser does
     const out: Array<El | Txt> = [];
     for (const c of this.childNodes) {
@@ -163,7 +170,9 @@ class El {
   }
   dispatchEvent(ev: Ev): boolean { return dispatch(this, ev); }
   click(): void { this.dispatchEvent(new Ev("click")); }
-  focus(): void { doc.activeElement = this; }
+  focus(): void { this.focused++; doc.activeElement = this; }
+  get tabIndex(): number { const v = this.attrs.get("tabindex"); return v === undefined ? -1 : Number(v); }   // reflects the attribute, as the browser's does
+  set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   blur(): void { if (doc.activeElement === this) doc.activeElement = null; }
   scrollIntoView(): void { this.scrolled++; }
   getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
@@ -1321,4 +1330,121 @@ test("a stand-in node enumerates its primitives alone, so a failing assertion's 
   assert.ok(child.parentNode === root && root.childNodes[0] === child && root.textContent === "alphabeta", "the tree is reachable as before");
   // the file's own Ev hides target and currentTarget the same way (hideEdges(this) at the end of its constructor)
   assertHiddenEvent(new Ev("click"), root, child);
+});
+
+// ── the keyboard (plans/markdown-viewer.md Slice 6, item 1) ────────────────────────────────────────
+// openFileView's takeKeyboard: the body is a Tab stop (tabindex 0) and takes the keyboard after the open's first landing and
+// after a paint the reader asked for from the viewer's own chrome (the Rendered/Raw toggle, a text-size step, the SVG
+// Source toggle), and only when nothing, the document's body or a control in the viewer's bar held it at that moment; a
+// reload's landing and the panel's setMode never call it. The stand-in's focus() sets doc.activeElement and counts
+// (El.focused); its tabIndex reflects the attribute; a removed subtree that held the active element drops the keyboard to
+// doc.body (dropFocusIn), the browser's focus fixup, so a toggle's repaint over a focused mark reads as it does in Chromium.
+// The press-time reading (a press inside the body lands on the body, the nearest focusable ancestor, where it fell to the
+// document's body before; the variant of path-links-pointer-focus.test.ts's pin the brief asked for) needs a browser's
+// own focus rules and the in-file link pass's TreeWalker, which this stand-in lacks: file-view-focus-body-browser.test.ts
+// reads it over the real viewer. Before item 1: no tabindex on the body and no focus call anywhere in the open (red at the
+// first assertion of each case over a git archive of the base).
+test("the body is a Tab stop and takes the keyboard at the open's first landing when the document's body, or nothing, held it; a reload's landing never focuses; the Rendered/Raw toggle's paint refocuses the body when its button held the keyboard; the panel's setMode takes nothing", async (t) => {
+  doc.activeElement = doc.body;
+  t.after(() => { doc.activeElement = null; });
+  const { ctx, body, b } = await open(REPORT, t);
+  assert.equal(body.getAttribute("tabindex"), "0", "the body carries tabindex 0 after the open");
+  assert.equal(body.tabIndex, 0);
+  assert.equal(doc.activeElement, body, "the first landing focused the body (the document's body held the keyboard)");
+  assert.equal(body.focused, 1, "one focus call");
+  const painted = paints;
+  ctx.reload(); await settle();
+  assert.equal(paints, painted + 1, "the reload landed and painted");
+  assert.equal(body.focused, 1, "a reload's landing calls focus on nothing (the reader may be tabbed onto a mark or typing)");
+  // the toggle: the pressed button holds the keyboard (a browser focuses a clicked button), and the paint hands it on
+  doc.activeElement = b.raw;
+  b.raw.click();
+  assert.equal(doc.activeElement, body, "the Raw paint moved the keyboard from the toggle button to the body");
+  assert.equal(body.focused, 2);
+  doc.activeElement = null;
+  b.rendered.click();
+  assert.equal(doc.activeElement, body, "with nothing focused the Rendered paint takes it too");
+  assert.equal(body.focused, 3);
+  // the panel's own switch is not the reader's gesture
+  doc.activeElement = doc.body;
+  ctx.setMode("raw");
+  assert.equal(ctx.mode(), "raw");
+  assert.equal(doc.activeElement, doc.body, "setMode paints without taking the keyboard");
+  assert.equal(body.focused, 3);
+  // and Escape from the focused body closes, through the document's handler, as from the document's body
+  doc.activeElement = body;
+  const esc = new Ev("keydown", { key: "Escape" });
+  body.dispatchEvent(esc);
+  assert.equal(doc.getElementById("romp-fileview"), null, "Escape with the body focused closed the viewer");
+  assert.equal(esc.defaultPrevented, true);
+});
+
+test("the keyboard stays where it is when something else holds it: a control outside the card at the first landing and at a toggle, the aside's box at a toggle, a mark under a text-size step from the wheel, the editor's textarea; a mark a toggle's repaint removes drops the keyboard to the document's body, and the body takes it, as in a browser", async (t) => {
+  const outside = doc.body.appendChild(new El("button"));
+  doc.activeElement = outside;
+  t.after(() => { outside.remove(); doc.activeElement = null; store.delete("romp:fileviewTextSize"); });
+  const o = await open(REPORT, t);
+  const { ctx, body, b } = o;
+  assert.equal(doc.activeElement, outside, "a control outside the card kept the keyboard through the first landing");
+  assert.equal(body.focused, 0);
+  b.raw.click();
+  assert.equal(doc.activeElement, outside, "…and through a toggle's paint");
+  assert.equal(body.focused, 0);
+  // a box inside the aside (the Comments panel's composer, retargeted across a paint, never rebuilt): a toggle's paint leaves it
+  const aside = new El("div"); const box = aside.appendChild(new El("textarea"));
+  ctx.aside(aside as unknown as HTMLElement); await settle();
+  doc.activeElement = box;
+  b.rendered.click();
+  assert.equal(doc.activeElement, box, "the aside's box kept the keyboard through the Rendered paint");
+  assert.equal(body.focused, 0);
+  // a mark (a comment's highlight: role button, a Tab stop, inside the body) under a text-size step from the wheel: the
+  // step rebuilds nothing, so the mark stands and keeps the keyboard
+  const md = body.querySelector(".fileview-md")!;
+  const mark = md.appendChild(new El("mark")); mark.setAttribute("role", "button"); mark.tabIndex = 0;
+  doc.activeElement = mark;
+  const wheel = new Ev("wheel", { ctrlKey: true, deltaY: -100, deltaMode: 0 });
+  body.dispatchEvent(wheel);
+  assert.equal(wheel.defaultPrevented, true, "the wheel step was taken");
+  assert.notEqual(o.wrap.querySelector(".fileview")!.dataset.fvText, "100", "…and stepped the size off the default");
+  assert.equal(doc.activeElement, mark, "the mark kept the keyboard through the text-size step");
+  assert.equal(body.focused, 0);
+  // the same mark under a toggle's repaint: the paint removes it, the focus falls to the document's body, and the body takes it
+  b.raw.click();
+  assert.equal(mark.isConnected, false, "the Raw paint rebuilt the body: the mark is gone");
+  assert.equal(doc.activeElement, body, "…so the body took the keyboard the mark could no longer hold");
+  assert.equal(body.focused, 1);
+  // the editor owns the body while it is up: its textarea keeps the keyboard, and a toggle's click paints nothing and takes nothing
+  await enterEdit(o);
+  const host = body.querySelector(".fileview-cm")!;
+  const ta = host.appendChild(new El("textarea"));
+  doc.activeElement = ta;
+  b.rendered.click();
+  assert.equal(doc.activeElement, ta, "the editor's textarea kept the keyboard");
+  assert.equal(body.focused, 1);
+});
+
+test("a picture's first landing and a code file's take the keyboard the same way; a control in the viewer's own bar yields it (the button whose click caused the paint)", async (t) => {
+  t.after(() => { doc.activeElement = null; });
+  doc.activeElement = doc.body;
+  const pic = await open(PLOT, t);
+  assert.equal(doc.activeElement, pic.body, "the picture's landing focused the body");
+  assert.equal(pic.body.focused, 1);
+  pic.fv.closeFileView();
+  doc.activeElement = null;
+  const code = await open(APP, t);
+  assert.equal(doc.activeElement, code.body, "the code file's landing focused the body");
+  assert.equal(code.body.focused, 1);
+  // a bar control holds it at a step: the A+ button pressed with the pointer (a browser focuses it; the click's detail is its
+  // count), then the paint hands the keyboard to the body; a key on the focused button (Enter, Space: a click of detail 0)
+  // keeps it there, so a keyboard user's next press steps again (file-view-text-size.test.ts pins the three Enters)
+  const up = code.wrap.querySelectorAll(".fileview-acts button").find((x) => x.textContent === "A+")!;
+  doc.activeElement = up;
+  up.dispatchEvent(new Ev("click", { detail: 1 }));
+  assert.equal(doc.activeElement, code.body, "the A+ step from a pointer's click handed the keyboard from the button to the body");
+  assert.equal(code.body.focused, 2);
+  doc.activeElement = up;
+  up.dispatchEvent(new Ev("click", { detail: 0 }));
+  assert.equal(code.wrap.querySelector(".fileview")!.dataset.fvText !== "100" && doc.activeElement === up, true, "the A+ step from a key on the button stepped and kept the keyboard on the button");
+  assert.equal(code.body.focused, 2);
+  store.delete("romp:fileviewTextSize");
 });

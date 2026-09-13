@@ -35,7 +35,9 @@ const RULES = [
   // one disabled dress for every bar button: the GitHub unit's no-link state and the text-size control's ends
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
-  "a.fileview-gh-note {", ".fileview-body {", "@property --fv-body-w {", ".fileview-md {",
+  "a.fileview-gh-note {", ".fileview-body {",
+  ".fileview-body:focus {", ".fileview-body:focus-visible {",   // the body holds the keyboard (Slice 6 of plans/markdown-viewer.md, item 1): no ring for a paint's focus, the accent ring for a Tab's
+  "@property --fv-body-w {", ".fileview-md {",
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
