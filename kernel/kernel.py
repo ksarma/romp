@@ -47499,11 +47499,19 @@ def _save_file(raw, sid, content, base_mtime_ns, prior=None):
     _TEXT_MAX_BYTES, existing files only (no create in this slice), and UTF-8 ONLY — /file's latin-1
     fallback means a non-UTF-8 file reaches the textarea re-decoded, and writing it back as UTF-8
     silently rewrote every non-ASCII byte (review, executed repro), so the save refuses instead.
+    A UTF-8 BOM goes back (plans/markdown-viewer.md, Slice 7, item 4): the browser's fetch strips a
+    leading U+FEFF from the text the viewer shows, so the content a save carries lacks it while the
+    file on disk begins EF BB BF. When the bytes this function reads begin EF BB BF and `content` does
+    not begin with U+FEFF, the BOM is written ahead of the content, keyed on that read and never on the
+    client's word, never twice (a content that already begins with U+FEFF is written as it is), and a
+    file without a BOM gains none; the three bytes count against the cap.
     A symlinked path writes THROUGH the link (realpath) — os.replace on the link itself destroyed it
     while the viewer showed and guarded the target. The write is temp-file + os.replace in the same
     directory, mode preserved — a full disk or a kill mid-write leaves the original intact.
 
-    `prior`, when a dict, receives the file as it was the instant before the replace ({"bytes", "ns"}),
+    `prior`, when a dict, receives the file as it was the instant before the replace ({"bytes", "ns"})
+    and the text this save wrote ("written": `content` with the BOM put back, so the comments log's
+    diff and its bytesAfter describe the bytes on disk and show no phantom first-line change),
     filled from the read this function already makes for its UTF-8 check and ONLY once every refusal
     above has been passed and the mtime fence has held: the comments log's edit entry needs the old
     text (plans/file-review.md, decision 33), and a caller that read it for itself ahead of this
@@ -47558,8 +47566,20 @@ def _save_file(raw, sid, content, base_mtime_ns, prior=None):
         except UnicodeError:
             return None, ("cannot save %s: the file is not UTF-8 on disk — saving would silently "
                           "re-encode bytes you never touched" % _tilde(p))
+        written = content
+        if cur[:3] == b"\xef\xbb\xbf" and not content.startswith("\ufeff"):
+            # the BOM rule (the docstring): the disk has it, the viewer's text never did, so it goes back
+            # ahead of the content; keyed on the bytes read above, never on the client's word, and a
+            # content that carries its own U+FEFF is written as it is
+            data = b"\xef\xbb\xbf" + data
+            written = "\ufeff" + content
+            if len(data) > _TEXT_MAX_BYTES:
+                # the cap above counted the content alone, ahead of the read; the three bytes count too
+                return None, ("cannot save %s: %s exceeds the %s text cap"
+                              % (_tilde(p), _human_bytes(len(data)), _human_bytes(_TEXT_MAX_BYTES)))
         if prior is not None:
             prior["bytes"], prior["ns"] = cur, st.st_mtime_ns   # the text this save replaces, for the comments log
+            prior["written"] = written                          # and the text it writes: the log's diff runs over what landed
         d = os.path.dirname(wp)
         fd, tmp = tempfile.mkstemp(prefix=".romp-save-", dir=d)
         try:
@@ -48646,7 +48666,9 @@ def _edit_log_after(pre, prior, content, new_ns):
     (logged, warning). `pre` is _edit_log_before's answer (None: not a logged save, quietly false;
     `noNode` set: node is absent and the host would have — or might have — logged this save, so the
     answer is logged:false WITH the warning that says so, _NO_NODE_EDIT_WARN); `prior` is the dict
-    _save_file filled with the replaced text and its mtime. The host decides whether the file has a
+    _save_file filled with the replaced text, its mtime and the text as written (`written`: the
+    frame's content with a BOM the disk had put back, so the diff and bytesAfter describe the bytes
+    on disk; the frame's `content` stands in for a caller that filled no `written`). The host decides whether the file has a
     sidecar, a log or a tracked flag — log-edit never creates one — and answers logged:true|false; on
     a refusal it still says whether the entry landed first (a corrupt sidecar stops the read that
     follows the append, not the append), and that verdict is honored: the warning then names what
@@ -48661,7 +48683,8 @@ def _edit_log_after(pre, prior, content, new_ns):
         return False, ("saved, but not written to the comments log: %s was not read before the save, so there "
                        "is no diff to record" % _tilde(p))
     old = prior["bytes"]
-    new = content if isinstance(content, str) else ""
+    written = prior.get("written")
+    new = written if isinstance(written, str) else (content if isinstance(content, str) else "")
     diff, truncated = _edit_log_diff(old.decode("utf-8", "replace"), new, os.path.basename(p))
     summary = {"mtimeBeforeNs": str(prior["ns"]), "mtimeAfterNs": str(new_ns),
                "bytesBefore": len(old), "bytesAfter": len(new.encode("utf-8")),

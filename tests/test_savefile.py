@@ -151,6 +151,104 @@ class SaveFile(_File):
             km._cwd_of = real
 
 
+class SaveFileKeepsTheBom(_File):
+    """The BOM rule (plans/markdown-viewer.md, Slice 7, item 4; the build's contract C4). The browser's fetch
+    strips a leading U+FEFF from the text the viewer shows, so the content a save carries lacks it while the
+    file on disk begins EF BB BF; a save that wrote the content as sent dropped the file's first three bytes.
+    _save_file puts the BOM back when the bytes it read begin EF BB BF and the content does not begin with
+    U+FEFF: keyed on its own read, never on the client's word, never doubled, and a file without a BOM gains
+    none. `prior` hands the caller the text as written, so the comments log diffs what landed."""
+
+    BOM = b"\xef\xbb\xbf"
+    TEXT = "# Notes\n\nfirst\n"
+
+    def setUp(self):
+        super().setUp()
+        self.bp = os.path.join(self.tmp, "notes.md")
+        with open(self.bp, "wb") as f:
+            f.write(self.BOM + self.TEXT.encode("utf-8"))
+        self.bns = os.stat(self.bp).st_mtime_ns
+
+    def read(self, p):
+        with open(p, "rb") as f:
+            return f.read()
+
+    def test_a_bom_file_saved_with_content_lacking_the_bom_still_begins_ef_bb_bf(self):
+        mt, err = km._save_file(self.bp, None, "# Notes\n\nsecond\n", self.bns)
+        self.assertIsNone(err)
+        got = self.read(self.bp)
+        self.assertEqual(got[:3], self.BOM, "the file's first three bytes are the BOM's")
+        self.assertEqual(got[3:], "# Notes\n\nsecond\n".encode("utf-8"), "and the rest is the content")
+        self.assertEqual(mt, os.stat(self.bp).st_mtime_ns, "the returned mtime is the written file's")
+
+    def test_content_already_beginning_with_the_bom_is_not_doubled(self):
+        # a control: a content that carries its own U+FEFF is written as it is (green before the rule too)
+        mt, err = km._save_file(self.bp, None, "\ufeff# Notes\n\nsecond\n", self.bns)
+        self.assertIsNone(err)
+        got = self.read(self.bp)
+        self.assertEqual(got, self.BOM + "# Notes\n\nsecond\n".encode("utf-8"), "one BOM, the content's own")
+        self.assertEqual(got[3:6], b"# N", "no second EF BB BF behind the first")
+
+    def test_a_file_without_a_bom_gains_none(self):
+        # a control: the rule is keyed on the bytes read, and these begin with the content's first byte
+        mt, err = km._save_file(self.fp, None, "print('v2')\n", self.ns)
+        self.assertIsNone(err)
+        self.assertEqual(self.read(self.fp), b"print('v2')\n")
+
+    def test_prior_hands_out_the_text_as_written(self):
+        # the comments log's diff runs over what landed: with the BOM put back on a BOM file, the content as
+        # sent on a plain one; the replaced bytes and their mtime as before
+        prior = {}
+        mt, err = km._save_file(self.bp, None, "# Notes\n\nsecond\n", self.bns, prior=prior)
+        self.assertIsNone(err)
+        self.assertEqual(prior, {"bytes": self.BOM + self.TEXT.encode("utf-8"), "ns": self.bns,
+                                 "written": "\ufeff# Notes\n\nsecond\n"})
+        plain = {}
+        mt, err = km._save_file(self.fp, None, "print('v2')\n", self.ns, prior=plain)
+        self.assertIsNone(err)
+        self.assertEqual(plain["written"], "print('v2')\n", "nothing to put back: the content as sent")
+        # and the log's entry is built over it: no phantom first-line change, bytesAfter the bytes on disk
+        seen = {}
+        real = km._file_comments_call
+        km._file_comments_call = lambda p, verb, args, fence=None: (seen.update(args) or ({"logged": True}, None))
+        try:
+            logged, warn = km._edit_log_after({"path": self.bp}, prior, "# Notes\n\nsecond\n", mt)
+        finally:
+            km._file_comments_call = real
+        self.assertTrue(logged)
+        self.assertIsNone(warn)
+        summary = seen["summary"]
+        self.assertEqual(summary["bytesAfter"], os.stat(self.bp).st_size)
+        self.assertEqual(summary["bytesBefore"], 3 + len(self.TEXT.encode("utf-8")))
+        self.assertEqual(summary["diff"], "--- a/notes.md\n+++ b/notes.md\n@@ -3 +3 @@\n-first\n+second\n")
+        self.assertNotIn("\ufeff", summary["diff"], "the first line, BOM and all, is unchanged in the diff")
+
+    def test_the_three_bytes_count_against_the_text_cap(self):
+        # the cap is checked over the content before the read; a content within the cap by two bytes joins
+        # the BOM to pass it, so a second comparison refuses after the read, with the cap's own words
+        body = "x" * (km._TEXT_MAX_BYTES - 2)
+        mt, err = km._save_file(self.bp, None, body, self.bns)
+        self.assertIsNone(mt)
+        self.assertIn("text cap", err)
+        self.assertEqual(self.read(self.bp), self.BOM + self.TEXT.encode("utf-8"), "the refusal wrote nothing")
+        # within the cap by three: written, BOM and all, exactly at the cap
+        mt, err = km._save_file(self.bp, None, "x" * (km._TEXT_MAX_BYTES - 3), self.bns)
+        self.assertIsNone(err)
+        self.assertEqual(os.stat(self.bp).st_size, km._TEXT_MAX_BYTES)
+        self.assertEqual(self.read(self.bp)[:3], self.BOM)
+
+    def test_the_frame_puts_the_bom_back_and_acks_the_written_files_mtime(self):
+        sent = []
+        client = {"app": "feed", "alive": True, "send": lambda s: sent.append(json.loads(s))}
+        handler = object.__new__(km.Handler)
+        km.Handler._dispatch_ws(handler, {"type": "saveFile", "path": self.bp, "content": "# Notes\n\nsecond\n",
+                                          "baseMtimeNs": str(self.bns), "reqId": 7}, client)
+        r = sent[-1]
+        self.assertEqual((r["type"], r["reqId"]), ("fileSaved", 7))
+        self.assertEqual(self.read(self.bp), self.BOM + "# Notes\n\nsecond\n".encode("utf-8"))
+        self.assertEqual(r["mtimeNs"], str(os.stat(self.bp).st_mtime_ns))
+
+
 class SaveFileWire(_File):
     """The WS op through the real dispatcher with a fake client (the listDir harness)."""
 

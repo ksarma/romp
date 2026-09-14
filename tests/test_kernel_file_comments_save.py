@@ -27,6 +27,7 @@ import json
 import os
 import re
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -409,3 +410,34 @@ def test_a_save_on_a_project_with_no_trackchanges_folder_is_refused_at_the_kerne
     assert world.other.read_text() == "# Other\n"
     assert not (world.root / ".trackchanges").exists(), "no directory minted for a log on a file with nothing tracked"
     assert world.traced == []
+
+
+@pytestmark_e2e
+def test_the_plain_save_over_a_bom_file_puts_the_bom_back_and_logs_the_text_as_written(world):
+    """Slice 7 of plans/markdown-viewer.md, item 4, the kernel door through the saveFile frame over the real host.
+    The viewer's text lacks the U+FEFF the fetch stripped while the disk begins EF BB BF; _save_file puts the BOM
+    back, keyed on the bytes it read (contract C4), and the comments log's edit entry, written by the host from
+    the kernel's summary, diffs the text as written: no phantom first-line change, bytesAfter the file's size."""
+    bom = world.root / "docs" / "bom.md"
+    bom.write_bytes(b"\xef\xbb\xbf" + e2e.TEXT.encode("utf-8"))
+    s0 = world.ok("status", bom)
+    assert s0["bom"] is False, "a status with no sidecar stats the file and reads no text (the bit is false, never absent)"
+    world.ok("set-tracked", bom, {"on": True, "scope": "file"}, world.fence_of(s0))   # the flag makes the file the log's business
+    ns = bom.stat().st_mtime_ns
+    saved = world.ws({"type": "saveFile", "path": str(bom), "content": e2e.EDITED, "baseMtimeNs": str(ns)}, wait=False)
+    assert saved["type"] == "fileSaved", saved
+    assert bom.read_bytes() == b"\xef\xbb\xbf" + e2e.EDITED.encode("utf-8"), "the BOM, then the text the viewer held"
+    assert saved["mtimeNs"] == str(bom.stat().st_mtime_ns)
+    assert saved["logged"] is True and "logWarning" not in saved
+    entries = world.log_lines(world.ok("status", bom))
+    assert [e["kind"] for e in entries] == ["set-tracked", "edit"]
+    e = entries[1]
+    assert (e["mtimeBeforeNs"], e["mtimeAfterNs"]) == (str(ns), saved["mtimeNs"])
+    assert e["bytesBefore"] == 3 + len(e2e.TEXT.encode("utf-8"))
+    assert e["bytesAfter"] == bom.stat().st_size, "the bytes on disk, BOM included"
+    assert e["diff"] == e2e.km._edit_log_diff("\ufeff" + e2e.TEXT, "\ufeff" + e2e.EDITED, "bom.md")[0]
+    assert e["diff"] == ("--- a/bom.md\n+++ b/bom.md\n@@ -3 +3 @@\n"
+                         "-The api session cut p95 latency by 40%.\n+The api session cut p95 latency by 45%.\n")
+    assert "@@ -1" not in e["diff"] and "\ufeff" not in e["diff"], "no phantom first-line change"
+    real = os.path.realpath(str(bom))
+    assert world.traced == [(SID, e2e.km._edit_trace_body(real))], "the owning session is told, as after any direct edit"
