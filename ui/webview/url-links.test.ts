@@ -351,8 +351,8 @@ test("urlChip / urlChipLabel: a label that keeps the distinguishing part in view
 // ── parity at source: both hosts run the URL pass first, and each opens the anchors its own way
 test("render.ts: the two todo linkers run linkifyUrls before the path walk; the chat installs no opener (its a[href] delegate opens every absolute-scheme anchor)", () => {
   assert.match(RENDER, /import \{ linkifyUrls, urlChip \} from "\.\/url-links";/);
-  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid\);\n\}/);
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
   assert.doesNotMatch(RENDER, /installUrlLinkOpener|installPrLinkOpener/, "the chat's own a[href] delegate already opens every absolute-scheme anchor");
   // the branch these anchors take (render-todo-file-chip.test.ts CLICKS them through the lifted delegate; this pins the
   // path at source): an http(s) href names a scheme, so it skips the scheme-less branch and its protocol gate, and
@@ -371,7 +371,7 @@ test("render.ts: the two todo linkers run linkifyUrls before the path walk; the 
 
 test("waiting.ts: linkTodoPaths runs linkifyUrls before its framed gate (a URL opens from any page), and the pane installs the URL opener beside the PR one", () => {
   assert.match(WAITING, /import \{ linkifyUrls, urlChip, installUrlLinkOpener \} from "\.\/url-links";/);
-  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*linkifyUrls\(node\);[^\n]*\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*linkifyUrls\(node\);[^\n]*\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
   assert.match(WAITING, /installPrLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);\n(?:\/\/[^\n]*\n)*installUrlLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);/);
   assert.equal((WAITING.match(/installUrlLinkOpener\(/g) || []).length, 1, "installed once, on the document");
 });

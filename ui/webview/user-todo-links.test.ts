@@ -159,12 +159,12 @@ test("render.ts imports the matcher and binds the click itself — the chat's ro
   // a URI sends none. The transcript's binder and the body delegate's openpath both call it
   // (user-todo-title-links.test.ts drives both), each handing over its click so the gesture rides along
   // (upstream's PDF own-tab reader, 2026-09-07 fold)
-  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement, e\?: MouseEvent \| null\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);[^\n]*\n\}/);
+  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement, e\?: MouseEvent \| null\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);[^\n]*\n\}/);
   assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a, e\); \}\);\n\s*onMiddleClick\(a, \(e\) => openLinkedPath\(a, e\)\);/);
   // every span the walk and the spaced pass emit is bound (unless the caller delegates); the hits feed
   // the figure pass as before
   assert.match(RENDER, /const bind = delegated \? \(a: HTMLElement\) => a : bindPathLink;/);
-  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bind\(link\);/);
+  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts\)\) \{\n\s*bind\(link\);/);
   assert.match(RENDER, /const link = bind\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
 });
 
@@ -173,7 +173,7 @@ test("the chat's todo card and its Reply modal still link the note against the t
   assert.match(card, /d\.textContent = t\.detail \|\| "";/);                           // the note stays plain text…
   assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);             // …with paths linked after
   // the detail's linker is the transcript's with the figure pass, DELEGATED: the card rebuilds every push
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
   assert.match(RENDER, /reply\.dataset\.sid = renderingSid \|\| "";/);               // the buttons act where the paths resolve
   // the modal is sliced from its full signature — the five-argument form since the todo-file follow-on
   // (plans/file-review.md, decision 35: `todoFile` is the file the todo names, shown as a chip) — and the
@@ -195,7 +195,7 @@ test("waiting.ts links the text and the detail at BOTH sites (the row and the Re
   assert.match(WAITING, /import \{ linkifyPathTokens, openPathLink \} from "\.\/path-links";/);   // openPathLink builds the file chip (waiting-file-chip.test.ts)
   // the gate: a pane the shell does not frame has no Files pane to send a click to → plain text
   // the URL pass runs before the framed gate (a web address opens from any page; url-links.test.ts, 2026-09-08)
-  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*linkifyUrls\(node\);[^\n]*\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*linkifyUrls\(node\);[^\n]*\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
   // the row: text first, then the links, on the one-line text (the user 2026-09-07) and on the fold body
   const row = WAITING.slice(WAITING.indexOf("function rowEl("), WAITING.indexOf("function hostLine("));
   assert.match(row, /txt\.textContent = w\.todo\.text;\n\s*linkTodoPaths\(txt, w\.sid\);/);
@@ -205,7 +205,7 @@ test("waiting.ts links the text and the detail at BOTH sites (the row and the Re
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
   assert.match(modal, /d\.textContent = todoText;\n\s*linkTodoPaths\(d, sid\);/);
   assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkTodoPaths\(dd, sid\);/);
-  assert.match(modal, /delegate\(box, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId\); \} \}\);/);
+  assert.match(modal, /delegate\(box, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId, linkTarget\(x\)\); \} \}\);/);
   assert.equal((modal.match(/delegate\(/g) || []).length, 1, "one delegate covers the quoted line and the detail");
   assert.equal((WAITING.match(/linkTodoPaths\(/g) || []).length, 5, "defined once, applied at the four sites");
 });
@@ -215,7 +215,7 @@ test("the list's delegate routes openpath from the ROW's sid and todo id, never 
   // both ids come from the enclosing .ut-item: path-links.ts stamps data-sid on a bare path's span and NOT
   // on a file:// URI's (an absolute path names no session), so a handler gated on the span's sid dropped
   // every URI click (the 2026-09-06 review; waiting-detail-link.test.ts clicks all three shapes for real)
-  assert.match(map, /\n    openpath: \(x\) => \{\n\s*const row = x\.closest<HTMLElement>\("\.ut-item"\);\n\s*const p = x\.dataset\.path, sid = row\?\.dataset\.sid, tid = row\?\.dataset\.tid;\n\s*if \(p && sid && tid\) openTodoPath\(p, sid, tid\);\n\s*\},/);
+  assert.match(map, /\n    openpath: \(x\) => \{\n\s*const row = x\.closest<HTMLElement>\("\.ut-item"\);\n\s*const p = x\.dataset\.path, sid = row\?\.dataset\.sid, tid = row\?\.dataset\.tid;\n\s*if \(p && sid && tid\) openTodoPath\(p, sid, tid, linkTarget\(x\)\);\n\s*\},/);
   const handler = map.slice(map.indexOf("\n    openpath: (x) => {"), map.indexOf("\n    },", map.indexOf("\n    openpath: (x) => {")));
   assert.doesNotMatch(handler, /x\.dataset\.sid/, "the span's own sid is not the gate — a URI span has none");
   // the row carries both ids the handler reads
@@ -226,36 +226,43 @@ test("the list's delegate routes openpath from the ROW's sid and todo id, never 
 });
 
 test("the posted payload, executed: viewFile to the Files pane with the todo's session, its chip identity and the todo id", () => {
-  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string): void {")[1].split("\n}")[0];
-  const fn = new Function("rows", "window", "path", "sid", "todoId", body) as
-    (rows: unknown[], w: unknown, path: string, sid: string, todoId: string) => void;
+  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string, at: LinkTarget | null = null): void {")[1].split("\n}")[0];
+  const fn = new Function("rows", "window", "path", "sid", "todoId", "at", body) as
+    (rows: unknown[], w: unknown, path: string, sid: string, todoId: string, at: unknown) => void;
   const posted: [unknown, string][] = [];
   const win = { parent: { postMessage: (m: unknown, origin: string) => posted.push([m, origin]) } };
   const rows = [{ sid: SID, name: "api", color: { bg: "#123456", fg: "#ffffff" }, todos: [] },
                 { sid: "11111111-2222-3333-4444-666666666666", name: "", color: null, todos: [] }];
-  fn(rows, win, "docs/design.md", SID, "t1");
+  fn(rows, win, "docs/design.md", SID, "t1", null);
   assert.deepEqual(posted, [[{ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID,
-                              identity: { name: "api", color: { bg: "#123456", fg: "#ffffff" } }, todoId: "t1" }, "*"]]);
+                              identity: { name: "api", color: { bg: "#123456", fg: "#ffffff" } }, todoId: "t1", at: null }, "*"]],
+    "a bare path: `at` rides as null, so the shell's forwarder and the pane see one shape (Slice 6 of plans/markdown-viewer.md)");
   // a row with no name sends null (looked up, never invented — the viewer falls to the kernel's stub)
-  fn(rows, win, "/tmp/notes-api/a.md", "11111111-2222-3333-4444-666666666666", "t2");
+  fn(rows, win, "/tmp/notes-api/a.md", "11111111-2222-3333-4444-666666666666", "t2", null);
   assert.equal((posted[1][0] as any).identity, null);
   assert.equal((posted[1][0] as any).todoId, "t2");
+  // a link that named a target after its path (path-links.ts linkTarget): the heading or the line rides as `at`
+  fn(rows, win, "docs/report.md", SID, "t3", { heading: "results" });
+  assert.deepEqual((posted[2][0] as any).at, { heading: "results" });
+  fn(rows, win, "docs/report.md", SID, "t4", { line: 12 });
+  assert.deepEqual((posted[3][0] as any).at, { line: 12 });
 });
 
 test("the shell forwards todoId into the Files pane; files.ts hands it to the viewer; the viewer's action ctx carries it", () => {
   // the landing shell's pane branch (kernel.py) — the feed route forwards path + sid only, as before
-  assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*')"), "pane branch forwards todoId");
-  assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*')"), "feed route unchanged");
-  assert.match(FILES, /openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);/);
-  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{/);
-  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);   // `line`, `frag`: a link inside the shown file (file-view-links.test.ts)
+  assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*')"), "pane branch forwards todoId and the link's target (Slice 6 of plans/markdown-viewer.md)");
+  assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')"), "feed route: path, sid and the target");
+  assert.match(FILES, /openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);/);
+  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, at: At \| null = null\): void \{/);
+  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;/);   // `at`: a todo link's or an in-file link's target; `place`: the file's Recent row's record, read inside openHere for every open (Slice 6 of plans/markdown-viewer.md; its review, round 1)
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);   // upstream's frag and the viewer links' line joined the opts (2026-09-07)
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null/);   // `at` replaced upstream's frag and the viewer links' line (Slice 6 of plans/markdown-viewer.md, C1); A3's `place` follows in the same opts
   assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);
   assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);   // the seam ctx every action mounts with (Slice 1)
   assert.match(VIEW, /const n = a\.mount\(ctx\);/);
   assert.match(VIEW, /openFileView\(path, sid, opts\);/, "the conflict Reload keeps the provenance");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,/);
+  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void/);
 });
 
 test("a relative path resolves against the todo's session ON THE KERNEL: the sid rides the viewer's /file fetch", () => {
@@ -264,7 +271,8 @@ test("a relative path resolves against the todo's session ON THE KERNEL: the sid
   const PREVIEW = read("preview.ts");
   assert.match(PREVIEW, /export function fileUrl\(path: string, sid\?: string \| null\): string \{[\s\S]*?"&sid=" \+ encodeURIComponent\(bare\)/);
   assert.match(VIEW, /fetch\(fileUrl\(path, sid\), \{ cache: "no-store" \}\)/);
-  assert.ok(KERNEL.includes('fp = _resolve_open_path((q.get("path") or [""])[0], (q.get("sid") or [None])[0])'), "/file resolves against the sid's cwd");
+  // the request's path is kept as `given` for the 404's one-word reason (the PR review's round 2 of Slice 6 of plans/markdown-viewer.md)
+  assert.ok(KERNEL.includes('given = (q.get("path") or [""])[0]\n        fp = _resolve_open_path(given, (q.get("sid") or [None])[0])'), "/file resolves against the sid's cwd");
   assert.ok(KERNEL.includes("def _resolve_open_path(p, sid=None):"));
 });
 

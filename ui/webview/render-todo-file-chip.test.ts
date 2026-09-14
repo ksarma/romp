@@ -205,7 +205,7 @@ interface Host {
   opened: Opened[];
 }
 async function host(activeId: string | null = ACTIVE): Promise<Host> {
-  const { linkifyPathTokens, openPathLink } = await import("./path-links");
+  const { linkifyPathTokens, openPathLink, linkTarget } = await import("./path-links");
   const { linkifyUrls, urlChip } = await import("./url-links");   // the URL pass the linkers run first, and the link chip's anchor (2026-09-08)
   const hint = await import("./user-todo-hint");
   const opened: Opened[] = [];
@@ -218,7 +218,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const fn = new Function(
     "el", "dot", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
     "linkifyPrRefs", "prRepoFor", "isCoarsePointer", "renderingSid", "utDetailOpen", "linkifyPathTokens", "linkifyFileUris",
-    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip",
+    "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget",
     code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, todoLinkChip, openpath, utreply };");
   const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
   const out = fn(
@@ -227,7 +227,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, sid: string | null) => linkifyPathTokens(node, sid),   // the detail's figure pass is not under test: its paths link the same way
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
-    linkifyUrls, urlChip,
+    linkifyUrls, urlChip, linkTarget,
   );
   return { ...out, opened };
 }

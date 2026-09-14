@@ -34,8 +34,8 @@ const ROWS = [{ sid: SID, name: "api", color: { bg: "#123456", fg: "#ffffff" }, 
 // ── leg 1: openTodoPath, executed out of the source ───────────────────────────────────────────────
 type Fn = (rows: unknown[], w: unknown, path: string, sid: string, todoId: string) => void;
 function openTodoPath(): Fn {
-  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string): void {")[1].split("\n}")[0];
-  return new Function("rows", "window", "path", "sid", "todoId", body) as Fn;
+  const body = WAITING.split("function openTodoPath(path: string, sid: string, todoId: string, at: LinkTarget | null = null): void {")[1].split("\n}")[0];
+  return new Function("rows", "window", "path", "sid", "todoId", "at", body) as Fn;
 }
 
 // the shell's document as the pane reads it: an iframe of the SHELL's realm (its own HTMLIFrameElement, reached

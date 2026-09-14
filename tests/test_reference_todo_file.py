@@ -234,9 +234,9 @@ class TheParagraphSaysWhatTheKernelDoesForLinks(_Sandbox):
         self.assertIn('const PAIRS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };', urls)
         # and both hosts run it before the path walk, which is what makes the last sentence true
         render = _read("ui", "webview", "render.ts")
-        self.assertIn("function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {\n  linkifyUrls(node);\n  linkifyPathTokens(node, sid);\n}", render)
+        self.assertIn("function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {\n  linkifyUrls(node);\n  linkifyPathTokens(node, sid, undefined, { targetSuffix: true });\n}", render)   # the walk reads a target after the path (Slice 6 of plans/markdown-viewer.md); the URL pass still runs first
         waiting = _read("ui", "webview", "waiting.ts")
-        self.assertRegex(waiting, r"function linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n  linkifyUrls\(node\);[^\n]*\n  if \(!framed\) return;\n  linkifyPathTokens\(node, sid\);\n\}")
+        self.assertRegex(waiting, r"function linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n  linkifyUrls\(node\);[^\n]*\n  if \(!framed\) return;\n  linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}")
 
     def test_the_paragraph_states_the_link_argument_and_what_is_refused(self):
         self.assertIn("A todo can carry a web address of its own as well, through the tool's `link` argument: an http or "

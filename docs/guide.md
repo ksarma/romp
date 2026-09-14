@@ -322,7 +322,10 @@ credential, a pick between two designs. Each row names its session and shows
 how long the todo has waited. Reply sends your answer straight into that
 session, waking it if it has gone quiet; Dismiss clears the todo without a
 reply. A file path in a todo's text or its detail is a link: click it and the
-file opens in the Files pane, which comes forward if it was closed. Absolute
+file opens in the Files pane, which comes forward if it was closed; a line or a
+section written after the path (`docs/report.md:12`, `docs/report.md#results`)
+opens the file at it (for a section, once the file is in its Rendered view; see
+Files). Absolute
 paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
 relative path links only when its last segment has a file extension
 (`notes/plan.md`, not `notes/plan`). A todo that names its file also shows the
@@ -355,8 +358,8 @@ the setting names it, otherwise over the feed. Pick a file in the listing and
 it opens where the listing is. Selecting
 a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
-recently open here; click one to open it again. The pane is off by default;
-the bottom bar turns it on.
+recently open here; click one to open it again, and the file opens at the
+place you left it. The pane is off by default; the bottom bar turns it on.
 
 **Links in a file.** Wherever the viewer shows a file's text, over the chat, over
 the feed, or in this pane, the links in that text work. A web address opens in a
@@ -367,9 +370,14 @@ machine of the session the file belongs to, and a line written after the path
 (`src/app.py:12`, or `src/app.py#L12`) scrolls the Raw view to that line. A
 Markdown file opens in its Raw view for that one open, since the Rendered view
 has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
-file lands on the last line, with a notice saying so. In a Markdown file, a
-`[link](target)` follows the same two rules: a web target opens a tab, a file
-target opens the file (a host with a port, `127.0.0.1:3000` or
+file lands on the last line, with a notice saying so. A line or a section
+written after a path in a todo's text or detail (`docs/report.md:12`,
+`docs/report.md#results`) opens the file there too; a section the file does not
+have leaves the file at its top, with a notice naming the section. The Raw view
+has no sections, so when you read Markdown in Raw the file opens at its top and
+lands on the section, or shows the notice, once you click **Rendered**. In a
+Markdown file, a `[link](target)` follows the same two rules: a web target opens
+a tab, a file target opens the file (a host with a port, `127.0.0.1:3000` or
 `api.example.com:8443`, is neither, and says so). A link to a section of
 another file (`report.md#results`) opens that file at the section. A link to a
 section of the same document scrolls to it
@@ -431,7 +439,9 @@ css, markdown, diff, yaml, rust, go, c, java, sql and toml (an ini file's gramma
 that names any other language stays plain rather than being guessed at, and comments in
 coloured code are readable against the block. TeX math renders wherever the file is shown:
 `$x^2$` inline and a `$$` block on its own, the same in the chat, the feed and the Files
-pane. The printed page leaves out the title bar, the Comments panel and the Copy buttons.
+pane. The **Outline** button above a rendered file lists the file's headings; pick one and
+the view scrolls to put it at the top, opening a closed fold around it. The printed page
+leaves out the title bar, the Comments panel and the Copy buttons.
 
 **Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
 Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
@@ -457,7 +467,11 @@ file, an edit the viewer refuses) sits above the file's text, wherever you have 
 to, and stays through a switch of view and a reload until the next notice replaces it or
 you open the editor. A notice raised while you edit (a save that failed) goes when you
 leave the editor; a warning about the comments log stays when the save that raised it
-closes the editor.
+closes the editor. The file takes the keyboard when it opens, so the arrow keys, PageDown
+and Space scroll it at once; a box you were typing in keeps the keyboard. When a file
+changes on disk while you read it with the Comments panel closed, a line above the text says
+so the next time you return to the dashboard, and **Reload** reads it again with your place
+kept.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
 modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the

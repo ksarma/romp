@@ -1550,6 +1550,22 @@ a.fileview-gh-note { border-style: dashed; }
    playwright's --hide-scrollbars) and measures the cap, and that nothing is reserved on a body that does not scroll. */
 @property --fv-body-w { syntax: "*"; inherits: false; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* the body is a Tab stop and takes the keyboard after the open's first paint (file-view.ts takeKeyboard; Slice 6 of
+   plans/markdown-viewer.md): no ring for the focus a paint gave it (a frame around the whole scroll box on every open would
+   read as an error), the accent ring when the keyboard reached it (a Tab from the bar, a hand-over from a control that
+   wore the ring, or the first key pressed on a body that took the keyboard without it), inset so the scrollbar keeps its
+   edge. :focus-visible alone does not draw that line: Chromium's heuristic for a script focus matches it when nothing
+   focusable was last pressed (a chat pill's press strips its tabindex, a Recent row is a plain div, a relayed open's click
+   is in another frame), so the frame sat around the whole note on the common pointer opens (the review's round 3);
+   takeKeyboard names the ring itself through the focus call's focusVisible option, read off the holder it takes the
+   keyboard from, and this rule paints what it names. That verdict holds for the life of the focus, keys included, where
+   the heuristic gives a mouse-focused element the ring on its first key (the review's round 4), so the body's first key
+   that is not a modifier alone, with no Ctrl, Alt or Meta held, while it holds the keyboard ringless takes it again
+   naming the ring (file-view.ts, the body's keydown beside takeKeyboard), and a chord leaves it off as the heuristic does
+   (file-view-focus-ring-browser.test.ts measures both over real presses). Mirrored in styles.css; fileview-parity.test.ts
+   holds both rules byte-equal. */
+.fileview-body:focus { outline: none; }
+.fileview-body:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
    and because they are a sibling element a selection of the code copies without dragging them along */
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }
@@ -1575,6 +1591,10 @@ a.fileview-gh-note { border-style: dashed; }
 /* the way out of a refusal: when the file exists but cannot render (413/415), the kernel's words are
    followed by the Download the view could not be — same button treatment as the title bar's */
 .fileview-err-dl { display: block; margin-top: 10px; }
+/* an action on the words' own line: the changed-on-disk bar's Reload (plans/markdown-viewer.md Slice 6, item 5), two words
+   and a button in one row of the card, where the refusal pane's Download stands under a paragraph of the kernel's words
+   (the review's round 5: dressed as that Download, the bar was two rows and 89 px tall at every width) */
+.fileview-err-act { display: inline-block; margin-left: 10px; vertical-align: middle; }
 /* a button inside the dress (the viewer's Download and Reload file, the comments panel's Reload and ✕) is
    .fileview-btn's 0.82em OF THE VIEWER, not of the 0.86em row it sits in: em nesting compounds (ui/CLAUDE.md,
    font sizes), and 0.86 × 0.82 rendered them at 0.705em, smaller than every button beside them. Dividing the
@@ -1598,6 +1618,35 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-btn.on { color: var(--accent); border-color: var(--accent);
   background: var(--accent-wash); font-weight: 600; }
 .fileview-btn.on:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+/* The Outline's dropdown (file-view.ts openOutline; Slice 6 of plans/markdown-viewer.md, item 2): a rendered note's
+   headings under the Outline button, in the menu vocabulary (ui/CLAUDE.md: the --menu-* tokens and the menu's 12px,
+   .ctx-menu the reference; a hex never sits here). A child of the card positioned absolutely, and the card is NOT its
+   containing block: .fileview is unpositioned and its container-type (inline-size) gives it no layout containment in
+   Chromium, so the box is placed against its offsetParent, the viewer's overlay #romp-fileview (fixed on the chat and
+   feed pages, relative in the Files pane), and the top and right file-view.ts sets from the button's box are offsets
+   from that overlay's padding edge (the review's round 1: written as card offsets, they sat the box 18 px high and 25 px
+   left in the chat and feed modals, where the card is inset from the overlay). Nor does the card's overflow: hidden clip
+   the box (an overflow clips an absolutely positioned descendant only through its containing block; the review's round 2
+   probed a box placed at the overlay's corner, outside the card, and it stayed hit-testable), so what keeps it inside
+   the card is the caps set inline at the open (the card's width and the body's height, each less a margin, and never
+   past the card's bottom) and the re-anchor at the card's left margin. Rows are one line each, an ellipsis at the box's
+   width, indented by their depth under the note's shallowest heading (--fv-ol-depth, set per row); the current row (the
+   keyboard's) and the hovered one wear the one menu wash; the popover holds the focus and shows no ring of its own, the
+   current row being the cue. The button has no rule of its own here: while the popover is up it wears the bar's selected
+   dress, .fileview-btn.on above (file-view.ts toggles the class beside aria-expanded), so an open Outline computes as the
+   pressed Rendered toggle does, the 600 weight and the hover inversion included. The build gave it a rule of its own on
+   [aria-expanded="true"], a near-twin of that dress without the weight and the hover; its first form, on the bare
+   .fileview-btn, dressed the Comments panel's Show more and Reject all, which carry aria-expanded too (file-comments.ts
+   clipRow, renderChangesFoot), and the PR review's round 1 dropped the twin for the shared dress. Mirrored in styles.css;
+   fileview-parity.test.ts holds every head byte-equal. */
+.fileview-outline { position: absolute; z-index: 5; box-sizing: border-box; min-width: 12em; overflow: auto; padding: 4px;
+  background: var(--menu-bg); color: var(--menu-fg); border: 1px solid var(--menu-border); border-radius: var(--radius-menu);
+  box-shadow: var(--shadow-menu); font-size: 12px; line-height: 1.4; }
+.fileview-outline:focus { outline: none; }
+.fileview-outline-row { padding: 4px 10px 4px calc(10px + var(--fv-ol-depth, 0) * 1.1em); border-radius: 4px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fileview-outline-row:hover, .fileview-outline-row.current { background: var(--menu-hover); }
 
 /* Wrap mode (the Wrap toggle, persisted per browser): long lines soft-wrap instead of scrolling
    sideways. The flat sibling gutter cannot survive that — one logical line becomes several visual lines

@@ -13,12 +13,12 @@ const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview",
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("a bare file:// URL becomes a clickable .file-uri-link that opens the file in the host app", () => {
-  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false\): void/);
+  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false, walkOpts\?: PathLinkOptions\): void/);
   assert.match(LINKS, /el\("span", "file-uri-link"\)/);   // the span is minted in path-links.ts (Slice 0 of plans/file-review.md)
   // clicking is ROUTED by openPath, never a blocked window.open(file://) — a file:// URI is absolute,
   // so it takes the shared openPathLink's no-session-id branch
   assert.match(LINKS, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/);   // with the click: a PDF's modified-click tab
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/);   // with the click: a PDF's modified-click tab; and the target the link named after its path (Slice 6 of plans/markdown-viewer.md)
   // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts); only a
   // LOCAL URI (an empty authority, or localhost) is one; file://host/path names another machine and stays prose (2026-09-07)
   assert.match(LINKS, /const FILE_URI_RE = \/\^file:\\\/\\\/\(\?:localhost\)\?\(\?=\\\/\)\/i;/);
@@ -32,7 +32,7 @@ test("linkify runs on chat message bodies (assistant reply + user bubble + nudge
   assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\)/);   // a compact nudge's expanded full text (2026-07-17)
   // …plus a user todo's note, in the card's fold and quoted in the reply dialog, through linkTodoDetailPaths:
   // the same pass, DELEGATED, since the card rebuilds every push and its spans are not bound (user-todo-links.test.ts)
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);/);   // the URL pass first (url-links.ts, 2026-09-08)
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);/);   // the URL pass first (url-links.ts, 2026-09-08)
   assert.match(RENDER, /linkTodoDetailPaths\(d, renderingSid \|\| null\)/);
   assert.match(RENDER, /linkTodoDetailPaths\(dd, sid\)/);
   // exactly the definition + those four applications, so tool-use reports/summaries stay untouched

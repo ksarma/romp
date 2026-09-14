@@ -47443,6 +47443,41 @@ def _resolve_open_path(p, sid=None):
     return p
 
 
+# The one-word cause a /file 404 carries, in the X-Romp-Reason header (Slice 6 of plans/markdown-viewer.md, the PR
+# review's round 2): the viewer's focus HEAD read every 404 as a deletion, and the route answers 404 for a detached
+# remote host and for a relative path re-aimed by a session move too, both with the file still on disk. So the header
+# names the cause, and the viewer says the file is deleted for `missing` alone. The relay's own two words (`detached`,
+# `unviewable`) live in _remote_file; _FILE_404_REASONS is the set the relay mirrors from a remote kernel's answer, a
+# known word being data about that disk, never prose. `unreadable` (the review's round 3) is the absolute path whose
+# stat failed for a reason other than absence: the caller's isfile() swallows every OSError alike, so EACCES on a
+# parent directory had read as `missing` and the viewer called a file the kernel could not look at deleted.
+_FILE_404_REASON_HDR = "X-Romp-Reason"
+_FILE_404_REASONS = ("missing", "relative", "unresolved", "unreadable")
+
+
+def _file_404_reason(given, fp):
+    """Why _file_preview found no file at `fp`, the resolution of the request's `given` path: `unresolved` when the
+    path stayed relative (no sid, or no cwd known for it, so nothing was looked up); `relative` when a relative path
+    was joined to the session's CURRENT cwd and no regular file is there (a deletion, or a move since the GET that
+    showed it, which the kernel cannot tell apart, so it certifies neither); `missing` when the path came absolute,
+    or `~`-rooted, and the stat says ENOENT or ENOTDIR (the path or a parent of it gone) or finds no regular file at
+    the name (a directory stands there now): the file is gone; `unreadable` when that stat fails for any other reason
+    (EACCES on a parent directory, a symlink loop, an I/O error): the file may well exist, the kernel could not look,
+    so it certifies nothing and the viewer keeps its change words. A path with a NUL byte, which no file can carry,
+    is `missing`."""
+    if not os.path.isabs(fp):
+        return "unresolved"
+    if not os.path.isabs(os.path.expanduser(str(given))):
+        return "relative"
+    try:
+        os.stat(fp)
+    except (FileNotFoundError, NotADirectoryError, ValueError):
+        return "missing"
+    except OSError:
+        return "unreadable"
+    return "missing"
+
+
 def _httpdate(t):
     """Epoch → the RFC 7231 form a Last-Modified header wears (the viewer's Date.parse reads it)."""
     from email.utils import formatdate
@@ -54767,6 +54802,9 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // from — which is forwarded as-is so the viewer can tie its work back to the todo; a chat click carries
 // none and the pane sees null. The pane STAYS up — nothing to put back — so none of the feed route's
 // was-off / ack / restore machinery below applies to this branch.
+// `at` (Slice 6 of plans/markdown-viewer.md) is the place the link named after its path, a line or a heading,
+// forwarded as-is too and validated where it lands (file-view.ts readAt); both forwarders here rebuild the
+// message field by field, so a field not copied would be dropped in transit.
 if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
   try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
   // phone (one pane at a time): bring the Files tab forward ONLY in the mobile layout — on desktop the column
@@ -54774,7 +54812,7 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   // remember the tab the click came from, so the viewer's close puts the person back (filesViewerClosed below)
   try{if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';
     if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
-  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*');}catch(e){}}
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
@@ -54790,7 +54828,7 @@ else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
   if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
-  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
+  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*');}catch(e){}}
 // the Files pane's viewer closed (files.ts posts it on the viewer element's removal): on a phone, where the
 // pane branch above switched tabs to show it, go back to the tab the click came from; on desktop the column
 // simply shows its recent list again. The remembered tab is dropped either way (a rotation to desktop in
@@ -58218,12 +58256,14 @@ class Handler(BaseHTTPRequestHandler):
         cwd — _resolve_open_path); RENDERABLE media only (_PREVIEW_MIME), anything else 404s and the
         client keeps its plain link. Oversize 413s rather than silently truncating. HEAD is the
         existence probe for a chip that can't self-verify like an <img> (a PDF): headers only, so a
-        since-deleted file costs no download and never shows a dead chip.
+        since-deleted file costs no download and never shows a dead chip. A 404 names its cause in
+        X-Romp-Reason (_file_404_reason), the viewer reading a deletion off `missing` alone.
 
         Also serves SOURCE/TEXT (the user 2026-08-08) so the viewer can show a file to a browser that is
         nowhere near the kernel's machine — its own, much smaller cap, and a NUL sniff so a binary that
         slipped past the name allowlist 415s instead of arriving as mojibake."""
-        fp = _resolve_open_path((q.get("path") or [""])[0], (q.get("sid") or [None])[0])
+        given = (q.get("path") or [""])[0]
+        fp = _resolve_open_path(given, (q.get("sid") or [None])[0])
         if (q.get("download") or [""])[0] == "1":
             return self._file_download(fp, head=head)
         # A mention-time PIN (see _pin_mention): serve the snapshot this message's embed latched, so a
@@ -58242,7 +58282,10 @@ class Handler(BaseHTTPRequestHandler):
         # Every error body NAMES the resolved path (home-collapsed) — a bare "not found" told the user
         # nothing about WHAT was tried when a relative link resolved somewhere unexpected (2026-08-09).
         if not os.path.isabs(fp) or not os.path.isfile(fp):
-            return self._send(404, b"" if head else "not found: %s" % _tilde(fp), "text/plain")
+            # ...and the 404 names its cause in one word (_file_404_reason), so the viewer's focus HEAD calls a
+            # 404 a deletion only when the file is gone; the body is as it was.
+            return self._send(404, b"" if head else "not found: %s" % _tilde(fp), "text/plain",
+                              headers={_FILE_404_REASON_HDR: _file_404_reason(given, fp)})
         if not mime:
             # Exists, but on neither VIEW allowlist (a .zip, a .so). Its own status, distinct from 404,
             # because the truths differ and the client acts on the difference: "not found" means give
@@ -62518,7 +62561,10 @@ class Handler(BaseHTTPRequestHandler):
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
         if not port:
-            return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain")
+            # `detached`, not `missing`: no disk was consulted, and the viewer's focus HEAD must not call the file
+            # deleted when its host went away (_file_404_reason's vocabulary; the relay's own two words are here)
+            return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain",
+                              headers={_FILE_404_REASON_HDR: "detached"})
         q = parse_qs(query or "")
         if (q.get("download") or [""])[0] == "1":
             # The download half rides the same relay (the user 2026-08-09: anything on disk is
@@ -62540,7 +62586,8 @@ class Handler(BaseHTTPRequestHandler):
             # and NUL sniff still rule at its end; its non-200 verdicts pass through below.
             mime = "text/plain; charset=utf-8"
         if not mime:
-            return self._send(404, b"" if head else "not found", "text/plain")
+            return self._send(404, b"" if head else "not found", "text/plain",
+                              headers={_FILE_404_REASON_HDR: "unviewable"})
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=15)
@@ -62564,6 +62611,7 @@ class Handler(BaseHTTPRequestHandler):
             r_ns = resp.getheader("X-Romp-Mtime-Ns")
             r_u8 = resp.getheader("X-Romp-Text-Utf8")
             crange = resp.getheader("Content-Range") or ""
+            r_why = resp.getheader(_FILE_404_REASON_HDR) or ""
         except (OSError, http.client.HTTPException) as e:
             _demand_redial(host, "refused" if isinstance(e, ConnectionRefusedError) else "timeout")
             return self._send(502, b"" if head else ("tunnel to %s is not answering — re-dialing now" % host),
@@ -62582,15 +62630,19 @@ class Handler(BaseHTTPRequestHandler):
             # tab handed prose labelled application/pdf shows a corrupt-PDF error instead of the sentence
             # (skeptic find). An oversize PDF navigated to gets the same way-out page the local route
             # serves, linking THIS relay's download half — the remote never sees Sec-Fetch-Dest, so the
-            # decision is made here. Body only; the remote's own headers are not mirrored on this arm.
+            # decision is made here. Body and the 404's one-word cause only; the remote's other headers are not
+            # mirrored on this arm. The cause rides when it is a word the local route itself sends
+            # (_FILE_404_REASONS): data about the remote's disk, the reasoning of the mtime headers below, and a word
+            # from a lying remote is dropped like its Content-Type. A remote from before the header sends none.
+            why = {_FILE_404_REASON_HDR: r_why} if status == 404 and r_why in _FILE_404_REASONS else None
             if head:
-                return self._send(status, b"", "text/plain")
+                return self._send(status, b"", "text/plain", headers=why)
             if status == 413 and mime == "application/pdf" and self._is_navigation():
                 return self._send(413, _too_large_page(_decode_text(body) or "too large to show",
                                                        os.path.basename(rp), q,
                                                        route="/remote/%s/file" % quote(host, safe="")),
                                   "text/html; charset=utf-8", cache="no-cache")
-            return self._send(status, body, "text/plain", cache="no-cache")
+            return self._send(status, body, "text/plain", cache="no-cache", headers=why)
         if head:
             # mirror _file_preview's HEAD: the remote's verdict + real length, no body
             self.send_response(status)

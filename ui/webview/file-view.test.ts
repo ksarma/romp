@@ -24,16 +24,16 @@ const FEED_CSS = web("feed.css");
 const CHAT_CSS = web("styles.css");
 
 test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
-  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void/);   // ev: the click, for a PDF's modified-click tab
+  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void/);   // ev: the click, for a PDF's modified-click tab; at: the target a todo link named (Slice 6 of plans/markdown-viewer.md, item 4)
   // web → the gesture reader, on every route (a plain click is openFileView here, or the relay below when the
   // route names a pane; a modified click on a PDF is the tab either way, pdf-new-tab.test.ts)
-  assert.match(RENDER, /openFileClick\(ev, path, to, relay\);/);
+  assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/);
   // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
   // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
   // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
-  assert.match(RENDER, /import \{ openFileClick \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
-  // VS Code keeps the host editor
-  assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
+  assert.match(RENDER, /import \{ openFileClick, type At \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
+  // VS Code keeps the host editor, whose arm reads a line target; a heading or an offset posts nothing extra
+  assert.match(RENDER, /const m: Record<string, unknown> = sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \};\n\s*if \(at && "line" in at\) m\.line = at\.line;\n\s*vscodeApi\.postMessage\(m\);/);
 });
 
 // executed: openPath's web-side branch (the user 2026-08-20). The DEFAULT is upstream's design — the
@@ -70,7 +70,7 @@ test("fileLinkRoute: an open Files pane takes the click; otherwise the preferenc
   // "here" becomes the plain click's opener (openFileClick's fourth argument, so the PDF gesture is read first),
   // which posts up a message naming its target pane and carrying the session's identity for the Files pane's chip
   assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);/);
-  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay\);/);
+  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null, a: At \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null, at: a \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay, at\);/);   // the relay carries the target too (Slice 6, item 4)
 });
 
 // The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
@@ -95,7 +95,7 @@ test("the chat caches the shell's pane set from its romp:panes broadcast, and op
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
-  for (const call of [/openPath\(path, null, e\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/,
+  for (const call of [/openPath\(path, null, e\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/,
                       /openPath\(p, id \|\| null, e\);/]) assert.match(RENDER, call);   // each with its click (a PDF's modified-click tab)
   // the ONLY openFile postMessage left in render.ts is openPath's own fallback branch
   assert.equal((RENDER.match(/type: "openFile"/g) || []).length, 2,
@@ -109,7 +109,7 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   // gate is chat-side — see the fileLinkRoute test), and the shell forwards unconditionally, the
   // browseFiles contract, into the feed iframe where initFileView's viewFile branch opens the viewer
   assert.match(KERNEL, /if\(m\.romp==='viewFile'\)\{var vf=document\.getElementById\('f-feed'\);/);
-  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid\},'\*'\)/);
+  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid,at:m\.at\|\|null\},'\*'\)/);   // …and the target rides through (Slice 6, item 4)
   // ARM ON ACK (review 2026-08-20): postMessage up the relay is fire-and-forget, so the shell only
   // STASHES the was-off bit at relay time and COMMITS the restore flag when the feed acks the real
   // open — a viewFile lost to a mid-reload feed iframe leaves no armed flag behind for a later
@@ -151,11 +151,11 @@ test("a relayed viewFile OPENS the viewer in the feed document, session id intac
   // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
   // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
   // BOTH viaRelay and the viewFileOpened ack on a real open.
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
   assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
-  assert.match(VIEW, /if \(openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null\)\) \{/);
+  assert.match(VIEW, /if \(openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null, \{ at: readAt\(m\.at\) \}\)\) \{/, "the relay's `at` (Slice 6 of plans/markdown-viewer.md), read through readAt: it crossed a frame boundary");
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   assert.ok(relayBranch.includes("viaRelay = true;"), "tagged only inside the real-open branch");
   assert.ok(relayBranch.includes('window.parent.postMessage({ romp: "viewFileOpened" }, "*");'),
@@ -472,8 +472,8 @@ test("the width watch is wired: each viewer opens one on the body it builds, eac
   assert.equal(opens.length, 1, "openUrlView watches its body as it builds it");
   assert.equal((VIEW.match(/const stampBodyWidth = watchBodyWidth\(body, \(w\) => \{/g) || []).length, 1,
     "openFileView watches its body where the reflow's per-frame fold lives, the fold on the watch's onWidth (the seam re-places the comments panel's cards once per animation frame)");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
-    "openFileView: every paint stamps its fresh tables after the folds' restore (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
+    "openFileView: every paint stamps its fresh tables after the folds' restore, the keeper's and then a record's held past a Raw first paint (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
   // openUrlView stamps between the folds' restore and the seat, the local viewer's order: the seat and the fragment landing
   // measure the fresh root, and a stamp after them would change the layout they had measured (review round 1 of the 4d-3
   // fold, correctness-1). A source pin, not an executed case: the stand-ins have no layout, so neither the seat nor the
@@ -496,7 +496,7 @@ test("it waits with the romp loader and fails with the kernel's own words, never
   // a reply that lands after the user closed OR REPLACED the viewer paints nothing: the landing and the failure path both
   // read `stands` (the wrap connected, this fetch the newest), never the viewer id, which a replace-open moves to the new
   // viewer (the Slice 3 review, round 3; file-view-landing-order-browser.test.ts)
-  assert.equal((VIEW.match(/if \(!stands\(\)\) return;/g) || []).length, 2, "the landing and the failure path");
+  assert.equal((VIEW.match(/if \(!stands\(\)\) return;/g) || []).length, 3, "the landing, the failure path, and `land` itself, which parks nothing for an answer that does not stand (the review's round 5: it records a parked landing for the bar's raise to wait on)");
 });
 
 test("it reuses fileUrl, so a REMOTE session's file is relayed from the host that owns it", () => {
@@ -1177,11 +1177,14 @@ test("the title bar carries a session chip resolved from the sid — never inven
   assert.match(openFn, /bar\.appendChild\(name\); if \(sess\) bar\.appendChild\(sess\); bar\.appendChild\(acts\);/,
     "between the path and the actions");
   // the signatures every opener and the relay pin depend on are as they were, plus the optional opts:
-  // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link), line (a `path:12` link
-  // inside a shown file) and frag (a sibling link's fragment lands after the render) — every existing caller unchanged
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
+  // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) and `at`, where the open lands
+  // (Slice 6 of plans/markdown-viewer.md, item 4: a line, a source offset or a heading; the former `line` and `frag`
+  // options are two of its arms, replaced, not aliased); every existing caller moved with it (file-view-seam.test.ts)
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
+  // The host's onLeave (Slice 6 of plans/markdown-viewer.md, item 3) hands the pane the reader's place in a file as they
+  // leave it, which the pane hands back as the open's `place`.
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown; at\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, at: At \| null\) => void; onLeave\?: \(path: string, sid: string \| null, rec: RememberedPlace\) => void \}\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {
@@ -1263,4 +1266,171 @@ test("a window stand-in enumerates no parent edge, and a dump of it names neithe
   }
   const self = unframedWindow();
   assert.ok(self.parent === self && framedWindow(shell).parent === shell, "the parent is still reachable: itself when unframed, the shell when framed");
+});
+
+test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4): the At union and readAt's three arms; the delegate hands a path link's line or fragment on as `at`; the offset is spent at the first text landing and scrolled the next frame, the block centred in Rendered through the anchor map's table and the row in Raw through the seam's scrollToOffset, an offset past the end saying so; a missing heading says so", () => {
+  assert.match(VIEW, /export type At = \{ line: number \} \| \{ offset: number \} \| \{ heading: string \};/);
+  assert.match(VIEW, /export function readAt\(x: unknown\): At \| null \{\n\s*if \(!x \|\| typeof x !== "object"\) return null;\n\s*const o = x as Record<string, unknown>;\n\s*if \(typeof o\.line === "number" && Number\.isInteger\(o\.line\) && o\.line > 0\) return \{ line: o\.line \};\n\s*if \(typeof o\.offset === "number" && Number\.isInteger\(o\.offset\) && o\.offset >= 0\) return \{ offset: o\.offset \};\n\s*if \(typeof o\.heading === "string" && o\.heading\) return \{ heading: o\.heading \};\n\s*return null;\n\}/,
+    "validated at the receiver: the message crossed a frame boundary");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
+  assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
+  assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
+  assert.match(openFn, /renderBody\(\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5)");
+  assert.match(openFn, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*if \(pendingHeading !== null && \(!isMd \|\| fmt\.md === "rendered"\)\) spendHeading\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/,
+    "spent at the landing like the line, scrolled the next frame (the heading landing's timing), before the keyboard");
+  const sso = openFn.slice(openFn.indexOf("const scrollToSourceOffset = "), openFn.indexOf("let pendingOffset"));
+  assert.match(sso, /if \(n > src\.length\) noteBar\("Offset " \+ n \+ " is past the end of this file, which has " \+ src\.length \+ \(src\.length === 1 \? " character" : " characters"\) \+ "; showing the last " \+ \(rendered \? "block\." : "line\."\)\);/, "the line rule's shape");
+  assert.match(sso, /if \(!rendered\) \{ ctx\.scrollToOffset\(at\); return; \}/, "Raw: the seam's own row mapping");
+  assert.match(sso, /const spans = sourceBlockSpans\(src\);[\s\S]*const held = blockHolding\(spans, at\);[\s\S]*renderedBlockElements\(md, src, k\)\[0\];[\s\S]*revealFragmentTarget\(target\);[^\n]*\n(?:\s*if \(own && target\.localName === "details"[^\n]*\n)?\s*target\.scrollIntoView\(\{ block: "center" \}\);/, "Rendered: the block table, the reader's place's reading of it, the paired element, a fold above it opened (and the block's own fold since review round 2), centred");
+  assert.match(VIEW, /import \{ sourceBlockSpans, renderedBlockElements \} from "\.\/anchor-map";/);
+  assert.match(VIEW, /import \{ readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place \} from "\.\/reader-place";/, "followPlace: the boxless leave follows the last measured place into the text a reload landed under the hide (the review's round 6)");
+  assert.match(openFn, /if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(sectionHidden\(body, h\)\) \{ noteBar\(HIDDEN_SECTION\); return; \}\n(?:\s*\/\/[^\n]*\n)*[\s\S]{0,300}noteBar\('No section named "' \+ shown \+ '" in this file\.'\);/, "a heading the note lacks: the notice, never a silent open at the top; one it has under a plain hidden wrapper, which scrollToFragment lands nothing on: the ruled words (the PR review's round 1)");
+  assert.doesNotMatch(openFn, /opts\?\.frag|opts\.line|pendingFrag/, "the former options are gone, not aliased");
+});
+
+test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the probe's HEAD through the panel's two readings, its listeners on the window's focus and the document's visibilitychange, registered as probeLive and dropped by both exits and the URL view's replace; the bar's words and its Reload through fetchFile; a landing settles the bar and the failure landing re-arms its own button; no timer anywhere in it", () => {
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the panel's pure readings, imported as they are (not the poll, not its stopped set), and its token for a 404 (the bar's deletion words; the PR review's round 1)");
+  assert.match(VIEW, /export const CHANGED_ON_DISK = "Changed on disk\.";/, "the bar's words (C4)");
+  assert.match(VIEW, /let probeLive: \(\(\) => void\) \| null = null;\nfunction dropProbe\(\): void \{\n\s*if \(probeLive\) \{ const f = probeLive; probeLive = null; f\(\); \}\n\}/, "one live probe, the onKey idiom");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  const probe = openFn.slice(openFn.indexOf("let probeOut = false;"), openFn.indexOf("// The fetch pipeline, as a function:"));
+  assert.match(probe, /if \(takingKeyboard \|\| probeOut \|\| probeStopped \|\| editing \|\| !mtimeNs \|\| !wrap\.isConnected \|\| document\.hidden\) return;[^\n]*\n\s*probeOut = true;/, "the gate: not the viewer's own focus call (a cross-frame open's landing fires the window's focus inside body.focus(); review round 1), one in flight, not retired, no editor, a fetched file, the viewer up, the document visible");
+  assert.match(openFn, /if \(a && a !== document\.body && !bar\.contains\(a\)\) return;\n\s*if \(typingInPeerFrame\(\)\) return;\n\s*takingKeyboard = true;\n\s*const opts: FocusOptions & \{ focusVisible: boolean \} = \{ preventScroll: true, focusVisible: ring \?\? \(a === null \|\| a === document\.body \? ringWithNoHolder\(\) : ringOf\(a\)\) \};\n\s*try \{ body\.focus\(opts\); \} finally \{ takingKeyboard = false; \}/, "takeKeyboard's gate reads this document's holder, then the focused sibling frame's (review round 2: the chat composer beside a Files iframe), marks its own focus call for the probe's gate, and names the ring through focusVisible from the holder it takes the keyboard from, the ring a closer read before removing that holder (review round 3: Chromium's script-focus heuristic framed the note on every pointer open), or, with no holder, the kind of this document's last press (review round 4: Enter on a file browser row, whose rows are not focusable, lost the ring)");
+  assert.match(VIEW, /function ringOf\(a: Element \| null\): boolean \{\n\s*if \(a === null \|\| a === document\.body\) return false;\n\s*try \{ return a\.matches\(":focus-visible"\); \} catch \{ return false; \}\n\}/, "ringOf, module-level since review round 4 (the replace path reads it before the old card goes): no holder or the document's body wears no ring; a matches() without the selector reads none");
+  assert.match(VIEW, /function ringInOld\(old: Element \| null\): boolean \| null \{\n\s*const a = document\.activeElement;\n\s*return old && a && old\.contains\(a\) \? ringOf\(a\) : null;\n\}/, "the ring of a holder inside the card a replace-open removes; null when the holder is elsewhere or there is none");
+  assert.match(openFn, /closeAsks = \[\];\n\s*const priorRing = ringInOld\(document\.getElementById\("romp-fileview"\)\);[^\n]*\n\s*runLeave\(\);/, "read once the close guard has passed and BEFORE the removal and every step that could move the focus (review round 4: Enter on a Tab-focused path link in the note replaced the viewer, and the link was gone at the landing, so the new body got no ring)");
+  assert.match(openFn, /const keyboardOnLanding = \(\): void => \{ if \(!keyboardPending\) return; keyboardPending = false; takeKeyboard\(priorRing \?\? undefined\); \};/, "the open's first landing passes the removed holder's ring when there was one, else takeKeyboard reads its own");
+  assert.match(VIEW, /let lastInputKey = false;\n(?:[^\n]*\n){0,2}function watchInputKind\(\): void \{\n\s*document\.addEventListener\("keydown", \(e: KeyboardEvent\) => \{ if \(!MODIFIER_KEYS\.has\(e\.key\)\) lastInputKey = true; \}, true\);\n\s*document\.addEventListener\("pointerdown", \(\) => \{ lastInputKey = false; \}, true\);\n\}/, "the kind of the document's last press, on the two events themselves (a modifier alone is no key press); no timer, no flag set by the viewer's own code");
+  assert.match(VIEW, /function ringWithNoHolder\(\): boolean \{\n\s*if \(!lastInputKey\) return false;\n\s*try \{ return typeof document\.hasFocus !== "function" \|\| document\.hasFocus\(\); \} catch \{ return false; \}\n\}/, "a key, and this document holding the page's focus (a relayed open's click was in another frame, whose press this record never saw)");
+  assert.match(VIEW, /window\.addEventListener\("pagehide", \(\) => \{ if \(leaveLive\) leaveLive\(\); \}\);\n\s*watchInputKind\(\);/, "installed once by initFileView beside the module's other document listeners");
+  assert.match(openFn, /const ring = held && ringOf\(a\);[^\n]*\n\s*pop\.remove\(\);[\s\S]{0,120}if \(held\) takeKeyboard\(ring\);/, "the Outline's closer reads the ring off the popover or the button before the removal and passes it");
+  assert.match(openFn, /diskBar\.ring = diskBar\.held && ringOf\(document\.activeElement\);/, "the disk bar's Reload records the ring at the click, before the disable drops the focus");
+  assert.match(probe, /fetch\(fileUrl\(path, sid\), \{ method: "HEAD", cache: "no-store" \}\)\.then\(\(r\) => \{\n\s*const v = headVerdict\(r\.status, r\.headers\.get\("X-Romp-Mtime-Ns"\)\);\n\s*if \(v\.kind === "stop"\) \{ probeStopped = true; return; \}/, "the same URL the GET used, read as the poll reads its own; a 413/415 retires it");
+  assert.match(probe, /const moved = v\.value;\n\s*if \(!mtimeMoved\(mtimeNs, moved\)\) return;/, "a string compare, the contract the panel and the save fence keep");
+  assert.match(probe, /const was = mtimeNs;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*raiseHold\.defer\(\(\) => \{\n\s*const go = \(\): void => \{ if \(!editing && wrap\.isConnected && mtimeNs === was\) raiseDiskBar\(words\); \};\n\s*const landing = parkedLanding;[^\n]*\n\s*if \(landing\) void landing\.then\(go\); else go\(\);\n\s*\}\);/, "the raise waits out a press on the body row and re-checks its guards at the release (review round 3: a raise mid-drag moved the body under the pointer and the selection ended on other text), after a landing parked under the same press has settled (round 5: the row's hold released first and the raise inserted a bar the landing then removed); the guard is that the body still shows the file the HEAD compared against, any landing since making the HEAD's evidence stale (round 6: a parked landing that brought a second write, newer than the HEAD's answer, read as moved against that answer and raised a false bar over the newest file)");
+  assert.match(openFn, /const parked = hold\.held\(\);\n\s*const p = hold\.defer\(\(\) => run\(parked\)\);\n\s*if \(parked\) noteParkedLanding\(p\);/, "a landing the card's hold parks is the one the raise waits for, and the run is told it was parked (the PR review's round 2: the Outline's re-open after a parked landing's paint reads it)");
+  assert.match(openFn, /const raiseHold = pressHold\(main\);/, "a hold of its own, on the body ROW the bar is inserted above (the body and the Comments aside): the landing's parks one run at a time, and a raise must never displace a parked landing (review round 4: held on the body alone, a press on a card's head or a drag in the reply box in the aside had the bar land under it, the click lost and the drag selecting nothing)");
+  assert.equal((openFn.match(/const hold = pressHold\(box\);/g) || []).length, 1, "the landing's hold is on the CARD (the PR review's round 1: the Outline popover is a card child outside the body, and a landing under a press on one of its rows painted at once and removed the pressed row before the mouseup, the pick lost)");
+  assert.equal((openFn.match(/pressHold\(body\)/g) || []).length, 0, "…and no longer on the body alone");
+  assert.ok(openFn.indexOf("const raiseHold = pressHold(main);") > openFn.indexOf('const main = el("div", "fileview-main");'), "the row exists when the hold takes it");
+  assert.match(probe, /\.catch\(\(\) => \{[^\n]*\}\)\n\s*\.finally\(\(\) => \{ probeOut = false; \}\);/, "a network failure says nothing; the flight ends either way");
+  assert.match(probe, /window\.addEventListener\("focus", onWindowFocus\);\n\s*document\.addEventListener\("visibilitychange", onVisibility\);\n\s*probeLive = \(\) => \{ window\.removeEventListener\("focus", onWindowFocus\); document\.removeEventListener\("visibilitychange", onVisibility\); \};/, "the two events, registered for the exits");
+  assert.match(probe, /const onVisibility = \(\): void => \{ if \(!document\.hidden\) probe\(\); \};/, "to visible only");
+  assert.match(probe, /const raiseDiskBar = \(words: string\): void => \{\n\s*if \(diskBarUp\(\)\) return;[^\n]*\n\s*const bar2 = noteBar\(words\);/, "the one notice row, the conflict bar's shape, with the verdict's words (the PR review's round 1: a 404 is a deletion)");
+  assert.match(probe, /const words = moved === ABSENT && r\.headers\.get\(REASON_HEADER\) === REASON_MISSING \? DELETED_ON_DISK : CHANGED_ON_DISK;[^\n]*\n\s*const was = mtimeNs;/, "the words are read off the HEAD's verdict AND the kernel's reason: a 404 says deleted only when the header says the file is gone (the PR review's round 2: the route also 404s a re-aimed relative path and a detached host), any other move says changed");
+  assert.match(VIEW, /export const REASON_HEADER = "X-Romp-Reason";\nexport const REASON_MISSING = "missing";/, "the kernel's one-word cause: the header, and the one value that means gone");
+  assert.match(probe, /raiseDiskBar\(words\); \};/, "the release's raise carries them");
+  assert.match(VIEW, /export const DELETED_ON_DISK = "Deleted on disk\.";/, "the deletion's words, the manager's");
+  assert.match(VIEW, /import \{ headVerdict, mtimeMoved, ABSENT \} from "\.\/file-comments-model";/, "the model's own token for a 404, not a string of the viewer's");
+  assert.match(openFn, /else if \(diskBar && diskBar\.under === mtimeNs && mtimeNs\) raiseDiskBar\(diskBar\.words\);/, "the editor's exit re-raises the bar with the words it had");
+  assert.match(probe, /re\.type = "button"; re\.textContent = "Reload";/);
+  assert.match(probe, /re\.disabled = true; re\.textContent = "Reloading";[^\n]*\n\s*fetchFile\(\);\n\s*diskBar\.asked = fetchSeq;/, "acknowledged at the click; the reload is fetchFile, which keeps the place; its landing is remembered");
+  assert.match(probe, /const ownAsk = \(my: number\): boolean => diskBar !== null && diskBar\.asked > 0 && my >= diskBar\.asked;\n\s*const settleDiskBar = \(my: number\): void => \{\n\s*if \(diskBar && \(mtimeMoved\(diskBar\.under, mtimeNs\) \|\| ownAsk\(my\)\)\) dropDiskBar\(\);/, "the clearing event: a landing under another mtime, or the bar's own ask's landing, which any newer fetch's landing stands for once it overtook the ask (review round 2: the overtaken bar dead-ended at Reloading over the poll's 404 pane)");
+  assert.match(probe, /diskBar\.held = bar2\.contains\(document\.activeElement\);[^\n]*\n\s*diskBar\.ring = diskBar\.held && ringOf\(document\.activeElement\);[^\n]*\n\s*re\.disabled = true; re\.textContent = "Reloading";/, "who holds the keyboard is read at the click, BEFORE the disable, and whether with the ring (a browser drops the focus off a disabled control at once; review round 1: read at the landing it was always the document's body; review round 3: the ring for the landing's hand-over)");
+  assert.match(probe, /const held = diskBar!\.held \|\| diskBar!\.el\.contains\(document\.activeElement\);\n\s*const ring = diskBar!\.ring \|\| ringOf\(document\.activeElement\);[^\n]*\n\s*diskBar!\.el\.remove\(\); note = null;\n\s*if \(held\) takeKeyboard\(ring\);/, "the drop: the keyboard the bar's Reload held at its click goes to the body, with the ring the click recorded or a holder still in the bar wears (the brief's call-site list named the button; review round 3)");
+  assert.match(probe, /const d = diskBar;\n\s*if \(!d \|\| !ownAsk\(my\) \|\| !diskBarUp\(\)\) return;/, "the re-arm answers the bar's ask or a newer fetch's failure, while the bar stands");
+  assert.match(probe, /if \(d\.held && keyboardIdle\(\)\) d\.btn\.focus\(\{ preventScroll: true \}\);/, "a failed Reload puts the click's keyboard back on the re-armed button only while nothing holds it (review round 2: it took the keyboard from a box the reader had moved to during the flight, and Space fired Reload again)");
+  assert.match(openFn, /const keyboardIdle = \(\): boolean => \{ const a = document\.activeElement; return \(a === null \|\| a === document\.body\) && !typingInPeerFrame\(\); \};/, "idle: this document's body or nothing, and no box being typed in a sibling frame");
+  assert.match(openFn, /isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "right after the landing applies the mtime, text and media alike");
+  assert.match(openFn, /body\.replaceChildren\(why\);\n\s*syncOutline\(\);[^\n]*\n\s*rearmDiskBar\(my\);/, "the failure landing re-arms the bar's own button AFTER painting the pane (review round 3: read before it, an element of the old body's content the reader had focused during the flight stood the re-arm down, and the paint's removal then left the keyboard on the document's body)");
+  assert.doesNotMatch(openFn, /rearmDiskBar\(my\);[^\n]*\n\s*const why = el\("div", "fileview-err"\);/, "never before the pane");
+  assert.doesNotMatch(probe, /setTimeout|setInterval|requestAnimationFrame/, "no timer: the events are the reader's return, the answer and the landing");
+  // the exits: closeFileView, the replace path, openUrlView's replace, each right after dropOnKey
+  const closeFn = VIEW.split("export function closeFileView")[1].split("\n}\n")[0];
+  assert.ok(closeFn.indexOf("dropProbe();") > closeFn.indexOf("dropOnKey();") && closeFn.indexOf("dropOnKey();") >= 0, "closeFileView drops the probe after the Escape handler");
+  assert.ok(openFn.indexOf("dropProbe();") > openFn.indexOf("dropOnKey();") && openFn.indexOf("dropProbe();") < openFn.indexOf('document.getElementById("romp-fileview")?.remove();'), "the replace path drops it before the old card goes");
+  const urlFn = VIEW.split("export function openUrlView")[1].split("\n}\n")[0];
+  assert.ok(urlFn.indexOf("dropProbe();") > urlFn.indexOf("gitHooks = null;") && urlFn.indexOf("dropProbe();") < urlFn.indexOf("dropOnKey();"), "the URL viewer's replace path drops it too (before dropOnKey: file-comments.test.ts pins dropOnKey and runCloseHooks adjacent there)");
+});
+
+test("source: review round 2 of Slice 6 (plans/markdown-viewer.md): the keyboard rule reaches a sibling frame's typing target through the top window and never a flag; the memory's key carries the session for a relative path; the fetch failure's pane closes the Outline popover; a heading target on a non-markdown file is spent at its first text paint; the editor's entry keeps the text view's place for a leave while it is up; a fold that is the remembered block, or the offset's block, is opened only when its content was showing", () => {
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  // the sibling frame: read when this document does not hold the focus, down the focused iframes to the element, a typing target keeps the keyboard, a throw takes as before
+  assert.match(VIEW, /function typingInPeerFrame\(\): boolean \{\n\s*try \{\n\s*if \(typeof document\.hasFocus !== "function" \|\| document\.hasFocus\(\)\) return false;\n\s*const top = window\.top;\n\s*if \(!top \|\| top === window\) return false;\n\s*let a: Element \| null = top\.document\.activeElement;/, "the read starts at the top window's active element");
+  assert.match(VIEW, /const inner = \(a as HTMLIFrameElement\)\.contentDocument;\n\s*if \(!inner \|\| inner === document\) return false;\n\s*a = inner\.activeElement;/, "…and walks the focused iframes down to their own active element");
+  assert.match(VIEW, /return a !== null && isTypingTarget\(a\);\n\s*\} catch \{ return false; \}/, "a typing target there keeps the keyboard; frames the read cannot see take it as before");
+  assert.match(VIEW, /function isTypingTarget\(a: Element\): boolean \{\n\s*if \(a\.localName === "textarea" \|\| a\.localName === "select"\) return true;[^\n]*\n\s*if \(a\.localName === "input"\) return !NON_TEXT_INPUTS\.has\(\(a\.getAttribute\("type"\) \|\| "text"\)\.toLowerCase\(\)\);\n\s*return \(a as HTMLElement\)\.isContentEditable === true;/, "a textarea, a select (type-ahead in a dropdown is typing too, as render.ts's own isTypingTarget reads it; review round 3), a text-like input or a contenteditable");
+  assert.equal((VIEW.match(/typingInPeerFrame\(\)/g) || []).length, 3, "read in takeKeyboard's gate and keyboardIdle, defined once: every hand-over runs through the one gate");
+  // the memory's key: the session folded in for a relative path alone
+  assert.match(VIEW, /export function placeKey\(path: string, sid: string \| null \| undefined\): string \{\n\s*if \(!\/\^\[\/~\]\/\.test\(path\)\) return path \+ "\\u0000" \+ \(sid \?\? ""\);\n\s*const host = hostOf\(sid \?\? ""\);\n\s*return host \? host \+ "\\u0000" \+ path : path;\n\}/, "the kernel's rule for a relative path (neither /- nor ~-rooted): the session's cwd resolves it, so the session is part of the file's identity; an absolute or ~ path is one file for every session of THIS kernel, and a session attached from another kernel (a host-prefixed sid, hostOf) reads that kernel's disk, so its key carries the host (the PR review's round 1: two kernels' files under one key)");
+  assert.match(openFn, /const memKey = placeKey\(path, sid\);[^\n]*\n\s*let pendingPlace: RememberedPlace \| null = at === null \? newerPlace\(opts\?\.place, rememberedPlaces\.get\(memKey\)\) : null;/, "read by the key");
+  assert.match(openFn, /rememberedPlaces\.set\(memKey, rec\);/, "written by the key");
+  assert.doesNotMatch(openFn, /rememberedPlaces\.(get|set)\(path/, "never by the bare path");
+  // the failure pane's paint closes the popover, as every other body paint does
+  assert.match(openFn, /closeOutline\(\);[^\n]*\n\s*body\.replaceChildren\(why\);\n\s*syncOutline\(\);/, "the fetch pipeline's catch: close, paint the pane, hide the button");
+  // a heading target on a file that is not markdown: judged at its first text paint (a note's Raw view still waits for the Rendered toggle)
+  assert.match(openFn, /if \(\(rendered \|\| !isMd\) && pendingHeading !== null\) spendHeading\(\);/, "the spend");
+  assert.match(openFn, /const spendHeading = \(\): void => \{\n\s*const h = pendingHeading; pendingHeading = null;\n\s*if \(h === null\) return;\n\s*requestAnimationFrame\(\(\) => \{\n\s*if \(wrap\.isConnected && unmeasurable\(\)\) \{ pendingHeading = h; return; \}[^\n]*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/, "spent at the paint, landed a frame later; a frame over a boxless body parks it again for the show's repaint (review round 5)");
+  // the editor's entry keeps the text view's place; the leave writes it while the editor is up; the exit clears it
+  assert.match(openFn, /let editPlace: RememberedPlace \| null = null;/);
+  assert.match(openFn, /if \(refused\) \{ noteBar\(refused\); return; \}\n\s*editPlace = liveRecord\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(isMd && fmt\.md === "rendered"\) \{ fmt\.md = "raw"; saveFmt\(fmt\); \}/, "read past the guard and before the Raw switch: the view the reader read");
+  assert.match(openFn, /leaveLive = \(\) => \{\n\s*const rec = editing \? editPlace : liveRecord\(\);\n\s*if \(!rec\) return;/, "the leave's record");
+  assert.match(openFn, /editing = false; dirty = false; ta = null;\n\s*editPlace = null;/, "the exit clears it");
+  // the remembered block's own fold opens only when the depth passes its shut box; the offset's block that is a fold opens
+  assert.match(openFn, /if \(e\.localName === "details" && !e\.hasAttribute\("open"\) && \(otherView \? !p\.atTop && p\.top < body\.clientHeight : !restored && depth > 0 && depth >= e\.getBoundingClientRect\(\)\.height - 0\.5\)\) e\.setAttribute\("open", ""\);/, "a depth inside the summary's height says nothing (it straddles the edge the same open or shut); a record read in Raw, where every row shows, names the fold's rows unless the body stood at the file's very top or the block starts below the body's height (review round 3; round 4 keyed the rule on the block's top sign for a Raw record at the file's top, which had unfolded the front matter; round 5 reads the record's own atTop flag, since the sign also shut a callout whose rows the reader had in view under the blank row at the edge); a fold the record's own state put back is left as it says by the depth rule alone (round 4: it re-opened a fold left shut at another width), and the other-view rule runs over it, a Raw record's carried folds being older evidence than its place (round 6: a Rendered read with the callout shut, Edit, a Raw read into its rows and a Rendered reopen kept it shut over the passage)");
+  assert.match(openFn, /revealFragmentTarget\(target\);[^\n]*\n\s*if \(own && target\.localName === "details" && !target\.hasAttribute\("open"\)\) target\.setAttribute\("open", ""\);[^\n]*\n\s*target\.scrollIntoView\(\{ block: "center" \}\);/, "the offset's block that IS a fold is opened before the scroll (revealFragmentTarget opens ancestors alone), and only the offset's OWN block: a stand-in for a block with no element (a comment after a shut callout, the trailing blank line) leaves the fold as authored (review round 3)");
+});
+
+test("source: review round 3 of Slice 6 (plans/markdown-viewer.md): the record carries the Rendered view's open folds by ordinal, read at the leave and put back before the seat at the same mtime; a heading target on a picture or a PDF is judged at its first paint with bytes; the Outline lists no heading under a plain hidden wrapper, names its current row for assistive technology and hands Tab back to its button", () => {
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  // the record's ninth field: numbers, never text; read off the Rendered body at the leave (liveRecord) and at Edit through it
+  assert.match(VIEW, /export type RememberedPlace = \{ start: number; end: number; top: number; atTop: boolean; view: "rendered" \| "raw"; mtimeNs: string; scrollTop: number; t: number; folds\?: number\[\] \};/);
+  assert.match(VIEW, /export function openFoldOrdinals\(body: HTMLElement\): number\[\] \| null \{\n\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*if \(!md\) return null;/, "the ordinals of the open <details> under the Rendered box; null without one (a Raw read)");
+  assert.match(openFn, /const rec = rememberedPlaceOf\(p, mtimeNs, boxless \? placeScrollTop : body\.scrollTop\);\n\s*const folds = openFoldOrdinals\(body\) \?\? heldFolds\(\);[^\n]*\n\s*return folds \? \{ \.\.\.rec, folds \} : rec;/, "the live record carries them when the Rendered body is up, else the folds a Raw first paint holds (heldFolds), and reads the last measured scrollTop under a boxless body (review round 5)");
+  // put back before the seat, at the record's mtime alone, in the Rendered view alone
+  assert.match(openFn, /const restoreFolds = \(rec: RememberedPlace\): boolean => \{\n\s*if \(!rec\.folds \|\| rec\.mtimeNs !== mtimeNs \|\| ctx\.mode\(\) !== "rendered"\) return false;/, "the gate: fold state present, the same bytes, the Rendered view; says whether it applied (review round 4)");
+  assert.match(openFn, /Array\.from\(md\.querySelectorAll\("details"\)\)\.forEach\(\(d, i\) => \{ if \(open\.has\(i\)\) d\.setAttribute\("open", ""\); else d\.removeAttribute\("open"\); \}\);\n\s*return true;\n\s*\};/, "applied: every fold as the record says");
+  assert.match(openFn, /if \(unmeasurable\(\)\) return;\n\s*const rec = pendingPlace; pendingPlace = null;\n\s*const restored = restoreFolds\(rec\);\n\s*if \(!restored && rec\.folds && rec\.mtimeNs === mtimeNs && ctx\.mode\(\) !== "rendered"\) pendingFolds = rec;[^\n]*\n\s*const kept = placeFromRemembered\(rec, shownText\);/, "a boxless body keeps the record pending (review round 4: a paint under a hidden pane spent it); the folds before the block is read and seated, held past a Raw first paint for the first Rendered one (round 4: Edit saves the Raw preference, and the toggle after the reopen painted every fold as authored)");
+  assert.match(openFn, /const unmeasurable = \(\): boolean => typeof body\.getClientRects === "function" && body\.getClientRects\(\)\.length === 0;/, "no box at all: the pane's document is display:none (a stand-in without getClientRects is measured as before)");
+  assert.match(openFn, /paintedWidth = seenWidth;\n\s*if \(!textShowing\(\)\) return;\n\s*fireRenderedKeepingSelection\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(unmeasurable\(\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*const moved = placeFrame !== 0;\n\s*const restored = scrollUnread && body\.scrollTop > 0 && place !== null && place\.source === shownText && body\.clientWidth === placeWidth && !\(moved && body\.scrollTop < placeScrollTop\);\n\s*if \(restored\) notePlace\(\); else seat\(place\);[^\n]*\n\s*landRemembered\(\); landTarget\(\);/, "the width hook's repaint (the ResizeObserver's report of the width moving from 0 at the show) seats the pending record and spends the pending target and keyboard (round 5); the report of the box going fires its reflow for the panel's hooks and seats nothing (round 5); the show's report over a scroll the hide kept from being read reads the offset the browser restored instead of seating over it, while the text and the width are the place's and the body is not back at 0 (round 6), unless the restore itself moved the body, its scroll event's read pending, to below the place last measured, where the place is seated (the closing pass); the flag falls with the measurement either branch makes");
+  assert.match(openFn, /folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/, "the held folds go back right after foldKeeper's restore (whose note in such an open was taken over the Raw body) and before the hooks measure and the seat writes");
+  assert.match(openFn, /const restoreHeldFolds = \(\): void => \{ if \(!pendingFolds \|\| ctx\.mode\(\) !== "rendered"\) return; const r = pendingFolds; pendingFolds = null; restoreFolds\(r\); \};/, "a Rendered paint alone spends them, once; restoreFolds' own mtime gate stands");
+  assert.match(openFn, /if \(kept\) revealRemembered\(kept, depth, ctx\.mode\(\) !== rec\.view, restored\);/, "the fallback rules learn whether the record is the other view's and whether its folds were put back");
+  // a picture that loads after the seat: the seat written again at its load, heard on the body in the capture phase, while the body stands where the seat left it
+  assert.match(openFn, /else body\.scrollTop = rec\.scrollTop;\n\s*notePlace\(\);\n\s*armReseat\(rec, kept, depth\);\n\s*\};/, "armed right after the remembered seat");
+  assert.match(openFn, /const stands = body\.scrollTop === at\.scrollTop \|\| \(now !== null && at\.place !== null && now\.start === at\.place\.start && Math\.abs\(now\.top - at\.place\.top\) < 0\.5\);\n\s*if \(!stands\) \{ retire\(\); return; \}/, "the guard: the same scrollTop (no anchoring moved it) or the same top block at the same offset (anchoring moved the scrollTop, not the reader); a reader's scroll retires it");
+  assert.match(openFn, /body\.addEventListener\("load", onLoad, true\);\n\s*dropReseat = retire;/, "the picture's own load, in the capture phase (an img's load does not bubble); no timer");
+  assert.match(openFn, /closeOutline\(\);[^\n]*\n\s*if \(dropReseat\) dropReseat\(\);/, "every paint retires it");
+  assert.match(openFn, /ctx\.onClose\(\(\) => \{ if \(dropReseat\) dropReseat\(\); \}\);/, "…and the close");
+  const reseat = openFn.slice(openFn.indexOf("const armReseat = "), openFn.indexOf("ctx.onClose(() => { if (dropReseat) dropReseat(); });"));
+  assert.doesNotMatch(reseat, /setTimeout|setInterval|requestAnimationFrame/, "no timer in the re-seat");
+  // a picture or a PDF: every target judged at the landing over a body with a box, the heading's notice the text branch's (the PR
+  // review's round 1 moved the spend out of renderBody's media branch into landMedia, with the line and the offset beside it)
+  const media = openFn.slice(openFn.indexOf("if (isImage || isPdf) {"), openFn.indexOf("folds.note();"));
+  assert.doesNotMatch(media, /pendingHeading|pendingLine|pendingOffset|noteBar\(/, "renderBody's media branch judges no target: the landing does (landMedia)");
+  assert.match(openFn, /const spendOnMedia = \(\): void => \{\n\s*const kind = isPdf \? "a PDF" : "a picture";\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; noteBar\("No line " \+ n \+ " in this file: it is " \+ kind \+ "\."\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; noteBar\("No offset " \+ n \+ " in this file: it is " \+ kind \+ "\."\); \}\n\s*if \(pendingHeading !== null\) \{\n\s*const h = pendingHeading; pendingHeading = null;[\s\S]{0,300}noteBar\('No section named "' \+ shown \+ '" in this file\.'\);\n\s*\}\n\s*\};/, "the line, the offset and the heading each named in the notice bar's one-line shape, the kind of file with them (a picture, a PDF); nothing scrolls");
+  // the Outline: no row for a heading under a plain hidden wrapper; ids and aria-activedescendant; Tab to the button
+  assert.match(VIEW, /function underHidden\(el: Element, root: Element\): boolean \{[\s\S]{0,400}h\.toLowerCase\(\) !== "until-found"\) return true;/, "a plain hidden, not until-found (which a landing lifts)");
+  assert.match(openFn, /\.filter\(\(h\) => !underHidden\(h, md\)\) : \[\];/, "headingsOf leaves it out, so the button's visibility and the rows agree");
+  assert.match(openFn, /r\.setAttribute\("role", "menuitem"\); r\.dataset\.id = h\.id; r\.id = "fileview-outline-" \+ seq \+ "-" \+ i;/, "a row has an id of its own");
+  assert.match(openFn, /const r = rows\[cur\]; r\.classList\.add\("current"\);\n\s*pop\.setAttribute\("aria-activedescendant", r\.id\);/, "the popover names the current row on every move");
+  assert.match(openFn, /const words = headingWords\(h\)\.replace\(/, "the row's words read each picture's alt in place");
+  assert.match(VIEW, /function headingWords\(n: Node\): string \{\n\s*if \(n\.nodeType === 3\) return \(n as Text\)\.data;\n\s*const e = n as Element;\n\s*if \(e\.localName === "img"\) return " " \+ \(e\.getAttribute\("alt"\) \|\| ""\) \+ " ";/);
+  assert.match(openFn, /else if \(e\.key === "Tab"\) \{ closeOutlineKeeping\(false\); outlineBtn\.focus\(\{ preventScroll: true \}\); \}/, "Tab: close, the keyboard back on the button, the key's default left to run (no take())");
+});
+
+test("source: the PR review's round 1 of Slice 6 (plans/markdown-viewer.md): the notice bar is a polite live region; a heading target under a plain hidden wrapper says so in the manager's words; the pane toggled off and on re-takes the keyboard the hide dropped at the show's repaint; the Outline button wears the bar's selected dress while its popover is up, Escape puts the keyboard back on it and the current row at the open is the section under the reader's eye; a media landing runs through the box guard and the show's repaint lands what it left pending", () => {
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  // item 11: the live-region role, after the insert (styles-fileview-err-sizes.test.ts pins the four lines before it contiguous)
+  assert.match(openFn, /bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);\n\s*bar2\.setAttribute\("role", "status"\);/, "noteBar's div announces itself: the changed-on-disk bar is raised with no gesture");
+  // the hidden section: the ruled words, from spendHeading's frame when scrollToFragment landed nothing on a heading the note has
+  assert.match(VIEW, /export const HIDDEN_SECTION = "That section is hidden in the rendered view; opened at the top\.";/, "the manager's words, exactly");
+  assert.match(VIEW, /function sectionHidden\(box: HTMLElement, fragment: string\): boolean \{[\s\S]{0,500}return !!target && underHidden\(target, root\);\n\}/, "found, under a plain hidden wrapper");
+  assert.match(VIEW, /if \(!target\) return false;\n\s*if \(underHidden\(target, box\.querySelector\("\.fileview-md"\) \|\| box\)\) return false;[^\n]*\n\s*revealFragmentTarget\(target\);/, "scrollToFragment lands nothing on a boxless target, so the caller can say why");
+  // the pane toggled off and on: the body's own focus and blur keep the record, the show's repaint hands the keyboard back through the gate
+  assert.match(openFn, /let bodyHeld = false;\n\s*body\.addEventListener\("focus", \(\) => \{ bodyHeld = true; \}\);\n\s*body\.addEventListener\("blur", \(\) => \{ if \(!unmeasurable\(\)\) bodyHeld = false; \}\);\n\s*const retakeAfterHide = \(\): void => \{\n\s*if \(!bodyHeld \|\| unmeasurable\(\) \|\| document\.activeElement === body\) return;\n\s*bodyHeld = false;\n\s*takeKeyboard\(\);\n\s*\};/, "a blur while the body has a box is the reader's move and clears the record; the fixup's finds none and keeps it; the re-take runs through takeKeyboard's gate, so a typing box elsewhere keeps the keyboard");
+  assert.match(openFn, /landRemembered\(\); landTarget\(\);[^\n]*\n\s*retakeAfterHide\(\);/, "after the text landing's pendings at the show's repaint");
+  assert.match(openFn, /if \(mediaShowing\(\)\) \{ paintedWidth = seenWidth; landMedia\(\); retakeAfterHide\(\); return; \}\n\s*paintedWidth = seenWidth;\n\s*if \(!textShowing\(\)\) return;/, "the show's repaint over a media body lands what the boxless paint left pending and re-takes the keyboard, ahead of the text block (which the place and text-size suites pin contiguous)");
+  assert.match(openFn, /const mediaShowing = \(\): boolean => !editing && ctx\.mode\(\) === "media" && objUrl !== null;/, "a media body with its bytes landed");
+  assert.match(openFn, /const landMedia = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;[^\n]*\n\s*spendOnMedia\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/, "the media landing: the text landing's box guard, the notices, the keyboard");
+  assert.match(openFn, /svgText = null;[^\n]*\n\s*renderBody\(\);\n\s*landMedia\(\);/, "the blob landing runs through it (before: keyboardOnLanding alone, spent under a boxless body)");
+  assert.doesNotMatch(openFn, /renderBody\(\);\n\s*keyboardOnLanding\(\);/, "no landing spends the keyboard outside a box guard");
+  // the Outline: the dress, Escape, the current row
+  assert.match(openFn, /outlineBtn\.setAttribute\("aria-expanded", "true"\); outlineBtn\.classList\.add\("on"\);\n\s*box\.appendChild\(pop\);\n\s*const br = outlineBtn\.getBoundingClientRect\(\)/, "the open: the bar's selected dress beside the aria, put on BEFORE the button's box is read (bold widens the button, and a re-wrapped actions row moves it down a line; the popover is placed against the dressed button)");
+  assert.match(openFn, /outline = pop;\n\s*setCur\(underEye\(\)\);\n\s*pop\.focus\(\{ preventScroll: true \}\);/, "the section under the reader's eye current at the open");
+  assert.match(openFn, /outlineBtn\.setAttribute\("aria-expanded", "false"\); outlineBtn\.classList\.remove\("on"\);/, "the close takes the dress off");
+  assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutlineKeeping\(false\); outlineBtn\.focus\(\{ preventScroll: true \}\); \}/, "Escape: the menu-button pattern, the keyboard back on the button (the Tab branch's shape)");
+  assert.match(openFn, /const underEye = \(\): number => \{\n\s*const edge = body\.getBoundingClientRect\(\)\.top;\n\s*let at = 0, margin = -1;\n\s*heads\.forEach\(\(h, i\) => \{\n\s*const r = h\.getBoundingClientRect\(\);\n\s*if \(r\.height === 0 && r\.width === 0\) return;[^\n]*\n\s*if \(margin < 0\) margin = typeof getComputedStyle === "function" \? parseFloat\(getComputedStyle\(h\)\.scrollMarginTop\) \|\| 0 : 0;\n\s*if \(r\.top <= edge \+ margin \+ 0\.5\) at = i;\n\s*\}\);\n\s*return at;\n\s*\};/, "the last heading with a box whose top is at or above the body's edge, the landing's own margin allowed; the first row with none");
+  assert.doesNotMatch(openFn, /setCur\(0\);\n\s*pop\.focus/, "never the first row by default");
 });

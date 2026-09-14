@@ -106,6 +106,12 @@ const SURFACES: Array<[string, string]> = [
   ["styles.css .ctx-sub .ctx-item.current::after", block(CHAT, ".ctx-sub .ctx-item.current::after")],
   ["feed.css .ctx-menu", block(FEED, ".ctx-menu")],
   ["feed.css .ctx-item:hover", block(FEED, ".ctx-item:hover")],
+  // the file viewer's Outline dropdown (file-view.ts openOutline; Slice 6 of plans/markdown-viewer.md): the card and its
+  // row wash, in both sheets (fileview-parity.test.ts holds the two copies byte-equal)
+  ["styles.css .fileview-outline", block(CHAT, ".fileview-outline")],
+  ["styles.css .fileview-outline-row:hover, .fileview-outline-row.current", block(CHAT, ".fileview-outline-row:hover, .fileview-outline-row.current")],
+  ["feed.css .fileview-outline", block(FEED, ".fileview-outline")],
+  ["feed.css .fileview-outline-row:hover, .fileview-outline-row.current", block(FEED, ".fileview-outline-row:hover, .fileview-outline-row.current")],
   ["gear.js housePick (the settings pickers — the Theme select)", slice(GEAR, "function housePick(", "var SCHEMES = [")],
   // from MSTYLE: the menu CARD and its rows — the trigger BUTTON above it is a closed-state control, not a menu
   ["gear.js versionMenu (model pickers + version submenus)", slice(GEAR, "    var MSTYLE = ", "versionMenu(jm);")],

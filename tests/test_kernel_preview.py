@@ -214,8 +214,124 @@ class FilePreviewEndpoint(unittest.TestCase):
         self.assertEqual(body, b"not renderable")
 
     def test_missing_file_404s(self):
-        code, _, _ = self._req("/file?path=" + urllib.parse.quote(os.path.join(self.tmp.name, "gone.png")))
+        # The 404 names its cause in one word, X-Romp-Reason (Slice 6 of plans/markdown-viewer.md, the PR review's
+        # round 2): the viewer's focus HEAD reads a 404 as a deletion only for `missing`, the word for an absolute
+        # path with no regular file at it; the GET body still names the resolved path, the HEAD has none.
+        gone = os.path.join(self.tmp.name, "gone.png")
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(gone))
         self.assertEqual(code, 404)
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "missing")
+        self.assertEqual(body, ("not found: %s" % km._tilde(gone)).encode("utf-8"))
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(gone), method="HEAD")
+        self.assertEqual((code, body), (404, b""))
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "missing")
+
+    def test_a_file_deleted_after_a_successful_get_heads_404_missing_for_a_tilde_path_too(self):
+        # the viewer's shape: a GET showed the file, the disk lost it, the focus HEAD asks the same URL. A `~` path is
+        # the person's own absolute path once expanded, so its 404 is `missing` like a bare absolute one's.
+        doomed = os.path.join(self.tmp.name, "doomed.md")
+        with open(doomed, "w") as f:
+            f.write("# soon gone\n")
+        code, _, _ = self._req("/file?path=" + urllib.parse.quote(doomed), method="HEAD")
+        self.assertEqual(code, 200)
+        os.unlink(doomed)
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(doomed), method="HEAD")
+        self.assertEqual((code, body), (404, b""))
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "missing")
+        with mock.patch.dict(os.environ, {"HOME": self.tmp.name}):
+            code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote("~/doomed.md"), method="HEAD")
+        self.assertEqual(code, 404)
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "missing", "a ~ path expands to an absolute one: the file is gone")
+
+    def test_a_relative_path_after_a_session_move_404s_as_relative_never_as_missing(self):
+        # A relative path resolves against the session's CURRENT cwd, the names registry's second field, which a move
+        # (the CLI's set_cwd, SdkBackend._finish_move) rewrites. The viewer showed `notes/todo.md` from the old cwd;
+        # after the move the same path names a file that is not there, while the shown file still exists. The kernel
+        # cannot tell that from a deletion, so the reason is `relative`, and the viewer keeps the deletion words for
+        # `missing` alone (Slice 6 of plans/markdown-viewer.md, the PR review's round 2).
+        sid = "11111111-2222-3333-4444-888888888888"      # a private synthetic sid: this test alone writes its entry
+        old = os.path.join(self.tmp.name, "repo-a")
+        new = os.path.join(self.tmp.name, "repo-b")
+        os.makedirs(os.path.join(old, "notes"))
+        os.makedirs(new)
+        shown = os.path.join(old, "notes", "todo.md")
+        with open(shown, "w") as f:
+            f.write("- [ ] write the test\n")
+        km.NAMES.mkdir(parents=True, exist_ok=True)
+        entry = km.NAMES / sid
+        qp = "/file?path=notes%2Ftodo.md&sid=" + sid
+        try:
+            entry.write_text("web\t%s\t\t\n" % old)
+            code, hdrs, body = self._req(qp)
+            self.assertEqual((code, body), (200, b"- [ ] write the test\n"))
+            entry.write_text("web\t%s\t\t\n" % new)             # the move: the registry's cwd rewritten
+            code, hdrs, body = self._req(qp, method="HEAD")
+            self.assertEqual((code, body), (404, b""))
+            self.assertEqual(hdrs.get("X-Romp-Reason"), "relative")
+            self.assertTrue(os.path.isfile(shown), "the file the viewer shows is still on disk")
+            code, hdrs, body = self._req(qp)
+            self.assertEqual(code, 404)
+            self.assertEqual(hdrs.get("X-Romp-Reason"), "relative")
+            self.assertEqual(body, ("not found: %s" % km._tilde(os.path.join(new, "notes", "todo.md"))).encode("utf-8"),
+                             "the GET body still names the path the kernel resolved, unchanged")
+            # a relative path whose file really was deleted reads the same: the kernel does not certify a deletion
+            # it cannot tell from a move
+            entry.write_text("web\t%s\t\t\n" % old)
+            os.unlink(shown)
+            code, hdrs, _ = self._req(qp, method="HEAD")
+            self.assertEqual(code, 404)
+            self.assertEqual(hdrs.get("X-Romp-Reason"), "relative")
+        finally:
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
+    def test_an_absolute_path_the_kernel_cannot_stat_404s_as_unreadable_never_as_missing(self):
+        # The route's isfile() swallows every OSError alike, so a file under a directory the kernel may not search
+        # (EACCES on the parent) had read as `missing`, and the viewer said the file was deleted over a file that
+        # exists (the PR review's round 3). `missing` is for ENOENT and ENOTDIR alone; any other stat failure is the
+        # fourth word, `unreadable`, which the viewer reads like every word but `missing`: its change words, Reload
+        # painting the kernel's own pane for what the GET answers. The kernel serves in this process, so the mode
+        # the test takes off the directory is the mode the handler's stat meets.
+        if os.geteuid() == 0:
+            self.skipTest("EACCES cannot be produced as root: the search bit is never checked for uid 0")
+        locked = os.path.join(self.tmp.name, "locked")
+        os.mkdir(locked)
+        kept = os.path.join(locked, "kept.md")
+        with open(kept, "w") as f:
+            f.write("# still here\n")
+        code, _, _ = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual(code, 200)
+        self.addCleanup(os.chmod, locked, 0o700)      # tearDown restores the mode; the class's tmp dir is removed after
+        os.chmod(locked, 0)
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual((code, body), (404, b""))
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "unreadable")
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(kept))
+        self.assertEqual(code, 404)
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "unreadable")
+        self.assertEqual(body, ("not found: %s" % km._tilde(kept)).encode("utf-8"), "the GET body is as it was")
+        os.chmod(locked, 0o700)
+        self.assertTrue(os.path.isfile(kept), "the file the viewer shows was on disk the whole time")
+        code, _, _ = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual(code, 200, "with the directory searchable again the same URL serves the file")
+
+    def test_missing_is_the_word_for_a_gone_path_or_parent_and_for_a_directory_at_the_name(self):
+        # The other side of the round-3 line: `missing` stays the word when the stat says ENOENT (the file gone) or
+        # ENOTDIR (a parent gone: a regular file stands where a directory was), when a directory stands at the name
+        # (no regular file there), and for a path with a NUL byte, which no file can carry (the route must answer
+        # it, not fall over: isfile() swallows the ValueError, and so does the reason).
+        folder = os.path.join(self.tmp.name, "folder.md")
+        os.mkdir(folder)
+        for tag, given in (("ENOENT", os.path.join(self.tmp.name, "nowhere", "gone.md")),
+                           ("ENOTDIR", os.path.join(self.txt, "inner.md")),
+                           ("a directory at the name", folder),
+                           ("a NUL byte", os.path.join(self.tmp.name, "odd\x00name.md"))):
+            for method in ("GET", "HEAD"):
+                code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(given), method=method)
+                self.assertEqual(code, 404, (tag, method))
+                self.assertEqual(hdrs.get("X-Romp-Reason"), "missing", (tag, method))
 
     def test_an_extension_on_neither_allowlist_415s_as_exists_but_unviewable(self):
         # the VIEW allowlist is renderable media PLUS source/text; a .zip is neither — but it EXISTS,
@@ -233,9 +349,16 @@ class FilePreviewEndpoint(unittest.TestCase):
         self.assertEqual(body, b"not renderable")
 
     def test_relative_path_without_sid_404s(self):
-        # unresolvable relative path (no session cwd) must not fall back to the kernel's own cwd
-        code, _, _ = self._req("/file?path=plot.png")
-        self.assertEqual(code, 404)
+        # unresolvable relative path (no session cwd) must not fall back to the kernel's own cwd; its reason is
+        # `unresolved`, not `missing`: nothing was looked up on disk, so the file is not known to be gone. The same
+        # for a sid with no names entry.
+        for qp in ("/file?path=plot.png", "/file?path=plot.png&sid=11111111-2222-3333-4444-777777777777"):
+            code, hdrs, _ = self._req(qp)
+            self.assertEqual(code, 404, qp)
+            self.assertEqual(hdrs.get("X-Romp-Reason"), "unresolved", qp)
+            code, hdrs, body = self._req(qp, method="HEAD")
+            self.assertEqual((code, body), (404, b""), qp)
+            self.assertEqual(hdrs.get("X-Romp-Reason"), "unresolved", qp)
 
     def test_oversize_413s_rather_than_truncating(self):
         old = km._MEDIA_MAX_BYTES

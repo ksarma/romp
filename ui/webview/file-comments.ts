@@ -57,7 +57,10 @@
 //     as STRINGS — and on every figure a text file's region comments name, against the poll's own last
 //     reading (a regenerated figure moves none of the three; tick). The Files pane has no filesystem
 //     watcher; the poll stands in for that event, and the person's own writes never fire it because every
-//     verb reply re-baselines it. Replies land in the
+//     verb reply re-baselines it. With the panel CLOSED the viewer itself sends one HEAD on the window's
+//     focus and the document's return to visibility and raises its Changed on disk line when the mtime
+//     moved (file-view.ts, Slice 6 of plans/markdown-viewer.md); it reads the same header through this
+//     module's headVerdict and mtimeMoved and never writes the mtime. Replies land in the
 //     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
 //     it finishes, and a status that read the disk before a write — asked before it, or asked while it was
 //     in flight — must not put the panel back a step once the write's reply is showing.
@@ -4663,7 +4666,12 @@ class Panel {
     });
     window.addEventListener("resize", this.onWindowResize);
     if (typeof ResizeObserver !== "undefined") {
-      this.sizer = new ResizeObserver(() => this.scheduleLayout());
+      // the body's box changing with no scroll and no paint of the panel's (a notice row inserted above the body row or removed
+      // from it: the viewer's changed-on-disk bar, Slice 6 of plans/markdown-viewer.md, item 5) moves the passage under a
+      // standing Comment offer, the third mover after the body's scroll and a figure's load; the layout's own report is the
+      // event and the subject's rect the test, as for those two (hideFloatOnScroll; the review's round 5: the button stood
+      // 119 px above the passage, over another line, until a scroll)
+      this.sizer = new ResizeObserver(() => { this.hideFloatOnScroll(); this.scheduleLayout(); });
       this.sizer.observe(body); this.sizer.observe(row); this.sizer.observe(track);
       this.cardSizer = new ResizeObserver(() => this.scheduleLayout());
     }

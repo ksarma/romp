@@ -53,7 +53,7 @@ test("the anchor delegate routes a same-origin .md href to the viewer BEFORE the
   const vsArm = HANDLER.slice(HANDLER.indexOf("} else if (vscodeApi) {"));
   assert.doesNotMatch(vsArm, /openUrlView/, "the webview cannot reach the kernel origin — no viewer there");
   // the helpers arrive on their own import lines (the openFileView import is pinned verbatim elsewhere)
-  assert.match(RENDER, /import \{ openFileClick \} from "\.\/file-view";/);   // the chat opens files through the gesture reader (pdf-new-tab.test.ts)
+  assert.match(RENDER, /import \{ openFileClick, type At \} from "\.\/file-view";/);   // the chat opens files through the gesture reader (pdf-new-tab.test.ts); At is the target a link names (Slice 6, item 4)
   assert.match(RENDER, /import \{ openUrlView \} from "\.\/file-view";/);
   assert.match(RENDER, /import \{ isMarkdownUrl \} from "\.\/md-links";/);
 });
@@ -327,8 +327,8 @@ test("local file mode: a relative link becomes a path link on the anchor itself 
   const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
   assert.match(MOD, /else if \(frag\) \{ a\.dataset\.frag = frag; a\.setAttribute\("title", a\.getAttribute\("title"\) \+ "#" \+ frag\); \}/, "the link's own #fragment rides data-frag (a #L12 is the line instead)");
   // the fragment rides openFileView's options bag beside the fork's todoId and line (user-todo-links.test.ts)
-  assert.match(OPEN_FN, /openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null, x\.dataset\.frag \|\| null\);/, "the sibling opens through the host's opener, for this sid, landing on its line or its fragment");
-  assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void =\n\s*\(path, sid, line, frag\) => \{ openFileView\(path, sid, \{ line, frag \}\); \};/);
+  assert.match(OPEN_FN, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the sibling opens through the host's opener, for this sid, landing on its line or its heading (the open's `at`; Slice 6 of plans/markdown-viewer.md)");
+  assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, at: At \| null\) => void =\n\s*\(path, sid, at\) => \{ openFileView\(path, sid, \{ at \}\); \};/);
   assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 0, "no fv-open delegate in the local viewer: the body's one click listener reads every link (file-view-links.test.ts pins it)");
   assert.ok(OPEN_FN.indexOf('body.addEventListener("click"') > 0 && OPEN_FN.indexOf('body.addEventListener("click"') < OPEN_FN.indexOf("const fetchFile = "), "installed in the open itself, before any bytes can land");
   // the chat's document-level delegate keys on LINK_SEL, an element that CARRIES an href, and a path link's href comes off
@@ -460,7 +460,10 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {
   // the fragment rides openFileView's options bag beside the fork's todoId, and the open answers with its verdict
   // (the 2026-09-07 fold; user-todo-links.test.ts pins the todoId half)
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
-  assert.match(OPEN_FN, /let pendingFrag: string \| null = opts\?\.frag \|\| null;/);
-  assert.match(OPEN_FN, /if \(rendered && pendingFrag\) \{\s*\n\s*const h = pendingFrag; pendingFrag = null;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, h\); \}\);/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
+  // the fragment is the open's `{ heading }` since Slice 6 of plans/markdown-viewer.md (pendingHeading; the former frag option), landed the same way and, when the note has no such section, said so in the notice bar (file-view-seam.test.ts)
+  assert.match(OPEN_FN, /let pendingHeading: string \| null = at !== null && "heading" in at && at\.heading \? at\.heading : null;/);
+  // …spent after the first Rendered paint of a note, or the first text paint of a file that is not markdown, which has no Rendered toggle to wait for (review round 2)
+  assert.match(OPEN_FN, /if \(\(rendered \|\| !isMd\) && pendingHeading !== null\) spendHeading\(\);/);
+  assert.match(OPEN_FN, /const spendHeading = \(\): void => \{\n\s*const h = pendingHeading; pendingHeading = null;\n\s*if \(h === null\) return;\n\s*requestAnimationFrame\(\(\) => \{\n\s*if \(wrap\.isConnected && unmeasurable\(\)\) \{ pendingHeading = h; return; \}[^\n]*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/, "landed a frame after the paint; a frame over a boxless body parks it again for the show (the review's round 5)");
 });

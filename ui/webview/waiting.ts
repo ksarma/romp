@@ -29,6 +29,7 @@ import { listenForFrames } from "./frame-listener";
 import { paintHeld, paintReleased } from "./paint-gate";
 import { publishPaneHidden } from "./paint-gate";   // a second line: the one above is the shape the Outline's tests pin
 import { linkifyPathTokens, openPathLink } from "./path-links";
+import { linkTarget, type LinkTarget } from "./path-links";   // a todo link's target after its path (Slice 6 of plans/markdown-viewer.md)
 import { linkifyUrls, urlChip, installUrlLinkOpener } from "./url-links";   // a URL in a todo's text is a link, and a todo's own `link` is a chip (the user 2026-09-08)
 
 type Color = { bg: string; fg: string } | null;
@@ -124,11 +125,14 @@ function dropTodo(sid: string, tid: string): void {
 // (.ut-text, data-act uttoggle): the delegate routes a click to the NEAREST data-act (actions.ts), so the
 // link opens the file and the fold stays put, and a click on the text beside it still folds
 // (user-todo-title-links.test.ts drives both through the real delegate).
+// A target written after the path, `docs/report.md#results` or `docs/report.md:12`, rides in the link (path-links.ts
+// `targetSuffix`: data-frag or data-line) and goes to the Files pane as the relay's `at`, so the file opens at that
+// heading or line (Slice 6 of plans/markdown-viewer.md); the chat's todo card reads the same shape (render.ts).
 const framed = window.parent !== window;
 function linkTodoPaths(node: HTMLElement, sid: string): void {
   linkifyUrls(node);   // an http(s) address links on every page, framed or not: a new tab needs no Files pane
   if (!framed) return;
-  linkifyPathTokens(node, sid);
+  linkifyPathTokens(node, sid, undefined, { targetSuffix: true });
 }
 // The file a todo NAMES (the todo-file follow-on, 2026-09-07): the record's own `file`, an absolute path the
 // kernel resolved when the todo was filed, is a chip on the row and in the Reply modal — the basename as the
@@ -165,7 +169,9 @@ function linkChip(link: string): HTMLElement {
 // forwards this whole message into it (kernel.py's landing shell; files.ts opens the viewer). The
 // identity is the row's own chip (name + colour — the pane has no session list to name the file's
 // session by; a row with no name sends null and the viewer falls to the kernel's stub); todoId names the
-// user todo the file was opened from, so the viewer can tie its work back to it.
+// user todo the file was opened from, so the viewer can tie its work back to it; `at` is the target the link
+// named after its path (path-links.ts linkTarget: a line or a heading), null for a bare path, so the viewer opens
+// the file there (the shell copies the field; kernel.py's pane branch).
 // Then focus moves to the Files pane. A keydown never crosses an iframe boundary, and the viewer's only
 // keyboard close is a document-level Escape in the Files document — so with focus left here, the Escape a
 // keyboard user pressed after opening a file (Enter on a focused link) closed the Reply modal and left the
@@ -185,10 +191,10 @@ function linkChip(link: string): HTMLElement {
 // cast, no annotation — because user-todo-links.test.ts executes it as it stands; the shell's toggle is
 // typed on Window below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
 declare global { interface Window { __rompPaneToggle?: (key: string, to?: boolean) => void } }
-function openTodoPath(path: string, sid: string, todoId: string): void {
+function openTodoPath(path: string, sid: string, todoId: string, at: LinkTarget | null = null): void {
   const r = rows.find((x) => x.sid === sid);
   const identity = r && r.name ? { name: r.name, color: r.color } : null;
-  try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId }, "*"); } catch { /* not in the shell */ }
+  try { window.parent.postMessage({ romp: "viewFile", pane: "pane", path, sid, identity, todoId, at }, "*"); } catch { /* not in the shell */ }
   try {
     const pd = window.parent.document, ff = pd.getElementById("f-files"), shell = pd.defaultView;
     if (shell && ff instanceof shell.HTMLIFrameElement) {
@@ -242,7 +248,7 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   // the modal lives outside #waiting-list and is built once per open, never rebuilt, so it carries its
   // own delegate for the same act: one listener on the box, over the quoted line and the detail both
   // (the rows' is on the list)
-  delegate(box, { openpath: (x) => { const p = x.dataset.path; if (p) openTodoPath(p, sid, todoId); } });
+  delegate(box, { openpath: (x) => { const p = x.dataset.path; if (p) openTodoPath(p, sid, todoId, linkTarget(x)); } });
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -544,7 +550,7 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
     openpath: (x) => {
       const row = x.closest<HTMLElement>(".ut-item");
       const p = x.dataset.path, sid = row?.dataset.sid, tid = row?.dataset.tid;
-      if (p && sid && tid) openTodoPath(p, sid, tid);
+      if (p && sid && tid) openTodoPath(p, sid, tid, linkTarget(x));
     },
     // Dismiss arms then confirms in place (render.ts's utdismiss, lifted): clearing an ask the agent
     // still waits on deserves a second click, but is light enough to skip a modal.

@@ -121,7 +121,8 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   // never opens a tab (a relayed viewFile, a Reload: no gesture, the viewer)
   // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
   // Files pane's openHere) rides in as the fourth argument, read AFTER the gesture, so the tab decision stays here
-  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null\) => void\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null\); else openFileView\(path, sid\);\n\}/);
+  // `at` (Slice 6 of plans/markdown-viewer.md): where the open lands (a todo link's line or heading), handed to whichever opener takes the plain click
+  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null, at: At \| null\) => void, at\?: At \| null\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null, at \?\? null\); else openFileView\(path, sid, \{ at: at \?\? null \}\);\n\}/);
   // no click site bypasses the gesture reader: the chat and the browser never call openFileView themselves
   assert.equal((RENDER.match(/openFileView\(/g) || []).length, 0, "render.ts opens files through openFileClick only");
   assert.equal((BROWSE.match(/openFileView\(/g) || []).length, 0, "file-browse.ts opens files through openFileClick only");
@@ -142,9 +143,9 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   // to the Files or feed pane) is handed to openFileClick as the plain click's opener, so a modified click on a PDF
   // is the tab whichever pane the route names (executed below)
   const openPath = RENDER.slice(RENDER.indexOf("function openPath("), RENDER.indexOf("\n}\n", RENDER.indexOf("function openPath(")));
-  assert.match(openPath, /^function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void \{/);
-  assert.match(openPath, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{/);
-  assert.match(openPath, /openFileClick\(ev, path, to, relay\);/);
+  assert.match(openPath, /^function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void \{/);
+  assert.match(openPath, /const relay = route === "here" \? undefined : \(p: string, s: string \| null, a: At \| null\) => \{/);
+  assert.match(openPath, /openFileClick\(ev, path, to, relay, at\);/);
   assert.doesNotMatch(openPath, /openPdfTab|wantsOwnTab/, "one gesture reader: openFileClick's, never a second read here");
   assert.match(RENDER, /function onMiddleClick\(a: HTMLElement, fn: \(e: MouseEvent\) => void\): void \{\n  a\.addEventListener\("mousedown", \(e\) => \{ if \(e\.button === 1\) e\.preventDefault\(\); \}\);\n  a\.addEventListener\("auxclick", \(e\) => \{ if \(e\.button !== 1\) return; e\.stopPropagation\(\); fn\(e\); \}\);/);
   assert.match(RENDER, /x\.addEventListener\("auxclick", \(e\) => e\.stopPropagation\(\)\);/, "a middle-click on the composer attachment's ✕ is inert, never the box's open");
@@ -152,7 +153,8 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   // one nested paren allowed: the path pill resolves its session as (sid ?? activeId), a todo's own session first (user-todo-links.test.ts).
   // The path link's click and middle-click both go through openLinkedPath, the one reader of the span (the body delegate's
   // openpath calls it too, user-todo-title-links.test.ts), which hands the event on: three pills × two gestures + that one call
-  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 7, "each pill passes its click AND its middle-click");
+  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 6, "each pill passes its click AND its middle-click");
+  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e, linkTarget\(a\)\)/g) || []).length, 1, "…and openLinkedPath passes its click with the target the link named (Slice 6, item 4)");
   assert.equal((RENDER.match(/openLinkedPath\(a, e\)/g) || []).length, 2, "the path link's click and middle-click both hand their gesture to openLinkedPath");
 });
 
@@ -232,7 +234,7 @@ test("openPath, executed: a modified click on a PDF opens the tab on every route
     };
     const tab = [fileUrl(PDF, SID), "_blank"];
     const relayed = (pane: string, p = PDF, identity: unknown = { name: "web", color: "#4a7" }, sid: string | null = SID) =>
-      [[{ romp: "viewFile", path: p, sid, pane, identity }, "*"]];
+      [[{ romp: "viewFile", path: p, sid, pane, identity, at: null }, "*"]];   // no target on a plain path pill (Slice 6, item 4: a todo link's rides here)
     // the Files pane is OPEN (route "pane"): the tab on a modified click, the relay on a plain one
     let r = run({ filesOpen: true, ev: { metaKey: true } });
     assert.deepEqual(r.opened, [tab], "Cmd-click, Files pane open: the browser's own tab");

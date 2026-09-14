@@ -56,6 +56,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     dl_ctype = "application/octet-stream"          # …and the download-side claims (a hostile one lies)
     dl_disp = 'attachment; filename="data.bin"'
     dl_truncate = False         # short body then a clean close, as _file_download sends when the file shrank
+    nf_reason = None            # the X-Romp-Reason a newer remote puts on its 404 (None: a remote from before it)
 
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
@@ -81,11 +82,16 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             if not head:
                 self.wfile.write(PY_BYTES)
             return
-        if "big.pdf" in self.path:
-            # the remote's own size cap: its _file_preview's prose verdict, text/plain, no disposition
-            body = b"too large to show: /tmp/big.pdf (95.4 MB, limit 47.7 MB)"
-            self.send_response(413)
+        if "big.pdf" in self.path or "boom.png" in self.path:
+            # the remote's own size cap: its _file_preview's prose verdict, text/plain, no disposition; and a remote
+            # kernel's 500, prose too. Either carries the 404's reason word when a test sets one, so the relay's
+            # status guard on the mirror is pinned (the PR review's round 3).
+            body = (b"too large to show: /tmp/big.pdf (95.4 MB, limit 47.7 MB)" if "big.pdf" in self.path
+                    else b"the remote kernel fell over")
+            self.send_response(413 if "big.pdf" in self.path else 500)
             self.send_header("Content-Type", "text/plain")
+            if _FakeRemoteFileHandler.nf_reason is not None:
+                self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             if not head:
@@ -106,6 +112,8 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             body = b"not found: /tmp/gone" if "download=1" in self.path else b""
             self.send_response(404)
             self.send_header("Content-Type", "text/plain")
+            if _FakeRemoteFileHandler.nf_reason is not None:
+                self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             if not head:
@@ -114,6 +122,9 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
         self.send_header("Content-Length", str(len(PNG_BYTES)))
+        if _FakeRemoteFileHandler.nf_reason is not None:
+            # a (confused or hostile) remote putting a 404's word on its 200: the relay's mirror is guarded on the status
+            self.send_header("X-Romp-Reason", _FakeRemoteFileHandler.nf_reason)
         self.end_headers()
         if not head:
             self.wfile.write(PNG_BYTES)
@@ -170,6 +181,7 @@ class RemoteFileRelay(unittest.TestCase):
         _FakeRemoteFileHandler.dl_ctype = "application/octet-stream"
         _FakeRemoteFileHandler.dl_disp = 'attachment; filename="data.bin"'
         _FakeRemoteFileHandler.dl_truncate = False
+        _FakeRemoteFileHandler.nf_reason = None
         self._saved_remotes = dict(km._remotes)
 
     def tearDown(self):
@@ -278,10 +290,43 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertTrue(req.startswith("/file?"), req)
 
     def test_remote_404_passes_through(self):
-        # a deleted/hallucinated path: the REMOTE's 404 reaches the <img> so it hides itself
+        # a deleted/hallucinated path: the REMOTE's 404 reaches the <img> so it hides itself. Its one-word cause,
+        # X-Romp-Reason (Slice 6 of plans/markdown-viewer.md, the PR review's round 2), is MIRRORED when it is a word
+        # the local /file route itself sends (data about the remote's disk, like X-Romp-Mtime-Ns), and dropped
+        # otherwise: prose from a lying remote never rides, and a remote from before the header sends none.
         self._register("gpu1", self.fake.server_address[1])
-        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png")
+        status, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png")
         self.assertEqual(status, 404)
+        self.assertNotIn("X-Romp-Reason", headers, "an older remote names no cause; the relay invents none")
+        # ...the four words the local route sends: `unreadable`, the fourth, is the PR review's round 3 (an absolute
+        # path the remote kernel could not stat, EACCES on a parent, which had read as `missing` there and here)
+        for word in ("missing", "relative", "unresolved", "unreadable"):
+            _FakeRemoteFileHandler.nf_reason = word
+            for method in ("GET", "HEAD"):
+                status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png", method=method)
+                self.assertEqual((status, body), (404, b""), (word, method))
+                self.assertEqual(headers.get("X-Romp-Reason"), word, (word, method))
+        for prose in ("the disk is gone", "detached", "MISSING", ""):
+            _FakeRemoteFileHandler.nf_reason = prose
+            status, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png", method="HEAD")
+            self.assertEqual(status, 404, repr(prose))
+            self.assertNotIn("X-Romp-Reason", headers, repr(prose))
+
+    def test_a_remote_reason_word_rides_on_its_404_alone_never_on_a_200_413_or_500(self):
+        # The mirror is guarded on the remote's STATUS as well as its word (the PR review's round 3 pinned the guard,
+        # which no case had held): a reason word is data about a 404, and a remote that puts a known word on another
+        # verdict, its 200 with the bytes, its own 413, a 500, is answered without it, GET and HEAD alike, the way its
+        # Content-Type is dropped. Nothing reads the header off a non-404 today; the pin keeps that so.
+        self._register("gpu1", self.fake.server_address[1])
+        _FakeRemoteFileHandler.nf_reason = "missing"
+        for name, want in (("plot.png", 200), ("big.pdf", 413), ("boom.png", 500)):
+            for method in ("GET", "HEAD"):
+                status, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2F" + name, method=method)
+                self.assertEqual(status, want, (name, method))
+                self.assertNotIn("X-Romp-Reason", headers, (name, method))
+        # ...while the same word on the remote's 404 rides: the guard is on the status, not on the word
+        status, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png", method="HEAD")
+        self.assertEqual((status, headers.get("X-Romp-Reason")), (404, "missing"))
 
     def test_a_lying_remote_cannot_choose_the_content_type(self):
         """An attached host is trusted to serve its own files, not to decide how this browser
@@ -321,9 +366,29 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(hh.get("X-Content-Type-Options"), "nosniff")
 
     def test_unknown_host_404s(self):
-        status, _, _ = self._get("/remote/nosuch/file?path=%2Ftmp%2Fplot.png")
-        self.assertEqual(status, 404)
+        # ...naming the cause in X-Romp-Reason: `detached`, never `missing`, since no disk was consulted
+        for method in ("GET", "HEAD"):
+            status, body, headers = self._get("/remote/nosuch/file?path=%2Ftmp%2Fplot.png", method=method)
+            self.assertEqual(status, 404, method)
+            self.assertEqual(headers.get("X-Romp-Reason"), "detached", method)
+            if method == "HEAD":
+                self.assertEqual(body, b"")
         self.assertEqual(_FakeRemoteFileHandler.requests, [])
+
+    def test_a_host_detached_after_a_successful_get_heads_404_detached(self):
+        # the viewer's shape (Slice 6 of plans/markdown-viewer.md, the PR review's round 2): a remote session's file
+        # was shown, the host's tunnel went away, the focus HEAD asks the same URL. The file is on the remote's disk
+        # still; the 404 says `detached`, so the viewer does not call it deleted.
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
+        self.assertEqual((status, body), (200, PNG_BYTES))
+        with km._remotes_lock:
+            km._remotes.pop("gpu1")
+        asked = list(_FakeRemoteFileHandler.requests)
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png", method="HEAD")
+        self.assertEqual((status, body), (404, b""))
+        self.assertEqual(headers.get("X-Romp-Reason"), "detached")
+        self.assertEqual(_FakeRemoteFileHandler.requests, asked, "nothing was dialed for the detached host")
 
     def test_unauthorized_403s_before_any_dial(self):
         self._register("gpu1", self.fake.server_address[1])
@@ -365,10 +430,12 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(headers.get("Content-Disposition"), 'attachment; filename="data.bin"')
 
     def test_the_view_relay_still_declines_that_same_extension(self):
-        # without download=1 nothing changed: a .bin is off _PREVIEW_MIME, 404'd HERE, remote unasked
+        # without download=1 nothing changed: a .bin is off _PREVIEW_MIME, 404'd HERE, remote unasked; the cause word
+        # is `unviewable`, the vocabulary's word for this side's own refusal
         self._register("gpu1", self.fake.server_address[1])
-        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin")
+        status, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin")
         self.assertEqual(status, 404)
+        self.assertEqual(headers.get("X-Romp-Reason"), "unviewable")
         self.assertEqual(_FakeRemoteFileHandler.requests, [])
 
     def test_a_remote_download_404_passes_through(self):

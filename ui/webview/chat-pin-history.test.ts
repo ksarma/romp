@@ -17,7 +17,7 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 
 test("pathPins ride the chat events as a sibling map and thread into every linkify pass", () => {
   assert.match(RENDER, /pathLinks\?: Record<string, string>; pathPins\?: Record<string, string> \}\n  \| \{ kind: "assistant";/);
-  assert.match(RENDER, /pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false\): void/);
+  assert.match(RENDER, /pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false, walkOpts\?: PathLinkOptions\): void/);   // walkOpts: the todo surfaces' targetSuffix (Slice 6 of plans/markdown-viewer.md)
   const uses = RENDER.match(/linkifyFileUris\((?:body|bubble|full), [^)]*ev\.pathPins\)/g) || [];
   assert.equal(uses.length, 3, "all three chat bodies thread the pins");
 });

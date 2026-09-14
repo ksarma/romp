@@ -628,7 +628,8 @@ test("a size step fires onRendered once, as a reflow (the panel re-places its ca
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
   // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
-  assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 2, "the step and the width's frame, each seating the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
+  assert.equal((VIEW.match(/if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(/g) || []).length, 1, "the step seats the reader's place after the selection is put back (Slice 2 of plans/markdown-viewer.md)");
+  assert.match(VIEW, /if \(!textShowing\(\)\) return;\n\s*fireRenderedKeepingSelection\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(unmeasurable\(\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*const moved = placeFrame !== 0;\n\s*const restored = scrollUnread[^\n]*\n\s*if \(restored\) notePlace\(\); else seat\(place\);/, "the width's frame the same, its seat waiting for a body with a box (Slice 6 of plans/markdown-viewer.md, the review's round 5) and standing aside for the offset the browser restored over a scroll the hide kept from being read (round 6), unless the restore moved the body below the place last measured (the closing pass)");
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
