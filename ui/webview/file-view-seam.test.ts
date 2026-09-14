@@ -19,6 +19,7 @@ import DOMPurify from "dompurify";   // the module-global instance md-sanitize.t
 import type { FileViewActionCtx, At } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
 import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { marked } from "marked";                   // the singleton the viewer parses with: one case makes its lexer throw (the Slice 7 review's round 2)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -1916,6 +1917,46 @@ test("record pin: a Rendered paint sanitizes through the seam's stand-in, once p
   assert.equal(DOMPurify.isSupported, false, "the module-global instance is that factory under node too");
 });
 
+test("a failed reload drops a standing Latin-1 line (the Slice 7 review's round 2): a \"0\" file whose next fetch answers 404 (a session deleted it; the Comments panel's poll reloads through ctx.reload) or 413 (it grew past the cap) shows the pane in the body with no notice bar over it (before: the line saying the file can be read here stood above a pane saying it could not be, until some other notice replaced it), error() the pane's words, Edit still off; a \"0\" landing after it raises the line again over the text", async (t) => {
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  t.after(() => { delete disk[LEGACY]; });
+  const o = await open(LEGACY, t);
+  const { fv, ctx, body, b } = o;
+  assert.equal(errBar(body)?.textContent, fv.LATIN1_NOTICE, "the line is up"); assert.equal(b.edit.hidden, true);
+  /** The card's notice bar alone (noteBar's element), never a pane inside the body. */
+  const noticeBar = (): El | null => cardOf(body).childNodes.find((x): x is El => x instanceof El && x.id === "fileview-save-err") ?? null;
+  // deleted on disk: the panel's poll meets a 404
+  delete disk[LEGACY];
+  ctx.reload(); await settle();
+  const pane = body.querySelector(".fileview-err");
+  assert.ok(pane, "the pane is in the body"); assert.equal(pane!.textContent, "no such file: " + LEGACY, "the kernel's words");
+  assert.equal(ctx.error(), "no such file: " + LEGACY, "error() answers the pane's words");
+  assert.equal(noticeBar(), null, "no notice bar over the pane (before: the Latin-1 line stood there, contradicting it)");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-main"], "title bar and body row; the pane is inside the body");
+  assert.equal(paints, 2, "the pane's paint fired the hooks"); assert.equal(b.edit.hidden, true, "Edit still off");
+  // the file is back, still Latin-1: the landing raises the line again over the text
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000031", utf8: "0" };
+  ctx.reload(); await settle();
+  assert.equal(noticeBar()?.textContent, fv.LATIN1_NOTICE, "the line is back with the \"0\"");
+  assert.equal(body.querySelector(".fileview-err"), null, "the pane went with the text's paint");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"]); assert.equal(paints, 3);
+  // grown past the cap: the next fetch answers 413, the pane offers Download, and the line goes the same way
+  const real = (globalThis as any).fetch;
+  (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
+    if ((!init || !init.method || init.method === "GET") && url.includes(encodeURIComponent(LEGACY))) return { ok: false, status: 413, headers: { get: () => null }, text: async () => "file too large to render: 20 MB over the 10 MB cap: " + LEGACY };
+    return real(url, init);
+  };
+  t.after(() => { (globalThis as any).fetch = real; });
+  ctx.reload(); await settle();
+  const big = body.querySelector(".fileview-err");
+  assert.ok(big && big.textContent.startsWith("file too large to render"), "the 413 pane");
+  assert.equal(big!.querySelectorAll("button").length, 1, "Download offered: the file exists");
+  assert.equal(noticeBar(), null, "no line over the 413 pane either");
+  assert.equal(ctx.error(), "file too large to render: 20 MB over the 10 MB cap: " + LEGACY);
+  assert.equal(paints, 4);
+  (globalThis as any).fetch = real;
+});
+
 // ── item 1 of Slice 7 of plans/markdown-viewer.md: a render that throws shows the text under a line that says so ─────────
 // Every failure says what happened where the person is looking: mdBlock keeps no catch, and each viewer's renderBody wraps
 // the block's build and the swap in one try whose catch records the message (renderFell), paints the RENDER_FELL line as the
@@ -2035,6 +2076,68 @@ test("an open at a source offset whose Rendered paint throws (the Slice 7 review
   const rows2 = layRows(body2.querySelector("code.hljs")!, DOC); flushFrames();
   assert.deepEqual(scrolls(rows2), [0, 0, 0, 0, 0, 1], "the last row");
   assert.equal(cardOf(body2).querySelector("#fileview-save-err")?.textContent, "Offset " + (DOC.length + 50) + " is past the end of this file, which has " + DOC.length + " characters; showing the last line.", "the notice names what shows (before: \"showing the last block.\" over rows, with nothing scrolled)");
+});
+
+test("a fallback that throws too (the Slice 7 review's round 2; a bug, not a file: the render swap and the fallback's swap both throwing from a click) propagates as designed and leaves the record matching the body: the previous Rendered paint stands, mode() still answers \"rendered\" and the Comments panel's contentRoot rule finds the box (before: renderFell was recorded before the fallback swap, so mode() answered \"raw\", renderedImages() [] and the rule looked for code.hljs over a standing .fileview-md); a healed click paints again; over a standing fallback the line, the rows and the record stand too", async (t) => {
+  const o = await open(REPORT, t);
+  const { ctx, body } = o;
+  assert.equal(ctx.mode(), "rendered"); assert.ok(body.querySelector(".fileview-md"), "the Rendered box is up");
+  // every swap into the body throws: the render swap, then the fallback's (an own property shadows the stand-in's method)
+  const swaps: string[] = [];
+  const failEverySwap = (why: string) => { (body as any).replaceChildren = (...nodes: Array<El | Txt>) => { swaps.push(nodes.map((n) => (n instanceof El ? n.className : "#text")).join("+")); throw new Error(why + " " + swaps.length); }; };
+  const healSwap = () => { delete (body as any).replaceChildren; };
+  t.after(healSwap);
+  failEverySwap("synthetic swap failure");
+  assert.throws(() => o.b.rendered.click(), /synthetic swap failure 2/, "the fallback's own throw propagates out of the click (a second failure is a bug, not a file)");
+  assert.deepEqual(swaps, ["fileview-md", "fileview-err+fileview-code"], "the render swap threw first, then the fallback's line and rows");
+  assert.ok(body.querySelector(".fileview-md"), "the previous Rendered paint stands"); assert.equal(body.querySelector(".fileview-err"), null, "no failure line reached the body");
+  assert.equal(ctx.mode(), "rendered", "mode() answers what the body shows (before: \"raw\" over the standing box)");
+  assert.ok(body.querySelector(ctx.mode() === "rendered" ? ".fileview-md" : "code.hljs"), "the panel's contentRoot rule (file-comments.ts) finds the root the body holds");
+  assert.equal(ctx.error(), null, "no pane: error() null"); assert.equal(paints, 1, "no hook fired: the pass ended at the throw");
+  assert.equal(o.b.rendered.classList.contains("on"), true, "the button took the click before the paint (fmt.md is the person's choice)");
+  // healed: the Rendered click paints
+  healSwap();
+  o.b.rendered.click();
+  assert.equal(ctx.mode(), "rendered"); assert.ok(body.querySelector(".fileview-md")); assert.equal(paints, 2);
+  // over a standing fallback (the sanitizer throwing: the line over rows) a click whose fallback throws too leaves the line, the rows and the record
+  sanitizeFails = "synthetic sanitizer failure";
+  t.after(() => { sanitizeFails = null; });
+  o.b.rendered.click();
+  assert.ok((body.childNodes[0] as El).matches("div.fileview-err") && (body.childNodes[1] as El).matches("div.fileview-code"), "the line over the rows"); assert.equal(ctx.mode(), "raw"); assert.equal(paints, 3);
+  swaps.length = 0; failEverySwap("synthetic swap failure again");
+  assert.throws(() => o.b.rendered.click(), /synthetic swap failure again 1/, "mdBlock threw before any swap; the fallback's swap is the one that threw");
+  assert.deepEqual(swaps, ["fileview-err+fileview-code"]);
+  assert.ok((body.childNodes[0] as El).matches("div.fileview-err") && (body.childNodes[1] as El).matches("div.fileview-code"), "the earlier fallback stands");
+  assert.equal(ctx.mode(), "raw", "and its record with it"); assert.equal(paints, 3);
+});
+
+test("a throw inside marked's own stage is named by its message alone (the Slice 7 review's round 2): marked 12 appends a bug-report sentence with its tracker's URL to every message its lexer, walkTokens or parser rethrow, and the RENDER_FELL line cuts it (before: \"(synthetic lexer failure\\nPlease report this to https://github.com/markedjs/marked.).\", a foreign URL and a request to report a romp file's failure to marked inside romp's own line); a throw whose message is nothing but that sentence is named by the error's name, as an empty message is; a message with a newline of its own is kept whole", async (t) => {
+  const { RENDER_FELL } = await mod();
+  const lexer = marked.Lexer.prototype as any;
+  const lex = lexer.lex;
+  lexer.lex = function () { throw new Error("synthetic lexer failure"); };   // the singleton's parse runs _Lexer.lex, which builds a lexer and calls this
+  t.after(() => { lexer.lex = lex; });
+  assert.throws(() => marked.parse("hello"), (e: unknown) => e instanceof Error && e.message === "synthetic lexer failure\nPlease report this to https://github.com/markedjs/marked.", "marked's onError appends the sentence before rethrowing: the cut is keyed on this text");
+  const o = await open(REPORT, t);
+  const { ctx, body } = o;
+  const first = body.childNodes[0] as El;
+  assert.ok(first.matches("div.fileview-err") && (body.childNodes[1] as El).matches("div.fileview-code"), "the line over the rows");
+  assert.equal(first.textContent, RENDER_FELL + " (synthetic lexer failure).", "the message alone: marked's sentence and URL cut (before: both printed, the newline collapsed to a space on screen)");
+  assert.equal(ctx.mode(), "raw"); assert.equal(paints, 1);
+  // an Error with no message of its own thrown inside marked: the sentence is all there is, and the line names the error's name
+  lexer.lex = function () { throw new Error(""); };
+  o.b.rendered.click();
+  assert.equal((body.childNodes[0] as El).textContent, RENDER_FELL + " (Error).", "never marked's sentence alone, never an empty parenthesis");
+  assert.equal(paints, 2);
+  // a message with a newline of its own is kept whole: the cut is the one sentence, not the first line
+  lexer.lex = function () { throw new Error("first line\nsecond line"); };
+  o.b.rendered.click();
+  assert.equal((body.childNodes[0] as El).textContent, RENDER_FELL + " (first line\nsecond line).");
+  assert.equal(paints, 3);
+  // healed: the Rendered click renders
+  lexer.lex = lex;
+  o.b.rendered.click();
+  assert.ok(body.querySelector(".fileview-md")); assert.equal(ctx.mode(), "rendered"); assert.equal(paints, 4);
 });
 
 // ── item 6 of Slice 7 of plans/markdown-viewer.md: an empty file says so ─────────────────────────────────────────────────

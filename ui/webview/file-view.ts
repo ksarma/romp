@@ -376,6 +376,19 @@ function renderFellLine(msg: string): HTMLElement {
   why.textContent = RENDER_FELL + " (" + msg + ").";
   return why;
 }
+/** The sentence marked appends to every message it rethrows (marked 12's `#onError`, wrapping its lexer, the per-call
+ *  walkTokens and its parser): a request to report the failure to marked's own tracker, with that URL. A throw at that
+ *  stage, one of item 1's four sources, put the sentence and the URL inside romp's own failure line, telling the person to
+ *  report a romp file's render failure to marked (the Slice 7 review's round 2). Keyed on the sentence's text alone. */
+const MARKED_REPORT_TAIL = /\n?Please report this to https:\/\/github\.com\/markedjs\/marked\.?\s*$/;
+/** The message a render catch records (renderFell) and the RENDER_FELL line prints: an Error's message with marked's
+ *  appended sentence cut (MARKED_REPORT_TAIL), its name when nothing else is left (`new Error("")`: "Error", as String(err)
+ *  answers for one), any other thrown value by its string. A message that carries something else after a newline is kept
+ *  whole: the cut is the one sentence, never the first line. */
+function fellMessage(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  return err.message.replace(MARKED_REPORT_TAIL, "") || err.name || "Error";
+}
 /** The label a figure that failed to load wears beside itself (plans/markdown-viewer.md Slice 7, item 2; armFigureLabels): the
  *  fact, then the authored source and the alt in parentheses when there is one, in one line (`Image failed to load: figs/p95.png
  *  (p95 by day)`), where the browser drew a wordless broken-image glyph or nothing. The img's `error` event carries no status, so
@@ -2220,8 +2233,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The Latin-1 line (the raise at the text landing, item 5 of Slice 7) says why Edit is off; a landing whose header says the
   // file is UTF-8 now (a session re-saved it) brings Edit back through the gate, so that landing drops the line when it is the
   // notice standing, the settleDiskBar shape (the review's round 1: the line stood over a shown Edit button until the next
-  // notice). Known by its words, the one notice shown alone with them; a notice standing in its place (a target's, a warning's,
-  // the changed-on-disk bar with its button) is not touched.
+  // notice). The failure pane's paint (the fetch chain's catch: a 404 after a deletion, a 413 after a growth past the cap, a
+  // network failure) drops it too: the line says the file can be read here and the pane says it could not be, and nothing else
+  // removed the line over the pane until some other notice replaced it (the review's round 2); a later landing whose header
+  // says "0" raises it again. Known by its words, the one notice shown alone with them; a notice standing in its place (a
+  // target's, a warning's, the changed-on-disk bar with its button) is not touched.
   const dropLatin1Line = (): void => {
     if (note !== null && note.textContent === LATIN1_NOTICE) { note.remove(); note = null; }
   };
@@ -2325,11 +2341,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     viewError = null;                       // a text paint follows, the rows a failed render falls back to included (that paint's word is mode() "raw"): no pane shows (Slice 7, item 3)
     // The pass below builds the block and swaps it in one try (plans/markdown-viewer.md Slice 7, item 1): a marked bug must never
     // cost the content, and this is where the content is kept now that mdBlock carries no catch of its own. A throw from marked,
-    // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the message is recorded
-    // (renderFell, which mode() reads as "raw" for this paint) and the body gets the RENDER_FELL line first and the text as Raw
-    // rows under it, the line saying what happened where the person is looking, instead of the source written into the Rendered
-    // box as one unannounced paragraph. The fallback runs in the catch, and a throw from THAT propagates (into the fetch chain's
-    // own catch at a landing): a second failure is a bug, not a file. The rest of the pass runs as for any text paint, so the
+    // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the body gets the
+    // RENDER_FELL line first and the text as Raw rows under it, the line saying what happened where the person is looking
+    // (fellMessage: the error's message, marked's appended report-this sentence cut), instead of the source written into the
+    // Rendered box as one unannounced paragraph, and the message is recorded once that fallback stands (renderFell, which mode()
+    // reads as "raw" for this paint). The fallback runs in the catch, and a throw from THAT propagates (into the fetch chain's
+    // own catch at a landing): a second failure is a bug, not a file; the previous paint stands and its record with it, so
+    // mode() still answers what the body shows (the review's round 2: recorded before the swap, a fallback throw from a click
+    // left mode() saying "raw" over a standing Rendered box). The rest of the pass runs as for any text paint, so the
     // hooks fire once and read the rows through mode(); the Rendered button stays pressed (fmt.md is the person's saved choice;
     // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
@@ -2341,8 +2360,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
         renderFell = null;
       } catch (err) {
-        renderFell = err instanceof Error && err.message ? err.message : String(err);
-        body.replaceChildren(renderFellLine(renderFell), codeBlock(text, path, true));
+        const fell = fellMessage(err);
+        body.replaceChildren(renderFellLine(fell), codeBlock(text, path, true));
+        renderFell = fell;                    // recorded once the fallback stands (the header): a throw from the fallback leaves the previous paint and its record
       }
       if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
@@ -2805,7 +2825,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
-    viewError = null;                           // the editor takes the body: no pane shows (a failed reload's pane over the text, say; the exit re-reads and says why then)
+    viewError = null;                           // the editor takes the body: no pane shows (a failed reload's pane over the text, say; the exit repaints the earlier text, or re-reads when a fetch landed under the editor, and the panel's row says what happened)
     fireRendered();
     // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
     // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar), THIS card's
@@ -3314,7 +3334,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // plans/markdown-viewer.md (item 1) the common throw never gets that far: a throw from the block's build or the swap is
   // caught inside renderBody's own try, parked or immediate, which paints the RENDER_FELL line over the text's Raw rows
   // (file-view-landing-throw-browser.test.ts drives both landings). What still rejects into the `.catch` below is a throw
-  // from the fallback itself or from the passes after the try (the folds' restore, the hooks, the seat): a bug, not a file.
+  // from the fallback itself or from the passes after the try that can throw through (the folds' restore, the width stamp,
+  // the Outline's sync, the seat): a bug, not a file. Never a hook's own throw: fireRendered runs each hook in its own
+  // try and swallows it (the review's round 2 corrected this list, which named the hooks).
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
@@ -3447,6 +3469,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       closeOutline();                                           // the popover's rows were read off the DOM the pane replaces (the paint closer's rule; the review's round 2: a popover open at a failed reload stood over the pane, the hidden button reading expanded)
+      dropLatin1Line();                                         // a Latin-1 line a previous landing raised says the file can be read here; the pane says it could not be, so the line goes with the pane's paint, and a later "0" landing raises it again (the Slice 7 review's round 2)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
       viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
@@ -3633,15 +3656,17 @@ export function openUrlView(href: string): void {
     folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
     // The build and the swap in one try, the local viewer's shape (plans/markdown-viewer.md Slice 7, item 1): a render that
-    // throws paints the RENDER_FELL line and the document's text as Raw rows under it, and a throw from that fallback propagates.
+    // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
+    // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
     try {
       body.replaceChildren(fmt.md === "rendered"
         ? mdBlock(text, { kind: "url", href: loc })    // relative refs resolve against where it LIVES
         : codeBlock(text, parts.base, true));          // basename → langFor → markdown highlighting
       renderFell = null;
     } catch (err) {
-      renderFell = err instanceof Error && err.message ? err.message : String(err);
-      body.replaceChildren(renderFellLine(renderFell), codeBlock(text, parts.base, true));
+      const fell = fellMessage(err);
+      body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
+      renderFell = fell;
     }
     if (text === "") body.prepend(emptyFileLine());    // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
@@ -4329,8 +4354,10 @@ function absUrl(u: string): string {
  *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
  *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
  *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
- *  written (a URL document's, a remote one's). The img's own src, or an img with no currentSrc to read (the node stand-in),
- *  keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src, else `src`; a figure with neither names nothing. */
+ *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
+ *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
+ *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
+ *  else `src`; a figure with neither names nothing. */
 function failedSource(img: Element): string | null {
   const cur = (img as HTMLImageElement).currentSrc || "";
   if (!cur || cur === absUrl(img.getAttribute("src") || "")) return pictureDest(img);
@@ -4352,13 +4379,20 @@ function shownSource(src: string): string {
   const comma = src.indexOf(",");
   return (comma >= 0 ? src.slice(0, comma + 1) : src.slice(0, 40)) + "…";
 }
+/** The words in the source's place when the figure names none (the Slice 7 review's round 2): an empty destination
+ *  (`![alt]()`, which marked renders as `<img src="" alt="alt">`, or an authored `<img src="">`) fires the img's `error` with
+ *  no request made (the HTML spec's empty-src rule), figure-gate.ts's figureRefs skips the empty value so nothing rewrote or
+ *  gated it, and failedSource answers the empty string (or null for a figure with no source attribute at all); before, the
+ *  label printed that string, "Image failed to load:  (alt)", a dangling colon before two spaces and nothing named. */
+const FIGURE_NO_SOURCE = "the source is empty";
 /** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
  *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
- *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) and the alt in parentheses when it
- *  is not empty. */
+ *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
+ *  none to name, and the alt in parentheses when it is not empty. */
 function figureLabelText(img: Element): string {
   const alt = img.getAttribute("alt");
-  return FIGURE_FAILED + " " + shownSource(failedSource(img) ?? "") + (alt ? " (" + alt + ")" : "");
+  const src = failedSource(img);
+  return FIGURE_FAILED + " " + (src ? shownSource(src) : FIGURE_NO_SOURCE) + (alt ? " (" + alt + ")" : "");
 }
 /** The figure an `error` or `load` heard on the body is about: an img inside the Rendered box and outside a gate's
  *  placeholder (`[data-act="fv-load"]`); null for anything else (the media view's own img, a control's, a gated figure). */

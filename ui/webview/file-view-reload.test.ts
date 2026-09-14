@@ -245,8 +245,10 @@ win.__rompEditor = {
 // whose decode (or whose body read) resolves when the test says so, which is how a response gets
 // overtaken by a newer reload or a close.
 // `head`: the status a HEAD of the file answers instead of 200 (413: too large to serve); `headWait`: a HEAD's answer waits
-// on it (a slow kernel, for the one-in-flight cases); `headFail`: the HEAD fails on the network (the fetch rejects).
-type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string>; head?: number; headWait?: Promise<void>; headFail?: boolean };
+// on it (a slow kernel, for the one-in-flight cases); `headFail`: the HEAD fails on the network (the fetch rejects); `get`: the
+// status a GET answers instead of 200, with `getBody` as its body (413 for a file grown past the cap between the HEAD that saw
+// the move and the Reload's GET; the kernel's body names the size, the cap and the resolved path; the Slice 7 review's round 2).
+type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string>; head?: number; headWait?: Promise<void>; headFail?: boolean; get?: number; getBody?: string };
 const disk: Record<string, Served> = {};
 // A path with no entry in `disk` answers 404 as the kernel's route does for a file gone from an absolute path: X-Romp-Reason
 // `missing`, the GET's body naming the path. An entry here says the 404 has another cause (the PR review's round 2): the reason
@@ -278,6 +280,7 @@ const fetches: string[] = [];
     return { ok: true, status: 200, headers, text: async () => "" };
   }
   if (!f) return { ok: false, status: 404, headers: headers404, text: async () => g.body };
+  if (f.get) return { ok: false, status: f.get, headers, text: async () => f.getBody || "" };   // the kernel's refusal: its status and its words, no bytes
   return {
     ok: true, status: 200, headers,
     text: () => (f.text ? f.text() : Promise.resolve(String(f.bytes))),
@@ -1065,4 +1068,42 @@ test("changed on disk (PR review round 2): the deletion's words survive the edit
   reloadButton(wrap).click(); await settle();
   assert.ok(body.querySelector(".fileview-err"), "Reload paints the 404 pane");
   assert.equal(readBar(wrap).text, "Deleted on disk.", "the bar stands over it"); assert.equal(readBar(wrap).disabled, false);
+});
+
+test("changed on disk (the Slice 7 review's round 2; the brief's item 3 named the failed Reload's 413 beside its 404, and two rounds left the scene open): a Reload whose GET answers 413 (the file grew past the cap between the HEAD that saw the move and the click) paints the too-large pane in the body with the kernel's words and a Download offer (the file exists), fires the paint hooks once at that paint and never again for it, exposes error() with the pane's words while text() and mtimeNs() keep the last landing's, and leaves the bar standing with its button armed again; the seam's own reload (the Comments panel's poll) refused the same way paints the same pane with one paint and sends no HEAD; the file back under the cap lands, clears the bar and the pane, and error() is null again", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  assert.equal(paints, 1, "the open's paint");
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, CHANGED, "the HEAD saw the move: the bar is up"); assert.equal(paints, 1, "its raise is no paint");
+  const TOO_LARGE = "file too large to show: 60 MB, the cap is 8 MB: " + APP;   // the kernel's 413 body: the size, the cap and the resolved path
+  disk[APP] = { bytes: "", type: TEXT, mtimeNs: MT2, get: 413, getBody: TOO_LARGE };
+  const btn = reloadButton(wrap);
+  btn.click();
+  assert.equal(btn.disabled, true, "the click disables the button");
+  await settle();
+  const pane = body.querySelector(".fileview-err")!;
+  assert.ok(pane, "the pane says what happened");
+  assert.equal(pane.childNodes.filter((x): x is Txt => x instanceof Txt).map((x) => x.textContent).join(""), TOO_LARGE, "the kernel's words, as the person reads them");
+  assert.equal(pane.querySelectorAll(".fileview-err-hint").length, 0, "no hint: the words name the path");
+  const offers = pane.querySelectorAll("button");
+  assert.equal(offers.length, 1, "one offer"); assert.equal(offers[0].textContent, "Download", "the way out: the file exists, the view could not be (a 404 offers none)");
+  assert.equal(paints, 2, "the pane's paint fired the hooks once (Slice 7 of plans/markdown-viewer.md, item 3), and nothing else did (red under the mutation that removes the catch's fireRendered())");
+  assert.equal(ctx.error(), TOO_LARGE, "error() the pane's words");
+  assert.equal(ctx.text(), PY, "text() the last landing's"); assert.equal(ctx.mtimeNs(), MT, "a failed landing lends no mtime");
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.textContent, "Reload"); assert.equal(btn.disabled, false, "armed again: no dead end");
+  assert.equal(gets(), 2, "the open's GET and the Reload's: the refusal asked no second request");
+  // the seam's own reload, the panel's poll: the same pane, one paint, no HEAD, the bar as it was
+  const heads0 = heads();
+  ctx.reload(); await settle();
+  assert.equal(heads(), heads0, "no HEAD: the seam's reload is a GET"); assert.equal(gets(), 3);
+  assert.equal(paints, 3, "one paint for the pane");
+  assert.equal(ctx.error(), TOO_LARGE, "error() the pane's words again");
+  assert.equal(body.querySelector(".fileview-err")!.querySelectorAll("button").length, 1, "the offer again");
+  assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(readBar(wrap).disabled, false, "its button armed");
+  // the file back under the cap: the bar's Reload lands it and clears the bar and the pane
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null, "the landing clears the bar"); assert.equal(body.querySelector(".fileview-err"), null, "and the pane");
+  assert.equal(ctx.error(), null, "error() null over the text"); assert.equal(ctx.text(), PY2); assert.equal(ctx.mtimeNs(), MT2); assert.equal(paints, 4, "the landing's paint");
 });

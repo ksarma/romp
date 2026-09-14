@@ -1497,6 +1497,9 @@ class Panel {
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
+  // the failure row's ground (bytesFailed): the seam's words it carries and the view's mtime at the paint that filed it, the
+  // last landing's. Every later pass reads the two against what the body shows (syncFailedRow); null while no failure row stands.
+  failedRow: { words: string; mtimeNs: string } | null = null;
   // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
   // comments might move with the window when possible, each trying to stay centered near its place in the text; the
   // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
@@ -2754,19 +2757,39 @@ class Panel {
     this.bytesWait = null;
     this.busy.delete("bytes");
     this.errors.set("bytes", { text: BYTES_FAILED + " (" + words + ")" + BYTES_FAILED_TAIL, reload: true });
+    this.failedRow = { words, mtimeNs: this.ctx.mtimeNs() };   // what the row was filed over: read against every later paint (syncFailedRow)
     this.render();
   }
-  /** A content paint put the last landing's text back in place of the failure pane while the "bytes" row said the view showed
-   *  the failure (paintAll, error() null and the view's mtime still not the status's: a Raw or Rendered click runs renderBody over
-   *  the text in memory, so no landing answers the row; the review of Slice 7's round 1). The row keeps the seam's words and
-   *  takes the deadline row's tail, which says what shows now: the earlier text, with no change marked on it (paintChanges
-   *  refuses the status's offsets over it, textCurrent); its Reload stays. Keyed on the row's own text, so a deadline row, or no
-   *  row, is left as it is; no render of its own (paintAll renders at its end). The pane coming back (a Reload that fails again)
-   *  files the failure row anew (bytesFailed), and the landing that shows the status's text takes the row away (bytesLanded). */
-  private bytesPaneGone(): void {
+  /** The failure row (bytesFailed) against the paint that just ran: paintAll calls this on every pass, the editor's included,
+   *  with the seam's error() at the paint. The row claims the reload failed and says what the body shows, and each clause is
+   *  read off the seam at the paint, never carried over from the paint that filed it (the review of Slice 7, rounds 1 and 2):
+   *  - no failure row stands (its ✕, a wait that took the slot, the deadline row in its place): the record goes with it;
+   *  - the view's mtime is not the one the row was filed under: a landing has read the file since (the row's own Reload, the
+   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, textCurrent), so the
+   *    row is answered and goes, as bytesLanded takes it when the landing shows the status's text. Before round 2 a landing of
+   *    text NEWER than the status's flipped the row to "the view still shows the earlier text" over the new text, until the
+   *    status at that mtime landed and bytesLanded took it;
+   *  - the same mtime and a pane stands (error() set): the row wears the pane's CURRENT words and the failure tail. A pane that
+   *    came back over the flipped row with no wait armed (the disk bar's Reload, the moved-figure re-fetch: askReload(null) with no
+   *    awaitBytes) kept the text tail before; and the row's Reload sends the status ask and the fetch together, so when the
+   *    status lands first, over the standing pane, the head files the row off THAT pane's words (bytesFailed), and a fetch then
+   *    refused for another reason (a 404 pane replaced by a 413) left the earlier words under the new pane;
+   *  - the same mtime and no pane (a content paint of the earlier text: a Raw or Rendered click's renderBody, the editor's entry
+   *    and its exit's repaint): the row keeps the seam's words and takes the deadline row's tail, which says what shows now: the
+   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, textCurrent); its Reload stays.
+   *  A deadline row is not this row and is left as it is (bytesLate; its tail over a pane is the pre-existing sibling the plan note
+   *  records). No render of its own: paintAll renders at its end. */
+  private syncFailedRow(failed: string | null): void {
+    const at = this.failedRow;
+    if (!at) return;
     const row = this.errors.get("bytes");
-    if (!row || !row.text.endsWith(BYTES_FAILED_TAIL)) return;
-    this.errors.set("bytes", { text: row.text.slice(0, -BYTES_FAILED_TAIL.length) + BYTES_LATE_TAIL, reload: true });
+    if (!row || !row.text.startsWith(BYTES_FAILED)) { this.failedRow = null; return; }
+    if (this.ctx.mtimeNs() !== at.mtimeNs) { this.errors.delete("bytes"); this.failedRow = null; return; }
+    const words = failed !== null ? failed : at.words;
+    const text = BYTES_FAILED + " (" + words + ")" + (failed !== null ? BYTES_FAILED_TAIL : BYTES_LATE_TAIL);
+    if (text === row.text) return;
+    this.failedRow = { words, mtimeNs: at.mtimeNs };
+    this.errors.set("bytes", { text, reload: true });
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
@@ -3631,7 +3654,7 @@ class Panel {
    *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
-    if (this.ctx.editing()) { this.afterPaint(); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint)
+    if (this.ctx.editing()) { this.afterPaint(); this.syncFailedRow(this.ctx.error()); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint); a failure row is read against the editor's entry, a content paint of the earlier text (syncFailedRow)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     // the body shows a failure pane in place of the file (the seam's error(): a reload refused or failed; Slice 7 of
     // plans/markdown-viewer.md, item 3): a wait for that reload's bytes ends here, at the paint that showed the pane, in the
@@ -3669,13 +3692,12 @@ class Panel {
     // Over a CONTENT paint alone (error() null): a picture's landing moves mtimeNs() to the new mtime before its bytes decode, so
     // the pane imgFailed then paints has the status's mtime under it while the file is not showing, and the row bytesFailed
     // filed at the head of this pass went in the same pass (the review's round 1; before the consolidation's landing clause,
-    // bytesLanded returned at once with no wait up). And a content paint of the EARLIER text while the failure row stands (a
-    // Raw or Rendered click repaints the last landing's text over the pane, error() null, the mtime still not the status's):
-    // the row said the view showed the failure, so it takes the deadline row's tail, true of what shows now (bytesPaneGone)
-    if (failed === null) {
-      if (this.status && this.textCurrent(this.status)) this.bytesLanded();
-      else this.bytesPaneGone();
-    }
+    // bytesLanded returned at once with no wait up). Then a standing failure row is read against this paint (syncFailedRow): a
+    // landing of other text than the status's takes it away too; a pane standing over it gives it that pane's words; a content
+    // paint of the EARLIER text (a Raw or Rendered click repaints the last landing's text over the pane, error() null, the mtime
+    // still not the status's) gives it the deadline row's tail, true of what shows now
+    if (failed === null && this.status && this.textCurrent(this.status)) this.bytesLanded();
+    this.syncFailedRow(failed);
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):

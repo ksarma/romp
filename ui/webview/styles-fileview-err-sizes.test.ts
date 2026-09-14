@@ -214,7 +214,7 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /const unit = el\("span", "fileview-fc"\);/);
   // the dressed buttons: the refusal's Download and the editor's Reload file, both .fileview-btn.fileview-err-dl in a .fileview-err
   // (the pane's paint may be preceded by the Outline popover's closer, a call that makes no node: Slice 6 of plans/markdown-viewer.md, review round 2)
-  assert.match(VIEW, /const why = el\("div", "fileview-err"\);[\s\S]*?const offer = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?why\.appendChild\(offer\);\n\s*\}\n(?:\s*closeOutline\(\);[^\n]*\n)?\s*body\.replaceChildren\(why\);/);
+  assert.match(VIEW, /const why = el\("div", "fileview-err"\);[\s\S]*?const offer = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?why\.appendChild\(offer\);\n\s*\}\n(?:\s*closeOutline\(\);[^\n]*\n)?(?:\s*dropLatin1Line\(\);[^\n]*\n)?\s*body\.replaceChildren\(why\);/, "the pane's chain: the div, the offer, then the swap (the popover's close and, since the Slice 7 review's round 2, a standing Latin-1 line's drop may stand between the offer and the swap)");
   assert.match(VIEW, /const bar2 = noteBar\(err\);[\s\S]*?const re = el\("button", "fileview-btn fileview-err-dl"\) as HTMLButtonElement;[\s\S]*?bar2\.appendChild\(re\);/);
   assert.match(VIEW, /const bar2 = el\("div", "fileview-err"\);\n\s*bar2\.id = "fileview-save-err";\n\s*bar2\.textContent = msg;\n\s*box\.insertBefore\(bar2, main\);/, "the notice bar mounts above the body row");
   // the panel: .fc-panel.fileview-aside > (.fc-sec-head > .fc-head | .fc-composer | .fc-sec-cards > .fc-cards > .fc-card | .fc-sec-send > .fc-send)

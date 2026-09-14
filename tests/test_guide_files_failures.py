@@ -168,8 +168,12 @@ class TheViewerDoesIt(unittest.TestCase):
     def test_a_render_that_fell_paints_the_line_over_raw_rows_and_mode_answers_raw(self):
         # the line: the constant, the error's message in parentheses, then the period, the body's first child
         self.assertIn('why.textContent = RENDER_FELL + " (" + msg + ").";', self.viewer)
-        self.assertIn("renderFell = err instanceof Error && err.message ? err.message : String(err);", self.viewer)
-        self.assertIn("body.replaceChildren(renderFellLine(renderFell), codeBlock(text, path, true));", self.viewer)
+        # the message through fellMessage (an Error's message with marked's appended report-this sentence cut, else the
+        # value's string), the line then the rows, and the record once the fallback stands (the Slice 7 review's round 2)
+        self.assertIn("const fell = fellMessage(err);", self.viewer)
+        self.assertIn("body.replaceChildren(renderFellLine(fell), codeBlock(text, path, true));", self.viewer)
+        self.assertIn("renderFell = fell;", self.viewer)
+        self.assertNotIn("renderFell = err instanceof Error", self.viewer, "no catch records the raw message before its fallback swap")
         # mdBlock keeps no fallback of its own: the old catch wrote the source into the box as one paragraph
         self.assertNotIn("box.textContent = text;", self.viewer)
         # "the way Raw shows it": the seam's word for the body follows what was painted, so the panel pairs over the rows
@@ -180,7 +184,10 @@ class TheViewerDoesIt(unittest.TestCase):
         # the source the label names: the candidate the browser asked for as the author wrote it (failedSource: pictureDest's rule
         # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head (shownSource); the
         # Slice 7 review's round 1
-        self.assertIn('return FIGURE_FAILED + " " + shownSource(failedSource(img) ?? "") + (alt ? " (" + alt + ")" : "");', self.viewer)
+        # ...and the words in the source's place when the figure names none (an empty destination; the review's round 2)
+        self.assertIn('const src = failedSource(img);', self.viewer)
+        self.assertIn('return FIGURE_FAILED + " " + (src ? shownSource(src) : FIGURE_NO_SOURCE) + (alt ? " (" + alt + ")" : "");', self.viewer)
+        self.assertIn('const FIGURE_NO_SOURCE = "the source is empty";', self.viewer)
         # the img's error does not bubble: one capture-phase listener on the body per open, its twin removing the label
         self.assertIn('body.addEventListener("error", onError, true);', self.viewer)
         self.assertIn('const FIGERR_MARK = "data-fv-figerr";', self.viewer)

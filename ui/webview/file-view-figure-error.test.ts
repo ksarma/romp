@@ -556,7 +556,7 @@ test("the label names the candidate the browser asked for (the Slice 7 review's 
   md.appendChild(block("p", dense));
   fire(dense, "error");
   assert.equal(labelAfter(dense)!.textContent, fv.FIGURE_FAILED + " figs/missing-1x.png (dense)", "the img's own candidate, by its authored spelling");
-  // candidates left as written (a remote host's, a URL document's): no data-fv-srcset, the candidate named as it stands in srcset
+  // candidates left as written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs with no data-fv-srcset, so its label names the resolved URL): no data-fv-srcset, the candidate named as it stands in srcset
   const remote = img({ src: "https://cdn.example/plot.png", alt: "remote", srcset: "https://cdn.example/plot-2x.png 2x" });
   (remote as any).currentSrc = "https://cdn.example/plot-2x.png";
   md.appendChild(block("p", remote));
@@ -647,7 +647,7 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   assert.match(VIEW, /\nconst FIGERR_CLASS = "fv-figerr";\n/, "the class, for the sheets alone");
   assert.match(arm, /const label = el\("span", FIGERR_CLASS\);\n\s*label\.setAttribute\(FIGERR_MARK, ""\);/, "the label is a span wearing the class and the mark");
   assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = anchor\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the anchor's next sibling, never by the class");
-  assert.match(VIEW, /return FIGURE_FAILED \+ " " \+ shownSource\(failedSource\(img\) \?\? ""\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2, and the review's round 1): FIGURE_FAILED, a space, the source the browser asked for (failedSource) as the label shows it (shownSource), the alt in parentheses when not empty");
+  assert.match(VIEW, /const src = failedSource\(img\);\n\s*return FIGURE_FAILED \+ " " \+ \(src \? shownSource\(src\) : FIGURE_NO_SOURCE\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2, the review's round 1 and its round 2): FIGURE_FAILED, a space, the source the browser asked for (failedSource) as the label shows it (shownSource) or FIGURE_NO_SOURCE when the figure names none (an empty destination), the alt in parentheses when not empty");
   // the review's round 1: the source is the candidate the browser asked for, read off currentSrc and matched against the srcset carriers
   // by the authored candidates rewriteFigureSrcs keeps in data-fv-srcset; the img's own src, or no currentSrc, keeps pictureDest's rule
   assert.match(VIEW, /\nconst FV_SRCSET = "data-fv-srcset";\n/, "the authored candidates' attribute");
