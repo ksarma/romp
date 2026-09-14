@@ -271,7 +271,8 @@ test("a relative path resolves against the todo's session ON THE KERNEL: the sid
   const PREVIEW = read("preview.ts");
   assert.match(PREVIEW, /export function fileUrl\(path: string, sid\?: string \| null\): string \{[\s\S]*?"&sid=" \+ encodeURIComponent\(bare\)/);
   assert.match(VIEW, /fetch\(fileUrl\(path, sid\), \{ cache: "no-store" \}\)/);
-  assert.ok(KERNEL.includes('fp = _resolve_open_path((q.get("path") or [""])[0], (q.get("sid") or [None])[0])'), "/file resolves against the sid's cwd");
+  // the request's path is kept as `given` for the 404's one-word reason (the PR review's round 2 of Slice 6 of plans/markdown-viewer.md)
+  assert.ok(KERNEL.includes('given = (q.get("path") or [""])[0]\n        fp = _resolve_open_path(given, (q.get("sid") or [None])[0])'), "/file resolves against the sid's cwd");
   assert.ok(KERNEL.includes("def _resolve_open_path(p, sid=None):"));
 });
 

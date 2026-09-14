@@ -343,6 +343,12 @@ export const CHANGED_ON_DISK = "Changed on disk.";
 /** The same bar's words when the HEAD answers 404: the file is gone, not changed (the PR review's round 1: the build read a
  *  deletion as a move and said "Changed on disk."). Reload paints the 404 pane, under the one-bar rule as before. */
 export const DELETED_ON_DISK = "Deleted on disk.";
+/** The kernel's one-word cause on a /file 404 (the PR review's round 2): the header, and the one value that means the file is
+ *  gone (an absolute path, as given or `~`-rooted, with no regular file at it). Its other values (`relative`, `unresolved`,
+ *  `detached`, `unviewable`) name a 404 the file may still exist behind, so the bar keeps to CHANGED_ON_DISK for them, as it
+ *  does for a 404 with no header at all (a kernel from before the header, a remote kernel without it). */
+export const REASON_HEADER = "X-Romp-Reason";
+export const REASON_MISSING = "missing";
 /** The notice for a heading target under a plain `hidden` wrapper (plans/markdown-viewer.md Slice 6, item 4; the PR review's
  *  round 1): the section is in the file and has no box to land on, so the open lands at the top and says why, where "No
  *  section named" would be false of it. */
@@ -1497,7 +1503,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // child of the card outside the body, and a landing during a press on one of its rows painted at once, its closeOutline
   // removing the pressed row before the mouseup, so the pick was lost (file-view-outline-browser.test.ts); a press on the
   // title bar's controls parks a landing the same way, and their clicks run before the parked run does (the hold's zero
-  // timer). The reader's own paints (a view swap, the editor) follow clicks already released.
+  // timer), so a landing parked under a press on the Outline button ran after the click had opened the popover and its
+  // paint closed it again: the text landing opens the popover again after its paint when the hold parked it (fetchFile,
+  // reopenOutline; the PR review's round 2). The reader's own paints (a view swap, the editor) follow clicks already released.
   const hold = pressHold(box);
   // ── the keyboard (plans/markdown-viewer.md Slice 6, item 1) ── The body takes the keyboard after a paint the reader did
   // not type through: the open's first landing (keyboardOnLanding, text or media, spent once) and a paint the reader asked
@@ -3031,7 +3039,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (v.kind !== "value" || editing || !mtimeNs || !wrap.isConnected) return;   // an unknown answer, or the world moved while the HEAD was out
       const moved = v.value;
       if (!mtimeMoved(mtimeNs, moved)) return;
-      const words = moved === ABSENT ? DELETED_ON_DISK : CHANGED_ON_DISK;   // a 404 is a deletion, not a change (the PR review's round 1); Reload then paints the 404 pane and re-arms
+      // A 404 is a deletion, not a change (the PR review's round 1), but only when the kernel says the file is gone: its 404 carries
+      // REASON_HEADER, and REASON_MISSING alone means no regular file is at the absolute path (the PR review's round 2; the route
+      // also answers 404 for a relative path the session's cwd moved from under, for one it can join to no cwd, and, through the
+      // relay, for a detached host, the file still on disk in each). Any other reason, or none (a kernel from before the header),
+      // falls back to the change's words; Reload then paints the kernel's own pane for whatever the GET answers, and re-arms.
+      const words = moved === ABSENT && r.headers.get(REASON_HEADER) === REASON_MISSING ? DELETED_ON_DISK : CHANGED_ON_DISK;
       const was = mtimeNs;                       // the mtime the answer was compared against: the file the body shows
       // The raise waits out a press on the body row (raiseHold: the body and the aside). The mousedown that begins a drag in a
       // Files iframe that did not hold the page's focus is itself the window focus that ran this HEAD, and the bar is a row of
@@ -3187,10 +3200,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // round 3, 2026-09-09; file-view-landing-order-browser.test.ts). An answer that does not stand paints nothing, parks
     // nothing and displaces nothing; the guards re-run inside the parked run for what changes while it is parked.
     const stands = (): boolean => wrap.isConnected && my === fetchSeq;
-    const land = (run: () => void): Promise<void> | void => {
+    // `parked`: the hold parks this landing under a press now under way, read once before the defer and handed to the run, which
+    // learns from it whether it ran at once or at a release (the Outline's re-open below reads it; the PR review's round 2).
+    const land = (run: (parked: boolean) => void): Promise<void> | void => {
       if (!stands()) return;
-      const p = hold.defer(run);
-      if (hold.held()) noteParkedLanding(p);   // parked under a press: the bar's raise parked under the same press waits for this one's settle (parkedLanding)
+      const parked = hold.held();
+      const p = hold.defer(() => run(parked));
+      if (parked) noteParkedLanding(p);   // parked under a press: the bar's raise parked under the same press waits for this one's settle (parkedLanding)
       return p;
     };
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
@@ -3220,7 +3236,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
-    }).then((t) => land(() => {   // parked while a pointer is pressed over the body; the guards re-run at the release
+    }).then((t) => land((parked) => {   // parked while a pointer is pressed over the card; the guards re-run at the release
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
@@ -3248,10 +3264,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       text = t;
+      // A landing the hold parked under a press on the Outline BUTTON runs after the release's click, on the hold's zero timer, and
+      // that click opened the popover: the paint below closes it (every paint does: its rows were read off the DOM the paint
+      // replaces), so the click appeared to do nothing (the PR review's round 2). The popover is opened again after the paint, on
+      // the landed body, its rows and its current row read afresh and the keyboard on it as the click left it. A landing that ran
+      // at once (a plain reload, the panel's poll with no press under way) closes the popover as before: the reader did not just
+      // ask for it. A landing parked under a press on a ROW finds the popover closed by the pick, and one parked under a press on
+      // the button while the popover was up finds it closed by the toggle, so neither opens it again (file-view-outline.test.ts
+      // and file-view-outline-browser.test.ts, the PR review's round 2 cases).
+      const reopenOutline = parked && outline !== null;
       // the open's target: a line takes the Raw view for this open (unsaved: the preference stays), then the row; an offset the next frame
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
       landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
+      if (reopenOutline) openOutline();
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)

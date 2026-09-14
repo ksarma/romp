@@ -682,6 +682,11 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /textSize\.sync\(\);[^\n]*\n\s*closeOutline\(\);[^\n]*\n\s*if \(dropReseat\) dropReseat\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(editing \|\| text === null\) outlineBtn\.hidden = true;\n/, "renderBody: every paint closes the popover and retires a remembered seat's re-seat on the pictures' loads (review round 3); the paths that paint no text hide the button here (the loader, the editor's entry)");
   assert.match(openFn, /stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/, "…and a text paint decides it inside the paint, after the swap and before the hooks measure and the seat writes (the consolidation: a bar whose height changes between the place read and the seat re-clamped a body at the document's end and lost the held place)");
   assert.doesNotMatch(openFn, /landRemembered\(\);[^\n]*\n\s*\}\);\n\s*syncOutline\(\);/, "never after the seat");
+  // the one paint that opens it again (the PR review's round 2): a text landing the card's hold PARKED under a press, run after the
+  // release's click on the Outline button had opened the popover; read before the paint, opened after the landing's target, and never for a landing
+  // that ran at once, so a plain reload still closes it as the pin above says
+  assert.match(openFn, /const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*landTarget\(\);[^\n]*\n\s*if \(reopenOutline\) openOutline\(\);/, "a landing the hold parked and a popover open at its run: opened again after the paint, on the landed body");
+  assert.equal((openFn.match(/openOutline\(\);/g) || []).length, 2, "openOutline is called from the button's toggle and the parked landing's re-open alone");
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
   assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
   // the sheets: the rules in the tokens, the same bytes in both, and no dark literal outside a var() fallback (menu-theme-tokens.test.ts's rule)
@@ -942,4 +947,55 @@ test("review round 3: a heading inside a plain `hidden` wrapper has no row (its 
   const none = await open(PLAIN, "<div hidden>\n\n## Stashed\n\n</div>\n\nJust text.\n", t);
   assert.equal(headings(none).length, 1, "the DOM holds the hidden heading");
   assert.equal(outlineBtn(none).hidden, true, "…and the Outline button is hidden, as over a note with no heading");
+});
+
+test("a landing under a press on the Outline BUTTON (PR review round 2): the landing parks until the release; the release's click opens the popover and the parked landing's paint leaves it open on the landed body, the new note's rows with the keyboard on the popover (before the fix: the paint ran closeOutline one task after the click, so the click appeared to do nothing); a press on the button with the popover up: the click closes it and the landing leaves it closed; a landing with no press under way still closes an open popover", async (t) => {
+  const MT2 = "1757145600000000009";
+  const APPENDIX = "\n## Appendix Z\n\nOne more section a session wrote while the reader pressed the button.\n";
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const btn = outlineBtn(o);
+  btn.dispatchEvent(new Ev("pointerdown", { button: 0 }));       // the press on the button, in the capture phase up to the card's hold
+  const painted = paints;
+  disk[REPORT] = { bytes: OUTLINE_NOTE + APPENDIX, type: "text/plain; charset=utf-8", mtimeNs: MT2 };
+  o.ctx.reload(); await settle();                                 // the panel's poll saw the file move: the landing parks under the press
+  assert.equal(paints, painted, "nothing painted under the press");
+  assert.equal(popover(o), null, "no popover yet: the click has not happened");
+  release();                                                      // the release: the click follows, then the parked landing on the hold's zero timer
+  btn.click();
+  const first = popover(o);
+  assert.ok(first, "the release's click opened the popover");
+  assert.equal(rowsOf(first!).length, 42, "on the note that shows: the landing has not painted yet");
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(paints, painted + 1, "then the parked landing painted, once");
+  assert.equal(o.ctx.text(), OUTLINE_NOTE + APPENDIX, "the reload's text is on screen");
+  const pop = popover(o);
+  assert.ok(pop, "the popover stands after the landing's paint (before the fix: the paint closed it and the click appeared to do nothing)");
+  assert.ok(pop !== first, "built afresh over the landed body, as every open of it is");
+  assert.equal(rowsOf(pop!).length, 43, "its rows are the landed note's headings");
+  assert.equal(rowsOf(pop!)[42].dataset.id, "md-appendix-z", "the last row is the heading the landing brought");
+  assert.equal(btn.getAttribute("aria-expanded"), "true", "the button says it is expanded"); assert.ok(btn.classList.contains("on"), "…and wears the open dress");
+  assert.ok(doc.activeElement === pop, "the popover holds the keyboard, as after any open");
+  assert.ok(rowsOf(pop!).some((r) => r.classList.contains("current")), "with a current row");
+  // the toggle's other half: a press on the button with the popover up parks the landing too; the click closes the popover, and the
+  // landing leaves it closed (the reader closed it)
+  btn.dispatchEvent(new Ev("pointerdown", { button: 0 }));
+  const p2 = paints;
+  disk[REPORT] = { bytes: OUTLINE_NOTE, type: "text/plain; charset=utf-8", mtimeNs: MT };
+  o.ctx.reload(); await settle();
+  assert.equal(paints, p2, "nothing painted under the press");
+  assert.ok(popover(o) === pop, "the popover stands under the press: a press on the button is not a press outside it");
+  release();
+  btn.click();
+  assert.equal(popover(o), null, "the click closed the popover");
+  assert.ok(doc.activeElement === o.body, "…and the keyboard went to the body");
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(paints, p2 + 1, "the parked landing painted");
+  assert.equal(popover(o), null, "…and opened nothing: the click had closed it");
+  assert.equal(btn.getAttribute("aria-expanded"), "false");
+  // no press under way: a landing closes an open popover, as every paint does (the round-1 pin stands; nothing opens it again)
+  openOutline(o);
+  const p3 = paints;
+  o.ctx.reload(); await settle();
+  assert.equal(paints, p3 + 1, "a landing with no press behind it paints at once");
+  assert.equal(popover(o), null, "…and closes the popover: the reader did not just ask for it");
 });

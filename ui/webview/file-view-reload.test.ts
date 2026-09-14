@@ -14,8 +14,11 @@
 // item 5) drive the same stand-in through the window's `focus` and the document's `visibilitychange`, the two events
 // that run the viewer's HEAD /file while the Comments panel is closed, and read the bar the moved mtime raises above the
 // body row, its Reload, and the landing that clears it; the fetch stub answers a HEAD with the headers and no body, as the
-// kernel does, and can hold one, fail one on the network or answer it 413. Synthetic fixtures only: the notes-api world,
-// placeholder ids.
+// kernel does, and can hold one, fail one on the network or answer it 413. A 404 carries the kernel's one-word cause in
+// X-Romp-Reason (the PR review's round 2): `missing` for a file gone from an absolute path, which the bar reads as a deletion,
+// and the other causes the route answers 404 for while the file may still exist (a relative path a session move re-aimed, a
+// detached remote host) or no header at all (a kernel from before it), which the bar reads as a change. Synthetic fixtures
+// only: the notes-api world, placeholder ids, TESTHOST for a remote session's host.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -245,6 +248,13 @@ win.__rompEditor = {
 // on it (a slow kernel, for the one-in-flight cases); `headFail`: the HEAD fails on the network (the fetch rejects).
 type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string>; head?: number; headWait?: Promise<void>; headFail?: boolean };
 const disk: Record<string, Served> = {};
+// A path with no entry in `disk` answers 404 as the kernel's route does for a file gone from an absolute path: X-Romp-Reason
+// `missing`, the GET's body naming the path. An entry here says the 404 has another cause (the PR review's round 2): the reason
+// the header carries (`relative` for a relative path the session's cwd moved from under, `detached` for a remote host with no
+// tunnel; null for a kernel from before the header, which sends none) and the GET's own body for it. Cleared at every open.
+type Gone = { reason: string | null; body: string };
+const gone: Record<string, Gone> = {};
+const goneOf = (p: string): Gone => gone[p] || { reason: "missing", body: "no such file: " + p };
 const fetches: string[] = [];
 (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
   const method = (init && init.method) || "GET";
@@ -255,15 +265,19 @@ const fetches: string[] = [];
   const f = disk[p];
   // an image 200 wears image/* and no X-Romp-Text-Utf8 (tests/test_kernel_preview.py pins that server-side)
   const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" && f.type.startsWith("text/") ? "1" : null) : null) };
+  // the 404's headers: the kernel's one-word reason alone, when its answer carries one (tests/test_kernel_preview.py and
+  // tests/test_kernel_remote_file_relay.py pin the header server-side)
+  const g = goneOf(p);
+  const headers404 = { get: (h: string) => (h === "X-Romp-Reason" ? g.reason : null) };
   if (method === "HEAD") {
     // the kernel's HEAD /file: the GET's headers and no bytes (tests/test_kernel_preview.py pins the empty body)
     if (f && f.headWait) await f.headWait;
     if (f && f.headFail) throw new TypeError("network gone");
-    if (!f) return { ok: false, status: 404, headers, text: async () => "" };
+    if (!f) return { ok: false, status: 404, headers: headers404, text: async () => "" };
     if (f.head) return { ok: false, status: f.head, headers, text: async () => "" };
     return { ok: true, status: 200, headers, text: async () => "" };
   }
-  if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
+  if (!f) return { ok: false, status: 404, headers: headers404, text: async () => g.body };
   return {
     ok: true, status: 200, headers,
     text: () => (f.text ? f.text() : Promise.resolve(String(f.bytes))),
@@ -326,13 +340,14 @@ async function mod(): Promise<typeof import("./file-view")> {
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
 type Open = { fv: typeof import("./file-view"); ctx: FileViewActionCtx; wrap: El; body: El; src: El };
-async function open(p: string, t: TestContext): Promise<Open> {
+async function open(p: string, t: TestContext, sid = SID): Promise<Open> {
   const fv = await mod();
   disk[PLOT] = { bytes: PNG1, type: "image/png", mtimeNs: MT };
   disk[FIG] = { bytes: SVG1, type: "image/svg+xml", mtimeNs: MT };
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
+  for (const k of Object.keys(gone)) delete gone[k];
   posted.length = 0; fetches.length = 0; paints = 0; seam = null;
-  assert.equal(fv.openFileView(p, SID), true, "the open happened");
+  assert.equal(fv.openFileView(p, sid), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
   const wrap = doc.getElementById("romp-fileview")!;
@@ -683,7 +698,7 @@ test("changed on disk: a picture probes too (a regenerated figure is a change on
   assert.equal(heads(), 0, "no mtime to compare against: no HEAD");
 });
 
-test("changed on disk (PR review round 1): a HEAD answering 404 (the file deleted) raises the bar with the deletion's words, Deleted on disk., not the change's (before the fix: a deletion read as a move and the bar said Changed on disk.); its Reload paints the 404 pane in the body with the bar standing and its button re-armed, under the one-bar rule as before; the file back on disk, Reload lands it and its own ask clears the bar", async (t) => {
+test("changed on disk (PR review round 1): a HEAD answering 404 with the kernel's reason `missing` (the file deleted from its absolute path; the reason since the PR review's round 2) raises the bar with the deletion's words, Deleted on disk., not the change's (before the fix: a deletion read as a move and the bar said Changed on disk.); its Reload paints the 404 pane in the body with the bar standing and its button re-armed, under the one-bar rule as before; the file back on disk, Reload lands it and its own ask clears the bar", async (t) => {
   const { wrap, ctx, body } = await open(APP, t);
   delete disk[APP];                                            // a session removed the file
   focusWindow(); await settle();
@@ -967,4 +982,77 @@ test("changed on disk (review round 6): a landing parked under the same press th
   assert.equal(readBar(wrap).text, CHANGED, "the next focus HEAD finds MT5 against the MT4 that shows and raises the bar at once");
   reloadButton(wrap).click(); await settle();
   assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT5);
+});
+
+test("changed on disk (PR review round 2): a HEAD answering 404 says Deleted on disk. only when the kernel's X-Romp-Reason reads `missing`; a 404 with another reason, `relative` for a relative path the session's cwd moved from under, `detached` for a remote session whose host is no longer attached (the HEAD went to the relay's URL), or with no reason header at all (a kernel from before the header) raises the bar with the change's words, Changed on disk., its Reload painting the kernel's own pane for what the GET answers, the bar standing with its button re-armed (before the fix: every 404 read as a deletion, and the bar said Deleted on disk. over a file still on disk)", async (t) => {
+  // a relative path, joined to the session's cwd at the kernel: the session moved, and the kernel says so
+  const REL = "src/app.py";
+  disk[REL] = { bytes: PY, type: TEXT, mtimeNs: MT };
+  const rel = await open(REL, t);
+  delete disk[REL]; gone[REL] = { reason: "relative", body: "not found: /repo/elsewhere/src/app.py" };
+  focusWindow(); await settle();
+  assert.equal(heads(), 1, "one HEAD for the focus");
+  let b = readBar(rel.wrap);
+  assert.equal(b.text, CHANGED, "a relative path's 404 is not a deletion: the file may stand at the old cwd (before the fix: Deleted on disk.)");
+  assert.equal(b.button, "Reload"); assert.equal(b.disabled, false);
+  assert.equal(rel.ctx.text(), PY, "the body shows the text the reader has");
+  reloadButton(rel.wrap).click(); await settle();
+  const pane = rel.body.querySelector(".fileview-err");
+  assert.ok(pane, "Reload paints the kernel's own pane");
+  assert.match(pane!.textContent, /not found: \/repo\/elsewhere\/src\/app\.py/, "…with the path the kernel resolved");
+  b = readBar(rel.wrap);
+  assert.equal(b.text, CHANGED, "the bar stands over the pane with the same words"); assert.equal(b.disabled, false, "its button re-armed");
+  rel.fv.closeFileView();
+  // a remote session (a host-prefixed sid): the HEAD goes to the relay, and a detached host's 404 says so
+  const remote = await open(APP, t, "TESTHOST:" + SID);
+  assert.ok(fetches[0].startsWith("GET /remote/TESTHOST/file?"), "the open fetched through the relay (read " + fetches[0] + ")");
+  delete disk[APP]; gone[APP] = { reason: "detached", body: "no attached host 'TESTHOST'" };
+  focusWindow(); await settle();
+  assert.equal(heads(), 1);
+  assert.ok(fetches.some((f) => f.startsWith("HEAD /remote/TESTHOST/file?")), "the HEAD went to the relay's URL");
+  assert.equal(readBar(remote.wrap).text, CHANGED, "a detached host's 404 is not a deletion: the remote's disk was not consulted (before the fix: Deleted on disk.)");
+  reloadButton(remote.wrap).click(); await settle();
+  assert.match(remote.body.querySelector(".fileview-err")!.textContent, /no attached host/, "Reload paints the relay's own answer");
+  assert.equal(readBar(remote.wrap).text, CHANGED); assert.equal(readBar(remote.wrap).disabled, false);
+  remote.fv.closeFileView();
+  // a kernel from before the header: its 404 carries no reason, and the bar keeps to the change's words
+  const old = await open(APP, t);
+  delete disk[APP]; gone[APP] = { reason: null, body: "not found: " + APP };
+  focusWindow(); await settle();
+  assert.equal(heads(), 1);
+  assert.equal(readBar(old.wrap).text, CHANGED, "no reason header: the cause is unknown, so the words claim no deletion (before the fix: Deleted on disk.)");
+  old.fv.closeFileView();
+  // and the one cause that IS a deletion, beside them: the words the round-1 case pins
+  const goneFor = await open(APP, t);
+  delete disk[APP];                                            // no entry in `gone`: the kernel's `missing`
+  focusWindow(); await settle();
+  assert.equal(readBar(goneFor.wrap).text, "Deleted on disk.", "`missing` alone says the file is gone");
+});
+
+test("changed on disk (PR review round 2): the deletion's words survive the editor: with the Deleted on disk. bar up, Edit takes it with the other notices and Cancel brings it back reading Deleted on disk., not Changed on disk., its Reload armed, no HEAD sent and the keyboard on the body (the words are kept on the bar's record for the exit's re-raise; red with the re-raise reading CHANGED_ON_DISK in place of the record's words); its Reload then paints the 404 pane with the bar standing", async (t) => {
+  visibleAfter(t);
+  const { wrap, ctx, body } = await open(APP, t);
+  delete disk[APP];                                            // a session removed the file: the kernel's 404 says `missing`
+  focusWindow(); await settle();
+  assert.equal(readBar(wrap).text, "Deleted on disk.", "the deletion's words");
+  const acts = wrap.querySelector(".fileview-acts")!;
+  const mounted = ed.mounted;
+  acts.querySelectorAll("button").find((x) => x.textContent === "Edit")!.click(); await settle();
+  assert.equal(ctx.editing(), true, "the editor is up over the text the reader has"); assert.equal(ed.mounted, mounted + 1);
+  assert.equal(barOf(wrap), null, "the editor's entry took the bar with the other notices");
+  const n = heads();
+  const cancel = acts.querySelectorAll("button").find((x) => x.textContent === "Cancel")!;
+  cancel.focus();                                          // a real click focuses the button
+  cancel.click(); await settle();
+  assert.equal(ctx.editing(), false, "Cancel left the editor");
+  const b = readBar(wrap);
+  assert.equal(b.text, "Deleted on disk.", "the exit re-raises the bar with the words it had (a mutation to raiseDiskBar(CHANGED_ON_DISK) reads Changed on disk. here)");
+  assert.equal(b.button, "Reload"); assert.equal(b.disabled, false, "…with its Reload armed");
+  assert.equal(barOf(wrap)!.getAttribute("role"), "status");
+  assert.equal(heads(), n, "…and without a HEAD: nothing new is known");
+  assert.equal(doc.activeElement, body, "the exit's repaint hands the keyboard to the body");
+  assert.equal(ctx.text(), PY, "the old text shows again under the bar");
+  reloadButton(wrap).click(); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "Reload paints the 404 pane");
+  assert.equal(readBar(wrap).text, "Deleted on disk.", "the bar stands over it"); assert.equal(readBar(wrap).disabled, false);
 });

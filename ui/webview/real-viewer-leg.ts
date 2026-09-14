@@ -90,7 +90,9 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
  *  is on. `window.__fetches` counts every request the stub answers and `window.__heads` the `HEAD`s among them (the Comments
  *  panel's poll, the viewer's changed-on-disk probe; Slice 6, item 5): a HEAD is answered with the GET's headers and no
- *  body, as the kernel answers it. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
+ *  body, as the kernel answers it. A 404 carries the kernel's one-word cause in X-Romp-Reason, `window.__reason` (the PR
+ *  review's round 2): `missing` by default, a file gone from an absolute path, which the viewer's bar reads as a deletion; a
+ *  leg sets another cause (`relative`, `detached`) or null for a kernel from before the header. `window.__paints` counts the seam's onRendered (one per text paint, and one per reflow), `window.__reflows` the
  *  reflows among them (`why` "reflow"), so `__paints - __reflows` is the paints proper. */
 export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, theme = ""): string {
   // The sheets in the kernel's order (_chat_page, _feed_page and _files_page in kernel/kernel.py): the surface's sheet (a
@@ -102,7 +104,7 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, t
   const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
+window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url, init) {
   url = String(url); window.__fetches++;
   var head = !!(init && init.method === "HEAD"); if (head) window.__heads++;   // the kernel's HEAD /file: the headers alone
@@ -111,7 +113,7 @@ window.fetch = async function (url, init) {
   if (window.__urls[url] !== undefined) return new Response(window.__urls[url], { status: 200, headers: { "Content-Type": "text/markdown; charset=utf-8" } });
   var m = /[?&]path=([^&]*)/.exec(url); var p = m ? decodeURIComponent(m[1]) : "";
   var text = window.__docs[p];
-  if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404 });
+  if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404, headers: window.__reason ? { "X-Romp-Reason": window.__reason } : {} });   // the kernel's one-word cause on a 404 (the header above)
   if (/\.svg$/i.test(p)) return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
   return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
 };

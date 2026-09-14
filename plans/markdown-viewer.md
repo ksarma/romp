@@ -3721,11 +3721,10 @@ re-verifies. Where the code as built departs from the text above, why, and which
 action lists headings by level; per-path scroll memory, persisted with the Recent entry;
 `openFileView(path, sid, { at })` (line, offset or heading) through the viewFile relay, sharing the
 in-file link route's `:line` grammar (fork PR #347); a HEAD on focus and visibilitychange, showing "Changed on disk:
-Reload" when the mtime moved and "Deleted on disk: Reload" when the HEAD answers 404 (the words of the PR review's
-round 1, below). Acceptance: PageDown moves scrollTop with no prior
-click; choosing the 40th heading in Outline puts it at the top; a note reopened from Recent returns
-to its scrollTop; a todo link with a heading target opens at that heading; a moved mtime on focus
-shows the note bar.
+Reload" when the mtime moved and "Deleted on disk: Reload" when the HEAD answers 404 with the kernel's `missing`
+reason (the words of the PR review's round 1, the reason its round 2, below). Acceptance: PageDown moves scrollTop
+with no prior click; choosing the 40th heading in Outline puts it at the top; a note reopened from Recent returns to
+its scrollTop; a todo link with a heading target opens at that heading; a moved mtime on focus shows the note bar.
 
 **The Slice 6 build** (2026-09-13). Branch `mdviewer-s6`, cut from 4a3e18664, the head of `mdviewer-s8` (Slice 8, fork
 PR 752, in the queue when the build began), every commit on it self-contained so that the branch could rebase onto the
@@ -4020,86 +4019,100 @@ which test holds each rule:
    settle, not by which hold hears the press first (file-view-outline.test.ts's eleventh case and
    file-view-outline-browser.test.ts's fourth leg, the mouse down on row 40, a reload through the seam, the popover
    standing with no paint, the release picking and landing the heading at the top and the new bytes painting after
-   with it kept there; both red over a `git archive` of 3e433ceee at the popover standing under the press). Measured:
-   a 500-heading note's popover opens about 9 ms after the click in headless Chromium (one query, 500 rows; the leg
-   prints the number and asserts a loose bound so a loaded box cannot flake it); the Outline adds one hidden button
-   per markdown open and one `querySelectorAll` per text paint for the button's visibility (open question 17). Edges:
-   the URL viewer's actions row has no Outline (the popover lives in openFileView's closure).
-   menu-theme-tokens.test.ts's list of menu surfaces names the popover's card and its row wash in both sheets since
-   the consolidation pass (a guard, green before: file-view-outline.test.ts applies the same dark-literal ban), so the
-   two blocks are read with every other menu. One fix from the consolidation pass, found by the full npm test: the
-   button's visibility was decided at the top of `renderBody` (hidden) and again after the paint (`syncOutline`), and
-   it is the one bar control that differs between the two text views; at pane 900 the actions row wraps with it (the
-   bar 64 px in Rendered against 40 px in Raw, measured; the chat modal's bar wraps in both views), so hiding it
-   before the paint read the reader's place grew the body and re-clamped a body standing at the document's end, and
-   the held place was lost: the Rendered/Raw round trip from the end came back one paragraph early and a last fold's
-   row 523 px low (file-view-place-blocks-browser and file-view-place-last-fold-browser, green on origin/main and on
-   the A4 head fc5fde2b4, red at the A5 head a40d4f4cc and alone; both heads of the pre-rebase lineage, mapped at the
-   head of this note). A text paint now decides it after the swap and the tables' width stamp and before the hooks
-   measure and the seat writes, and only the paths that paint no text (the loader, the editor's entry) hide it at the
-   top; the order pins name the new step (file-view-place.test.ts (8, two re-pinned), file-comments.test.ts (35, one
-   order pin re-aimed), file-view-outline.test.ts's own). Accepted cost, not a defect (the review's round 2): the
-   Outline button is one more control in the bar's wrapping actions row, and a control of width w moves every step of
-   the bar's height staircase right by w. Measured over the real bundles of main 0bf0465b4 and the branch (the Files
-   pane 600 px tall, a nine-heading note, the Comments panel closed and open): the row's natural one-line width is
-   725.4 px on main and 790.0 on the branch (the button 58.6 plus the 6 px gap), so the one-action-row step, between
-   745 and 750 px on main, lies between 805 and 810 on the branch, and the actions-beside-the-path step moves from
-   between 885 and 890 to between 950 and 955; between the steps the trees agree, and a note with no heading is
-   identical at every width. The 300, 800 and 900 px cells of the round 1 matrix (157 against 126, 95 against 64 and
-   64 against 40 px) are those shifted steps. Nothing was changed: the label and the place in the bar are decided
-   defaults (open questions 2 and 16), the only rules that keep one row at exactly 800 px shave 15 px or less of slack
-   (the reset slot's 5.5em, the row's gaps) and move the step by that much, and a leg pinning a one-row bar at 800 px
-   would rest on a sub-15 px margin of font metrics, which differ between the maintainer's box and CI. Sheets:
-   `.fileview-outline`, its `:focus`, `.fileview-outline-row` and the hover and current wash, byte-equal and in
-   fileview-parity's list; the Outline button wears the bar's selected dress, `.fileview-btn.on`, while its popover is
-   up (file-view.ts toggles the class beside aria-expanded, and puts it on BEFORE the popover's box is read: the bold
-   dress widens the button by a few px, and in the chat modal at 1000 px that re-wrapped the actions row and moved the
-   button down a line, so a popover placed from the pre-dress box sat 20 px above the button's bottom, measured in the
-   browser leg) and has no rule of its own since the PR review's round 1, which dropped the build's
-   `[aria-expanded="true"]` rule, a near-twin of that dress without its 600 weight and hover inversion (the build's
-   own review, round 1, had narrowed that rule from the bare `.fileview-btn`, which recoloured the Comments panel's
-   Show less and armed Reject all, bar buttons that carry aria-expanded too, a comments regression in the Rendered
-   view, to `.fileview-outline-btn`); the `.fileview-btn.on` and `.fileview-btn.on:hover` heads join fileview-parity's
-   list, whose new case holds the twin gone (red over a `git archive` of 3e433ceee, the twin's head found in
-   styles.css), and a headless-Chromium probe read an open button with the class computing as the pressed Rendered
-   toggle does in both sheets, at rest and on hover once the bar button's transition had finished, while aria-expanded
-   without the class computed as a plain bar button.
-   file-view-outline.test.ts (14, new: the real openFileView over the place suite's stand-in, given heading ids by the
-   sanitizer's own two slug functions; the button's placement, aria and hiding, the 42 rows with ids, texts, depths,
-   the fold's and the quote's headings and no front-matter row, the pick's landing and keyboard return, the fold
-   opened, the keyboard, the closers, source pins over both sheets; from the review's round 1, the sheets' heads for
-   the button's open state, re-aimed in the PR review's round 1 to every `.fileview-btn.on` head in both sheets
-   reaching the open Outline button and none of the panel's Show less, armed Reject all or Show more, with no head in
-   either sheet naming aria-expanded or the button's class; from the review's round 2, both sheets' Outline comment
-   naming `offsetParent`, `#romp-fileview` and no layout
-   containment and none of the stale card-as-containing-block phrases, and the failure pane's paint closing an open
-   popover, the button hidden and collapsed and the body holding the keyboard; from the review's round 3, the hidden
-   heading's row absent and the `until-found` one listed, a note whose only heading is hidden showing no button, the
-   rows' ids present and unique per open with `aria-activedescendant` following ArrowDown and End, a heading with a
-   picture and text reading the alt in place, and Tab closing the popover onto the button with the event neither
-   prevented nor stopped; from the PR review's round 1, four new cases, the current row at the open, the focusout
-   closer's three branches (a guard, red under three mutations of the closer), a landing under a press on a row
-   waiting for the release, and a heading under a plain `hidden` wrapper opened at it showing the ruled words with the
-   export, role status and nothing scrolled, three re-pinned, Escape's destination the button, the `on` class while
-   open and gone after the toggle, and the sheets block's slicer ending at the row-hover head with no aria-expanded
-   rule in the block, and the sheets case rewritten for the reused dress; the stand-in's events carry `button` and
-   `relatedTarget`, both hidden from the assertion differ), file-view-outline-browser.test.ts (4 legs, new: the pane
-   at 900 and 380 px and the
-   500-heading cost, the tokens' computed colours in the dark and the light theme, the 40th row at the top; the chat
-   modal under render.ts's own key handlers; from the review's round 1, long headings at pane 900, pane 380 and chat
-   1000 inside the card with every row's text starting inside the popover and the 90-character row ellipsized, the
-   usual note's right anchor 4 px under the button in the pane and the chat modal, an image-only heading's row reading
-   its alt text at a text row's height, the resize closer, the panel's reload closer and the toggle close leaving the
-   body active with PageDown scrolling, and the failure pane hiding the button, since round 2 with an open popover
-   closed by its paint, the hidden button collapsed and the body holding the keyboard; from the PR review's round 1 a
-   fourth leg, a landing while the pointer is pressed on a row waiting for the release, and two re-aimed, the first
-   leg's reopen after the 40th pick reading row 39 current and Escape leaving the keyboard on the Outline button in
-   the first two, the press pulse's class allowed), the fixture ui/webview/file-view-outline-fixture.ts (42 headings,
+   with it kept there; both red over a `git archive` of 3e433ceee at the popover standing under the press). Since the
+   PR review's round 2 a landing the hold PARKED opens the popover again after its paint when one is open at its run:
+   the card's hold also parks a landing under a press on the Outline button itself, whose click, run before the parked
+   run's zero timer, opens the popover, and the landing's paint then closed it (every paint closes it, its rows read
+   off the DOM the paint replaces), so the click appeared to do nothing; `fetchFile`'s `land` reads the hold once
+   before the defer and hands the run a `parked` flag, and the text landing, when the flag is set and a popover is
+   open, calls `openOutline` after `landTarget`, rebuilding the rows and the current row over the landed body with the
+   keyboard on the popover as the click left it; a landing that ran at once still closes it, and one parked under a
+   press on a row, or on the button with the popover up, finds it closed by the pick or the toggle and opens nothing
+   (file-view-outline.test.ts's fifteenth case and file-view-outline-browser.test.ts's fifth leg, the press on the
+   button, the reload landing parked with no paint, the release's click opening the popover on the old note and the
+   parked landing's one paint leaving it standing with the landed note's rows; both red over a `git archive` of
+   e6aeb1138 at the popover standing after the paint). Measured: a 500-heading note's popover opens about 9 ms after
+   the click in headless Chromium (one query, 500 rows; the leg prints the number and asserts a loose bound so a
+   loaded box cannot flake it); the Outline adds one hidden button per markdown open and one `querySelectorAll` per
+   text paint for the button's visibility (open question 17). Edges: the URL viewer's actions row has no Outline (the
+   popover lives in openFileView's closure). menu-theme-tokens.test.ts's list of menu surfaces names the popover's
+   card and its row wash in both sheets since the consolidation pass (a guard, green before: file-view-outline.test.ts
+   applies the same dark-literal ban), so the two blocks are read with every other menu. One fix from the
+   consolidation pass, found by the full npm test: the button's visibility was decided at the top of `renderBody`
+   (hidden) and again after the paint (`syncOutline`), and it is the one bar control that differs between the two text
+   views; at pane 900 the actions row wraps with it (the bar 64 px in Rendered against 40 px in Raw, measured; the
+   chat modal's bar wraps in both views), so hiding it before the paint read the reader's place grew the body and
+   re-clamped a body standing at the document's end, and the held place was lost: the Rendered/Raw round trip from the
+   end came back one paragraph early and a last fold's row 523 px low (file-view-place-blocks-browser and
+   file-view-place-last-fold-browser, green on origin/main and on the A4 head fc5fde2b4, red at the A5 head a40d4f4cc
+   and alone; both heads of the pre-rebase lineage, mapped at the head of this note). A text paint now decides it
+   after the swap and the tables' width stamp and before the hooks measure and the seat writes, and only the paths
+   that paint no text (the loader, the editor's entry) hide it at the top; the order pins name the new step
+   (file-view-place.test.ts (8, two re-pinned), file-comments.test.ts (35, one order pin re-aimed),
+   file-view-outline.test.ts's own). Accepted cost, not a defect (the review's round 2): the Outline button is one
+   more control in the bar's wrapping actions row, and a control of width w moves every step of the bar's height
+   staircase right by w. Measured over the real bundles of main 0bf0465b4 and the branch (the Files pane 600 px tall,
+   a nine-heading note, the Comments panel closed and open): the row's natural one-line width is 725.4 px on main and
+   790.0 on the branch (the button 58.6 plus the 6 px gap), so the one-action-row step, between 745 and 750 px on
+   main, lies between 805 and 810 on the branch, and the actions-beside-the-path step moves from between 885 and 890
+   to between 950 and 955; between the steps the trees agree, and a note with no heading is identical at every width.
+   The 300, 800 and 900 px cells of the round 1 matrix (157 against 126, 95 against 64 and 64 against 40 px) are those
+   shifted steps. Nothing was changed: the label and the place in the bar are decided defaults (open questions 2 and
+   16), the only rules that keep one row at exactly 800 px shave 15 px or less of slack (the reset slot's 5.5em, the
+   row's gaps) and move the step by that much, and a leg pinning a one-row bar at 800 px would rest on a sub-15 px
+   margin of font metrics, which differ between the maintainer's box and CI. Sheets: `.fileview-outline`, its
+   `:focus`, `.fileview-outline-row` and the hover and current wash, byte-equal and in fileview-parity's list; the
+   Outline button wears the bar's selected dress, `.fileview-btn.on`, while its popover is up (file-view.ts toggles
+   the class beside aria-expanded, and puts it on BEFORE the popover's box is read: the bold dress widens the button
+   by a few px, and in the chat modal at 1000 px that re-wrapped the actions row and moved the button down a line, so
+   a popover placed from the pre-dress box sat 20 px above the button's bottom, measured in the browser leg) and has
+   no rule of its own since the PR review's round 1, which dropped the build's `[aria-expanded="true"]` rule, a
+   near-twin of that dress without its 600 weight and hover inversion (the build's own review, round 1, had narrowed
+   that rule from the bare `.fileview-btn`, which recoloured the Comments panel's Show less and armed Reject all, bar
+   buttons that carry aria-expanded too, a comments regression in the Rendered view, to `.fileview-outline-btn`); the
+   `.fileview-btn.on` and `.fileview-btn.on:hover` heads join fileview-parity's list, whose new case holds the twin
+   gone (red over a `git archive` of 3e433ceee, the twin's head found in styles.css), and a headless-Chromium probe
+   read an open button with the class computing as the pressed Rendered toggle does in both sheets, at rest and on
+   hover once the bar button's transition had finished, while aria-expanded without the class computed as a plain bar
+   button. file-view-outline.test.ts (15, new: the real openFileView over the place suite's stand-in, given heading
+   ids by the sanitizer's own two slug functions; the button's placement, aria and hiding, the 42 rows with ids,
+   texts, depths, the fold's and the quote's headings and no front-matter row, the pick's landing and keyboard return,
+   the fold opened, the keyboard, the closers, source pins over both sheets; from the review's round 1, the sheets'
+   heads for the button's open state, re-aimed in the PR review's round 1 to every `.fileview-btn.on` head in both
+   sheets reaching the open Outline button and none of the panel's Show less, armed Reject all or Show more, with no
+   head in either sheet naming aria-expanded or the button's class; from the review's round 2, both sheets' Outline
+   comment naming `offsetParent`, `#romp-fileview` and no layout containment and none of the stale
+   card-as-containing-block phrases, and the failure pane's paint closing an open popover, the button hidden and
+   collapsed and the body holding the keyboard; from the review's round 3, the hidden heading's row absent and the
+   `until-found` one listed, a note whose only heading is hidden showing no button, the rows' ids present and unique
+   per open with `aria-activedescendant` following ArrowDown and End, a heading with a picture and text reading the
+   alt in place, and Tab closing the popover onto the button with the event neither prevented nor stopped; from the PR
+   review's round 1, four new cases, the current row at the open, the focusout closer's three branches (a guard, red
+   under three mutations of the closer), a landing under a press on a row waiting for the release, and a heading under
+   a plain `hidden` wrapper opened at it showing the ruled words with the export, role status and nothing scrolled,
+   three re-pinned, Escape's destination the button, the `on` class while open and gone after the toggle, and the
+   sheets block's slicer ending at the row-hover head with no aria-expanded rule in the block, and the sheets case
+   rewritten for the reused dress; the stand-in's events carry `button` and `relatedTarget`, both hidden from the
+   assertion differ; from the PR review's round 2 the fifteenth case, the press on the Outline button with the landing
+   parked under it, and the source-pin case 7 reading the re-open lines, `land`'s `parked` flag and `openOutline`
+   called from the toggle and the re-open alone), file-view-outline-browser.test.ts (5 legs, new: the pane at 900 and
+   380 px and the 500-heading cost, the tokens' computed colours in the dark and the light theme, the 40th row at the
+   top; the chat modal under render.ts's own key handlers; from the review's round 1, long headings at pane 900, pane
+   380 and chat 1000 inside the card with every row's text starting inside the popover and the 90-character row
+   ellipsized, the usual note's right anchor 4 px under the button in the pane and the chat modal, an image-only
+   heading's row reading its alt text at a text row's height, the resize closer, the panel's reload closer and the
+   toggle close leaving the body active with PageDown scrolling, and the failure pane hiding the button, since round 2
+   with an open popover closed by its paint, the hidden button collapsed and the body holding the keyboard; from the
+   PR review's round 1 a fourth leg, a landing while the pointer is pressed on a row waiting for the release, and two
+   re-aimed, the first leg's reopen after the 40th pick reading row 39 current and Escape leaving the keyboard on the
+   Outline button in the first two, the press pulse's class allowed; from the PR review's round 2 a fifth leg, the
+   press on the button in headless Chromium, a reload through the seam under the press, the release and one paint with
+   the popover standing over the landed rows), the fixture ui/webview/file-view-outline-fixture.ts (42 headings,
    test-only), fileview-parity.test.ts (4, the Outline's heads; since the PR review's round 1 the two
-   `.fileview-btn.on` heads in place of the twin's, and a case holding the twin gone),
-   menu-theme-tokens.test.ts (7, the Outline's two blocks in both sheets added to its surfaces by the consolidation
-   pass); real-viewer-leg.ts exports `chatKeysScript()`, the chat page's window key handlers lifted from render.ts,
-   shared by items 1 and 2's chat legs.
+   `.fileview-btn.on` heads in place of the twin's, and a case holding the twin gone), menu-theme-tokens.test.ts (7,
+   the Outline's two blocks in both sheets added to its surfaces by the consolidation pass); real-viewer-leg.ts
+   exports `chatKeysScript()`, the chat page's window key handlers lifted from render.ts, shared by items 1 and 2's
+   chat legs.
 3. *Item 3, the remembered place.* The memory is the reader's place in the file's terms, with the pixel count as the
    fallback (open question 7, the default): `RememberedPlace`, exported from file-view.ts, is the top block's source
    span and its top edge's offset from the body's top in px, whether the body stood at its very top, the view it was
@@ -4208,7 +4221,7 @@ which test holds each rule:
    review's closing pass the flag falls with the measurement it stands in for, a read of the place or a clamped seat's
    hold, and not with the repaint alone, since a flag set while the show's repaint stood down, the editor up or a
    media body shown, had stayed armed for a later show with no scroll behind it, which then read the block a clamped
-   seat's landing showed in place of the held passage, place-memory case 9; and the restore is trusted only where it
+   seat's landing showed in place of the held passage, place-memory case 11; and the restore is trusted only where it
    did not move the body: a scroll event since the hide's read, its own frame read still pending at the repaint, is
    the restore's, an exact restore firing none, and a restore that moved the body to below the place last measured
    seats the place instead, measured in headless Chromium, where the Raw view's restore lands short when the reader
@@ -4225,7 +4238,7 @@ which test holds each rule:
    held place at a visible leave (a reload's paint reads the place over the text before its swap and the seat holds it
    in the old text's terms when the new text ends at or near the reader's block, so the leave after it wrote the old
    text's span under the new mtime through `keptPlace`'s held arm, round 6's defect on the visible branch; `held`, the
-   one test the seat's read and the leave share; place-memory case 8), so a restart's pagehide or a close under a
+   one test the seat's read and the leave share; place-memory case 10), so a restart's pagehide or a close under a
    hidden pane no longer keeps the previous leave's record on the row, and a Raw leave from an open holding a Rendered
    record's folds for a Rendered paint that never came carries them on, `heldFolds`, where the held state had died
    with the open); and files-recent.ts's `asPlace` accepts the field as a list of non-negative integers, anything else
@@ -4281,45 +4294,46 @@ which test holds each rule:
    trip seating the block at the edge, and two source pins moved with the record's fold field; in round 4 the replace
    path's pin admits the prior ring's read between the guard and the leave, and landRemembered's the boxless-body
    guard; in round 5 the `liveRecord` pin reads the boxless leave and `heldFolds`; in round 6 that pin re-aimed and
-   one on `measuredPlace` added; in the closing pass case 8, the visible leave after a reload whose seat clamped,
-   through the seam's reload from a probe action, and case 9, the unread-scroll flag under the editor, through a
-   ResizeObserver stand-in the case reports through and the body's rects and width faked for the hide and the show,
-   with the `liveRecord` pin re-aimed to `held`; in the PR review's round 1 case 21 extended with the three keys of a
-   host-prefixed sid and a scene over the shared absolute path, the remote open landing at 0, its leave to 250 leaving
-   the local's 330 standing and each reopen its own, and two new cases, the URL viewer's replace path executed, a
-   guard, red with `runLeave` removed from `openUrlView`, and a line, an offset, a heading and no target on a picture
-   and on a PDF, the notice's words and role and the body holding the keyboard, red over a `git archive` of
-   3e433ceee), files.test.ts (16, two new over the pure half, the wiring pins
-   re-aimed and one executed; from the review's round 1, `openHere`'s body lifted and run over stubs: the relay's
-   open, a link's and the row's click hand the record, an `at` open hands it too, a replace-open's fresher leave
-   record stays on the row, a veto records nothing; the eight-field pins gain the fold field in round 3; in round 5
-   the executed case runs `placeKey` lifted from file-view.ts, another session's row for the same absolute path
-   handing the file's record, of two rows for one file the later seating whichever row is clicked, another session's
-   relative path or no row handing null, and one pure case over `latestPlace`; in the PR review's round 1 the executed
-   case binds the lifted `placeKey` to the real `hostOf`, asserts a remote session's key and hands the remote open
-   null and then its own row's record after its leave, red over a `git archive` of 3e433ceee),
-   files-recent-place-shared-browser.test.ts (2 legs, new in the review's round 5: the real Files page in headless
-   Chromium, two sessions reading one absolute path, the second's relay landing at the first's place, either row
-   landing at the file's latest read before and after a page reload, the rows told apart by their session chips, a
-   relative path keeping each session's own place across the reload, no word of the note in the store; red over a `git
-   archive` of ad612d193 at the post-reload landing; a second leg in the PR review's round 1, the remote route served
-   as another text, the remote session's relay landing at the top, the rows and chips per host, each row's landing its
-   own before and after a page reload and no word of either note in the store, red over a `git archive` of 3e433ceee
-   where the remote open landed at the local's 1489), files-recent-place-browser.test.ts (3 legs, new: the real Files
-   page in headless Chromium, the acceptance reopen within a pixel, the record's JSON, a change below and above the
-   block, a page reload with the shell's relay as the first open after it returning to the block and its close keeping
-   the block on the row, a replace-open with two rows, a relay re-open through the viewer's in-page memory; from the
-   review's round 3, a record read at Paragraph 65 with a figure loaded, a page reload, the note changed above the
-   passage (the numeric path), the figure held at the landing and released, the body ending at the record's scrollTop
-   with an earlier block at that pixel, over an .svg the leg's route serves as image/svg+xml, never cached, held while
-   the test says so, and from round 4 two figures held by path: after the first figure's re-seat the reader scrolls
-   400 px on and the second figure's load leaves the reader's block at the top with the record's number not written
-   back, and after a second reload with five paragraphs inserted for twenty a Rendered/Raw round trip before the loads
-   leaves the paint's own block at the top, the record's number again not written back, so the scroll and the next
-   text paint retire the re-seat; the stored keys pin keeps its eight fields, its message since round 3 saying that a
-   note with no fold records no fold state: this leg's note has no `<details>`, so the ninth key, `folds`, is pinned
-   over a note with one in file-view-place-memory-fold-browser.test.ts, and in files.test.ts's JSON case; the round 3
-   commit message's clause that this leg's key pin gained the field is a slip and stands as history),
+   one on `measuredPlace` added; in the closing pass case 10, the visible leave after a reload whose seat clamped,
+   through the seam's reload from a probe action, and case 11, the unread-scroll flag under the editor (the eighth and
+   the ninth until the PR review's round 1 inserted its two cases ahead of them), through a ResizeObserver stand-in
+   the case reports through and the body's rects and width faked for the hide and the show, with the `liveRecord` pin
+   re-aimed to `held`; in the PR review's round 1 case 7 extended with the three keys of a host-prefixed sid and a
+   scene over the shared absolute path, the remote open landing at 0, its leave to 250 leaving the local's 330
+   standing and each reopen its own, and two new cases, the URL viewer's replace path executed, a guard, red with
+   `runLeave` removed from `openUrlView`, and a line, an offset, a heading and no target on a picture and on a PDF,
+   the notice's words and role and the body holding the keyboard, red over a `git archive` of 3e433ceee),
+   files.test.ts (16, two new over the pure half, the wiring pins re-aimed and one executed; from the review's round
+   1, `openHere`'s body lifted and run over stubs: the relay's open, a link's and the row's click hand the record, an
+   `at` open hands it too, a replace-open's fresher leave record stays on the row, a veto records nothing; the
+   eight-field pins gain the fold field in round 3; in round 5 the executed case runs `placeKey` lifted from
+   file-view.ts, another session's row for the same absolute path handing the file's record, of two rows for one file
+   the later seating whichever row is clicked, another session's relative path or no row handing null, and one pure
+   case over `latestPlace`; in the PR review's round 1 the executed case binds the lifted `placeKey` to the real
+   `hostOf`, asserts a remote session's key and hands the remote open null and then its own row's record after its
+   leave, red over a `git archive` of 3e433ceee), files-recent-place-shared-browser.test.ts (2 legs, new in the
+   review's round 5: the real Files page in headless Chromium, two sessions reading one absolute path, the second's
+   relay landing at the first's place, either row landing at the file's latest read before and after a page reload,
+   the rows told apart by their session chips, a relative path keeping each session's own place across the reload, no
+   word of the note in the store; red over a `git archive` of ad612d193 at the post-reload landing; a second leg in
+   the PR review's round 1, the remote route served as another text, the remote session's relay landing at the top,
+   the rows and chips per host, each row's landing its own before and after a page reload and no word of either note
+   in the store, red over a `git archive` of 3e433ceee where the remote open landed at the local's 1489),
+   files-recent-place-browser.test.ts (3 legs, new: the real Files page in headless Chromium, the acceptance reopen
+   within a pixel, the record's JSON, a change below and above the block, a page reload with the shell's relay as the
+   first open after it returning to the block and its close keeping the block on the row, a replace-open with two
+   rows, a relay re-open through the viewer's in-page memory; from the review's round 3, a record read at Paragraph 65
+   with a figure loaded, a page reload, the note changed above the passage (the numeric path), the figure held at the
+   landing and released, the body ending at the record's scrollTop with an earlier block at that pixel, over an .svg
+   the leg's route serves as image/svg+xml, never cached, held while the test says so, and from round 4 two figures
+   held by path: after the first figure's re-seat the reader scrolls 400 px on and the second figure's load leaves the
+   reader's block at the top with the record's number not written back, and after a second reload with five paragraphs
+   inserted for twenty a Rendered/Raw round trip before the loads leaves the paint's own block at the top, the
+   record's number again not written back, so the scroll and the next text paint retire the re-seat; the stored keys
+   pin keeps its eight fields, its message since round 3 saying that a note with no fold records no fold state: this
+   leg's note has no `<details>`, so the ninth key, `folds`, is pinned over a note with one in
+   file-view-place-memory-fold-browser.test.ts, and in files.test.ts's JSON case; the round 3 commit message's clause
+   that this leg's key pin gained the field is a slip and stands as history),
    file-view-place-memory-fold-browser.test.ts (13 legs, new in the review's round 1: at 900 and 380 px an authored
    `<details>` and a folded callout come back open with Paragraph 25 at the same edge and the scrollTop within a
    pixel, a fold the reader left shut stays shut with Paragraph 41 exact, and a Raw record reopened under the Rendered
@@ -4437,15 +4451,16 @@ which test holds each rule:
    of the edge. Edges recorded: the conflict bar's "Reload file" re-open passes the open's options as before, so an
    `at` target lands again on that re-open, as `line` and `frag` did; `readAt` refuses `{ line: 1.5 }` where the
    in-process option floors it (the relay's producers write integers, so the two never disagree in practice). The two
-   shell lines are JavaScript the kernel SERVES, not Python it runs, so no kernel behaviour changes; the live
-   dashboard picks the field up only when the live kernel restarts after the landing, and until then a todo link
-   routed to the Files pane opens the file at its top. Cost: one sticky regex per linked token on the todo surfaces
-   (`FRAG_SUFFIX_AT_RE`, read in place, never a slice of the text). file-view-seam.test.ts (39, five new here:
-   `readAt`'s arms and refusals; a line, a heading and a malformed `at` through the relay's default branch and the
-   body's delegate; the missing heading's notice and the landing held for the Rendered toggle; the offset on the block
-   and on the row, past the end with the notice; from the review's round 2, a heading target on a file that is not
-   markdown judged at its first text paint, the notice naming the section decoded and nothing scrolled, a note's Raw
-   view still waiting for the toggle; the stand-in records `scrollIntoView`'s argument and runs a per-case
+   shell lines are JavaScript the kernel SERVES, not Python it runs, so no kernel behaviour changes for this item
+   (item 5's 404 reason header, the PR review's round 2, is the slice's one change to the kernel's Python and deploys
+   with them); the live dashboard picks the field up only when the live kernel restarts after the landing, and until
+   then a todo link routed to the Files pane opens the file at its top. Cost: one sticky regex per linked token on the
+   todo surfaces (`FRAG_SUFFIX_AT_RE`, read in place, never a slice of the text). file-view-seam.test.ts (39, five new
+   here: `readAt`'s arms and refusals; a line, a heading and a malformed `at` through the relay's default branch and
+   the body's delegate; the missing heading's notice and the landing held for the Rendered toggle; the offset on the
+   block and on the row, past the end with the notice; from the review's round 2, a heading target on a file that is
+   not markdown judged at its first text paint, the notice naming the section decoded and nothing scrolled, a note's
+   Raw view still waiting for the toggle; the stand-in records `scrollIntoView`'s argument and runs a per-case
    animation-frame queue), file-view.test.ts (53, four new source pins, this item's over the union, `readAt`, the
    spend and the frame, the two notices and the Rendered path, item 5's, from the review's round 2 one over the
    round's shapes, the peer-frame read, `placeKey`, the catch's closer, the non-markdown spend, `editPlace` and the
@@ -4510,59 +4525,64 @@ which test holds each rule:
    the model's, the poll the panel's, the probe the viewer's). A 413 or 415 retires the probe for the open; a network
    failure paints nothing and says nothing; the listeners are dropped by both exits and the URL viewer's replace. A
    moved mtime raises the one-line bar above the body row through `noteBar`, `Changed on disk.` (exported as
-   `CHANGED_ON_DISK` for the pins), or `Deleted on disk.` (`DELETED_ON_DISK`) when the HEAD answered 404, the words
-   read off the verdict at the answer (`headVerdict`'s absent) and kept on the bar's record so the editor's exit
-   re-raises the words the bar had (the PR review's round 1 ruled a 404 a deletion, not a change), with a `Reload`
-   button on the words' line (`.fileview-err-act` in both sheets, in
-   the parity list; the review's round 5: dressed as the refusal pane's block Download, `.fileview-err-dl`, the bar
-   was two rows and 89 px tall at every width) whose title says the place is kept, the raise waiting out a press on
-   the body row, `.fileview-main`, the body and the Comments aside, through a hold of its own (`raiseHold`, a
-   `pressHold(main)` beside the landing's on the body, which parks one run at a time, and a raise must never displace
-   a parked landing; the review's round 3: the mousedown that begins a drag in a Files iframe that did not hold the
-   page's focus is itself the window focus that runs the HEAD, and the bar is a row of the card above the body, so a
-   raise while the pointer was down moved the body under the press and the drag's selection ended on other text, the
-   composer quoting the wrong passage with the Comments panel open; the guards re-run at the release, and a landing
-   parked under the same press runs first and stands the raise down, since round 5 by the raise waiting for that
-   landing's settle (`parkedLanding`, recorded by `fetchFile`'s `land` while the body's hold is held: the row's hold
-   hears the press before the body's, both listening in the capture phase, so its parked run went on the zero timer
-   first and inserted a bar over the old mtime that the landing's settle removed a task later; since the PR review's
-   round 1 the landing's hold is the card's, `pressHold(box)`, item 2's fix, whose listener hears a press before the
-   row's, so the order holds by the settle and not by which hold hears the press first), the raise's guard at
-   the release being, since round 6, that the body still shows the file the HEAD compared against (`was`, the mtime at
-   the answer), any landing since making the HEAD's evidence stale whatever mtime it brought (round 6: a parked
-   landing that brought a second write, newer than the HEAD's answer, read as moved against that answer and raised a
-   false bar over the newest file, standing until Reload, 3/3 on 85fa51bf5 and on 7fbced030, masked on ad612d193 by
-   the flipped order; a departure recorded: a parked landing that brought an OLDER mtime than the HEAD saw, a GET
-   served before the write the HEAD saw, stands the raise down too, the body showing a file the disk moved past with
-   no line until the next focus HEAD raises it over the file that shows, and with the Comments panel open, the one
-   source of a parked landing, its poll re-asks within its interval; reload case 19 pins both faces); round 4: held on
-   the body alone, a press on a card's head or a drag in the reply box in the aside while the HEAD landed had the bar
-   land under it, the control moved out from under the pointer, the click lost and the drag selecting nothing); the
-   click disables and relabels it `Reloading` and runs `fetchFile`, so the reader's place is kept as every reload
-   keeps it and the landing runs through the body's press hold as every landing does. The bar goes at the landing that
-   applies a different mtime from the one it was raised under, whoever asked for that reload (with the panel open its
-   poll asks within 2.5 s and the later landing rules; open question 14's default), OR at the landing of the bar's own
-   ask, or of any fetch newer than it (`ownAsk`, since the review's round 2), whatever mtime it brings (a departure
-   from the brief, which named the different-mtime landing alone: a HEAD answered after a newer landing had already
-   put the moved file in the body raised it over the file that shows, and without this rule that bar stood with a
-   disabled button; a numeric mtime compare in the probe is the alternative for the review); a landing under the same
-   mtime by another ask keeps it (a GET out before the write); the bar's own ask failing, or any fetch newer than it
-   (the 404, 413 or 415 pane, a network failure), re-arms the button above the pane so the bar is no dead end (a
-   second departure; removing the bar over the pane would leave a transient failure with no retry; the review's round
-   2 widened the clearing and the re-arm from the bar's own ask to any fetch newer than it, `ownAsk`: `fetchSeq` is
-   monotonic and `fetchFile` drops a landing a newer fetch overtook, so once the Comments panel's poll asks its own
-   reload during the bar's flight that newer fetch's bytes or failure are the bar's answer; before, the poll's GET
-   after a deletion met the 404 pane and the bar stood over it with its button disabled at Reloading for the rest of
-   the open, every later focus HEAD returning on the standing bar). One bar: a second move while it stands replaces
-   nothing. A later one-line notice (the Edit refusal under an edit block, a refused save, a comments-log warning)
-   takes the bar's row, `noteBar` keeping one notice, and nothing re-raises it while the reader stays in the tab, the
-   probe firing on the window's focus and the document's visibility alone; the next event's HEAD raises it again and
-   replaces the later notice in turn (the review's round 6, measured through the real bundle: the refusal stood
-   through scrolls, clicks, keys and a resize, and a dispatched focus brought the bar back); the guide states the
-   one-bar rule; whether the bar should outrank other notices is a design call for a follow-up, recorded in item 6.
-   Since the PR review's round 1 `noteBar`'s div carries `role="status"`, a polite live region, set right after the
-   insert so styles-fileview-err-sizes' contiguous-lines pin stands, and every notice announces itself to assistive
-   technology, the changed-on-disk bar being the one raised with no gesture of the reader's
+   `CHANGED_ON_DISK` for the pins), or `Deleted on disk.` (`DELETED_ON_DISK`) when the HEAD answered 404 with the
+   kernel's one-word cause `missing`, the words read at the answer off the verdict (`headVerdict`'s absent) and off
+   the 404's `X-Romp-Reason` header (the exported `REASON_HEADER` and `REASON_MISSING`: `missing` is a file gone from
+   its absolute or `~`-rooted path, and any other cause, `relative` for a path the session's cwd moved from under,
+   `unresolved` for one with no cwd to join, `detached` for a remote host with no tunnel, or no header at all, a
+   kernel from before it, keeps the change's words, Reload then painting the kernel's own pane for what the GET
+   answers; the PR review's round 2, the Manager review round 2 paragraph below) and kept on the bar's record so the
+   editor's exit re-raises the words the bar had (the PR review's round 1 ruled a 404 a deletion, not a change; its
+   round 2 narrowed the reading to the cause the kernel certifies), with a `Reload` button on the words' line
+   (`.fileview-err-act` in both sheets, in the parity list; the review's round 5: dressed as the refusal pane's block
+   Download, `.fileview-err-dl`, the bar was two rows and 89 px tall at every width) whose title says the place is
+   kept, the raise waiting out a press on the body row, `.fileview-main`, the body and the Comments aside, through a
+   hold of its own (`raiseHold`, a `pressHold(main)` beside the landing's on the body, which parks one run at a time,
+   and a raise must never displace a parked landing; the review's round 3: the mousedown that begins a drag in a Files
+   iframe that did not hold the page's focus is itself the window focus that runs the HEAD, and the bar is a row of
+   the card above the body, so a raise while the pointer was down moved the body under the press and the drag's
+   selection ended on other text, the composer quoting the wrong passage with the Comments panel open; the guards
+   re-run at the release, and a landing parked under the same press runs first and stands the raise down, since round
+   5 by the raise waiting for that landing's settle (`parkedLanding`, recorded by `fetchFile`'s `land` while the
+   body's hold is held: the row's hold hears the press before the body's, both listening in the capture phase, so its
+   parked run went on the zero timer first and inserted a bar over the old mtime that the landing's settle removed a
+   task later; since the PR review's round 1 the landing's hold is the card's, `pressHold(box)`, item 2's fix, whose
+   listener hears a press before the row's, so the order holds by the settle and not by which hold hears the press
+   first), the raise's guard at the release being, since round 6, that the body still shows the file the HEAD compared
+   against (`was`, the mtime at the answer), any landing since making the HEAD's evidence stale whatever mtime it
+   brought (round 6: a parked landing that brought a second write, newer than the HEAD's answer, read as moved against
+   that answer and raised a false bar over the newest file, standing until Reload, 3/3 on 85fa51bf5 and on 7fbced030,
+   masked on ad612d193 by the flipped order; a departure recorded: a parked landing that brought an OLDER mtime than
+   the HEAD saw, a GET served before the write the HEAD saw, stands the raise down too, the body showing a file the
+   disk moved past with no line until the next focus HEAD raises it over the file that shows, and with the Comments
+   panel open, the one source of a parked landing, its poll re-asks within its interval; reload case 20 pins both
+   faces); round 4: held on the body alone, a press on a card's head or a drag in the reply box in the aside while the
+   HEAD landed had the bar land under it, the control moved out from under the pointer, the click lost and the drag
+   selecting nothing); the click disables and relabels it `Reloading` and runs `fetchFile`, so the reader's place is
+   kept as every reload keeps it and the landing runs through the body's press hold as every landing does. The bar
+   goes at the landing that applies a different mtime from the one it was raised under, whoever asked for that reload
+   (with the panel open its poll asks within 2.5 s and the later landing rules; open question 14's default), OR at the
+   landing of the bar's own ask, or of any fetch newer than it (`ownAsk`, since the review's round 2), whatever mtime
+   it brings (a departure from the brief, which named the different-mtime landing alone: a HEAD answered after a newer
+   landing had already put the moved file in the body raised it over the file that shows, and without this rule that
+   bar stood with a disabled button; a numeric mtime compare in the probe is the alternative for the review); a
+   landing under the same mtime by another ask keeps it (a GET out before the write); the bar's own ask failing, or
+   any fetch newer than it (the 404, 413 or 415 pane, a network failure), re-arms the button above the pane so the bar
+   is no dead end (a second departure; removing the bar over the pane would leave a transient failure with no retry;
+   the review's round 2 widened the clearing and the re-arm from the bar's own ask to any fetch newer than it,
+   `ownAsk`: `fetchSeq` is monotonic and `fetchFile` drops a landing a newer fetch overtook, so once the Comments
+   panel's poll asks its own reload during the bar's flight that newer fetch's bytes or failure are the bar's answer;
+   before, the poll's GET after a deletion met the 404 pane and the bar stood over it with its button disabled at
+   Reloading for the rest of the open, every later focus HEAD returning on the standing bar). One bar: a second move
+   while it stands replaces nothing. A later one-line notice (the Edit refusal under an edit block, a refused save, a
+   comments-log warning) takes the bar's row, `noteBar` keeping one notice, and nothing re-raises it while the reader
+   stays in the tab, the probe firing on the window's focus and the document's visibility alone; the next event's HEAD
+   raises it again and replaces the later notice in turn (the review's round 6, measured through the real bundle: the
+   refusal stood through scrolls, clicks, keys and a resize, and a dispatched focus brought the bar back); the guide
+   states the one-bar rule; whether the bar should outrank other notices is a design call for a follow-up, recorded in
+   item 6. Since the PR review's round 1 `noteBar`'s div carries `role="status"`, a polite live region, set right
+   after the insert so styles-fileview-err-sizes' contiguous-lines pin stands, and every notice announces itself to
+   assistive technology, the changed-on-disk bar being the one raised with no gesture of the reader's
    (file-view-reload.test.ts's first changed-on-disk case and file-view-notebar-browser.test.ts's third leg, per cell,
    red over a `git archive` of 3e433ceee, the role null; the media and hidden-section cases assert it too).
    The bar's raise or drop changes the body's height, and with the Comments panel open the panel's body size report
@@ -4575,69 +4595,83 @@ which test holds each rule:
    re-raises it when no re-read is pending and the file that shows is still the one it was raised under, the mtime
    shown being `diskBar.under`; a save that landed moved the mtime, and a fetch the editor held lands and settles it
    itself; before that the old text stood with no line above it until the next focus). Edges recorded: a deleted
-   file's HEAD answers 404, which `headVerdict` reads as absent and `mtimeMoved` as moved, so the bar says `Deleted on
-   disk.` and Reload paints the 404 pane in the body, no Download offered, the bar standing with its button re-armed,
-   a second HEAD replacing nothing and the file back on disk clearing it at the own ask's landing, the one-bar rule
-   unchanged (the PR review's round 1; the build had said `Changed on disk.` for a deletion, loose words under the
-   one-bar rule, and no case sent the probe a 404); a window `focus` fires
-   only on the window holding the focus, so an alt-tab return to a tab whose Files iframe does not hold it sends no
-   HEAD from that iframe (`visibilitychange` fires in every frame on a tab switch; item 1's body focus makes the
-   iframe the holder in the common case); a real `page.bringToFront` fires no window focus event in headless Chromium
-   (measured: `hasFocus()` true throughout, no event, no HEAD), so the leg dispatches the event the browser would. The
-   kernel's HEAD route and its Python are untouched, so no Python test changes for this item. Cost: one HEAD per focus
-   or visibility event (`window.__heads` in the harness), zero repaints and zero GETs until Reload, one GET and one
-   repaint for the Reload; an open into a Files iframe that did not hold the page's focus costs one GET and no HEAD
-   (the review's round 1: the body's own `focus()` fires the window's focus event synchronously inside it, and the
-   probe read that as the reader's return, GET then HEAD on every cross-frame open; `takeKeyboard` now marks its call
-   and the probe stands aside for it). file-view-reload.test.ts (20, ten new in the build: the stand-in's fetch stub
-   answers a HEAD, held, failed or 413 on request, and the document dispatches its own events; the focus's one HEAD
-   and no bar under the same mtime, the moved mtime's bar as a card row with its words and button and no bytes
-   fetched, hidden asking nothing and visible asking once, the in-flight fold and the network failure, the 413 retire
-   and a fresh probe on a replace-open, the Reload's acknowledgement, one GET, the landing clearing the bar with one
-   repaint and no scroll, a same-mtime landing keeping it, editing and the editor's entry, the close removing the
-   listeners, a picture probing and a 404 pane never, the own-ask clearing and the failed Reload's re-armed button,
-   and the Reload's keyboard, from the consolidation pass and corrected by the review's round 1: the click's record
-   hands it to the body at the landing (the stand-in's `disabled` setter drops the focus as a browser does, so the
-   case fails before at the drop itself), the panel's box keeps it through the poll's clearing, a failed Reload puts
-   it back on the re-armed button while nothing holds it (the review's round 2: a box the reader moved to during the
-   failed flight keeps it); the stand-in gained the browser's focus fixup for a removed subtree; from the review's
-   round 1, Cancel bringing the bar back at once with the HEAD count unchanged; and, from round 2, the bar's ask
-   overtaken by the panel's reload: the newer fetch's 404 re-arming the button over its pane, the overtaken GET's late
-   answer changing nothing, the re-armed click landing the file back, and a newer landing of the moved file clearing
-   the bar; from round 3, a failed Reload's re-arm after the pane's paint with a code element inside the body focused
-   mid-flight, the re-armed button holding the keyboard and the box-keeps-it rule re-asserted, and the raise parked
-   under a pointer press on the body, the HEAD's answer raising nothing, the release raising it through the hold's
-   flush, a landing parked under the same press running first and standing the raise down, a press on the bar holding
-   nothing; the case extended in round 4 with an aside mounted through the seam, a pointerdown on a card's head
-   parking the raise until the release and no second HEAD, and in round 5 with a count of the bar's insertions across
-   the release, zero, where the flipped order had inserted one over the old mtime; case 19 in round 6: a HEAD
-   answering MT2 under the press and a landing bringing MT3 parked under it, no bar and none inserted at the release,
-   the next HEAD raising nothing; and the trade, a GET served under MT4 parked, a write to MT5 the HEAD sees, no bar
-   at the release and the next focus HEAD raising it, Reload clearing it; 18/19 over a `git archive` of 85fa51bf5; in
-   the PR review's round 1 case 33 asserts the bar's role and case 40 is new, a HEAD answering 404: one HEAD, the
-   deletion's words, Reload painting the 404 pane in the body with no Download offer, the bar standing with its button
-   re-armed, a second HEAD replacing nothing and the file back on disk clearing it at the own ask's landing; 18/20
-   over a `git archive` of 3e433ceee), file-view-notebar-browser.test.ts (9 legs, one new in the build: the pane at
-   700 and 380 px and the chat modal, the
-   moved mtime's bar at scrollTop 400 above the body row with no repaint, Reload keeping the top block and clearing
-   the bar, the panel's poll clearing it with the top block kept; one re-aimed, its past-the-end line passed as `{ at:
-   { line: 9999 } }`; three from the review's round 1: at pane 700 and chat 700 a mouse Reload and an Enter Reload
-   each leave the body active with PageDown scrolling and a failed Reload re-arms the button with the keyboard on it;
-   after Cancel the body is active, the bar is back with no HEAD and the mtime unchanged; a shell stand-in holding a
-   chat iframe and the Files iframe, the relayed open from the chat frame's body or a focused control there taking the
-   keyboard across the frames with the GET and no HEAD and a dispatched window focus then sending exactly one, and
-   from the composer, a text input or a contenteditable there leaving the keyboard in the box with the next keystroke
-   landing in it, a click on the body then taking it and asking once (the review's round 2 restructured the round 1
-   leg into six holder cells; round 3 added a `select` cell, focused and not clicked since a click opens Chromium's
-   native picker, the body not taking the keyboard across the relayed open and the next keystroke being the dropdown's
-   type-ahead, and one leg for a heading target on a picture, `figs/a.svg#layer1` served as image/svg+xml in the pane
-   and the chat modal, the notice above the picture and none for an open with no target; two new in round 5: at pane
-   300 and 700 px and the chat modal at 380 the bar is one line, its Reload sharing the words' line, the bar under 70
-   px tall and the body row moved down by the bar's height, and at pane 800 px with the real panel open and a
-   selection's Comment float offered, the bar's raise moves the passage and hides the float with the selection
-   standing; both red over a `git archive` of ad612d193; the third leg reads the bar's role per cell since the PR
-   review's round 1, 8/9 over a `git archive` of 3e433ceee)); real-viewer-leg.ts's fetch stub answers a HEAD with the
-   GET's headers and no body and counts them beside `__fetches`.
+   file's HEAD answers 404 with the reason `missing`, which `headVerdict` reads as absent and `mtimeMoved` as moved,
+   so the bar says `Deleted on disk.` and Reload paints the 404 pane in the body, no Download offered, the bar
+   standing with its button re-armed, a second HEAD replacing nothing and the file back on disk clearing it at the own
+   ask's landing, the one-bar rule unchanged (the PR review's round 1; the build had said `Changed on disk.` for a
+   deletion, loose words under the one-bar rule, and no case sent the probe a 404; since its round 2 the reading is
+   narrowed by the reason header, reload case 13 models the kernel's `missing` and case 21 the other causes); a window
+   `focus` fires only on the window holding the focus, so an alt-tab return to a tab whose Files iframe does not hold
+   it sends no HEAD from that iframe (`visibilitychange` fires in every frame on a tab switch; item 1's body focus
+   makes the iframe the holder in the common case); a real `page.bringToFront` fires no window focus event in headless
+   Chromium (measured: `hasFocus()` true throughout, no event, no HEAD), so the leg dispatches the event the browser
+   would. The kernel's HEAD route answers as before but for one header since the PR review's round 2: its 404 names
+   its cause in one word, `X-Romp-Reason`, which the probe reads (the Manager review round 2 paragraph below), the
+   slice's one change to the kernel's Python, held by tests/test_kernel_preview.py (27, four 404 reason cases) and
+   tests/test_kernel_remote_file_relay.py (19, four relay reason cases). Cost: one HEAD per focus or visibility event
+   (`window.__heads` in the harness), zero repaints and zero GETs until Reload, one GET and one repaint for the
+   Reload; an open into a Files iframe that did not hold the page's focus costs one GET and no HEAD (the review's
+   round 1: the body's own `focus()` fires the window's focus event synchronously inside it, and the probe read that
+   as the reader's return, GET then HEAD on every cross-frame open; `takeKeyboard` now marks its call and the probe
+   stands aside for it). file-view-reload.test.ts (22, ten new in the build: the stand-in's fetch stub answers a HEAD,
+   held, failed or 413 on request, and the document dispatches its own events; the focus's one HEAD and no bar under
+   the same mtime, the moved mtime's bar as a card row with its words and button and no bytes fetched, hidden asking
+   nothing and visible asking once, the in-flight fold and the network failure, the 413 retire and a fresh probe on a
+   replace-open, the Reload's acknowledgement, one GET, the landing clearing the bar with one repaint and no scroll, a
+   same-mtime landing keeping it, editing and the editor's entry, the close removing the listeners, a picture probing
+   and a 404 pane never, the own-ask clearing and the failed Reload's re-armed button, and the Reload's keyboard, from
+   the consolidation pass and corrected by the review's round 1: the click's record hands it to the body at the
+   landing (the stand-in's `disabled` setter drops the focus as a browser does, so the case fails before at the drop
+   itself), the panel's box keeps it through the poll's clearing, a failed Reload puts it back on the re-armed button
+   while nothing holds it (the review's round 2: a box the reader moved to during the failed flight keeps it); the
+   stand-in gained the browser's focus fixup for a removed subtree; from the review's round 1, Cancel bringing the bar
+   back at once with the HEAD count unchanged; and, from round 2, the bar's ask overtaken by the panel's reload: the
+   newer fetch's 404 re-arming the button over its pane, the overtaken GET's late answer changing nothing, the
+   re-armed click landing the file back, and a newer landing of the moved file clearing the bar; from round 3, a
+   failed Reload's re-arm after the pane's paint with a code element inside the body focused mid-flight, the re-armed
+   button holding the keyboard and the box-keeps-it rule re-asserted, and the raise parked under a pointer press on
+   the body, the HEAD's answer raising nothing, the release raising it through the hold's flush, a landing parked
+   under the same press running first and standing the raise down, a press on the bar holding nothing; the case
+   extended in round 4 with an aside mounted through the seam, a pointerdown on a card's head parking the raise until
+   the release and no second HEAD, and in round 5 with a count of the bar's insertions across the release, zero, where
+   the flipped order had inserted one over the old mtime; case 20 (the 19th until the PR review's round 1 put its 404
+   case ahead of it) in round 6: a HEAD answering MT2 under the press and a landing bringing MT3 parked under it, no
+   bar and none inserted at the release, the next HEAD raising nothing; and the trade, a GET served under MT4 parked,
+   a write to MT5 the HEAD sees, no bar at the release and the next focus HEAD raising it, Reload clearing it; 18/19
+   over a `git archive` of 85fa51bf5; in the PR review's round 1 case 6 asserts the bar's role and case 13 is new, a
+   HEAD answering 404: one HEAD, the deletion's words, Reload painting the 404 pane in the body with no Download
+   offer, the bar standing with its button re-armed, a second HEAD replacing nothing and the file back on disk
+   clearing it at the own ask's landing; 18/20 over a `git archive` of 3e433ceee; in the PR review's round 2 cases 21
+   and 22, appended: the fake's 404 carries the kernel's reason from a per-path table, a path with no entry answering
+   `missing` as the kernel does for an absolute path; a relative path's `relative` raises `Changed on disk.` and
+   Reload paints the kernel's pane naming the resolved path with the bar re-armed, a `TESTHOST`-prefixed sid fetches
+   through `/remote/TESTHOST/file` and its `detached` 404 raises the same with Reload painting the no-attached-host
+   pane, a 404 with no header, a kernel from before it, raises the same, and `missing` raises `Deleted on disk.` (case
+   21, red over a `git archive` of e6aeb1138 with the deletion's words where the change's were expected); and the
+   deletion's words across the editor, the bar up, Edit taking it, Cancel bringing it back reading exactly `Deleted on
+   disk.` with Reload armed, role status, no HEAD sent and the keyboard on the body, and Reload then painting the 404
+   pane with the bar standing (case 22, green over that archive and at the head, red under a mutation of the exit's
+   re-raise to the change's words); 21/22 over the archive of e6aeb1138), file-view-notebar-browser.test.ts (9 legs,
+   one new in the build: the pane at 700 and 380 px and the chat modal, the moved mtime's bar at scrollTop 400 above
+   the body row with no repaint, Reload keeping the top block and clearing the bar, the panel's poll clearing it with
+   the top block kept; one re-aimed, its past-the-end line passed as `{ at: { line: 9999 } }`; three from the review's
+   round 1: at pane 700 and chat 700 a mouse Reload and an Enter Reload each leave the body active with PageDown
+   scrolling and a failed Reload re-arms the button with the keyboard on it; after Cancel the body is active, the bar
+   is back with no HEAD and the mtime unchanged; a shell stand-in holding a chat iframe and the Files iframe, the
+   relayed open from the chat frame's body or a focused control there taking the keyboard across the frames with the
+   GET and no HEAD and a dispatched window focus then sending exactly one, and from the composer, a text input or a
+   contenteditable there leaving the keyboard in the box with the next keystroke landing in it, a click on the body
+   then taking it and asking once (the review's round 2 restructured the round 1 leg into six holder cells; round 3
+   added a `select` cell, focused and not clicked since a click opens Chromium's native picker, the body not taking
+   the keyboard across the relayed open and the next keystroke being the dropdown's type-ahead, and one leg for a
+   heading target on a picture, `figs/a.svg#layer1` served as image/svg+xml in the pane and the chat modal, the notice
+   above the picture and none for an open with no target; two new in round 5: at pane 300 and 700 px and the chat
+   modal at 380 the bar is one line, its Reload sharing the words' line, the bar under 70 px tall and the body row
+   moved down by the bar's height, and at pane 800 px with the real panel open and a selection's Comment float
+   offered, the bar's raise moves the passage and hides the float with the selection standing; both red over a `git
+   archive` of ad612d193; the third leg reads the bar's role per cell since the PR review's round 1, 8/9 over a `git
+   archive` of 3e433ceee)); real-viewer-leg.ts's fetch stub answers a HEAD with the GET's headers and no body and
+   counts them beside `__fetches`.
 6. *Item 6, the records, and what the earlier slices routed here.* docs/guide.md: the Files section's opening
    paragraph says a file reopened from the Recent list opens at the place it was left (the folder lines above the
    clause keep their hard wraps byte for byte; tests/test_files_pane.py reads them raw); "Your place in the file" says
@@ -4651,84 +4685,86 @@ which test holds each rule:
    Raw view having no sections (round 2 had recorded the notice sentence as holding as written, false for a markdown
    file under the Raw preference, whose target waits for the toggle by item 4's design); and Waiting on you says the
    same of the pane's links, with the same Raw parenthetical, placed before the chip sentence another pin reads. The
-   PR review's round 1 changed no guide sentence: none of the words it ruled appears in the guide, whose
-   changed-on-disk sentence says a line above the text says so and quotes no words, so a deletion's line is covered as
-   written, and the hard-wrapped lines tests/test_files_pane.py reads stand byte for byte.
-   tests/test_guide_files_place_and_outline.py (14, new; two in round 3: the Raw clause and the parenthetical in their
-   places, and `renderBody`'s heading gate with seam case 38's three assertion messages, so the guide and the code
-   cannot drift apart unnoticed; in the PR review's round 1 the disk-bar pin reads `noteBar(words)`, the deletion's
-   export and the line that reads the words off the verdict, red over a `git archive` of 3e433ceee) pins the six
-   clauses flattened, their places among the sentences around them, the
-   clauses other pins read in the same paragraphs, and each against the source that keeps it.
-   tests/test_reference_todo_file.py (20, two source pins re-aimed at the todo walks under `targetSuffix`, which item
-   4 moved and no test run of the build read). The comments in code that stated the old boundary are reworded:
-   file-view.ts's options doc and the `pendingLine`, `pendingHeading` and `pendingOffset` comments name `at`;
-   `initFileView`'s header lists the relay's `at`; files.ts's `openHere` doc carries `at` and `place`;
-   files-recent.ts's header names what a row holds; kernel.py's relay comment defines `at`; file-comments.ts's poll
-   header says the viewer probes on the window's focus with the panel closed (the consolidation pass; the module's
-   code is untouched). CONTEXT.md is unchanged: the build coined no term (no reviewer asked for "remembered place"),
-   and the PR review's round 1 coined none.
-   The ledger entry is upstream/2026-09-13-markdown-viewer-slice6.md (tier feature; its `where:` line names every file
-   the branch changes and says the two shell lines need the live kernel's restart; since the PR review's round 1 it
-   also names upstream's twin of the relay's field and the mapping between the two, the rule the offer and the next
-   inbound fold apply, stated in the Manager review round 1 paragraph below). The brief's open questions, each
-   taken as recorded above: 1 the stacked base (the alternative, the coordinating session's call); 2 the label
-   `Outline` with "the file's headings" in the guide; 3 every heading as the DOM shows it; 4 the button in Rendered
-   only; 5 the focus rule's reach, with the key-driven text-size step as the one exception; 6 the ring; 7 the record's
-   fields, the path key, the page-life map and the Recent entry as the one store; 8 the span-start match and the
-   clamped scrollTop; 9 an explicit target wins and the memory still writes; 10 one `At` union and a separate `place`;
-   11 a target after a path in a todo's text or detail and inside a shown file, not in the transcript or the
-   structured field; 12 the caret-to-offset export not built; 13 text and media, the document visible; 14 the probe
-   runs beside the poll, the later landing ruling, plus the own-ask rule; 15 `line` alone to the VS Code host; 16 the
-   button's place in the bar; 17 the numbers above (about 9 ms for 500 headings, one parse per leave, one HEAD per
-   event). What the earlier slices routed here: (a) the keyboard dropping to the document's body after a save or a
-   Send (slice1-build.md:303, "viewer focus is Slice 6's") is closed as far as the viewer's half goes, the body taking
-   the keyboard at the open and after its own gestures; a focus the panel drops (a `focusout` with no relatedTarget)
-   is not caught, since the panel's own focus bookkeeping runs on the same events and a catcher would race it, and the
-   suggested forward for the panel (a saved comment handing the keyboard to the new card's head or the Comment
-   control) stays the panel owner's, and a Comment float the reader Tabbed onto, which the panel's own hide drops the
-   same way (at the changed-on-disk bar's raise since round 5, at its poll's landing on every tree), is recorded below
-   with the Tab-focused highlight, the same drop (the review's round 6); (b) the caret-to-offset export the Slice 2
-   record wanted and the Slice 8 note's routing sentence named ("which Slice 6 or a follow-up could add"; the PR
-   review's round 1 ruled that clause "a follow-up" alone, and the Slice 8 note reads so) is not built: the memory
-   seats a block, the Outline lands an element and `offset` lands a block or a row, so it is a
-   follow-up of the reader's place and of no slice; (c) the keyboard selection offer is unchanged and its legs ran as
-   controls; (d) the front-matter block mints no id and has no Outline row; (e) the note bar is Slice 2's bar and its
-   leg is that leg extended; (f) the landing hold is inherited by the Reload and the initial seat; (g) the place is
-   read once per leave; (h) the two readings are the model's, the poll the panel's, the probe the viewer's; (i) the
-   wrapper control was not added to the memory leg (item 3); (j) Slice 7's failure paths, the VS Code host and the raw
-   HTML `<table>` stay where they were. Edges the units recorded and the consolidation pass closed, each with a test
-   that failed before it: render.ts's arrow shortcut scrolling the transcript with the viewer up, and the disk bar's
-   Reload taking no keyboard (item 1). The review's round 1 (2026-09-13) closed, each with a test red over an archive
-   of d91f0c19d: the arrow stand-aside ahead of both branches and the Reload's keyboard read at the click (item 1, the
-   two consolidation fixes corrected), the editor's exits taking the keyboard (item 1), the Outline's closers handing
-   it over, the popover placed from its containing block and anchored inside the card, the image-only row, the failure
-   pane hiding the button and the open dress scoped to the Outline button (item 2), the remembered seat opening folds
-   and the Recent row's place handed back on every open (item 3), the bar back at Cancel and no HEAD from the viewer's
-   own focus call (item 5); and the records: this note's base sentence, the ledger's `where:` line and the
-   build-process names defined at the head. The review's round 2 (2026-09-13) closed, each with a test red over a `git
-   archive` of c88444f85: the keyboard rule reaching a typing box in the sibling frame through the top window
-   (`typingInPeerFrame`), so a relayed open, a Reload's landing and a Save's ack leave the chat composer holding the
-   keyboard, and the failed Reload's re-arm refocusing its button only while nothing holds it (item 1; round 1 had
-   recorded the relayed-open take as the slice's design, reversed here: no relay field, the landing reads the focused
-   frame); the failure pane's paint closing an open Outline popover, and a record, both sheets' Outline comment, the
-   parity list's comment and two test messages saying the card was the popover's containing block, corrected to its
-   `offsetParent`, the overlay, with a pin over both sheets (item 2); the memory keyed by `placeKey`, the editor's
-   leave writing the pre-Edit place, and the block's own fold opened only for a depth past its shut box (item 3); a
-   heading target on a file that is not markdown judged at its first text paint, and an offset inside a shut callout
-   opening it (item 4); the bar's clearing and re-arm answering any fetch newer than its ask (item 5); and the
-   records, the head's sentence on the three commit messages' identity claims, checked against the history by
-   tests/test_markdown_viewer_plan_note_history.py (the module reads git as well as the note, so its three red cases
-   ran over the note as committed at c88444f85 with the branch's history reachable; over a bare archive it skips).
-   Round 2's fix commit, 27c56fbf7, names Seam case 39 for the heading target on a file that is not markdown; the case
-   is 38, the 38th `test(` of file-view-seam.test.ts and `ok 38` in the file's run (`not ok 38` over the c88444f85
-   archive), and case 39 is the build's source-offset landing, moved from 38 by the new case's insertion ahead of it;
-   the message stands as written, the history never rewritten (the review's round 3). The review's round 3
-   (2026-09-13) closed, each with a test red over a `git archive` of 27c56fbf7: the record's fold state, restored
-   before the seat at the record's mtime, which closes round 2's two follow-ups and the width window of the depth
-   gate, the re-seat at each picture's load, and a Raw record inside a folded callout opening it under the Rendered
-   preference (item 3); the failed Reload's re-arm after the pane's paint, the `select` as a typing target and the
-   ring named through `focusVisible` (item 1); the Outline's hidden heading, the rows' ids with
+   PR review's rounds 1 and 2 changed no guide sentence: none of the words they ruled appears in the guide, whose
+   changed-on-disk sentence says a line above the text says so and quotes no words, so a deletion's line, and the
+   change's words a 404 for another cause falls back to, are covered as written, and the hard-wrapped lines
+   tests/test_files_pane.py reads stand byte for byte. tests/test_guide_files_place_and_outline.py (14, new; two in
+   round 3: the Raw clause and the parenthetical in their places, and `renderBody`'s heading gate with seam case 38's
+   three assertion messages, so the guide and the code cannot drift apart unnoticed; in the PR review's round 1 the
+   disk-bar pin reads `noteBar(words)`, the deletion's export and the line that reads the words off the verdict, red
+   over a `git archive` of 3e433ceee; in its round 2 that pin reads the words line with the reason header's read and
+   the two exported constants, red over a `git archive` of e6aeb1138) pins the six clauses flattened, their places
+   among the sentences around them, the clauses other pins read in the same paragraphs, and each against the source
+   that keeps it. tests/test_reference_todo_file.py (20, two source pins re-aimed at the todo walks under
+   `targetSuffix`, which item 4 moved and no test run of the build read). The comments in code that stated the old
+   boundary are reworded: file-view.ts's options doc and the `pendingLine`, `pendingHeading` and `pendingOffset`
+   comments name `at`; `initFileView`'s header lists the relay's `at`; files.ts's `openHere` doc carries `at` and
+   `place`; files-recent.ts's header names what a row holds; kernel.py's relay comment defines `at`;
+   file-comments.ts's poll header says the viewer probes on the window's focus with the panel closed (the
+   consolidation pass; the module's code is untouched). CONTEXT.md is unchanged: the build coined no term (no reviewer
+   asked for "remembered place"), and the PR review's rounds 1 and 2 coined none. The ledger entry is
+   upstream/2026-09-13-markdown-viewer-slice6.md (tier feature; its `where:` line names every file the branch changes
+   and says the two shell lines need the live kernel's restart; since the PR review's round 1 it also names upstream's
+   twin of the relay's field and the mapping between the two, the rule the offer and the next inbound fold apply,
+   stated in the Manager review round 1 paragraph below; since its round 2 it names the /file 404's reason header, the
+   served route's one Python change, deployed by the same restart, and ui/test-dom-shim.test.ts, which round 1 changed
+   and its `where:` line had missed). The brief's open questions, each taken as recorded above: 1 the stacked base
+   (the alternative, the coordinating session's call); 2 the label `Outline` with "the file's headings" in the guide;
+   3 every heading as the DOM shows it; 4 the button in Rendered only; 5 the focus rule's reach, with the key-driven
+   text-size step as the one exception; 6 the ring; 7 the record's fields, the path key, the page-life map and the
+   Recent entry as the one store; 8 the span-start match and the clamped scrollTop; 9 an explicit target wins and the
+   memory still writes; 10 one `At` union and a separate `place`; 11 a target after a path in a todo's text or detail
+   and inside a shown file, not in the transcript or the structured field; 12 the caret-to-offset export not built; 13
+   text and media, the document visible; 14 the probe runs beside the poll, the later landing ruling, plus the own-ask
+   rule; 15 `line` alone to the VS Code host; 16 the button's place in the bar; 17 the numbers above (about 9 ms for
+   500 headings, one parse per leave, one HEAD per event). What the earlier slices routed here: (a) the keyboard
+   dropping to the document's body after a save or a Send (slice1-build.md:303, "viewer focus is Slice 6's") is closed
+   as far as the viewer's half goes, the body taking the keyboard at the open and after its own gestures; a focus the
+   panel drops (a `focusout` with no relatedTarget) is not caught, since the panel's own focus bookkeeping runs on the
+   same events and a catcher would race it, and the suggested forward for the panel (a saved comment handing the
+   keyboard to the new card's head or the Comment control) stays the panel owner's, and a Comment float the reader
+   Tabbed onto, which the panel's own hide drops the same way (at the changed-on-disk bar's raise since round 5, at
+   its poll's landing on every tree), is recorded below with the Tab-focused highlight, the same drop (the review's
+   round 6); (b) the caret-to-offset export the Slice 2 record wanted and the Slice 8 note's routing sentence named
+   ("which Slice 6 or a follow-up could add"; the PR review's round 1 ruled that clause "a follow-up" alone, and the
+   Slice 8 note reads so) is not built: the memory seats a block, the Outline lands an element and `offset` lands a
+   block or a row, so it is a follow-up of the reader's place and of no slice; (c) the keyboard selection offer is
+   unchanged and its legs ran as controls; (d) the front-matter block mints no id and has no Outline row; (e) the note
+   bar is Slice 2's bar and its leg is that leg extended; (f) the landing hold is inherited by the Reload and the
+   initial seat; (g) the place is read once per leave; (h) the two readings are the model's, the poll the panel's, the
+   probe the viewer's; (i) the wrapper control was not added to the memory leg (item 3); (j) Slice 7's failure paths,
+   the VS Code host and the raw HTML `<table>` stay where they were. Edges the units recorded and the consolidation
+   pass closed, each with a test that failed before it: render.ts's arrow shortcut scrolling the transcript with the
+   viewer up, and the disk bar's Reload taking no keyboard (item 1). The review's round 1 (2026-09-13) closed, each
+   with a test red over an archive of d91f0c19d: the arrow stand-aside ahead of both branches and the Reload's
+   keyboard read at the click (item 1, the two consolidation fixes corrected), the editor's exits taking the keyboard
+   (item 1), the Outline's closers handing it over, the popover placed from its containing block and anchored inside
+   the card, the image-only row, the failure pane hiding the button and the open dress scoped to the Outline button
+   (item 2), the remembered seat opening folds and the Recent row's place handed back on every open (item 3), the bar
+   back at Cancel and no HEAD from the viewer's own focus call (item 5); and the records: this note's base sentence,
+   the ledger's `where:` line and the build-process names defined at the head. The review's round 2 (2026-09-13)
+   closed, each with a test red over a `git archive` of c88444f85: the keyboard rule reaching a typing box in the
+   sibling frame through the top window (`typingInPeerFrame`), so a relayed open, a Reload's landing and a Save's ack
+   leave the chat composer holding the keyboard, and the failed Reload's re-arm refocusing its button only while
+   nothing holds it (item 1; round 1 had recorded the relayed-open take as the slice's design, reversed here: no relay
+   field, the landing reads the focused frame); the failure pane's paint closing an open Outline popover, and a
+   record, both sheets' Outline comment, the parity list's comment and two test messages saying the card was the
+   popover's containing block, corrected to its `offsetParent`, the overlay, with a pin over both sheets (item 2); the
+   memory keyed by `placeKey`, the editor's leave writing the pre-Edit place, and the block's own fold opened only for
+   a depth past its shut box (item 3); a heading target on a file that is not markdown judged at its first text paint,
+   and an offset inside a shut callout opening it (item 4); the bar's clearing and re-arm answering any fetch newer
+   than its ask (item 5); and the records, the head's sentence on the three commit messages' identity claims, checked
+   against the history by tests/test_markdown_viewer_plan_note_history.py (the module reads git as well as the note,
+   so its three red cases ran over the note as committed at c88444f85 with the branch's history reachable; over a bare
+   archive it skips). Round 2's fix commit, 27c56fbf7, names Seam case 39 for the heading target on a file that is not
+   markdown; the case is 38, the 38th `test(` of file-view-seam.test.ts and `ok 38` in the file's run (`not ok 38`
+   over the c88444f85 archive), and case 39 is the build's source-offset landing, moved from 38 by the new case's
+   insertion ahead of it; the message stands as written, the history never rewritten (the review's round 3). The
+   review's round 3 (2026-09-13) closed, each with a test red over a `git archive` of 27c56fbf7: the record's fold
+   state, restored before the seat at the record's mtime, which closes round 2's two follow-ups and the width window
+   of the depth gate, the re-seat at each picture's load, and a Raw record inside a folded callout opening it under
+   the Rendered preference (item 3); the failed Reload's re-arm after the pane's paint, the `select` as a typing
+   target and the ring named through `focusVisible` (item 1); the Outline's hidden heading, the rows' ids with
    `aria-activedescendant`, the alt text read in place and Tab handing the keyboard to the button (item 2); the
    offset's own block alone opening a shut callout, and a heading target on a picture or a PDF judged at its first
    paint with bytes (item 4); the bar's raise waiting out a press on the body (item 5); and the records: the guide's
@@ -4770,9 +4806,9 @@ which test holds each rule:
    of these. The review's closing pass (2026-09-14), after the cap, closed the three edges round 6's own fixes had
    left, each with a test red over a `git archive` of 14a246665: the visible leave after a reload whose seat clamped
    following the held place into the text that landed as the boxless leave does (`liveRecord` reads `measuredPlace`
-   under `held`, the one test `keptPlace` uses; place-memory case 8), the unread-scroll flag cleared by the
+   under `held`, the one test `keptPlace` uses; place-memory case 10), the unread-scroll flag cleared by the
    measurement it stands in for, a read of the place or a clamped seat's hold, and no longer by the repaint alone
-   (place-memory case 9), and the show's repaint seating the place when the browser's restore moved the body to below
+   (place-memory case 11), and the show's repaint seating the place when the browser's restore moved the body to below
    it, told by the restore's own scroll event with its frame read pending, the Raw view's short restore near the
    note's end (boxless leg 5); and the records: this note's sentences on each of these (items 3 and 4), the
    tests-by-file counts, the ledger's `where:` line, and the pins re-aimed in file-view-place, file-view,
@@ -4895,41 +4931,46 @@ which test holds each rule:
    the PR review's round 1), file-view-place (8, two re-pinned, one in round 4, two and a narrowed one in round 5, two
    in round 6,
    four re-aimed in the closing pass), file-view (53, four new and six re-pinned; pins re-aimed in rounds 4, 5 and 6
-   and in the closing pass; one new and pins re-aimed in the PR review's round 1), file-view-links (28, re-pinned),
-   md-url-view (29, re-pinned), pdf-new-tab (12,
-   re-pinned), file-view-notebar-browser (9 legs, one new and one re-aimed in the build, three in the review's round
-   1, one of them restructured in round 2 into six holder cells and given a seventh in round 3, one new in round 3,
-   and two in round 5, the third reading the bar's role per cell in the PR review's round 1), file-view-place-memory
-   (13, new; case 6 re-aimed in the review's round 3, two pins in round 4, one in round 5, one re-aimed and one added
-   in round 6, two cases and one re-aimed pin in the closing pass, two new cases and one extended in the PR review's
-   round 1),
-   file-view-place-svg-source (1, re-pinned), file-view-reload (20, ten new in the build, two in the review's round 3,
-   one extended in rounds 4 and 5, one new in round 6, one new and one extended in the PR review's round 1),
-   file-view-outline (14, new; the closers case counting over the module's listener since round 4; four new, three
-   re-pinned and one rewritten in the PR review's round 1), file-view-outline-browser (4 legs, new, one extended in
-   round 2, a fourth and two re-aimed in the PR review's round 1), files (16, two new; the fold field in round 3; one
-   in round 5 over `latestPlace`; the executed case extended in the PR review's round 1), files-recent-place-browser
-   (3 legs, new; the
-   third extended in round 4), file-view-place-memory-fold-browser (13 legs, new; four in the review's round 4, two in
-   round 5, one in round 6), file-view-keyboard-frames-browser (2 legs, new in the review's round 2; comments in round
-   3), feed-viewer-focus-browser (2 legs, new in the PR review's round 1, a record), file-view-focus-ring-browser (3
-   legs, new in the review's round 3; the third in round 4),
+   and in the closing pass; one new and pins re-aimed in the PR review's round 1; the `land` and words pins re-aimed
+   and the reason constants pinned in its round 2), file-view-links (28, re-pinned), md-url-view (29, re-pinned),
+   pdf-new-tab (12, re-pinned), file-view-notebar-browser (9 legs, one new and one re-aimed in the build, three in the
+   review's round 1, one of them restructured in round 2 into six holder cells and given a seventh in round 3, one new
+   in round 3, and two in round 5, the third reading the bar's role per cell in the PR review's round 1),
+   file-view-place-memory (13, new; case 6 re-aimed in the review's round 3, two pins in round 4, one in round 5, one
+   re-aimed and one added in round 6, two cases and one re-aimed pin in the closing pass, two new cases and one
+   extended in the PR review's round 1), file-view-place-svg-source (1, re-pinned), file-view-reload (22, ten new in
+   the build, two in the review's round 3, one extended in rounds 4 and 5, one new in round 6, one new and one
+   extended in the PR review's round 1, two new in its round 2), file-view-outline (15, new; the closers case counting
+   over the module's listener since round 4; four new, three re-pinned and one rewritten in the PR review's round 1;
+   one new and one re-pinned in its round 2), file-view-outline-browser (5 legs, new, one extended in round 2, a
+   fourth and two re-aimed in the PR review's round 1, a fifth in its round 2), files (16, two new; the fold field in
+   round 3; one in round 5 over `latestPlace`; the executed case extended in the PR review's round 1),
+   files-recent-place-browser (3 legs, new; the third extended in round 4), file-view-place-memory-fold-browser (13
+   legs, new; four in the review's round 4, two in round 5, one in round 6), file-view-keyboard-frames-browser (2
+   legs, new in the review's round 2; comments in round 3), feed-viewer-focus-browser (2 legs, new in the PR review's
+   round 1, a record), ui/test-dom-shim.test.ts (13, the shim's NON_DOM_EDGES list gains that leg's file, whose feed
+   card carries a goal tree with an empty children array, a card model and no DOM edge, and NON_DOM_EDGES_MAX rises
+   from 2 to 3, the PR review's round 1; named here since its round 2, the round 1 records having missed it),
+   file-view-focus-ring-browser (3 legs, new in the review's round 3; the third in round 4),
    file-view-focus-ring-openers-browser (2 legs, new in the review's round 4), file-view-boxless-browser (7 legs, new
    in the review's round 5, two in round 6, one in the closing pass, two in the PR review's round 1),
    files-recent-place-shared-browser (2 legs, new in the review's round 5, a second in the PR review's round 1),
-   path-links (15, five new), render-open-path-target (5, new), user-todo-links (12, cases
-   extended and re-pinned), waiting-detail-link (5, one new), todo-link-target-browser (2 legs, new),
-   waiting-file-chip (12, re-aimed), user-todo-title-links (12, re-pinned), url-links (15, re-pinned), file-uri-link
-   (4, re-pinned), chat-space-paths (5, re-pinned), user-img-dedup (4, re-pinned), render-todo-file-chip (14,
-   re-pinned), waiting-link-focus (4, re-pinned), waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6,
-   re-pinned), menu-theme-tokens (7, the surfaces list), file-comments (35, one re-pinned), file-view-text-size (33,
-   one count pin re-aimed in the review's round 5 to the width frame's reshaped repaint, in round 6 to its restored
-   branch, and in the closing pass to its moved-restore test), styles-fileview-err-sizes (7, one pin admitting a line
-   in the review's round 2), the fixture file-view-outline-fixture.ts (new) and real-viewer-leg.ts (the HEAD-aware
-   stub, `__heads`, `chatKeysScript`); tests/test_files_pane.py (24, one new),
+   path-links (15, five new), render-open-path-target (5, new), user-todo-links (12, cases extended and re-pinned),
+   waiting-detail-link (5, one new), todo-link-target-browser (2 legs, new), waiting-file-chip (12, re-aimed),
+   user-todo-title-links (12, re-pinned), url-links (15, re-pinned), file-uri-link (4, re-pinned), chat-space-paths
+   (5, re-pinned), user-img-dedup (4, re-pinned), render-todo-file-chip (14, re-pinned), waiting-link-focus (4,
+   re-pinned), waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6, re-pinned), menu-theme-tokens (7, the
+   surfaces list), file-comments (35, one re-pinned), file-view-text-size (33, one count pin re-aimed in the review's
+   round 5 to the width frame's reshaped repaint, in round 6 to its restored branch, and in the closing pass to its
+   moved-restore test), styles-fileview-err-sizes (7, one pin admitting a line in the review's round 2), the fixture
+   file-view-outline-fixture.ts (new) and real-viewer-leg.ts (the HEAD-aware stub, `__heads`, `chatKeysScript`; the
+   404's reason from `__reason` since the PR review's round 2); tests/test_files_pane.py (24, one new),
+   tests/test_kernel_preview.py (27, two new and two extended in the PR review's round 2: the 404 reason `missing`,
+   `unresolved` and `relative`), tests/test_kernel_remote_file_relay.py (19, one new and three extended in the PR
+   review's round 2: `detached`, `unviewable` and the mirror of a remote's known word),
    tests/test_guide_files_place_and_outline.py (14, new; two pins re-aimed in round 4, the heading gate's and the
-   Recent lookup's in round 5, the disk bar's in the PR review's round 1), tests/test_reference_todo_file.py (20, two
-   re-pinned),
+   Recent lookup's in round 5, the disk bar's in the PR review's round 1 and again in its round 2, to the reason
+   header's read), tests/test_reference_todo_file.py (20, two re-pinned),
    tests/test_markdown_viewer_plan_note_history.py (10, five in the review's round 2: the head's sentence on the three
    commit messages, checked against the history it names; three in round 3: the same claims held to the facts the
    module states without git, so CI's depth-1 checkout pins the note and the history half's skip is named in the run's
@@ -4941,17 +4982,16 @@ which test holds each rule:
    note), with the new exports stubbed where a test imports one, and says how and over which tree in its commit (a
    review round's case over a `git archive` of the tree that round reviewed, d91f0c19d for round 1, c88444f85 for
    round 2, 27c56fbf7 for round 3, 7fbced030 for round 4, ad612d193 for round 5, 85fa51bf5 for round 6, 14a246665 for
-   the closing pass and 3e433ceee for the PR review's round 1); a pin over a shape this slice moved is titled a re-pin
-   and is red by construction over those
-   trees; the guards say they are guards. The guarantees the families re-verify: highlights are measured `<mark
-   class="fc-hl">` elements over the range's text nodes with their data-act, id, tabIndex, role and title, the margin
-   layout reading their boxes, and the panel's press-time strip takes the tabindex off marks alone, never off the
-   body, whose own `tabindex` stands through a press; the panel's boxes, the editor and a mark keep the keyboard
-   through every paint this slice adds a focus to; the poll asks one reload per mtime and the save fence compares
-   mtime strings, and the probe reads the same header with the same two functions and never writes `mtimeNs`; the
-   pairing, the change marks and the selection map read the one block table, which item 3's span check and item 4's
-   offset landing READ and do not change; the Raw view and the anchor map are untouched; and the composer's quote
-   stays the exact source slice.
+   the closing pass, 3e433ceee for the PR review's round 1 and e6aeb1138 for its round 2); a pin over a shape this
+   slice moved is titled a re-pin and is red by construction over those trees; the guards say they are guards. The
+   guarantees the families re-verify: highlights are measured `<mark class="fc-hl">` elements over the range's text
+   nodes with their data-act, id, tabIndex, role and title, the margin layout reading their boxes, and the panel's
+   press-time strip takes the tabindex off marks alone, never off the body, whose own `tabindex` stands through a
+   press; the panel's boxes, the editor and a mark keep the keyboard through every paint this slice adds a focus to;
+   the poll asks one reload per mtime and the save fence compares mtime strings, and the probe reads the same header
+   with the same two functions and never writes `mtimeNs`; the pairing, the change marks and the selection map read
+   the one block table, which item 3's span check and item 4's offset landing READ and do not change; the Raw view and
+   the anchor map are untouched; and the composer's quote stays the exact source slice.
 
 **Manager review round 1** (2026-09-14). The manager's review of fork PR 753 at 3e433ceee over main 0bf0465b4, the
 first review of the PR as distinct from the build's own rounds above; the code's comments and the tests call it "the
@@ -4976,9 +5016,9 @@ section is now cut first and the line rides as `data-line` with `#results` left 
 `docs/a.md:12#results` (item 4; path-links case 12, 0/1 over the archive; the `lineSuffix` follow-up recorded above is
 unchanged). (5) The media landing through the text landing's box guard, `landMedia` from the blob landing and from the
 show's repaint, a line or an offset target on a picture or a PDF named in the notice bar where it was dropped in
-silence, and the one-shot keyboard take no longer spent over a boxless body (item 4; place-memory case 22, boxless leg
+silence, and the one-shot keyboard take no longer spent over a boxless body (item 4; place-memory case 8, boxless leg
 6). (6) A HEAD answering 404 raises `Deleted on disk.`, the words read off the verdict and kept on the bar's record,
-Reload painting the 404 pane with the button re-armed under the one-bar rule (item 5; reload case 40; the Python guide
+Reload painting the 404 pane with the button re-armed under the one-bar rule (item 5; reload case 13; the Python guide
 module's disk-bar pin re-aimed). (7) The URL viewer's replace path executed in the place-memory suite beside its
 source pin, a guard, red with `runLeave` removed from `openUrlView` (item 3; place-memory case 9). (8) The relay's
 field and upstream's twin, recorded here and in the ledger entry: upstream's viewFile relay carries `frag`, a string,
@@ -4998,16 +5038,16 @@ popover returns the keyboard to the Outline button, the menu-button pattern (ite
 legs 1 and 2). (10) The Outline button's open state is the bar's selected dress, `.fileview-btn.on`, toggled beside
 aria-expanded and put on before the popover's box is read; the sheets' `[aria-expanded="true"]` twin dropped and the
 `.on` heads added to the parity list (item 2; outline case 2, cases 7 and 8 re-aimed, fileview-parity's new case).
-(11) `noteBar`'s div carries `role="status"` (item 5; reload case 33, notebar leg 3). Rulings on the open decisions,
+(11) `noteBar`'s div carries `role="status"` (item 5; reload case 6, notebar leg 3). Rulings on the open decisions,
 fixed: the Outline's current row at the open is the section under the reader's eye (item 2; outline case 9,
 outline-browser leg 1); `placeKey` folds the host into a remote session's absolute or `~` key, correctness over
-sharing (item 3; place-memory case 21, the files suite's executed case, shared-browser leg 2 over the real Files
-page); the Files pane toggled off and on re-takes the keyboard at the show's repaint, the edge being new to the branch
-(item 1; boxless leg 7); a heading target under a plain `hidden` wrapper shows `That section is hidden in the rendered
-view; opened at the top.` (item 4; outline case 12); a 404 is a deletion, fix 6 above; and the Slice 8 note's routing
-clause reads "a follow-up" alone. Accepted as recorded, so their entries above stand: the focusout closer closing on a
-null relatedTarget (pinned by fix 2); the URL viewer without the keyboard take and the Outline, and the fetch-failure
-pane taking no keyboard, as the brief scoped them; the remembered seat not holding a clamped write; the depth across a
+sharing (item 3; place-memory case 7, the files suite's executed case, shared-browser leg 2 over the real Files page);
+the Files pane toggled off and on re-takes the keyboard at the show's repaint, the edge being new to the branch (item
+1; boxless leg 7); a heading target under a plain `hidden` wrapper shows `That section is hidden in the rendered view;
+opened at the top.` (item 4; outline case 12); a 404 is a deletion, fix 6 above; and the Slice 8 note's routing clause
+reads "a follow-up" alone. Accepted as recorded, so their entries above stand: the focusout closer closing on a null
+relatedTarget (pinned by fix 2); the URL viewer without the keyboard take and the Outline, and the fetch-failure pane
+taking no keyboard, as the brief scoped them; the remembered seat not holding a clamped write; the depth across a
 width change landing near, and the other-view fold rule judged against the reopen body; `readAt` refusing a fractional
 line; the conflict bar's Reload re-open passing `at`; the other routed edges (the text-size reset slot clearing the
 keyboard, focus containment for the card, the editor's exit recording the top, the file URI section inside a shown
@@ -5023,8 +5063,92 @@ code in the dashboard since the shell's rename, and its comment's claim that the
 document's last-focused element does not hold in Chromium; correcting the id alone breaks the viewer's and the
 browser's keyboard (the four post-timer reads red in a scratch run), so a fix is the id and a `boardCovered()`
 exception in `feedWantsKeys` together, which feed-viewer-focus-browser already holds (red with the id alone, green
-with both); a call for the owner, not this slice. Process: review round 2 follows in delta mode over the fix head; the
-two kernel relay lines still need the live kernel's restart at the deployment.
+with both); a call for the owner, not this slice. Process: review round 2 followed over the fix head, e6aeb1138, the
+paragraph below; the two kernel relay lines still need the live kernel's restart at the deployment.
+
+**Manager review round 2** (2026-09-14). The manager's review of fork PR 753 at e6aeb1138, the round 1 fixes, over
+main 0bf0465b4, reading the change since 3e433ceee; the code's comments and the tests call it "the PR review's round
+2". Seven findings confirmed, every one low, and one refuted; every round 1 fix held (the closer cases, the tail
+order, the media notices, the URL viewer case, the frag mapping, Escape, the shared dress, the live region and the
+five ruled decisions). Under the review's rules a round whose findings are all low closes the review once its items
+are applied, so the five items below were applied on the branch, each code change with a test red over a `git archive`
+of e6aeb1138, and no review round follows them: the manager's own full test run, CI, the landing on the standing word
+and the deployment note come next. The standing rule held again: nothing here touches file-comments.ts, the kernel
+change ran green beside the comments note module (tests/test_kernel_file_comments_note.py with
+tests/test_perf_stats.py, 75 cases) and the viewer's beside the notebar, boxless and seam suites (9 legs, 7 legs and
+39 cases). What changed, why, and the test that holds it: (1) A landing the card's hold parked under a press on the
+Outline BUTTON ran after the release's click had opened the popover, on the hold's zero timer, and its paint closed
+it, so the click appeared to do nothing (a face of round 1's fix 1, which moved the hold from the body to the card so
+that a press on a row would park a landing). `fetchFile`'s `land` now reads the hold once before the defer and hands
+the run a `parked` flag, and the text landing, when it was parked and a popover is open at its run, opens the popover
+again after its paint, over the landed body, so the rows, the current row and the keyboard are read afresh; a landing
+that ran at once still closes it, and one parked under a press on a row, or on the button with the popover up, finds
+it already closed by the pick or the toggle and opens nothing. Of the two shapes the manager allowed, the parked
+landing run ahead of the click's own handler or the popover kept across the landing's paint, the second was built,
+scoped to landings the hold parked, the first needing a flush inside the shared press hold (item 2; outline case 15
+and outline-browser leg 5, both red over the archive at the popover standing after the landing's paint; outline case
+7's and file-view case 50's pins re-aimed to the re-open lines and the `land` shape). (2) Every HEAD 404 had been read
+as a deletion, and the kernel's HEAD /file answers 404 for causes a shown file reaches after a successful GET with the
+file still on disk, read from the handler: a relative path re-aimed by a session move (`SdkBackend._finish_move`
+rewrites the names registry's cwd that `_resolve_open_path` joins the path to), a relative path with no cwd to join,
+and, through the relay, a host detached since the GET. The kernel's /file 404, GET and HEAD, now names its cause in
+one word, the `X-Romp-Reason` header: `missing` for an absolute or `~`-rooted path with no regular file at it, the one
+value that means the file is gone; `relative` for a relative path joined to the session's current cwd and found
+nothing there, which a move and a deletion produce alike, so the kernel certifies neither; `unresolved` for a relative
+path with no cwd to join; the relay's own `detached` for a host no longer attached and `unviewable` for an extension
+it refuses before dialing; and a remote kernel's word mirrored when it is one of the local route's three, dropped
+otherwise, as `X-Romp-Mtime-Ns` is mirrored (`_file_404_reason`, `_FILE_404_REASONS` and `_FILE_404_REASON_HDR` in
+kernel/kernel.py; GET bodies unchanged; the download half's 404 and do_HEAD's route miss are not on the probe's URL
+and carry none). The viewer reads the header off the HEAD's answer and says `Deleted on disk.` for `missing` alone and
+the change's words for any other cause or none, a kernel from before the header included, Reload then painting the
+kernel's own pane for what the GET answers (`REASON_HEADER` and `REASON_MISSING`, exported for the pins);
+real-viewer-leg.ts's page stub sends the header from `window.__reason`, `missing` by default (item 5;
+test_kernel_preview four cases, two new and two extended, and test_kernel_remote_file_relay four cases, one new and
+three extended, each red over the archive on the header's absence, `None` where the word was expected; reload case 21,
+red over the archive with the deletion's words where the change's were expected: `relative`, `detached` through the
+relay URL for a `TESTHOST`-prefixed sid and no header raise `Changed on disk.` and `missing` raises `Deleted on
+disk.`; case 13 now says its 404 carries `missing`; tests/test_guide_files_place_and_outline.py's disk-bar pin
+re-aimed to the new words line and the two constants, red over the archive). Two limits, recorded: `relative` is
+deliberately not `missing` even when a relative path's file really was deleted, since the kernel cannot tell that from
+a move, so that case shows the change's words, the price of never calling a moved session's file deleted; and no
+`Access-Control-Expose-Headers` names the header, since the route exposes none of its custom headers cross-origin
+today, `X-Romp-Mtime-Ns` included, the dashboard and the relay URL being same-origin, a pre-existing condition and not
+this item's. (3) The words kept on the disk bar's record for the editor's exit re-raise had been pinned by source text
+alone; the executed case: with the `Deleted on disk.` bar up, Edit takes the bar, Cancel brings it back reading
+exactly those words with Reload armed, role status, no HEAD sent and the keyboard on the body, and Reload then paints
+the 404 pane (item 5; reload case 22, green over the archive and at the head and red with the re-raise mutated to the
+change's words; no code change). (4) The ledger entry's `where:` line had omitted ui/test-dom-shim.test.ts, which
+round 1's commit changed (a NON_DOM_EDGES entry for feed-viewer-focus-browser.test.ts, whose feed card carries a goal
+tree with an empty children array, no DOM edge, and the list's cap raised from 2 to 3), and cited reload cases by
+numbers the file does not have; the line now names the file, numbers the cases by each file's own ordinal and names
+every file this round changes, and the entry's body says the shim and its ratchet are fork-only until the shim
+migration entry ports (item 6). (5) The round 1 paragraph above had cited reload cases 33 and 40 and place-memory
+cases 21 and 22, numbers from a continuous count over three suites run together where each file numbers its own cases:
+the role assertion is reload case 6 and the 404 case 13, the key case place-memory 7 and the media case 8, corrected
+there and in items 3 and 5. The re-check of every other ordinal in this note against the files found two that round
+1's insertions had moved and nothing else: its two place-memory cases went in ahead of the closing pass's, so the
+clamped reload's visible leave is case 10 and the unread-scroll flag case 11, and its 404 case went in ahead of round
+6's, so the parked landing newer than the HEAD's answer is reload case 20; the earlier paragraphs say so (item 6;
+tests/test_markdown_viewer_plan_note_counts.py and tests/test_markdown_viewer_plan_note_history.py accept the note).
+Refuted, no change: that the card's hold, parking a fetch under a press on the Edit button, lets the click's
+`enterEdit` run before the parked landing and open the editor on stale text. `enterEdit` is reached through
+`ensureEditingAllowed`, which awaits a GET /version first, a network round trip, and the parked run's zero timer fires
+before that answer; in Chromium, and in the harness once its /version stub answers on a macrotask as a fetch does, the
+parked landing paints before the editor opens, the harness's microtask-fast stub being the one place it reproduced.
+Records this round: this paragraph and the sentences above that each fix touched (the head's summary, items 2, 4, 5
+and 6, the tests-by-file counts, with file-view-reload at 22, file-view-outline at 15 and file-view-outline-browser at
+5 legs, and the two kernel modules and the shim test named), the ledger entry's `where:` line and its body, and the
+round 1 paragraph's ordinals; docs/guide.md is unchanged, its changed-on-disk sentence quoting no words, and
+CONTEXT.md is unchanged, the round coining no term. Deployment: the /file route's 404 reason and the two viewFile
+relay lines are served by kernel/kernel.py, so they reach the dashboard only after the live kernel's restart, and
+until then every HEAD 404 shows the `Changed on disk.` fallback with Reload, a real deletion included; a remote host
+whose kernel predates the header answers its 404 without it, so a file deleted there reads as the fallback until that
+host's kernel restarts on the new code too. The consolidation's full run found two source pins the round's shapes
+had moved, re-aimed with no count change: file-view-links.test.ts's landing pin, which now allows the
+`reopenOutline` lines between the text's assignment and the target, and user-todo-links.test.ts's kernel pin, which
+now reads the `given` name `_file_preview` keeps the request's path under for the 404's reason. With this round the
+review closed; the owner's termination rule stands, only a wrong mapping or a Rendered comments regression
+reopening it.
 ### Slice 7: every failure says what happened
 
 The render catch shows Raw rows under a `.fileview-err` line; a failed figure shows an inline error

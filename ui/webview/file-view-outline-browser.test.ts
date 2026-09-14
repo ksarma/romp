@@ -352,3 +352,64 @@ test("in a browser (PR review round 1): a landing while the pointer is pressed o
     await page.close();
   });
 });
+
+test("in a browser (PR review round 2): a landing while the pointer is pressed on the Outline BUTTON waits for the release; the release's click opens the popover, and the parked landing's paint leaves it open on the landed body, the new note's rows and the popover holding the keyboard (before the fix: the paint ran closeOutline one task after the click, so the popover was gone before the next frame and the click appeared to do nothing); a press on the button with the popover up: the click closes it and the landing leaves it closed, the body holding the keyboard", { timeout: 180000 }, async (t) => {
+  const APPENDIX = "\n## Appendix Z\n\nOne more section a session wrote while the reader pressed the button.\n";
+  const MT3 = "1757145600000000011";
+  const readOutline = () => {
+    const pop = document.querySelector(".fileview-outline");
+    const rows = pop ? Array.from(pop.querySelectorAll(".fileview-outline-row")) as HTMLElement[] : [];
+    const b = document.querySelector(".fileview-outline-btn") as HTMLElement;
+    const a = document.activeElement as HTMLElement | null;
+    return { popover: !!pop, rows: rows.length, last: rows.length ? rows[rows.length - 1].dataset.id : null, current: rows.findIndex((r) => r.classList.contains("current")),
+      focused: !!pop && document.activeElement === pop, expanded: b.getAttribute("aria-expanded"), on: b.classList.contains("on"),
+      active: a ? a.tagName + "." + String(a.className).split(/\s+/).join(".") : "none", mt: (window as any).__seam.mtimeNs(), paints: (window as any).__paints };
+  };
+  const buttonPoint = (page: any) => page.evaluate(() => { const b = document.querySelector(".fileview-outline-btn") as HTMLElement; const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: OUTLINE_NOTE } });
+    let pt = await buttonPoint(page);
+    await page.mouse.move(pt.x, pt.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed: { paints: number; fetches: number } = await page.evaluate(() => ({ paints: (window as any).__paints, fetches: (window as any).__fetches }));
+    // the panel's poll saw the file move: the reload's fetch answers in microtasks, so two frames on the landing has run or parked
+    await page.evaluate((a: [string, string, string]) => { const w = window as any; w.__docs[a[0]] = a[2]; w.__mtime = a[1]; w.__seam.reload(); }, [REPORT, MT2, OUTLINE_NOTE + APPENDIX] as [string, string, string]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, pressed.fetches, { timeout: 10000 });
+    await frames(page, 2);
+    const under = await page.evaluate(readOutline);
+    assert.equal(under.popover, false, "no popover under the press: the click has not happened");
+    assert.equal(under.paints, pressed.paints, "nothing painted under the press");
+    assert.equal(under.mt, MT, "the body shows the file the reader has");
+    await page.mouse.up();                                    // the release: the click opens the popover, then the parked landing runs on the hold's zero timer
+    await paintsReach(page, pressed.paints + 1); await frames(page, 2);
+    const after = await page.evaluate(readOutline);
+    assert.equal(after.mt, MT2, "the parked landing painted the new bytes");
+    assert.equal(after.paints, pressed.paints + 1, "one paint for the one landing");
+    assert.equal(after.popover, true, "the popover stands after the landing's paint (before the fix: the paint had closed it, and the click appeared to do nothing)");
+    assert.equal(after.rows, 43, "on the landed body: the new note's headings");
+    assert.equal(after.last, "md-appendix-z", "the last row is the heading the landing brought");
+    assert.ok(after.current >= 0, "with a current row");
+    assert.equal(after.focused, true, "the popover holds the keyboard, as after any open");
+    assert.equal(after.expanded, "true", "the button says it is expanded"); assert.equal(after.on, true, "…and wears the open dress");
+    // a press on the button with the popover up: the landing parks too; the click closes the popover and the landing leaves it closed
+    pt = await buttonPoint(page);
+    await page.mouse.move(pt.x, pt.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed2: { paints: number; fetches: number } = await page.evaluate(() => ({ paints: (window as any).__paints, fetches: (window as any).__fetches }));
+    await page.evaluate((a: [string, string, string]) => { const w = window as any; w.__docs[a[0]] = a[2]; w.__mtime = a[1]; w.__seam.reload(); }, [REPORT, MT3, OUTLINE_NOTE] as [string, string, string]);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, pressed2.fetches, { timeout: 10000 });
+    await frames(page, 2);
+    const under2 = await page.evaluate(readOutline);
+    assert.equal(under2.popover, true, "the popover stands under the press: a press on the button is not a press outside it");
+    assert.equal(under2.paints, pressed2.paints, "nothing painted under the press");
+    await page.mouse.up();
+    await paintsReach(page, pressed2.paints + 1); await frames(page, 2);
+    const closed = await page.evaluate(readOutline);
+    assert.equal(closed.mt, MT3, "the parked landing painted");
+    assert.equal(closed.popover, false, "the click closed the popover and the landing opened nothing");
+    assert.equal(closed.expanded, "false"); assert.equal(closed.on, false);
+    assert.equal(closed.active, BODY, "the body holds the keyboard (read " + closed.active + ")");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+  });
+});
