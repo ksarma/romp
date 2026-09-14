@@ -65,12 +65,15 @@ export const STATUS = {
 
 let viewerBundle: string | null = null;
 /** The viewer module as the webview build bundles it, in memory, as window.FV (openUrlView included, for the URL viewer's own swap;
- *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls). */
+ *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls;
+ *  and preview.ts's heal for markdown-inline pictures, installMdImgHeal with the two retry drivers render.ts calls on a kernel
+ *  message and on romp:wsup, so a leg can put the chat page's own retry of a failed figure under the viewer, as the figure
+ *  label's leg does; nothing installs it unless a leg calls it). */
 export function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS } from "./anchor-map";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -158,18 +161,31 @@ export async function inBrowser(t: any, body: (browser: any) => Promise<void>): 
 }
 
 export type Opened = { page: any; errors: string[] };
+/** What `serve` answers a request of the page's origin with, in place of the page: the status, the Content-Type and the body. */
+export type Served = { status: number; type?: string; body?: string };
 /** A page of the surface at the viewport size, the report open in it (Rendered, or Raw when `raw`: the preference is written
  *  first, as a person's earlier choice would stand), the first paint awaited. `docs` replaces the file table; `openOpts` is
  *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`;
- *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). */
+ *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). `serve` answers the requests the page's
+ *  own fetch stub never sees, the ones the browser makes from the DOM (a figure's `<img src>` at the kernel's /file route,
+ *  rewriteFigureSrcs's URL): a Served answer for a URL of the origin is fulfilled as given (a 404 for a missing figure, a
+ *  text/plain body the decoder refuses, an image/svg+xml that loads), null falls through to the page, as every request of the
+ *  origin did before. `before` runs in node with the page after it is loaded and before the open, for a page global that must
+ *  stand before the first paint (the chat page's heal, installMdImgHeal, registers a failed picture at its error event). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
-  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string } = {}): Promise<Opened> {
+  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void> } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
-  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+    const a = opts.serve ? opts.serve(new URL(route.request().url())) : null;
+    if (a) return route.fulfill({ status: a.status, contentType: a.type, body: a.body ?? "" });
+    return route.fulfill({ status: 200, contentType: "text/html", body: html });
+  });
   await page.goto(ORIGIN + "/");
+  if (opts.before) await opts.before(page);
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   if (opts.url) {
     await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, ORIGIN + opts.url]);

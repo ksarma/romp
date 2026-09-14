@@ -28,6 +28,7 @@ import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // th
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
@@ -374,6 +375,12 @@ function renderFellLine(msg: string): HTMLElement {
   why.textContent = RENDER_FELL + " (" + msg + ").";
   return why;
 }
+/** The label a figure that failed to load wears beside itself (plans/markdown-viewer.md Slice 7, item 2; armFigureLabels): the
+ *  fact, then the authored source and the alt in parentheses when there is one, in one line (`Image failed to load: figs/p95.png
+ *  (p95 by day)`), where the browser drew a wordless broken-image glyph or nothing. The img's `error` event carries no status, so
+ *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
+ *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
+export const FIGURE_FAILED = "Image failed to load:";
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1955,6 +1962,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     dropReseat = retire;
   };
   ctx.onClose(() => { if (dropReseat) dropReseat(); });
+  // A figure of the Rendered box that fails to load says so beside itself (armFigureLabels, module level): the body's `error`
+  // and `load` capture listeners, armed once per open like the re-seat's above and never per paint, dropped with the viewer.
+  ctx.onClose(armFigureLabels(body));
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
   // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
   // lesson), at this file's mtime and scrollTop, with the Rendered view's open folds by ordinal, into the module's map and the
@@ -3489,6 +3499,7 @@ export function openUrlView(href: string): void {
     [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGate(g); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
   });
   gateKeys(body);                                      // and the same Enter and Space: the delegate reads clicks alone, and the placeholder is a role=button span
+  closeHooks.push(armFigureLabels(body));              // a figure that fails to load says so beside itself, as in the local viewer (Slice 7, item 2)
   body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
@@ -3727,6 +3738,7 @@ function headingWords(n: Node): string {
   if (n.nodeType === 3) return (n as Text).data;
   const e = n as Element;
   if (e.localName === "img") return " " + (e.getAttribute("alt") || "") + " ";
+  if (e.hasAttribute(FIGERR_MARK)) return "";   // a failed figure's label (armFigureLabels) is the viewer's text, not the heading's: the row reads the alt alone
   return Array.from(n.childNodes).map(headingWords).join("");
 }
 let outlineOpens = 0;   // openOutline's count across the module, for the rows' ids
@@ -4090,7 +4102,8 @@ function mintHeadingIds(root: ParentNode): void {
  *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
  *  — so the picture shown is the file the poll watches and the host hashes (review round 2: the viewer alone left
- *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw).
+ *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw; since
+ *  Slice 7 a figure that fails to load wears a label naming its source beside the img, armFigureLabels below).
  *  A `~/…` src is a relative one whose first segment is `~`: markdown has no home anchor, so every markdown reader
  *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
  *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
@@ -4148,6 +4161,94 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     if (p === null) continue;
     el.setAttribute(ref.attr, p);
   }
+}
+
+// ── a figure that failed to load says so beside itself (plans/markdown-viewer.md Slice 7, item 2) ─────────
+// A picture the browser could not fetch or decode drew a wordless broken-image glyph, or nothing at all: the kernel's
+// answers for a figure that fails (a 404 for a missing file or a path outside its roots, a 415, a 413, a text file named
+// as a figure that a 200 hands the decoder) all fire the img's `error` event with no status on it, and nothing in the
+// Rendered box listened (the media view's imgBlock arms its own img; a figure inside a note had no listener), so the
+// person saw a glyph with no word of what happened or which file. Now ONE capture-phase `error` listener on the body per
+// open hears every figure of the box (an img's error does not bubble, so the body hears it in the capture phase, armReseat's
+// idiom for `load`; the events fire after the swap, since the img's fetch is queued as a task and the swap is synchronous in
+// the paint's own task, the fact the seam's onRendered doc relies on) and parks a label after the img naming the fact and
+// the source (FIGURE_FAILED, the authored src by pictureDest's rule, the alt when there is one). Its twin, a capture-phase
+// `load` listener, removes the label when a retry lands. Installed once per open beside the body's other listeners and
+// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which re-fetches every
+// failed `<img>` per kernel message and on romp:wsup) re-fires into the same listener; the heal skips an img with an
+// `onerror` property, and none is set here: the img is only listened to. The img stays in the DOM as the browser draws it
+// with every attribute untouched: the Comments panel pairs pictures by img order and `data-fv-src` (file-comments.ts
+// embedFor), the regions layer wraps THE img (file-comments-regions.ts) and the reader's place counts `<img` tags in a row,
+// and a label as the img's SIBLING leaves all three alone; it is one per img (a second `error`, the heal's retry failing
+// again, rewrites the one label's text) and found by its data mark, never by its class (figure-gate.ts's rule: an author
+// can type the class, and the sanitizer keeps `class` while its profile forbids every data-* attribute, so a data-* mark
+// is the viewer's own). Both text walks skip it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES: its text is the
+// viewer's, not the note's, and a control's text in a block once refused the block's pairing and seated the reader's place
+// fourteen paragraphs off), and headingWords skips it so a heading's Outline row reads the alt alone. The insertion fires
+// no paint hook: the body's nodes stand and the panel's marks are unaffected, and a hook per failed figure would re-run
+// the panel's whole pass. A gated figure (figure-gate.ts) has no src and never errors, and a label inside its placeholder
+// would leave with restore, so an img under one is left alone. Images only, as the media body covers images alone: a
+// `<picture>` fires its img's error once every source fails, and gets its label after the picture element (a span is not
+// a picture's content); video, audio and an inline svg's `<image>` are recorded as a follow-up.
+/** The mark on the label: the label is found by it (figureLabelAfter) and never by its class. */
+const FIGERR_MARK = "data-fv-figerr";
+/** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
+const FIGERR_CLASS = "fv-figerr";
+/** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
+ *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), and the regions layer's
+ *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
+ *  dispose puts the img back in the wrap's place and removes the wrap with everything else in it, so a label inside would
+ *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same). */
+function figureAnchor(img: Element): Element {
+  let a: Element = img;
+  for (let p = a.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap")); p = a.parentElement) a = p;
+  return a;
+}
+/** The label standing right after `anchor` (its next sibling carrying the mark), when one does. */
+function figureLabelAfter(anchor: Element): Element | null {
+  const n = anchor.nextSibling;
+  return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
+}
+/** The label's words (the slice's contract C2): FIGURE_FAILED, the authored source (pictureDest: `data-fv-src` when
+ *  rewriteFigureSrcs rewrote the src, else `src`; a figure with neither names nothing) and the alt in parentheses when it is
+ *  not empty. */
+function figureLabelText(img: Element): string {
+  const alt = img.getAttribute("alt");
+  return FIGURE_FAILED + " " + (pictureDest(img) ?? "") + (alt ? " (" + alt + ")" : "");
+}
+/** The figure an `error` or `load` heard on the body is about: an img inside the Rendered box and outside a gate's
+ *  placeholder (`[data-act="fv-load"]`); null for anything else (the media view's own img, a control's, a gated figure). */
+function figureOf(e: Event): Element | null {
+  const t = e.target as Element | null;
+  if (!t || t.nodeType !== 1 || t.localName !== "img") return null;
+  if (!t.closest(".fileview-md")) return null;
+  if (t.closest('[data-act="' + GATE_ACT + '"]')) return null;
+  return t;
+}
+/** Arm the two capture listeners on a viewer's body (the header above); the function returned drops them. */
+function armFigureLabels(body: HTMLElement): () => void {
+  const onError = (e: Event): void => {
+    const img = figureOf(e);
+    if (!img) return;
+    const anchor = figureAnchor(img);
+    const words = figureLabelText(img);
+    const had = figureLabelAfter(anchor);
+    if (had) { had.textContent = words; return; }   // the one label per img: a retry that failed again rewrites its text
+    const label = el("span", FIGERR_CLASS);
+    label.setAttribute(FIGERR_MARK, "");
+    label.textContent = words;
+    const parent = anchor.parentNode;
+    if (parent) parent.insertBefore(label, anchor.nextSibling);
+  };
+  const onLoad = (e: Event): void => {
+    const img = figureOf(e);
+    if (!img) return;
+    const had = figureLabelAfter(figureAnchor(img));
+    if (had) had.remove();                          // a retry landed: the picture shows, the label goes
+  };
+  body.addEventListener("error", onError, true);
+  body.addEventListener("load", onLoad, true);
+  return () => { body.removeEventListener("error", onError, true); body.removeEventListener("load", onLoad, true); };
 }
 
 /** A URL document's figures resolve against where the document LIVES, through every attribute a figure fetches through
