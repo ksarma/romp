@@ -8,10 +8,11 @@
 // (scrollTop clamped to its content, as a browser clamps a write) and getBoundingClientRect answers the box less the
 // scroll, so reader-place.ts's readPlace and seatPlaceOutcome run as they do in a browser, over the elements the paint
 // built, at the paint. Two things build them here where the browser's parser would: an innerHTML setter parses the
-// markup codeBlock writes (the .fv-cl rows, hljs spans inside), and the `.fileview-md` box renders its text through
-// marked when mdBlock falls back to the bare text, which it does under node because DOMPurify has no document to work in
-// (the sanitizer returns its input, and mdBlock's catch writes the text): the blocks' elements, unsanitized (the fixture
-// is plain markdown) and without the heading ids the sanitizer's own pass mints. The review's closing pass adds two cases over the
+// markup codeBlock writes (the .fv-cl rows, hljs spans inside), and the sanitizer's stand-in (md-sanitize.ts setMdSanitizer,
+// Slice 7) hands mdBlock a body holding marked's markup parsed by this suite's parser, unsanitized (the fixture is plain
+// markdown), over which the real mintHeadingIds and the registered passes then run. Until Slice 7 the box's textContent
+// setter parsed the source through marked itself, because DOMPurify has no document under node and mdBlock's catch wrote
+// the bare text into the box (the seam suite's record pin states the constraint). The review's closing pass adds two cases over the
 // same stand-ins: the visible leave after a reload whose seat the browser clamped (the seam's reload, a ResizeObserver-free open),
 // and the unread-scroll flag under the editor (a ResizeObserver stand-in the case reports through, the body's rects and width
 // faked for the hide and the show). Synthetic fixtures only: the notes-api world, placeholder ids, hostname none.
@@ -20,11 +21,11 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import { sourceBlockSpans } from "./anchor-map";
 import type { Place } from "./reader-place";
 import type { RememberedPlace, At } from "./file-view";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -156,14 +157,11 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  /** The browser's parser stands in here for the one text write that is a paint: mdBlock's fallback writes the note's
-   *  source into the `.fileview-md` box when the sanitizer could not hand it a tree (the header), and the box renders
-   *  it through marked as the sanitizer would have; every other element takes the text as one node. */
+  /** One text node, as the browser's setter writes it (the `.fileview-md` box no longer parses the note here: the sanitizer's
+   *  stand-in hands mdBlock the parsed markup, the header). */
   set textContent(v: string) {
     this.clear();
-    if (v === "") return;
-    if (this.classes.includes("fileview-md")) { for (const n of parseHTML(marked.parse(v) as string)) this.appendChild(n); return; }
-    this.appendChild(new Txt(v));
+    if (v !== "") this.appendChild(new Txt(v));
   }
   get innerHTML(): string { return this._html; }
   set innerHTML(v: string) { this._html = v; this.clear(); for (const n of parseHTML(v)) this.appendChild(n); }
@@ -315,6 +313,13 @@ function walkNodes(root: El, what: number): Array<El | Txt> {
   walk(root);
   return out;
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint went through mdBlock's catch, and this
+// suite's box parsed the note through marked in its textContent setter (file-view-seam.test.ts's record pin states the
+// constraint). The stand-in hands mdBlock a body holding marked's markup parsed by this suite's parser, unsanitized (the
+// fixtures are plain markdown), and the real mintHeadingIds and the registered passes run over it.
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { const body = new El("body"); for (const n of parseHTML(dirty)) body.appendChild(n); return body; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const doc = {
   listeners: [] as Reg[],
   body: null as unknown as El,

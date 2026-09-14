@@ -450,8 +450,9 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);
   assert.doesNotMatch(chatMd, /ALLOW_DATA_ATTR/, "no per-call override of the shared profile's data-* verdict");
   assert.match(SANITIZE, /export const MD_PURIFY: Config = \{[\s\S]*?ALLOW_DATA_ATTR: false,[\s\S]*?\};/, "the shared sanitizer's profile forbids data-*");
-  assert.equal((SANITIZE.match(/DOMPurify\.sanitize\(/g) || []).length, 1, "the module holds the one DOMPurify.sanitize call");
-  assert.match(SANITIZE, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.equal((SANITIZE.match(/\.sanitize\(/g) || []).length, 1, "the module holds the one call into DOMPurify's sanitize, through purifier() (setMdSanitizer's seam: the module-global instance unless a node test installed a stand-in; Slice 7 of plans/markdown-viewer.md)");
+  assert.match(SANITIZE, /purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.match(SANITIZE, /const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/, "…which falls back to the module-global instance");
   assert.doesNotMatch(VIEW + RENDER, /ALLOW_DATA_ATTR|DOMPurify\.sanitize\(/, "neither caller spells a profile of its own");
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
   assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box"));

@@ -16,6 +16,7 @@ import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim"
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FileViewActionCtx } from "./file-view";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -171,6 +172,14 @@ class El {
   getBoundingClientRect(): Rect { return this.rect; }
   get offsetWidth(): number { return 0; }
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint here went through mdBlock's catch, which
+// wrote the note's text into the box (file-view-seam.test.ts's record pin states the constraint). This suite's cases read
+// the bar, the buttons, the editor and the seam's closures, never the box's content, so the stand-in hands mdBlock an
+// empty body, as the seam suite's does: the real mintHeadingIds, the registered passes and the link passes run over it
+// and find nothing (a body with text would send the link walk through a tree walker this stand-in has not got).
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: () => new El("body") } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const doc = {
   listeners: [] as Reg[],
   body: null as unknown as El,

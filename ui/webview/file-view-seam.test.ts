@@ -15,8 +15,10 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports, for the record pin on the seam's constraint
 import type { FileViewActionCtx, At } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -179,6 +181,16 @@ class El {
   getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
   get offsetWidth(): number { return 0; }
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint here went through mdBlock's catch, which
+// wrote the note's text into the box (the record pin at the end of this file states the constraint). The stand-in hands
+// mdBlock an empty body and the cases lay the blocks marked would paint by hand (layRendered), as they always did; the real
+// mintHeadingIds and the registered passes run over the empty body and find nothing.
+/** Every dirty string the stand-in was handed: one per Rendered paint (the record pin counts them). */
+const sanitized: string[] = [];
+const fakeSanitizer = { addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { sanitized.push(dirty); return new El("body"); } };
+setMdSanitizer(fakeSanitizer as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const doc = {
   listeners: [] as Reg[],
   body: null as unknown as El,
@@ -1657,4 +1669,30 @@ test("an open at a source offset: the block holding it is scrolled to the centre
   assert.deepEqual(scrolls(rrows), [0, 0, 0, 0, 0, 1], "the sixth row (the offset's line, one .fv-cl per logical line)");
   assert.deepEqual(rrows[5].scrolledWith, { block: "center" });
   assert.equal(store.get("romp:fileviewFmt"), JSON.stringify({ md: "raw" }), "the preference stands as it was");
+});
+
+// ── the sanitizer seam (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ─────
+// A record pin: the stand-in installed at the top of this file is what every Rendered paint here sanitizes through, and the
+// constraint it exists for is executed over the library itself. DOMPurify 3.4.10 built over a window with no `document`
+// (createDOMPurify's isSupported branch, purify.es.mjs) returns the bare factory, its `sanitize` and `addHook` unassigned,
+// so before the seam sanitizeMd threw at every call under node and every markdown paint in every node suite went through
+// mdBlock's catch, which wrote the note's text into the box: no node suite ever ran the real sanitize, and none can (the
+// browser legs do). Before the seam: the stand-in was never reached (red at the first assertion over a git archive of the
+// base with setMdSanitizer stubbed).
+test("record pin: a Rendered paint sanitizes through the seam's stand-in, once per paint and never on a Raw one, with marked's markup for the note; DOMPurify built over this stand-in's window (no document) is the bare factory, isSupported false with sanitize and addHook unassigned, and so is the module-global instance md-sanitize.ts imports: before the seam no node suite ran the real sanitize and every markdown paint here went through mdBlock's catch", async (t) => {
+  const before = sanitized.length;
+  const o = await open(REPORT, t);
+  assert.equal(sanitized.length, before + 1, "the open's Rendered paint reached the stand-in's sanitize");
+  assert.match(sanitized[before], /<h1>Report<\/h1>/, "handed marked's markup for the note (the heading ids are minted after, by sanitizeMd's own pass)");
+  assert.ok(o.body.querySelector(".fileview-md"), "the box mdBlock adopted the stand-in's body into");
+  assert.equal(o.ctx.mode(), "rendered");
+  o.b.raw.click();
+  assert.equal(sanitized.length, before + 1, "a Raw paint sanitizes nothing");
+  o.b.rendered.click();
+  assert.equal(sanitized.length, before + 2, "the Rendered toggle paints through the stand-in again");
+  // the constraint, executed: an instance built for a window with no document, and the module-global one
+  const bare = DOMPurify(win) as unknown as { isSupported: boolean; sanitize?: unknown; addHook?: unknown };
+  assert.equal(bare.isSupported, false, "no window.document: DOMPurify reports itself unsupported");
+  assert.equal(bare.sanitize, undefined); assert.equal(bare.addHook, undefined);
+  assert.equal(DOMPurify.isSupported, false, "the module-global instance is that factory under node too");
 });

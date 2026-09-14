@@ -23,6 +23,7 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { scriptLiteral } from "./real-viewer-leg";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const requireCjs = createRequire(__filename);
 
@@ -171,6 +172,13 @@ class El {
   }
   querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint here went through mdBlock's catch, which
+// wrote the note's text into the box as one node (file-view-seam.test.ts's record pin states the constraint). This suite
+// reads the box for its size and dispatches on it, never its content, so the stand-in hands mdBlock a body holding marked's
+// markup as one text node; the real mintHeadingIds and the registered passes run over it and find no element.
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { const body = new El("body"); body.replaceChildren(String(dirty)); return body; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const docBody = new El("body");
 const docKeys: Listener[] = [];                  // the viewer's document keydown handlers, one per open
 const doc = {

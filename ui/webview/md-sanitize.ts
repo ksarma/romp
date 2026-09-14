@@ -221,12 +221,29 @@ export function dropBodyTitle(node: Node, data: Pick<UponSanitizeElementHookEven
   (node.ownerDocument as Document).createDocumentFragment().appendChild(node);
 }
 
+// ── the instance in use: DOMPurify's, or a node test's stand-in ──────────────────────────────────────
+/** What sanitizeMd sanitizes with and installMdSanitizeHooks installs on: the two members of DOMPurify this module calls. */
+export type MdSanitizer = Pick<DOMPurifyInstance, "sanitize" | "addHook">;
+let installedSanitizer: MdSanitizer | null = null;
+/** A seam for the node tests, in setFileViewIdentity's idiom (file-view.ts) and installMdSanitizeHooks's `purify`
+ *  parameter's: the instance sanitizeMd and the hooks install use in place of the module-global DOMPurify while one is
+ *  set; null puts the module-global back. Node only, no production caller: DOMPurify 3.4.10 hands a module with no
+ *  `window.document` the bare factory (createDOMPurify's isSupported branch), whose `sanitize` and `addHook` are
+ *  unassigned, so under node sanitizeMd threw on every call and no node suite ever ran a Rendered paint through the
+ *  sanitizer (every markdown paint there went through mdBlock's catch; file-view-seam.test.ts's record pin states the
+ *  constraint). A node suite that reads a Rendered paint installs a fake here (`addHook` a no-op, `sanitize` returning
+ *  the body mdBlock adopts); the browser legs run the real instance. */
+export function setMdSanitizer(p: MdSanitizer | null): void { installedSanitizer = p; }
+/** The instance in use: the one set through setMdSanitizer, else the module-global DOMPurify. */
+const purifier = (): MdSanitizer => installedSanitizer ?? DOMPurify;
+
 let hooksInstalled = false;
-/** Install the two hooks on the (module-global) DOMPurify instance, once: the style rewrite on every attribute
- *  (styleAttributeHook) and, on every element, the comment drop (dropCommentChildren) and the body title's drop
- *  (dropBodyTitle). Idempotent: DOMPurify's hooks are a list, and a second registration would run the same rewrite twice
- *  per attribute. `purify` is a seam for the node tests, which have no window for the real instance to sanitize in. */
-export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"> = DOMPurify): void {
+/** Install the two hooks on the instance in use (purifier: the module-global DOMPurify, or a node test's stand-in), once:
+ *  the style rewrite on every attribute (styleAttributeHook) and, on every element, the comment drop (dropCommentChildren)
+ *  and the body title's drop (dropBodyTitle). Idempotent: DOMPurify's hooks are a list, and a second registration would run
+ *  the same rewrite twice per attribute. `purify` is the older seam for the node tests, which have no window for the real
+ *  instance to sanitize in (md-sanitize.test.ts installs a fake through it); setMdSanitizer above is the one sanitizeMd reads. */
+export function installMdSanitizeHooks(purify: Pick<DOMPurifyInstance, "addHook"> = purifier()): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   purify.addHook("uponSanitizeAttribute", (_node, ev) => { styleAttributeHook(ev); });
@@ -266,10 +283,10 @@ export function registerMdPostPass(pass: (root: ParentNode) => void): void {
  *  layout order (a fraction's denominator before its numerator, a U+200B strut), so `# Ratio $\frac{a}{b}$` was
  *  `md-ratio-ba` where GitHub's slug of the text, and the id the Files pane minted before the fill reached its
  *  bundle, is `md-ratio-fracab`, and the note's own `[see](#ratio-fracab)` rendered dead (the Slice 4 review). The
- *  only DOMPurify.sanitize call in the dashboard's source. */
+ *  only call into DOMPurify's sanitize in the dashboard's source, through purifier() (the seam above). */
 export function sanitizeMd(dirty: string, own?: (body: HTMLElement) => void): HTMLElement {
   installMdSanitizeHooks();
-  const clean = DOMPurify.sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
+  const clean = purifier().sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
   keepOnlyInertCheckboxes(clean);
   if (own) own(clean);
   for (const pass of postPasses) pass(clean);

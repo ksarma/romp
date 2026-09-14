@@ -26,6 +26,7 @@ import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim"
 import type { FileViewActionCtx } from "./file-view";
 import type { Status, Hunk } from "./file-comments-model";
 import { DECIDE_IN_EDITOR, DECIDE_IN_EDITOR_TOUCH } from "./file-comments";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 // ── a DOM stand-in: ancestry, ids, attributes, events with capture and bubbling, a small selector engine ──
 class Ev {
@@ -172,6 +173,18 @@ class El {
   getBoundingClientRect(): { left: number; top: number; right: number; bottom: number; width: number; height: number } { return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }; }
   get offsetWidth(): number { return 0; }
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint here went through mdBlock's catch, which
+// wrote the note's text into the box as one text node (file-view-seam.test.ts's record pin states the constraint). This
+// suite's first case reads the box through the panel's change paint, which maps the status's source offsets over the box's
+// text and offers the link only where the substitution painted, so the stand-in hands mdBlock a body holding the note's
+// SOURCE as one text node, the shape the catch left: the fetch stub below records the text it last served, which is the
+// text the paint under way renders. The real mintHeadingIds and the registered passes run over it and find no element; the
+// link passes walk its text (the tree walker and NodeFilter below, which the sibling suites' empty bodies never reach) and
+// link nothing in the fixture.
+let servedText = "";
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: () => { const body = new El("body"); body.appendChild(new Txt(servedText)); return body; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const doc = {
   listeners: [] as Reg[],
   body: null as unknown as El,
@@ -182,6 +195,9 @@ const doc = {
   createTextNode: (s: string) => new Txt(s),
   getElementById: (id: string): El | null => doc.body.querySelector("#" + id),
   querySelectorAll: (sel: string): El[] => doc.body.querySelectorAll(sel),
+  /** The link passes' walk (path-links.ts markUrls): document-order text nodes, the elements too under SHOW_ELEMENT. Reached
+   *  here because the sanitizer's stand-in hands mdBlock a body with text (above). */
+  createTreeWalker: (root: El, what = 4) => { const nodes: Array<El | Txt> = []; const walk = (n: El) => { for (const c of n.childNodes) { if (c instanceof Txt) { if (what & 4) nodes.push(c); } else { if (what & 1) nodes.push(c); walk(c); } } }; walk(root); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
   addEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean; once?: boolean }): void { doc.listeners.push({ type, cb, ...optsOf(o) }); },
   removeEventListener(type: string, cb: Listener, o?: boolean | { capture?: boolean }): void {
     const cap = optsOf(o).capture;
@@ -218,6 +234,7 @@ win.postMessage = () => { /* our own window: nothing listens here */ };
 (globalThis as any).window = win;
 (globalThis as any).location = { protocol: "http:" };   // the web dashboard: the viewer's discard ask is a confirm here (canPreview)
 (globalThis as any).document = doc;
+(globalThis as any).NodeFilter = { SHOW_ELEMENT: 1, SHOW_TEXT: 4 };   // the link walk's mask (the tree walker above)
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
   getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
@@ -281,7 +298,7 @@ const deferred = () => { let resolve!: () => void; const p = new Promise<void>((
   if (!f) return { ok: false, status: 404, headers, text: async () => { if (g && g.body) await g.body; return "no such file: " + p; } };
   return {
     ok: true, status: 200, headers,
-    text: async () => { if (g && g.body) await g.body; return f.bytes; },
+    text: async () => { if (g && g.body) await g.body; return (servedText = String(f.bytes)); },
     blob: async () => new Blob([f.bytes], { type: f.type }),
   };
 };

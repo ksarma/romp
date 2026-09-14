@@ -13,7 +13,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks } from "./md-sanitize";
+import DOMPurify from "dompurify";   // the module-global instance md-sanitize.ts imports: under node the bare factory (the seam test below)
+import { MD_FORBID_TAGS, MD_FORBID_ATTR, MD_PURIFY, USER_CONTENT_PREFIX, colorOnlyStyle, isLiteralColor, styleAttributeHook, dropCommentChildren, dropBodyTitle, installMdSanitizeHooks, setMdSanitizer, sanitizeMd } from "./md-sanitize";
 import { hideEdges, sameNodes } from "../test-dom-shim";
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -259,6 +260,25 @@ test("installMdSanitizeHooks registers its two hooks ONCE however often it is ca
   assert.deepEqual(title.childNodes.map((c) => c.nodeType), [TEXT], "the title's own text goes with the element; nothing is unwrapped");
 });
 
+test("setMdSanitizer (the node suites' seam, Slice 7 of plans/markdown-viewer.md): sanitizeMd sanitizes through the installed stand-in, hands it the one profile spread with RETURN_DOM, and returns the body the stand-in gave after the input post-pass and the caller's own pass; null puts the module-global DOMPurify back, which under node is the bare factory (no window.document: isSupported false, sanitize and addHook unassigned), so a call then throws instead of sanitizing", () => {
+  const seen: Array<{ dirty: string; cfg: Record<string, unknown> }> = [];
+  const body = { childNodes: [], querySelectorAll: () => [] };
+  const fake = { addHook: () => { /* the hooks are DOMPurify's business; the stand-in has none */ }, sanitize: (dirty: string, cfg: Record<string, unknown>) => { seen.push({ dirty, cfg }); return body; } };
+  setMdSanitizer(fake as unknown as Parameters<typeof setMdSanitizer>[0]);
+  try {
+    let ownGot: unknown = null;
+    const out = sanitizeMd("<p>x</p>", (b) => { ownGot = b; });
+    assert.equal(out, body, "the stand-in's body is what sanitizeMd hands back");
+    assert.equal(ownGot, body, "the caller's own pass ran over it");
+    assert.deepEqual(seen.map((s) => s.dirty), ["<p>x</p>"], "one call per sanitizeMd");
+    assert.equal(seen[0].cfg.RETURN_DOM, true);
+    assert.deepEqual(seen[0].cfg.FORBID_TAGS, [...MD_FORBID_TAGS], "the one profile reaches the stand-in as it reaches DOMPurify");
+  } finally { setMdSanitizer(null); }
+  assert.equal(DOMPurify.isSupported, false, "under node the module-global instance is DOMPurify's bare factory: nothing sanitizes without the seam");
+  assert.equal((DOMPurify as unknown as { sanitize?: unknown }).sanitize, undefined);
+  assert.throws(() => sanitizeMd("<p>x</p>"), TypeError, "with no stand-in the module-global instance is what sanitizes, and under node it cannot: the throw mdBlock's catch swallowed in every node suite before the seam");
+});
+
 // ── the profile ─────────────────────────────────────────────────────────────────────────────────────
 
 test("the profile: html + svg, data: on img, no data-*, the forbidden tags, prefixed ids and names; input stays for the task checkbox", () => {
@@ -279,14 +299,18 @@ test("the profile: html + svg, data: on img, no data-*, the forbidden tags, pref
 
 // ── source pins: one sanitizer ──────────────────────────────────────────────────────────────────────
 
-test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.ts and file-view.ts import sanitizeMd and no dompurify of their own", () => {
+test("md-sanitize.ts holds the dashboard's ONLY call into DOMPurify's sanitize, through purifier() (the module-global instance unless a node test installed a stand-in through setMdSanitizer); render.ts and file-view.ts import sanitizeMd and no dompurify of their own", () => {
   const sources = fs.readdirSync(UI).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"));
-  const callers = sources.filter((f) => /DOMPurify\.sanitize\(/.test(read(f)));
+  const callers = sources.filter((f) => /\.sanitize\(/.test(read(f)));
   assert.deepEqual(callers, ["md-sanitize.ts"], "every other module goes through sanitizeMd");
   const SAN = read("md-sanitize.ts");
-  assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1);
-  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
+  assert.equal((SAN.match(/\.sanitize\(/g) || []).length, 1);
+  assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 0, "never the import directly: the seam would be bypassed");
+  assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
     "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass is optional (the chat's md() and userMd() pass none)");
+  assert.match(SAN, /export function setMdSanitizer\(p: MdSanitizer \| null\): void \{ installedSanitizer = p; \}\n(?:\/\*\*[^\n]*\*\/\n)?const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/,
+    "the seam: the installed stand-in, else the module-global instance (no production caller sets one)");
+  assert.match(SAN, /export function installMdSanitizeHooks\(purify: Pick<DOMPurifyInstance, "addHook"> = purifier\(\)\): void \{/, "the hooks install reads the same instance");
   assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
     "the input post-pass, then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");
   assert.match(SAN, /export function registerMdPostPass\(pass: \(root: ParentNode\) => void\): void \{\n\s*if \(!postPasses\.includes\(pass\)\) postPasses\.push\(pass\);\n\}/, "the registry: idempotent, a pass registered twice runs once (md-sanitize-katex-browser.test.ts executes it)");
@@ -425,7 +449,7 @@ test("SECURITY.md's output-sanitization bullet names KaTeX as the renderer that 
 
   // the code has the boundary the bullet describes: DOMPurify first, the registered fill on its output, under the option
   const san = read("md-sanitize.ts");
-  assert.ok(san.indexOf("DOMPurify.sanitize(dirty") < san.indexOf("for (const pass of postPasses) pass(clean);"), "the fill runs on the DOM DOMPurify has already returned");
+  assert.ok(san.indexOf("purifier().sanitize(dirty") < san.indexOf("for (const pass of postPasses) pass(clean);"), "the fill runs on the DOM DOMPurify has already returned");
   const math = read("math.ts");
   assert.match(math, /trust: false/, "math.ts renders under trust: false");
   for (const c of ["MATH_TEX_MAX_CHARS", "MATH_TEX_BUDGET_CHARS", "MATH_MAX_SIZE_EM"]) assert.match(math, new RegExp("export const " + c + " = "), c + " is math.ts's constant");
