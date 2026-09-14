@@ -208,6 +208,20 @@ function seedOf(s: Status): EditSeed | null {
   if (!(s.hunks || []).length) return null;
   return { records: pendingRecords(s.store), storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
 }
+/** The seed's records as the editor takes them: in the VIEW's coordinates (Slice 7 of plans/markdown-viewer.md, item 4; contract
+ *  C4). The sidecar's records index the text the host read, which on a BOM file runs one ahead of the view's (the host keeps
+ *  the U+FEFF the fetch strips; the status's `bom` says which, as viewAt reads it), so each record's integer `from` moves by
+ *  `-off` as it rides into the editor, and its marks sit on the right characters; a record of another shape rides in as it is
+ *  (the host names it at Save). The seed itself keeps the host's own records (EditSeed.records): the moved-records compare
+ *  reads them against the status's (sameRecords, noteChangesMovedUnderEdit), both in the host's coordinates. The records a
+ *  Save sends are the editor's as it holds them, view coordinates, with no shift by the panel: the host moves each `from`
+ *  back by one when it puts the BOM back (its save door), so the shift is applied once on each leg. Before Slice 7 the
+ *  records rode in unmapped, one character off on a BOM file. */
+function viewRecords(records: unknown[], off: number): unknown[] {
+  if (!off) return records;
+  return records.map((r) => r && typeof r === "object" && Number.isInteger((r as { from?: unknown }).from)
+    ? { ...(r as Record<string, unknown>), from: (r as { from: number }).from - off } : r);
+}
 /** The host's `logWarning` on a reply — its account of a comments-log append that failed, or a sidecar it could not read
  *  back after writing — as text; "" when the reply carries none. */
 function warningOf(r: unknown): string {
@@ -2502,7 +2516,7 @@ class Panel {
         // not refused instead).
         if (!s || !hunks.length) { this.editSeed = null; this.render(); return null; }
         const seed = seedOf(s)!;                       // changes are pending: never null here
-        const records = seed.records;
+        const records = viewRecords(seed.records, s.bom ? 1 : 0);   // the editor's copy, in the view's coordinates (viewRecords)
         this.editSeed = seed;
         this.render();
         return {
@@ -3881,16 +3895,22 @@ class Panel {
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
-    // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
-    // batch: the hunks index the string the HOST read, and the viewer's text can differ from it — a BOM the fetch
-    // stripped puts every mark one character off. Refused, the changes stay card-only, each with Reveal (D4).
+    // The hunks index the string the HOST read, which on a BOM file runs one ahead of the view's text (the host keeps the
+    // U+FEFF the fetch strips; the status says which, `bom`), so each is handed to the painters at `curFrom - off`,
+    // `curTo - off`, the rule the other readers of the host's offsets apply (viewAt, placedAt, overlapping,
+    // startChangeComment): before Slice 7 of plans/markdown-viewer.md the pass handed them unmapped, and on every BOM file
+    // the painters refused the batch and the changes stayed card-only. newText rides along so the painters still verify
+    // that each change's new text sits at its offsets before painting the batch: a text that differs from the one the
+    // hunks index (the poll's reload before its status, a file that changed between the two reads) is refused whole and
+    // the changes stay card-only, each with Reveal (D4), never marked one character off.
     // `label`: the chip beside a Raw mark reads the session's CURRENT name from the colour map, as the card's chip does
     // (chip) — the sidecar's `author` is the name at write time, and after a rename the mark and the card must name the
     // session alike. An author with no live match keeps the sidecar's label (the painter's own fallback, chipLabel).
+    const off = s.bom ? 1 : 0;
     const changes: ChangePaint[] = (s.hunks || []).map((h) => {
       const aid = authorIdOf(store, h.id);
       const col = aid && this.colors ? this.colors.get(aid) : null;
-      return { id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, author: h.author, label: col ? col.name : undefined };
+      return { id: h.id, kind: h.kind, curFrom: h.curFrom - off, curTo: h.curTo - off, oldText: h.oldText, newText: h.newText, author: h.author, label: col ? col.name : undefined };
     });
     const stylesFor = (c: ChangePaint): Record<string, string> => {
       const aid = authorIdOf(store, c.id);

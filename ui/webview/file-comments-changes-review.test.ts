@@ -397,30 +397,55 @@ function before(mark: El): string {
 
 // ── the painters' check, armed from the panel ──────────────────────────────────────────────────────
 
-test("hunks over the host's BOM-bearing text against a view without the BOM: nothing is painted, every card is card-only with Reveal — in Raw and in Rendered; over matching text the same hunks paint", async (t: TestContext) => {
+test("hunks over the host's BOM-bearing text against a view without the BOM: with the status's `bom` the pass maps them one back and the marks paint, \"cut\" in Raw and the insertion in Rendered (Slice 7 of plans/markdown-viewer.md, item 4); the same shifted hunks without `bom` are still refused, every card card-only with Reveal; over matching text the unshifted hunks paint as ever", async (t: TestContext) => {
   // the host decodes the file keeping a leading U+FEFF (track-edit's ignoreBOM) and computes the hunks over that string;
-  // the viewer's fetch strips it, so every offset is one too many. The painters refuse the batch on the new text the
-  // panel now hands them, rather than marking "ut " for "cut" (plans/file-review.md: Raw is exact).
+  // the viewer's fetch strips it, so every offset is one too many for the view. The status says so (`bom`), and the paint
+  // pass maps the hunks by it, as viewAt maps a card's position (before Slice 7 it handed them unmapped, and the painters
+  // refused the batch on the new text, so on every BOM file the changes stayed card-only). Without the word the painters
+  // still refuse rather than mark "ut " for "cut" (plans/file-review.md: Raw is exact): the refusal is the control.
   const w = world(); t.after(() => w.close());
-  const bom = status({ hunks: [shifted(h1, 1), shifted(h3, 1)] });
+  const bom = status({ bom: true, hunks: [shifted(h1, 1), shifted(h3, 1)] });
   const { aside } = await openPanel(w, bom);
-  assert.equal(marksOf(w).length, 0, "no change mark over the wrong characters");
+  assert.ok(marksOf(w, "h1").some((m) => m.textContent === "cut"), "Raw: the substitution's new text is marked, one back from the host's offsets (before: nothing painted on a BOM file)");
+  assert.equal(marksOf(w, "h3").length, 1, "the deletion's point is painted");
   for (const key of ["chg:h1", "chg:h3"]) {
     const c = card(aside, key)!;
+    assert.equal(tags(c).includes("not shown"), false, key + " is painted, not card-only");
+  }
+  assert.ok(isLink(card(aside, "chg:h1")!), "the substitution's reference links to its mark");
+  w.close();
+  const wr = world({ mode: "rendered" }); t.after(() => wr.close());
+  const { aside: ar } = await openPanel(wr, status({ bom: true, hunks: [shifted(h2, 1)] }));
+  const ins = marksOf(wr, "h2");
+  assert.equal(ins.length, 1, "Rendered: the insertion is marked once");
+  assert.equal(ins[0].textContent.trim(), "and the p99 by 10%", "…on the insertion's words, one back from the host's offsets");
+  assert.equal(tags(card(ar, "chg:h2")!).includes("not shown"), false);
+  wr.close();
+  // the control: the same shifted hunks with no `bom` in the status are refused, in Raw and in Rendered (the shift is the
+  // status's word, never a guess from a text that happens not to match)
+  const w0 = world(); t.after(() => w0.close());
+  const { aside: a0 } = await openPanel(w0, status({ bom: false, hunks: [shifted(h1, 1), shifted(h3, 1)] }));
+  assert.equal(marksOf(w0).length, 0, "no change mark over the wrong characters");
+  for (const key of ["chg:h1", "chg:h3"]) {
+    const c = card(a0, key)!;
     assert.ok(tags(c).includes("not shown"), key + " is card-only");
     assert.ok(act(c, "fcreveal", key), key + " offers Reveal");
     assert.equal(isLink(c), false, key + "'s reference is no link");
   }
-  w.close();
-  const wr = world({ mode: "rendered" }); t.after(() => wr.close());
-  const { aside: ar } = await openPanel(wr, status({ hunks: [shifted(h2, 1)] }));
-  assert.equal(marksOf(wr).length, 0, "Rendered refuses the same batch");
-  assert.ok(tags(card(ar, "chg:h2")!).includes("not shown"));
-  wr.close();
-  // the control: the same hunks over the text they index paint, "cut" under the substitution's mark
+  w0.close();
+  const wr0 = world({ mode: "rendered" }); t.after(() => wr0.close());
+  const { aside: ar0 } = await openPanel(wr0, status({ hunks: [shifted(h2, 1)] }));
+  assert.equal(marksOf(wr0).length, 0, "Rendered refuses the same batch without the word");
+  assert.ok(tags(card(ar0, "chg:h2")!).includes("not shown"));
+  wr0.close();
+  // and unshifted hunks over the text they index paint, "cut" under the substitution's mark; with `bom` they would be one off and refused
   const w2 = world(); t.after(() => w2.close());
   await openPanel(w2);
   assert.ok(marksOf(w2, "h1").some((m) => m.textContent === "cut"), "over matching text the substitution's new text is marked");
+  w2.close();
+  const w3 = world(); t.after(() => w3.close());
+  await openPanel(w3, status({ bom: true }));
+  assert.equal(marksOf(w3).length, 0, "unshifted hunks under `bom`: mapped one back they no longer sit on their text, and the painters refuse rather than mark 'ut ' for 'cut' (the shift is exactly one, applied once)");
 });
 
 // ── the Rendered half of the paint pass ────────────────────────────────────────────────────────────

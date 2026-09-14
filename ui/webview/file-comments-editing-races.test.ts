@@ -406,6 +406,42 @@ test("a decision whose click passed the gate before the editor opened is refused
   assert.deepEqual(out.ok, { mtimeNs: "1757145600000000009", logged: true });
 });
 
+test("a BOM file (Slice 7 of plans/markdown-viewer.md, item 4; contract C4): the seed begin() hands the editor carries the sidecar's records with `from` one back, in the view's coordinates; the records Save sends are the editor's own, unshifted by the panel; a status with the same sidecar raises no moved-records row; without `bom` the records ride in as they are", async (t: TestContext) => {
+  // the host keeps the U+FEFF the fetch strips, so its records index a text one ahead of the view's (the status says so: `bom`);
+  // the editor's marks must sit on the view's characters, and the host moves the records it receives back by one when it puts
+  // the BOM back on Save, so the panel shifts at the seed alone (viewRecords) and sends the editor's records untouched
+  const w = world(); t.after(() => w.close());
+  const plus = (r: typeof rec1) => ({ ...r, from: r.from + 1 });
+  const hostRecs = [plus(rec1), plus(rec2)];
+  const bom = pending({ bom: true, hunks: [{ ...h1, curFrom: h1.curFrom + 1, curTo: h1.curTo + 1 }, { ...h2, curFrom: h2.curFrom + 1, curTo: h2.curTo + 1 }] }, undefined, hostRecs);
+  const { aside } = await openPanel(w, bom);
+  w.editing = true;
+  const seed = w.tracked!.begin()!;
+  assert.deepEqual(seed.records, [rec1, rec2], "the editor's records: each `from` one back from the host's, the other fields as the sidecar holds them");
+  assert.notEqual(seed.records[0], hostRecs[0], "a copy: the status's own records are not written to");
+  assert.deepEqual(hostRecs, [plus(rec1), plus(rec2)]);
+  // the same sidecar shows again under the editor (a poll's status): the records did not move, so no head row says they did
+  answer(w, bom); await flush(); await flush();
+  assert.equal(headRows(aside).length, 0, "the moved-records compare reads the host's records against the host's: no false CHANGES_MOVED row on a BOM file");
+  // Save sends the editor's records as it holds them: view coordinates, no shift by the panel, no flag in the args
+  const edited = [rec1, { ...rec2, from: rec2.from + 10 }];   // the editor moved the second record as the person typed above it
+  const out = settle(w.tracked!.save("the typed text", edited, { accepted: [], rejected: [] }));
+  await flush();
+  const save = lastOf(w, "fileComments", "save");
+  assert.ok(save, "the save verb");
+  assert.deepEqual(save.args.suggestions, edited, "the records go as the editor holds them (the host shifts them by one into its own text when it re-prepends the BOM)");
+  assert.deepEqual(Object.keys(save.args).sort(), ["accepted", "content", "rejected", "suggestions"], "no bom flag: the host keys the rule on its own disk read");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: save.reqId, ...pending({ verb: "save", bom: true, fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000010" }, undefined, hostRecs), logged: true } }));
+  await flush(); await flush();
+  assert.deepEqual(out.ok, { mtimeNs: "1757145600000000009", logged: true });
+  w.close();
+  // the control: no `bom`, the records ride in as the sidecar holds them
+  const w2 = world(); t.after(() => w2.close());
+  await openPanel(w2, pending());
+  w2.editing = true;
+  assert.deepEqual(w2.tracked!.begin()!.records, [rec1, rec2], "unshifted without the word");
+});
+
 test("a decision refused on a moved fence while the editor opens during its re-read is refused at the retry's send, not re-sent", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside, DECIDE } = await openPanel(w, pending());
