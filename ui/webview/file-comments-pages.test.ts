@@ -338,7 +338,7 @@ async function harness(over: Partial<FileViewActionCtx> = {}) {
     body: () => body as unknown as HTMLElement,
     mode: () => "media",
     text: () => null,
-    mtimeNs: () => "1757145600000000001",
+    mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => "pdf",
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
     pdfPages: () => pages as unknown as HTMLElement[],

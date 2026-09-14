@@ -291,7 +291,7 @@ function world(): World {
   const w = { posted: [] as any[], main, body, md, hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void>, saved: [] as Array<(info: Saved) => void> }, mtimes: {} as Record<string, string> } as World;
   w.ctx = {
     path: ABS, sid: SID, todoId: null,
-    body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => DOC, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => DOC, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },

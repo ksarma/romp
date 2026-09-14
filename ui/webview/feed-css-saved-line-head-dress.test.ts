@@ -143,7 +143,7 @@ function mount(page: any, status: Record<string, unknown>): Promise<void> {
     const saved: Array<(info: unknown) => void> = []; w.__saved = saved;
     const ctx = {
       path: abs, sid, todoId: null,
-      body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null,
+      body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null,
       renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
       onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: (cb: (info: unknown) => void) => { saved.push(cb); }, onClose: () => { /* inert */ },
       post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },

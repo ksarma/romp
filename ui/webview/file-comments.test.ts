@@ -641,7 +641,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
   const body = new El("div") as unknown as HTMLElement;
   return {
     path: ABS, sid: SID, todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
     post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop, aside: noop, setMode: noop,

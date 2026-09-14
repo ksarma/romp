@@ -399,7 +399,7 @@ const noop = () => { /* inert */ };
 function ctxBase(w: World, over: Partial<FileViewActionCtx>): FileViewActionCtx {
   return {
     path: ABS, sid: SID, todoId: null,
-    body: () => w.body as unknown as HTMLElement, mode: () => "raw", text: () => SHORT, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => w.body as unknown as HTMLElement, mode: () => "raw", text: () => SHORT, mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: noop, onSaved: noop, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => w.editing, setTrackedEdit: (_t: TrackedEdit | null) => { /* inert */ }, guardClose: noop,   // the viewer's close ask (main, 2026-09-07): the stand-in asks nothing

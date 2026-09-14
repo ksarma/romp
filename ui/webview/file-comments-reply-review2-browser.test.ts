@@ -77,7 +77,7 @@ const SETUP = `window.__setup = () => {
   const noop = () => {};
   const ctx = {
     path: ${JSON.stringify(ABS)}, sid: ${JSON.stringify(SID)}, todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001",
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { savedCb = cb; }, onClose: noop,
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,

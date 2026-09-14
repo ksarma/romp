@@ -238,7 +238,7 @@ async function harness() {
   const ctx: FileViewActionCtx = {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => null,
-    mtimeNs: () => FILE_NS, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
+    mtimeNs: () => FILE_NS, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => editingNow, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },

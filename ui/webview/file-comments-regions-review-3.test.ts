@@ -374,7 +374,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     body: () => body as unknown as HTMLElement,
     mode: () => (kind === "rendered" ? "rendered" : "media"),
     text: () => (kind === "rendered" && src !== undefined ? src : null),
-    mtimeNs: () => "1757145600000000001",
+    mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => (kind === "media" ? "image" : kind === "pdf" ? "pdf" : null),
     pdfPages: () => [],                              // the Slice 4 seam member: these harnesses mount no PDF pages
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],

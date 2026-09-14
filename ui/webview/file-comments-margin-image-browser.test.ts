@@ -85,7 +85,7 @@ function mount(page: any, w: number, h: number, s: Record<string, unknown>): Pro
     const rendered: Array<() => void> = []; win.__rendered = rendered;
     const ctx = {
       path: abs, sid, todoId: null,
-      body: () => body, mode: () => "media", text: () => null, mtimeNs: () => "1757145600000000001", media: () => "image", mediaElement: () => img,
+      body: () => body, mode: () => "media", text: () => null, mtimeNs: () => "1757145600000000001", error: () => null, media: () => "image", mediaElement: () => img,
       renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
       onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: () => { /* inert */ }, onClose: () => { /* inert */ },
       post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },

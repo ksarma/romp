@@ -183,7 +183,7 @@ function mount(page: any, patch: Record<string, unknown>): Promise<void> {
     const rendered: Array<() => void> = [];
     const ctx = {
       path: abs, sid, todoId: null,
-      body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null,
+      body: () => body, mode: () => "rendered", text: () => src, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null,
       renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
       onRendered: (cb: () => void) => { rendered.push(cb); }, onSelection: () => { /* inert */ }, onSaved: () => { /* inert */ }, onClose: () => { /* inert */ },
       post: (m: any) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },

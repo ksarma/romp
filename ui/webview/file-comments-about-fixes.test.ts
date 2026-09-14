@@ -317,7 +317,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     path: ABS, sid: SID, todoId: over.todoId ?? null,
     body: () => body as unknown as HTMLElement, mode: () => w.mode,
     text: () => (w.editing && w.buffer !== null ? w.buffer : text),   // the viewer's seam: the buffer while editing (file-view.ts)
-    mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },

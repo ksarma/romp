@@ -329,7 +329,7 @@ function world(): World {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "raw",
     text: () => (w.editing && w.buffer !== null ? w.buffer : text),   // the viewer's seam: the buffer while editing (file-view.ts)
-    mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
