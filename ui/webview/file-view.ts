@@ -345,8 +345,10 @@ export const CHANGED_ON_DISK = "Changed on disk.";
 export const DELETED_ON_DISK = "Deleted on disk.";
 /** The kernel's one-word cause on a /file 404 (the PR review's round 2): the header, and the one value that means the file is
  *  gone (an absolute path, as given or `~`-rooted, with no regular file at it). Its other values (`relative`, `unresolved`,
- *  `detached`, `unviewable`) name a 404 the file may still exist behind, so the bar keeps to CHANGED_ON_DISK for them, as it
- *  does for a 404 with no header at all (a kernel from before the header, a remote kernel without it). */
+ *  `unreadable`, `detached`, `unviewable`) name a 404 the file may still exist behind, so the bar keeps to CHANGED_ON_DISK for
+ *  them, as it does for a 404 with no header at all (a kernel from before the header, a remote kernel without it); `unreadable`
+ *  (the PR review's round 3) is an absolute path the kernel could not stat, EACCES on a parent directory, the file possibly
+ *  still there. */
 export const REASON_HEADER = "X-Romp-Reason";
 export const REASON_MISSING = "missing";
 /** The notice for a heading target under a plain `hidden` wrapper (plans/markdown-viewer.md Slice 6, item 4; the PR review's
@@ -3042,8 +3044,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // A 404 is a deletion, not a change (the PR review's round 1), but only when the kernel says the file is gone: its 404 carries
       // REASON_HEADER, and REASON_MISSING alone means no regular file is at the absolute path (the PR review's round 2; the route
       // also answers 404 for a relative path the session's cwd moved from under, for one it can join to no cwd, and, through the
-      // relay, for a detached host, the file still on disk in each). Any other reason, or none (a kernel from before the header),
-      // falls back to the change's words; Reload then paints the kernel's own pane for whatever the GET answers, and re-arms.
+      // relay, for a detached host, the file still on disk in each, and, since the PR review's round 3, for an absolute path it
+      // cannot stat, EACCES on a parent, the file possibly still there). Any other reason, or none (a kernel from before the
+      // header), falls back to the change's words; Reload then paints the kernel's own pane for whatever the GET answers, and
+      // re-arms.
       const words = moved === ABSENT && r.headers.get(REASON_HEADER) === REASON_MISSING ? DELETED_ON_DISK : CHANGED_ON_DISK;
       const was = mtimeNs;                       // the mtime the answer was compared against: the file the body shows
       // The raise waits out a press on the body row (raiseHold: the body and the aside). The mousedown that begins a drag in a

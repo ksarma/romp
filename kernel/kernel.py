@@ -47448,9 +47448,11 @@ def _resolve_open_path(p, sid=None):
 # remote host and for a relative path re-aimed by a session move too, both with the file still on disk. So the header
 # names the cause, and the viewer says the file is deleted for `missing` alone. The relay's own two words (`detached`,
 # `unviewable`) live in _remote_file; _FILE_404_REASONS is the set the relay mirrors from a remote kernel's answer, a
-# known word being data about that disk, never prose.
+# known word being data about that disk, never prose. `unreadable` (the review's round 3) is the absolute path whose
+# stat failed for a reason other than absence: the caller's isfile() swallows every OSError alike, so EACCES on a
+# parent directory had read as `missing` and the viewer called a file the kernel could not look at deleted.
 _FILE_404_REASON_HDR = "X-Romp-Reason"
-_FILE_404_REASONS = ("missing", "relative", "unresolved")
+_FILE_404_REASONS = ("missing", "relative", "unresolved", "unreadable")
 
 
 def _file_404_reason(given, fp):
@@ -47458,11 +47460,21 @@ def _file_404_reason(given, fp):
     path stayed relative (no sid, or no cwd known for it, so nothing was looked up); `relative` when a relative path
     was joined to the session's CURRENT cwd and no regular file is there (a deletion, or a move since the GET that
     showed it, which the kernel cannot tell apart, so it certifies neither); `missing` when the path came absolute,
-    or `~`-rooted, and no regular file is at it: the file is gone."""
+    or `~`-rooted, and the stat says ENOENT or ENOTDIR (the path or a parent of it gone) or finds no regular file at
+    the name (a directory stands there now): the file is gone; `unreadable` when that stat fails for any other reason
+    (EACCES on a parent directory, a symlink loop, an I/O error): the file may well exist, the kernel could not look,
+    so it certifies nothing and the viewer keeps its change words. A path with a NUL byte, which no file can carry,
+    is `missing`."""
     if not os.path.isabs(fp):
         return "unresolved"
     if not os.path.isabs(os.path.expanduser(str(given))):
         return "relative"
+    try:
+        os.stat(fp)
+    except (FileNotFoundError, NotADirectoryError, ValueError):
+        return "missing"
+    except OSError:
+        return "unreadable"
     return "missing"
 
 

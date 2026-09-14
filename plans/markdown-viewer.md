@@ -4607,8 +4607,9 @@ which test holds each rule:
    Chromium (measured: `hasFocus()` true throughout, no event, no HEAD), so the leg dispatches the event the browser
    would. The kernel's HEAD route answers as before but for one header since the PR review's round 2: its 404 names
    its cause in one word, `X-Romp-Reason`, which the probe reads (the Manager review round 2 paragraph below), the
-   slice's one change to the kernel's Python, held by tests/test_kernel_preview.py (27, four 404 reason cases) and
-   tests/test_kernel_remote_file_relay.py (19, four relay reason cases). Cost: one HEAD per focus or visibility event
+   slice's one change to the kernel's Python (four words since the PR review's round 3, its paragraph below), held by
+   tests/test_kernel_preview.py (29, six 404 reason cases) and tests/test_kernel_remote_file_relay.py (20, five relay
+   reason cases). Cost: one HEAD per focus or visibility event
    (`window.__heads` in the harness), zero repaints and zero GETs until Reload, one GET and one repaint for the
    Reload; an open into a Files iframe that did not hold the page's focus costs one GET and no HEAD (the review's
    round 1: the body's own `focus()` fires the window's focus event synchronously inside it, and the probe read that
@@ -4702,13 +4703,15 @@ which test holds each rule:
    `place`; files-recent.ts's header names what a row holds; kernel.py's relay comment defines `at`;
    file-comments.ts's poll header says the viewer probes on the window's focus with the panel closed (the
    consolidation pass; the module's code is untouched). CONTEXT.md is unchanged: the build coined no term (no reviewer
-   asked for "remembered place"), and the PR review's rounds 1 and 2 coined none. The ledger entry is
+   asked for "remembered place"), and the PR review's rounds 1, 2 and 3 coined none. The ledger entry is
    upstream/2026-09-13-markdown-viewer-slice6.md (tier feature; its `where:` line names every file the branch changes
    and says the two shell lines need the live kernel's restart; since the PR review's round 1 it also names upstream's
    twin of the relay's field and the mapping between the two, the rule the offer and the next inbound fold apply,
    stated in the Manager review round 1 paragraph below; since its round 2 it names the /file 404's reason header, the
    served route's one Python change, deployed by the same restart, and ui/test-dom-shim.test.ts, which round 1 changed
-   and its `where:` line had missed). The brief's open questions, each taken as recorded above: 1 the stacked base
+   and its `where:` line had missed; since its round 3 it names the fourth reason word, `unreadable`, the narrowed
+   `missing` and the relay's status guard, and cites the round 1 path-links case by the file's ordinal, case 12). The
+   brief's open questions, each taken as recorded above: 1 the stacked base
    (the alternative, the coordinating session's call); 2 the label `Outline` with "the file's headings" in the guide;
    3 every heading as the DOM shows it; 4 the button in Rendered only; 5 the focus rule's reach, with the key-driven
    text-size step as the one exception; 6 the ring; 7 the record's fields, the path key, the page-life map and the
@@ -4965,9 +4968,12 @@ which test holds each rule:
    moved-restore test), styles-fileview-err-sizes (7, one pin admitting a line in the review's round 2), the fixture
    file-view-outline-fixture.ts (new) and real-viewer-leg.ts (the HEAD-aware stub, `__heads`, `chatKeysScript`; the
    404's reason from `__reason` since the PR review's round 2); tests/test_files_pane.py (24, one new),
-   tests/test_kernel_preview.py (27, two new and two extended in the PR review's round 2: the 404 reason `missing`,
-   `unresolved` and `relative`), tests/test_kernel_remote_file_relay.py (19, one new and three extended in the PR
-   review's round 2: `detached`, `unviewable` and the mirror of a remote's known word),
+   tests/test_kernel_preview.py (29, two new and two extended in the PR review's round 2: the 404 reason `missing`,
+   `unresolved` and `relative`; two new in its round 3: `unreadable` for a file under a directory made mode 0 for the
+   test's duration, and `missing` pinned for ENOENT, ENOTDIR, a directory at the name and a NUL byte in the path),
+   tests/test_kernel_remote_file_relay.py (20, one new and three extended in the PR review's round 2: `detached`,
+   `unviewable` and the mirror of a remote's known word; one new and one extended in its round 3: a known word on a
+   remote 200, 413 or 500 not mirrored, GET and HEAD, and `unreadable` among the mirrored words),
    tests/test_guide_files_place_and_outline.py (14, new; two pins re-aimed in round 4, the heading gate's and the
    Recent lookup's in round 5, the disk bar's in the PR review's round 1 and again in its round 2, to the reason
    header's read), tests/test_reference_todo_file.py (20, two re-pinned),
@@ -5072,11 +5078,12 @@ main 0bf0465b4, reading the change since 3e433ceee; the code's comments and the 
 order, the media notices, the URL viewer case, the frag mapping, Escape, the shared dress, the live region and the
 five ruled decisions). Under the review's rules a round whose findings are all low closes the review once its items
 are applied, so the five items below were applied on the branch, each code change with a test red over a `git archive`
-of e6aeb1138, and no review round follows them: the manager's own full test run, CI, the landing on the standing word
-and the deployment note come next. The standing rule held again: nothing here touches file-comments.ts, the kernel
-change ran green beside the comments note module (tests/test_kernel_file_comments_note.py with
-tests/test_perf_stats.py, 75 cases) and the viewer's beside the notebar, boxless and seam suites (9 legs, 7 legs and
-39 cases). What changed, why, and the test that holds it: (1) A landing the card's hold parked under a press on the
+of e6aeb1138; the kernel code this round added, new to the branch, was then read in a round 3, the paragraph below,
+which closed the review, and the manager's own full test run, CI, the landing on the standing word and the deployment
+note come next. The standing rule held again: nothing here touches file-comments.ts, the kernel change ran green
+beside the comments note module (tests/test_kernel_file_comments_note.py with tests/test_perf_stats.py, 75 cases) and
+the viewer's beside the notebar, boxless and seam suites (9 legs, 7 legs and 39 cases). What changed, why, and the
+test that holds it: (1) A landing the card's hold parked under a press on the
 Outline BUTTON ran after the release's click had opened the popover, on the hold's zero timer, and its paint closed
 it, so the click appeared to do nothing (a face of round 1's fix 1, which moved the hold from the body to the card so
 that a press on a row would park a landing). `fetchFile`'s `land` now reads the hold once before the defer and hands
@@ -5092,14 +5099,18 @@ as a deletion, and the kernel's HEAD /file answers 404 for causes a shown file r
 file still on disk, read from the handler: a relative path re-aimed by a session move (`SdkBackend._finish_move`
 rewrites the names registry's cwd that `_resolve_open_path` joins the path to), a relative path with no cwd to join,
 and, through the relay, a host detached since the GET. The kernel's /file 404, GET and HEAD, now names its cause in
-one word, the `X-Romp-Reason` header: `missing` for an absolute or `~`-rooted path with no regular file at it, the one
-value that means the file is gone; `relative` for a relative path joined to the session's current cwd and found
-nothing there, which a move and a deletion produce alike, so the kernel certifies neither; `unresolved` for a relative
-path with no cwd to join; the relay's own `detached` for a host no longer attached and `unviewable` for an extension
-it refuses before dialing; and a remote kernel's word mirrored when it is one of the local route's three, dropped
-otherwise, as `X-Romp-Mtime-Ns` is mirrored (`_file_404_reason`, `_FILE_404_REASONS` and `_FILE_404_REASON_HDR` in
-kernel/kernel.py; GET bodies unchanged; the download half's 404 and do_HEAD's route miss are not on the probe's URL
-and carry none). The viewer reads the header off the HEAD's answer and says `Deleted on disk.` for `missing` alone and
+one word, the `X-Romp-Reason` header: `missing` for an absolute or `~`-rooted path whose stat answers ENOENT or
+ENOTDIR, the path or a parent gone, or finds no regular file at the name, the one value that means the file is gone
+(narrowed so in the review's round 3, which found every failed stat reading `missing`); `relative` for a relative path
+joined to the session's current cwd and found nothing there, which a move and a deletion produce alike, so the kernel
+certifies neither; `unresolved` for a relative path with no cwd to join; since the review's round 3 `unreadable` for
+an absolute or `~`-rooted path whose stat fails for any other reason (EACCES on a parent directory, a symlink loop, an
+I/O error), the file possibly still there, so the kernel certifies nothing; the relay's own `detached` for a host no
+longer attached and `unviewable` for an extension it refuses before dialing; and a remote kernel's word mirrored when
+it is one of the local route's words (three then, four since round 3), dropped otherwise, as `X-Romp-Mtime-Ns` is
+mirrored (`_file_404_reason`, `_FILE_404_REASONS` and `_FILE_404_REASON_HDR` in kernel/kernel.py; GET bodies
+unchanged; the download half's 404 and do_HEAD's route miss are not on the probe's URL and carry none). The viewer
+reads the header off the HEAD's answer and says `Deleted on disk.` for `missing` alone and
 the change's words for any other cause or none, a kernel from before the header included, Reload then painting the
 kernel's own pane for what the GET answers (`REASON_HEADER` and `REASON_MISSING`, exported for the pins);
 real-viewer-leg.ts's page stub sends the header from `window.__reason`, `missing` by default (item 5;
@@ -5147,8 +5158,63 @@ host's kernel restarts on the new code too. The consolidation's full run found t
 had moved, re-aimed with no count change: file-view-links.test.ts's landing pin, which now allows the
 `reopenOutline` lines between the text's assignment and the target, and user-todo-links.test.ts's kernel pin, which
 now reads the `given` name `_file_preview` keeps the request's path under for the 404's reason. With this round the
-review closed; the owner's termination rule stands, only a wrong mapping or a Rendered comments regression
-reopening it.
+review was to close; the manager read the kernel code it added in a round 3, the paragraph below, and the review
+closed there.
+
+**Manager review round 3** (2026-09-14). The manager's review of fork PR 753 at 4a1c02fe8, the round 2 fixes, over
+main 0bf0465b4, reading the change since e6aeb1138, whose kernel code was new to the branch; the code's comments and
+the tests call it "the PR review's round 3". Three findings confirmed, every one low, none refuted; the header's
+exposure, the route's gates, the HEAD path, the relay's mirror and the viewer's fallback all held. An all-low round
+closes the review once its items are applied, so the three items below were applied on the branch, each code change
+with a test red over a `git archive` of 4a1c02fe8, and no round follows them: the manager's own full test run, CI, the
+landing on the standing word and the deployment note come next. The standing rule held: nothing here touches
+file-comments.ts or the viewer's code (two comments in file-view.ts name the new word, no line of code); the change is
+one function and one tuple in kernel/kernel.py and two of its test modules. What changed, why, and the test that holds
+it: (1) `_file_404_reason` had answered `missing`, the one word the viewer shows as `Deleted on disk.`, for every
+absolute path with no regular file at it, and the route's `isfile()` swallows every OSError alike, so a file under a
+directory the kernel may not search (EACCES on a parent) read as deleted while it existed. The function now stats the
+absolute path itself, after the `unresolved` and `relative` checks, and answers `missing` only when the stat says
+ENOENT or ENOTDIR (the path or a parent gone), finds no regular file at the name (a directory stands there now), or
+the path carries a NUL byte, which no file can (a ValueError from `os.stat`, outside the ruling's split into ENOENT,
+ENOTDIR and any other OSError; the route must catch it, since the new stat would otherwise 500 a request `isfile()`
+had swallowed, and `missing` was chosen, a choice put to the manager: one word in the except tuple and one row of the
+pin change it to `unreadable`); any other OSError (EACCES on a parent directory, a symlink loop, an I/O error) answers
+a fourth word, `unreadable`, the ruling having allowed the word or no header: the file may well exist, the kernel
+could not look, so it certifies nothing, and the viewer shows the change's words with Reload, its reading rule
+unchanged (`REASON_MISSING` alone means deleted; every other word falls back to `CHANGED_ON_DISK`).
+`_FILE_404_REASONS` holds the four words, so the relay mirrors a remote kernel's `unreadable` as it mirrors the other
+three; the comment block over the constants and the function's docstring name the word and why (item 5;
+test_kernel_preview's EACCES case, a file under a directory made mode 0 for the test's duration with the mode restored
+in the cleanup, skipped with its reason as root, where EACCES cannot be produced: HEAD 200 first, then HEAD and GET
+404 `unreadable` with the GET body as it was, the file shown on disk once the mode is back and served 200 again, red
+over the archive at `missing` on the HEAD; a second case pins `missing` for ENOENT, ENOTDIR, a directory at the name
+and a NUL byte, GET and HEAD, green over the archive and red under a build answering `unreadable` for ENOENT; the
+relay module's mirrored-words case extended with `unreadable`, red over the archive with the word dropped as unknown;
+over the archive the two modules read 2 failed, 47 passed, at the head 49 passed). One limit, recorded: GET bodies are
+unchanged, so Reload after an `unreadable` HEAD paints the kernel's 404 pane, not found over a file the kernel could
+not read; a body naming the cause is a follow-up if wanted. (2) The relay's mirror is guarded on the remote's status
+as well as its word, `status == 404 and r_why in _FILE_404_REASONS`, and no case held the guard: dropping it changed
+no verdict. A pin, no code change: the fake remote's 200 (plot.png) and 413 (big.pdf) arms and a new 500 arm
+(boom.png) send `X-Romp-Reason` when a case sets one; the new case sets `missing`, requests each by GET and HEAD,
+asserts the relayed status is the remote's and the header absent, then that the same word on the remote's 404 still
+rides (item 5; the case is green over the archive and red with the guard dropped from the relay line, every older case
+green under that build, which is what the finding said). (3) The ledger entry's `where:` line had called the round 1
+path-links case a fifteenth, the file's count, where the same line cites the reload suite's cases by ordinal, so the
+phrase read as an ordinal and pointed at the linkTarget case; by the file's ordinal it is case 12, corrected through
+scripts/upstream-ledger.py set, and the re-check of every other ordinal in the line against the files found the rest
+right: reload cases 6, 13, 20, 21 and 22, outline cases 7 and 15, outline-browser legs 4 and 5, notebar-browser leg 3,
+files-recent-place-browser leg 3, focus-ring-browser leg 3 and files-recent-place-shared-browser leg 2 (item 6;
+records only). Records this round: this paragraph, the round 2 paragraph's list of reason words, its mirror sentence
+and its closing sentence, item 5's count of the reason cases, the ledger-entry sentence and the tests-by-file counts
+above (tests/test_kernel_preview.py at 29, tests/test_kernel_remote_file_relay.py at 20), and the ledger entry's
+`where:` line (the kernel clause, the file-view.ts clause, the two test modules' clauses, the plan clause and the
+ordinal) and its body; file-view.ts's two comments on the header's values name the fourth word; docs/guide.md and
+CONTEXT.md are unchanged, the round coining no term. Deployment: `_file_404_reason` and `_FILE_404_REASONS` are
+served-route code in kernel/kernel.py, so like round 2's header they reach the dashboard only after the live kernel's
+restart; until then a file under an unsearchable directory still reads `missing` and the bar says `Deleted on disk.`
+over it. With this round the review closed; the owner's termination rule stands, only a wrong mapping or a Rendered
+comments regression reopening it.
+
 ### Slice 7: every failure says what happened
 
 The render catch shows Raw rows under a `.fileview-err` line; a failed figure shows an inline error

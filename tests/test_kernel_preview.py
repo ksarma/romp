@@ -287,6 +287,52 @@ class FilePreviewEndpoint(unittest.TestCase):
             except OSError:
                 pass
 
+    def test_an_absolute_path_the_kernel_cannot_stat_404s_as_unreadable_never_as_missing(self):
+        # The route's isfile() swallows every OSError alike, so a file under a directory the kernel may not search
+        # (EACCES on the parent) had read as `missing`, and the viewer said the file was deleted over a file that
+        # exists (the PR review's round 3). `missing` is for ENOENT and ENOTDIR alone; any other stat failure is the
+        # fourth word, `unreadable`, which the viewer reads like every word but `missing`: its change words, Reload
+        # painting the kernel's own pane for what the GET answers. The kernel serves in this process, so the mode
+        # the test takes off the directory is the mode the handler's stat meets.
+        if os.geteuid() == 0:
+            self.skipTest("EACCES cannot be produced as root: the search bit is never checked for uid 0")
+        locked = os.path.join(self.tmp.name, "locked")
+        os.mkdir(locked)
+        kept = os.path.join(locked, "kept.md")
+        with open(kept, "w") as f:
+            f.write("# still here\n")
+        code, _, _ = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual(code, 200)
+        self.addCleanup(os.chmod, locked, 0o700)      # tearDown restores the mode; the class's tmp dir is removed after
+        os.chmod(locked, 0)
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual((code, body), (404, b""))
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "unreadable")
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(kept))
+        self.assertEqual(code, 404)
+        self.assertEqual(hdrs.get("X-Romp-Reason"), "unreadable")
+        self.assertEqual(body, ("not found: %s" % km._tilde(kept)).encode("utf-8"), "the GET body is as it was")
+        os.chmod(locked, 0o700)
+        self.assertTrue(os.path.isfile(kept), "the file the viewer shows was on disk the whole time")
+        code, _, _ = self._req("/file?path=" + urllib.parse.quote(kept), method="HEAD")
+        self.assertEqual(code, 200, "with the directory searchable again the same URL serves the file")
+
+    def test_missing_is_the_word_for_a_gone_path_or_parent_and_for_a_directory_at_the_name(self):
+        # The other side of the round-3 line: `missing` stays the word when the stat says ENOENT (the file gone) or
+        # ENOTDIR (a parent gone: a regular file stands where a directory was), when a directory stands at the name
+        # (no regular file there), and for a path with a NUL byte, which no file can carry (the route must answer
+        # it, not fall over: isfile() swallows the ValueError, and so does the reason).
+        folder = os.path.join(self.tmp.name, "folder.md")
+        os.mkdir(folder)
+        for tag, given in (("ENOENT", os.path.join(self.tmp.name, "nowhere", "gone.md")),
+                           ("ENOTDIR", os.path.join(self.txt, "inner.md")),
+                           ("a directory at the name", folder),
+                           ("a NUL byte", os.path.join(self.tmp.name, "odd\x00name.md"))):
+            for method in ("GET", "HEAD"):
+                code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(given), method=method)
+                self.assertEqual(code, 404, (tag, method))
+                self.assertEqual(hdrs.get("X-Romp-Reason"), "missing", (tag, method))
+
     def test_an_extension_on_neither_allowlist_415s_as_exists_but_unviewable(self):
         # the VIEW allowlist is renderable media PLUS source/text; a .zip is neither — but it EXISTS,
         # which is a different truth from 404's "no such file", and the client acts on the difference
