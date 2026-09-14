@@ -781,19 +781,21 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   assert.equal(w3.reloads, 2); assert.equal(countOf(w3, "fileComments", "status"), asks3 + 1);
   assert.ok(a3.querySelector('.fc-load[data-slot="bytes"]'), "the slot wears the loader for the re-read");
   // the browser's order (the Slice 7 consolidation pass's scene in file-view-failures-browser.test.ts): the status ask the row's
-  // Reload sent is answered before the fetch it sent lands, over the standing pane, so the pass arms the wait again and ends it at
-  // once in the pane's words (the row is filed again, no loader); THEN the fetch lands: the landing paint shows the status's text,
-  // and the row, which said the bytes could not be read, goes with the wait (bytesLanded). Before that pass the row stood over the
-  // new text until dismissed or the next wait (this scene landed the fetch first and never saw it).
+  // Reload sent is answered before the fetch it sent lands, over the standing pane. The pass arms the wait again and, a fetch of
+  // the panel's asking being out (reloadOut), leaves it standing: the pane is the failure before the click, not that fetch's
+  // answer, so the slot keeps the loader and no row is filed (the review's round 4; before it the head filed the row again off the
+  // standing pane at once, the loader gone before the eye saw it, and the deadline went with the wait). THEN the fetch lands: the
+  // landing paint shows the status's text, and the wait ends with the loader (bytesLanded, which also takes a row filed with no
+  // fetch of the panel's out, the consolidation pass's clause).
   answer(w3, after); await flush(); await flush();
   assert.equal(w3.reloads, 2, "the same mtime: the status asks no third fetch");
-  assert.equal(a3.querySelectorAll(".fc-load").length, 0, "no loader over the standing pane");
-  assert.ok(a3.querySelector('.fc-cards .fc-err[data-slot="bytes"]'), "the row is filed again over the pane, in the failure's words");
+  assert.ok(a3.querySelector('.fc-load[data-slot="bytes"]'), "the loader stands for the fetch the click sent (before round 4: gone at the status's landing)");
+  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "no row while that fetch is out (before round 4: the row filed again off the standing pane)");
   assert.ok(w3.landReload, "the fetch is still out");
   w3.landReload!(); await flush(); await flush();
   assert.equal(w3.viewError, null, "a content paint clears error()");
-  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "the landing answers the row: the bytes it said could not be read are showing (before the consolidation pass: the row stood over the new text)");
-  assert.equal(a3.querySelectorAll(".fc-load").length, 0);
+  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "no row over the new text");
+  assert.equal(a3.querySelectorAll(".fc-load").length, 0, "the landing ends the wait");
   assert.equal(marksOf(w3, "h5").length, 1, "the marks are back over the new text");
   assert.deepEqual(w3.hookErrors, []);
 });
@@ -888,13 +890,15 @@ test("after the failure row, a Raw or Rendered click repaints the last landing's
   w.failReload!(WORDS); await flush();
   assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the pane's paint ends the wait");
   assert.equal(rowText(), FAILED_ROW, "the pane is back, and so is the row that says so");
-  // and the landing: the row goes with the paint that shows the status's text
+  // and the landing: the row goes with the click, the loader stands through the status landing first over the pane (the click's
+  // fetch is out, reloadOut; the review's round 4), and the paint that shows the status's text ends the wait
   act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
   answer(w, after); await flush(); await flush();
-  assert.equal(rowText(), FAILED_ROW, "the status over the standing pane files the row again (contract C3's standing-pane clause)");
+  assert.equal(rowText(), null, "the status over the standing pane files no row while the click's fetch is out (before round 4: the row again, off the standing pane)");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader stands for that fetch");
   w.landReload!(); await flush(); await flush();
   assert.equal(w.viewError, null); assert.equal(w.viewMtime, F11);
-  assert.equal(rowText(), null, "the landing answers the row");
+  assert.equal(rowText(), null, "no row over the new text"); assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the landing ends the wait");
   assert.equal(marksOf(w, "h5").length, 1, "the marks are back over the new text");
   assert.deepEqual(w.hookErrors, []);
 });
@@ -986,8 +990,8 @@ test("after the row flipped to the text tail (a Raw or Rendered click), a reload
   assert.deepEqual(w.hookErrors, []);
 });
 
-test("the row's Reload sends the status ask and the fetch together; the status lands first, over the standing pane, and files the row off THAT pane's words (the standing-pane clause); the fetch is then refused for another reason: the row takes the new pane's words at the paint that shows it", async (t: TestContext) => {
-  const { w, aside, FAILED_ROW, rowText, failedRow } = await failureRow(t);
+test("the row's Reload sends the status ask and the fetch together; the status lands first, over the standing pane, and files no row while the click's fetch is out (reloadOut: the loader stands, the wait armed); the fetch is then refused for another reason: the row files at the paint that shows the new pane, in its words; the other order as a control", async (t: TestContext) => {
+  const { w, aside, rowText, failedRow } = await failureRow(t);
   const OTHER = "file too large to show: 60 MB, the cap is 8 MB";   // the session restored the file as a dump: the kernel refuses 413 with these words
   act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
   assert.equal(rowText(), null, "the click takes the row");
@@ -996,13 +1000,14 @@ test("the row's Reload sends the status ask and the fetch together; the status l
   const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
     store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
   answer(w, after); await flush(); await flush();
-  assert.equal(rowText(), FAILED_ROW, "the status over the standing pane files the row again, in that pane's words");
-  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "no loader over the standing pane");
+  assert.equal(rowText(), null, "the status over the standing pane files no row: the click's fetch is out and the pane is the failure before the click (before round 4: the row again, in that pane's words)");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader stands for that fetch (before round 4: gone)");
   w.failReload!(OTHER); await flush(); await flush();
   assert.deepEqual(w.hookErrors, []);
   assert.equal(w.viewError, OTHER, "error() answers the new pane's words");
   assert.equal(w.body.querySelector(".fileview-err")!.textContent, OTHER, "the new pane stands");
-  assert.equal(rowText(), failedRow(OTHER), "the row carries the pane's CURRENT words (before: the first failure's words under the second's pane, until dismissed, the next status or a landing)");
+  assert.equal(rowText(), failedRow(OTHER), "the row files at the new pane's paint, in its words (before round 2: the first failure's words under the second's pane, until dismissed, the next status or a landing)");
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the pane's paint ends the wait");
   assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "one row");
   assert.equal(aside.querySelectorAll(".fc-load").length, 0);
   // the other order, as a control: the fetch refused first (no wait is armed until the status lands, so the pane's paint files
@@ -1015,6 +1020,84 @@ test("the row's Reload sends the status ask and the fetch together; the status l
   answer(w, after); await flush(); await flush();
   assert.equal(rowText(), failedRow(OTHER), "the status over the standing pane files the row in that pane's words");
   assert.equal(aside.querySelectorAll(".fc-load").length, 0);
+  assert.deepEqual(w.hookErrors, []);
+});
+
+// ── a fetch of the panel's asking out over a standing pane (Slice 7 item 3, the review's round 4) ─────
+
+test("the row's Reload over a standing pane whose fetch never answers (a kernel from before this feature, a stalled tunnel): the status lands first and arms the wait; the loader stands through it, no row is filed off the standing pane, and the deadline row files at 15 s where before nothing did (the head's re-file had cleared the deadline and the ask's end had taken the slot); the deadline row's Reload asks again, and its landing clears everything", async (t: TestContext) => {
+  const { w, aside, rowText } = await failureRow(t);
+  const asks = countOf(w, "fileComments", "status");
+  act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
+  assert.equal(w.reloads, 2, "the click re-fetches"); assert.equal(countOf(w, "fileComments", "status"), asks + 1, "…and re-asks status");
+  assert.equal(rowText(), null, "the click takes the row");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the slot wears the loader");
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  answer(w, after); await flush(); await flush();
+  assert.equal(w.reloads, 2, "the same mtime: the status asks no second fetch");
+  assert.equal(rowText(), null, "no row off the standing pane while the click's fetch is out (before round 4: the failure row again, at once)");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader stands through the status (before round 4: the ask's end took the slot)");
+  assert.ok(w.landReload, "the fetch is still out");
+  assert.equal(w.body.querySelectorAll(".fileview-err").length, 1, "the pane stands in the body meanwhile");
+  // the fetch never answers: the deadline is the one event left, and it speaks
+  t.mock.timers.tick(14999); await flush();
+  assert.equal(rowText(), null, "nothing before the deadline"); assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader holds");
+  t.mock.timers.tick(1); await flush();
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the loader yields at the deadline");
+  const row = aside.querySelector('.fc-cards .fc-err[data-slot="bytes"]');
+  assert.ok(row, "…to the deadline row where it was (before round 4: no row ever filed, the row's Reload the only door, and it repeated the sequence)");
+  assert.match(row!.textContent, /have not arrived after 15 s/);
+  assert.ok(act(row!, "fcreload"), "with Reload");
+  // the deadline row's Reload: the same two sends, the status first again, and this time the fetch lands
+  act(row!, "fcreload")!.click(); await flush();
+  assert.equal(w.reloads, 3); assert.equal(countOf(w, "fileComments", "status"), asks + 2);
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader for the re-read");
+  answer(w, after); await flush(); await flush();
+  assert.equal(rowText(), null, "no row while the fetch is out");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader stands through the status");
+  w.landReload!(); await flush(); await flush();
+  assert.equal(w.viewError, null); assert.equal(w.viewMtime, F11);
+  assert.equal(rowText(), null, "no row over the new text"); assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the landing ends the wait");
+  assert.equal(marksOf(w, "h5").length, 1, "the marks are back over the new text");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(rowText(), null, "the landing cleared the deadline: a later tick files nothing");
+  assert.deepEqual(w.hookErrors, []);
+});
+
+test("a fetch the panel asks on a NEW mtime while a pane stands (the poll's tick: its HEAD sees the file rewritten since the failure and asks the fetch on that mtime; a reply's askReload is the same path): the status that follows arms the wait and the loader stands, no row filed off the standing pane; the fetch's own paint settles it: refused, the row in the new pane's words at that paint; landed, the loader goes and the marks paint", async (t: TestContext) => {
+  const { w, aside, rowText, failedRow, FAILED_ROW } = await failureRow(t, ["setTimeout", "setInterval"]);
+  const OTHER = "file too large to show: 60 MB, the cap is 8 MB";
+  const NEWER = DOC.replace("cut", "reduced") + "One more line the session added.\n";
+  w.disk = NEWER; w.diskMtime = F21; w.mtimes[ABS] = F21;
+  const asks = countOf(w, "fileComments", "status");
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(w.reloads, 2, "the poll asked the fetch on the mtime it saw"); assert.equal(countOf(w, "fileComments", "status"), asks + 1, "…and re-asked status");
+  assert.ok(w.failReload, "the fetch is out");
+  assert.equal(rowText(), FAILED_ROW, "the row stands until the status lands: nothing has answered it yet");
+  const newest = status({ fileMtimeNs: F21, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  answer(w, newest); await flush(); await flush();
+  assert.equal(w.reloads, 2, "the same mtime: the status asks no second fetch");
+  assert.equal(rowText(), null, "no row off the standing pane: the fetch is the panel's own and the pane is the failure before it (before round 4: the failure row again, in the 404's words, the fetch still out)");
+  assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the wait's loader stands (before round 4: none)");
+  assert.equal(w.body.querySelectorAll(".fileview-err").length, 1, "the pane stands in the body meanwhile");
+  // refused for another reason: the row files at the paint that shows the new pane, in its words
+  w.failReload!(OTHER); await flush(); await flush();
+  assert.deepEqual(w.hookErrors, []);
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the pane's paint ends the wait");
+  assert.equal(rowText(), failedRow(OTHER), "the row in the new pane's words");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "the deadline was cleared at the paint: no second row");
+  // the row's Reload lands this time
+  act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
+  assert.equal(w.reloads, 3);
+  answer(w, newest); await flush(); await flush();
+  assert.equal(rowText(), null, "no row while the click's fetch is out"); assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the loader through the status");
+  w.landReload!(); await flush(); await flush();
+  assert.equal(w.viewError, null); assert.equal(w.viewMtime, F21);
+  assert.equal(rowText(), null, "no row over the new text"); assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the landing ends the wait");
+  assert.equal(marksOf(w, "h5").length, 1, "the marks over the new text");
   assert.deepEqual(w.hookErrors, []);
 });
 

@@ -47570,7 +47570,10 @@ def _save_file(raw, sid, content, base_mtime_ns, prior=None):
         if cur[:3] == b"\xef\xbb\xbf" and not content.startswith("\ufeff"):
             # the BOM rule (the docstring): the disk has it, the viewer's text never did, so it goes back
             # ahead of the content; keyed on the bytes read above, never on the client's word, and a
-            # content that carries its own U+FEFF is written as it is
+            # content that carries its own U+FEFF is written as it is. One file shape sits inside that
+            # last clause as the base wrote it: bytes beginning with TWO BOMs reach the view with one (the
+            # fetch strips one), so a save writes one and the comments log shows a first-line hunk over a
+            # line nobody touched. Pre-existing, recorded in the plan's item 4 and routed, not fixed here.
             data = b"\xef\xbb\xbf" + data
             written = "\ufeff" + content
             if len(data) > _TEXT_MAX_BYTES:

@@ -478,5 +478,5 @@ test("source: the moved-file row latches once per edit before the clocks are rea
   // the siblings check theirs the same way, so the three rows in the head's `edit` slot agree on once per edit
   assert.match(SRC, /if \(!seed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesMovedUnderEdit\) return;/);
   assert.match(SRC, /if \(this\.editSeed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesUnreadUnderEdit\) return;/);
-  assert.match(SRC, /if \(this\.movedUnderEdit\) \{ this\.movedUnderEdit = false; this\.errors\.delete\("edit"\); this\.ctx\.reload\(\); \}/, "the edit's end spends the latch and re-reads");
+  assert.match(SRC, /if \(this\.movedUnderEdit\) \{ this\.movedUnderEdit = false; this\.errors\.delete\("edit"\); this\.reloadView\(\); \}/, "the edit's end spends the latch and re-reads (through the panel's one door for a re-fetch of its asking, reloadView; the Slice 7 review's round 4)");
 });

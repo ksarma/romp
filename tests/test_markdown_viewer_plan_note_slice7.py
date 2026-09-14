@@ -9,8 +9,12 @@ notes describe a round by its rule, its fixes and its routings (round 2 stripped
 reintroduced one in the plural the check had not matched); a count in the head left at the base's number after a
 later round added a case, against the list's; a `git range-diff` command whose right-hand range ended at `HEAD`, a
 moving reference that stopped pairing commit for commit at the first review commit; and an item's count of a file's
-cases by stage (new in the build, in the review's round 1, in its round 2) one short of the list's for the same file.
-This module reads the Slice 7 section and holds each of the four (the review's round 3).
+cases by stage (new in the build, in the review's round 1, in its round 2, in its round 3) one short of the list's for
+the same file. This module reads the Slice 7 section and holds each of the four (the review's round 3). The stage rule
+reads a round 3 count since the review's round 4: written in round 3, it stopped at round 2, the stage that round
+itself added to the seam suite's two mentions, so the two could disagree on it unread. An item's account of a file may
+stop at an earlier round than the list's, since the list is the note's full account and an item tells its own part;
+every stage an item names is the list's count for that stage, and an item names no stage the list lacks.
 
 The words held out of the note are the nouns the review's plan uses for its readers and its hands, and the verb forms
 of the one who directs a round; "seed" is not among them, since the editor's seed, a seeded comment and the seeded
@@ -41,14 +45,21 @@ RANGE_DIFF = re.compile(r"git range-diff ([^\s`]+)\.\.([^\s`]+) ([^\s`]+)\.\.([^
 # The head's account of a count that moved between the cut point and the base: `file-view-reload.test.ts 23 where
 # the cut point had 20`, `file-view-outline.test.ts 15 where it had 14`
 HEAD_COUNT = re.compile(r"((?:tests/)?[\w-]+\.(?:test\.ts|py)) (\d+) where (?:the cut point|it) had (\d+)")
-# A file counted by stage, in an item (`file-view-seam.test.ts (55, ten new in the build, three in the review's
-# round 1 and three in its round 2, below:`) or in the list (`file-view-seam (55, ten new in the build, three in the
-# review's round 1, three in its round 2)`); a clause may stand between the round 1 count and the conjunction
-STAGES = re.compile(r"((?:tests/)?[\w-]+(?:\.test\.ts|\.py)?) \((\d+), (\w+) new in the build, (\w+) in the review's "
-                    r"round 1[^,]*?(?:,| and) (\w+) in its round 2")
+WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+NUM = r"(\d+|%s)" % "|".join(WORDS)  # a stage's count: digits or a number word, so a mention with another word before
+# a round (`one pin re-aimed in its round 2`) is not read, rather than read and then unconvertible
+# A file counted by stage, in an item (`file-view-seam.test.ts (57, ten new in the build, three in the review's
+# round 1, three in its round 2 and two in its round 3, below:`) or in the list (`file-view-seam (57, ten new in the
+# build, three in the review's round 1, three in its round 2, two in its round 3 with one pin re-aimed and one added)`,
+# `file-view (59, four new in the build, one in the review's round 1, one in its round 2, eight pins re-aimed in its
+# round 2, five re-aimed and four added in its round 3)`); a clause may stand between the round 1 count and the
+# conjunction, and any clauses of the parenthetical between the round 2 count and a round 3 count, which a mention may
+# leave out (the review's round 4: round 3's reading stopped at round 2, the stage that round added)
+STAGES = re.compile(r"((?:tests/)?[\w-]+(?:\.test\.ts|\.py)?) \((\d+), %s new in the build, %s in the review's "
+                    r"round 1[^,]*?(?:,| and) %s in its round 2(?:[^)]*?\b%s (?:added )?in its round 3)?"
+                    % ((NUM,) * 4))
 # The list's entries: `file-view-reload (23, five scenes extended`, `tests/test_kernel_preview.py (31, two record pins)`
 LIST_COUNT = re.compile(r"((?:tools/|tests/)?[\w-]+(?:\.test\.(?:ts|mjs)|\.py)?) \((\d+)(?: legs?)?[,)]")
-WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
 
 
 def _read(*parts):
@@ -98,8 +109,9 @@ def _list_counts(lst):
 
 
 def _stages(text):
-    """path -> (count, new in the build, in round 1, in round 2) for each file the text counts by stage."""
-    return {_path(m.group(1)): (int(m.group(2)), _number(m.group(3)), _number(m.group(4)), _number(m.group(5)))
+    """path -> (count, new in the build, in round 1, in round 2[, in round 3]) for each file the text counts by stage:
+    four entries where the mention stops at round 2, five where it counts round 3."""
+    return {_path(m.group(1)): (int(m.group(2)),) + tuple(_number(w) for w in m.groups()[2:] if w is not None)
             for m in STAGES.finditer(text)}
 
 
@@ -118,8 +130,11 @@ class TheNoteSaysEnough(unittest.TestCase):
         self.assertGreaterEqual(len(RANGE_DIFF.findall(section)), 1, "the head gives a range-diff command to run")
         self.assertGreaterEqual(len(HEAD_COUNT.findall(outside)), 3,
                                 "the head explains the counts that moved between the cut point and the base")
-        both = set(_stages(outside)) & set(_stages(lst))
-        self.assertIn(_path("file-view-seam"), both, "an item and the list both count the seam suite by stage")
+        items, entries = _stages(outside), _stages(lst)
+        seam = _path("file-view-seam")
+        self.assertIn(seam, set(items) & set(entries), "an item and the list both count the seam suite by stage")
+        self.assertEqual((len(items[seam]), len(entries[seam])), (5, 5),
+                         "both mentions of the seam suite count its round 3 stage")
 
 
 class TheNoteHoldsToItsRules(unittest.TestCase):
@@ -152,9 +167,11 @@ class TheNoteHoldsToItsRules(unittest.TestCase):
                                  % m.group(0))
 
     def test_an_items_count_of_a_file_by_stage_is_the_lists(self):
+        """Every stage an item names is the list's count for it, and an item names no stage the list lacks; an item's
+        account may stop at an earlier round than the list's (item 1's file-view entry stops at round 2)."""
         items, lst = _stages(self.outside), _stages(self.lst)
         wrong = ["%s: an item counts %r by stage, the list %r" % (f, items[f], lst[f])
-                 for f in sorted(set(items) & set(lst)) if items[f] != lst[f]]
+                 for f in sorted(set(items) & set(lst)) if lst[f][:len(items[f])] != items[f]]
         self.assertEqual(wrong, [], "\n".join(wrong))
 
 

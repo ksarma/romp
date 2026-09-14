@@ -4211,8 +4211,13 @@ body.filebrowse-open { overflow: hidden; }
   white-space: pre; tab-size: 4; }
 .fileview-pre code { background: none; padding: 0; font: inherit; }
 /* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
-   cap; not a text file; not found) over the path it was asked for. Never a blank pane. */
-.fileview-err { padding: 18px 14px; font-size: 0.86em; color: var(--warn); }
+   cap; not a text file; not found) over the path it was asked for. Never a blank pane. The words break
+   inside the box even with no break opportunity (overflow-wrap: anywhere): a render failure's message
+   (plans/markdown-viewer.md Slice 7, item 1) or a 404's path can hold one long unbroken token, which ran
+   past the box at phone width and gave the body a horizontal scrollbar under the words (the Slice 7
+   review's round 4); the hint, the Download and the note bar's Reload inherit it, and none has a word wider
+   than its box. Both sheets carry this rule, byte for byte (fileview-parity.test.ts). */
+.fileview-err { padding: 18px 14px; font-size: 0.86em; color: var(--warn); overflow-wrap: anywhere; }
 /* the edit-mode notice (file-view.ts noteBar) is a row of the card, between the title bar and the body:
    it keeps its height and the body row shrinks under it, so the editor's 100% is the body it can see; in
    this tree the bar carries the viewer's other one-line notices too, so it shows at any scroll position and
