@@ -794,7 +794,7 @@ test("wantsOwnTab reads a Cmd/Ctrl-click or the middle button; openFileTab opens
 });
 
 // ── the viewer's wiring, at source ────────────────────────────────────────────────────────────────
-test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; the fallback is left bare", () => {
+test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
   assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
   const codeFn = VIEW.split("function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
@@ -803,11 +803,14 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n[^\n]*\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
     "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7` (the walkTokens itself runs for every kind since the Slice 3 review, collecting the code tokens for Copy)");
-  const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, doc.path);");
+  const anchorsAt = mdFn.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
-  const textAt = mdFn.indexOf('if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);');
+  const textAt = mdFn.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
   assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
-  assert.match(mdFn, /box\.textContent = text;[^\n]*\n\s*rendered = false;/, "the fallback's bare text takes no links");
+  // no fallback in mdBlock since Slice 7 of plans/markdown-viewer.md (item 1): a throw propagates to renderBody, whose catch paints
+  // the failure line and the text as Raw rows through codeBlock, which linkifies the rows it built (the wrap branch above)
+  assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no bare-text fallback in mdBlock");
+  assert.doesNotMatch(mdFn, /\brendered\s*=|if \(rendered/, "no `rendered` flag and no gate on it: both passes run on every render");
   assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
   assert.equal((mdFn.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the two link loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors; both select LINK_SEL, every link element (md-sanitize-viewer-links.test.ts)");
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "no a[href] loop is left: it missed an SVG anchor's xlink:href");

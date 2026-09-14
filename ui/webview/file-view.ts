@@ -359,6 +359,21 @@ export const HIDDEN_SECTION = "That section is hidden in the rendered view; open
  *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the guide says
  *  "the file's headings" beside it so the sessions pane's outline is never confused with it (the brief's open question 2). */
 export const OUTLINE_LABEL = "Outline";
+/** The line a failed render stands under (plans/markdown-viewer.md Slice 7, item 1): when marked, the sanitizer or a DOM pass
+ *  of mdBlock throws, or the swap itself does, renderBody paints this sentence and the error's message in the `.fileview-err`
+ *  dress as the body's first child, and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
+ *  and says why, where the old catch wrote the source into the Rendered box as one unannounced paragraph. No hint row (the
+ *  title bar names the path) and no Download (the text is showing). Without a terminal period so the guide can carry the words;
+ *  the line's text is this constant, the message in parentheses, then the period (renderFellLine). */
+export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";
+/** The `.fileview-err` line for a render that fell (RENDER_FELL, above), naming what threw: the body's first child above the
+ *  Raw rows in both viewers. Outside `code.hljs`, so the anchor map's rawIndex never reads it as a row, and outside
+ *  `.fileview-md`, which that body does not hold. */
+function renderFellLine(msg: string): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = RENDER_FELL + " (" + msg + ").";
+  return why;
+}
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1069,6 +1084,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // here, same as Copy path below.
   const fmt = loadFmt();
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
+  let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
   let mtimeNs = "";                           // the file's mtime at load, NANOSECONDS AS A STRING —
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
@@ -1648,7 +1664,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
-    mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" ? "rendered" : "raw",
+    mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" && renderFell === null ? "rendered" : "raw",
     text: () => (editing && bufValue() !== null ? bufValue() : viewText()),   // in edit mode the buffer is the text (Slice 5)
     mtimeNs: () => mtimeNs,
     media: () => (isPdf ? "pdf" : isSvgImage ? "svg" : isImage ? "image" : null),
@@ -2225,10 +2241,27 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
     folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    // The pass below builds the block and swaps it in one try (plans/markdown-viewer.md Slice 7, item 1): a marked bug must never
+    // cost the content, and this is where the content is kept now that mdBlock carries no catch of its own. A throw from marked,
+    // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the message is recorded
+    // (renderFell, which mode() reads as "raw" for this paint) and the body gets the RENDER_FELL line first and the text as Raw
+    // rows under it, the line saying what happened where the person is looking, instead of the source written into the Rendered
+    // box as one unannounced paragraph. The fallback runs in the catch, and a throw from THAT propagates (into the fetch chain's
+    // own catch at a landing): a second failure is a bug, not a file. The rest of the pass runs as for any text paint, so the
+    // hooks fire once and read the rows through mode(); the Rendered button stays pressed (fmt.md is the person's saved choice;
+    // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
+    // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
+    // paint that stands does.
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
-      body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      try {
+        body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        renderFell = null;
+      } catch (err) {
+        renderFell = err instanceof Error && err.message ? err.message : String(err);
+        body.replaceChildren(renderFellLine(renderFell), codeBlock(text, path, true));
+      }
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
@@ -3377,6 +3410,7 @@ export function openUrlView(href: string): void {
 
   const fmt = loadFmt();
   let text: string | null = null;
+  let renderFell: string | null = null;                // the message of the throw the last text paint fell on (renderBody's catch, as the local viewer's); null once a paint stands
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   for (const mode of ["rendered", "raw"] as const) {
     const b = el("button", "fileview-btn") as HTMLButtonElement;
@@ -3484,9 +3518,17 @@ export function openUrlView(href: string): void {
     if (text === null) return;                         // the loader holds the body until the bytes land
     folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
-    body.replaceChildren(fmt.md === "rendered"
-      ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
-      : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    // The build and the swap in one try, the local viewer's shape (plans/markdown-viewer.md Slice 7, item 1): a render that
+    // throws paints the RENDER_FELL line and the document's text as Raw rows under it, and a throw from that fallback propagates.
+    try {
+      body.replaceChildren(fmt.md === "rendered"
+        ? mdBlock(text, { kind: "url", href: loc })    // relative refs resolve against where it LIVES
+        : codeBlock(text, parts.base, true));          // basename → langFor → markdown highlighting
+      renderFell = null;
+    } catch (err) {
+      renderFell = err instanceof Error && err.message ? err.message : String(err);
+      body.replaceChildren(renderFellLine(renderFell), codeBlock(text, parts.base, true));
+    }
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
@@ -3829,43 +3871,42 @@ type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; si
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
 // before it ever reaches the DOM: an <img onerror> or a javascript: href in a README must never run in
 // the dashboard, and a README's <style>, form or fixed-positioned div must never reach the viewer's chrome.
+// No catch here (plans/markdown-viewer.md Slice 7, item 1): a throw from marked, from the sanitizer or from any DOM pass
+// below propagates to the caller, each viewer's renderBody, whose try around the build and the swap keeps the content as
+// Raw rows under a line that says what happened (RENDER_FELL); the catch that lived here wrote the source into the box as
+// one unannounced paragraph, and the link passes at the end ran on a render that stood and skipped the fallback, so both
+// run on every render now.
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
-  let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   const fences: Fence[] = [];                          // marked's code tokens in document order, for the fence pass's Copy (fence-source.ts)
-  try {
-    // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
-    // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
-    // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
-    // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
-    // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
-    // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
-    // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
-    // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
-    const base = marked.defaults.walkTokens;
-    const dirty = marked.parse(text, { walkTokens: (t) => {
-      if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
-      if (doc && doc.kind === "file") viewerWalkTokens(t);
-      if (base) void base.call(marked, t);
-    } }) as string;
-    // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
-    // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
-    // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
-    // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
-    // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
-    // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
-    // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
-    // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
-    // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
-    // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
-    // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
-    // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
-    // slug and the id the note's own links spell.
-    box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
-  } catch {
-    box.textContent = text;                            // a marked bug must never cost the content
-    rendered = false;
-  }
+  // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
+  // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
+  // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
+  // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
+  // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
+  // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
+  // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
+  // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
+  const base = marked.defaults.walkTokens;
+  const dirty = marked.parse(text, { walkTokens: (t) => {
+    if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
+    if (doc && doc.kind === "file") viewerWalkTokens(t);
+    if (base) void base.call(marked, t);
+  } }) as string;
+  // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
+  // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
+  // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
+  // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
+  // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
+  // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
+  // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
+  // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
+  // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
+  // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
+  // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
+  // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
+  // slug and the id the note's own links spell.
+  box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -3946,7 +3987,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why. The module
     // walks every `a`, the SVG anchor included (its xlink:href is a plain href by now, above), and writes each
     // attribute as one, so an SVG link is stamped like an HTML one.
-    if (rendered) linkMarkdownAnchors(box, doc.path);
+    linkMarkdownAnchors(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
     // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
@@ -3994,8 +4035,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
-  // The fallback's bare text is left bare: it is the content and nothing else, which is that branch's promise.
-  if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);
+  if (doc && doc.kind === "file") linkifyFileText(box, doc.path);
   return box;
 }
 

@@ -321,7 +321,7 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
 });
 
 test("local file mode: a relative link becomes a path link on the anchor itself (file-view-links.ts linkMarkdownAnchors), read by the ONE click listener on the body; its own #fragment rides as data-frag and lands after the open", () => {
-  assert.match(MD_FN, /if \(doc && doc\.kind === "file"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(rendered\) linkMarkdownAnchors\(box, doc\.path\);/,
+  assert.match(MD_FN, /if \(doc && doc\.kind === "file"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*linkMarkdownAnchors\(box, doc\.path\);/,
     "the file kind's anchors are sorted by the module: a path link with the joined path, a section link, a dead link that says why (file-view-links.test.ts)");
   assert.doesNotMatch(MD_FN, /"fv-open"|joinDocPath\(/, "no second marker and no second join for a sibling link: the path link's act is the chat's (openpath), its path the module's (resolveViewerPath)");
   const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
@@ -405,7 +405,7 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore, the tables' width stamp and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);\n\s*\}\n\s*folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint (the try's catch closes over the fallback rows since Slice 7 of plans/markdown-viewer.md, item 1), the folds' restore, the tables' width stamp and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 

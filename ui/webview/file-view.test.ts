@@ -472,8 +472,8 @@ test("the width watch is wired: each viewer opens one on the body it builds, eac
   assert.equal(opens.length, 1, "openUrlView watches its body as it builds it");
   assert.equal((VIEW.match(/const stampBodyWidth = watchBodyWidth\(body, \(w\) => \{/g) || []).length, 1,
     "openFileView watches its body where the reflow's per-frame fold lives, the fold on the watch's onWidth (the seam re-places the comments panel's cards once per animation frame)");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
-    "openFileView: every paint stamps its fresh tables after the folds' restore, the keeper's and then a record's held past a Raw first paint (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n[^\n]*\n[^\n]*\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
+    "openFileView: every paint stamps its fresh tables after the folds' restore, the keeper's and then a record's held past a Raw first paint, after the try's close (Slice 7 of plans/markdown-viewer.md, item 1: the swap sits inside the try; the fallback paint takes the same stamp) (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
   // openUrlView stamps between the folds' restore and the seat, the local viewer's order: the seat and the fragment landing
   // measure the fresh root, and a stamp after them would change the layout they had measured (review round 1 of the 4d-3
   // fold, correctness-1). A source pin, not an executed case: the stand-ins have no layout, so neither the seat nor the
@@ -624,7 +624,7 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   // those and stayed green with mdBlock's own stamps deleted (review of Slice 1, round 2).
   const mdFn = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
   assert.match(mdFn, /if \(doc && doc\.kind === "file"\) \{/, "the file kind has its own arm");
-  assert.match(mdFn, /if \(rendered\) linkMarkdownAnchors\(box, doc\.path\);/, "a file's links: the module's walk, in Rendered only");
+  assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);/, "a file's links: the module's walk, on every render (no `rendered` gate since Slice 7 of plans/markdown-viewer.md, item 1: mdBlock has no fallback to skip)");
   assert.match(mdFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes");
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
@@ -1433,4 +1433,36 @@ test("source: the PR review's round 1 of Slice 6 (plans/markdown-viewer.md): the
   assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutlineKeeping\(false\); outlineBtn\.focus\(\{ preventScroll: true \}\); \}/, "Escape: the menu-button pattern, the keyboard back on the button (the Tab branch's shape)");
   assert.match(openFn, /const underEye = \(\): number => \{\n\s*const edge = body\.getBoundingClientRect\(\)\.top;\n\s*let at = 0, margin = -1;\n\s*heads\.forEach\(\(h, i\) => \{\n\s*const r = h\.getBoundingClientRect\(\);\n\s*if \(r\.height === 0 && r\.width === 0\) return;[^\n]*\n\s*if \(margin < 0\) margin = typeof getComputedStyle === "function" \? parseFloat\(getComputedStyle\(h\)\.scrollMarginTop\) \|\| 0 : 0;\n\s*if \(r\.top <= edge \+ margin \+ 0\.5\) at = i;\n\s*\}\);\n\s*return at;\n\s*\};/, "the last heading with a box whose top is at or above the body's edge, the landing's own margin allowed; the first row with none");
   assert.doesNotMatch(openFn, /setCur\(0\);\n\s*pop\.focus/, "never the first row by default");
+});
+
+// ── item 1 of Slice 7 of plans/markdown-viewer.md: the render catch moves to the callers, and says what happened ─────────
+test("source: mdBlock keeps no try, no catch and no fallback; both viewers' renderBody wrap the block's build and the swap in one try whose catch records the message, paints the RENDER_FELL line and then the Raw rows; mode() reads the record; the line's words are exported", () => {
+  // mdBlock: the parse and the sanitize at the function's own level (a two-space indent, inside no try), no fallback write, no flag
+  const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
+  assert.match(mdFn, /\n {2}const base = marked\.defaults\.walkTokens;\n {2}const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n/, "the parse at the function's own level");
+  assert.match(mdFn, /\n {2}box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty, mintHeadingIds\)\.childNodes\)\);\n/, "the sanitize and the adoption at the function's own level: a throw from either propagates");
+  assert.doesNotMatch(mdFn, /\n {2}try \{/, "no try at the function's own level (the fence highlight's and the URL parse's inner ones stand)");
+  assert.doesNotMatch(mdFn, /box\.textContent = text;|let rendered|rendered = false|if \(rendered/, "no fallback write and no `rendered` flag: the caller keeps the content, and both link passes run on every render");
+  assert.match(mdFn, /\n {4}linkMarkdownAnchors\(box, doc\.path\);\n/, "the anchors' pass, ungated");
+  assert.match(mdFn, /\n {2}if \(doc && doc\.kind === "file"\) linkifyFileText\(box, doc\.path\);\n {2}return box;$/, "the text pass, gated on the file kind alone");
+  assert.match(VIEW, /\n\/\/ No catch here \(plans\/markdown-viewer\.md Slice 7, item 1\)[^\n]*\n(?:\/\/[^\n]*\n)*function mdBlock\(/, "mdBlock's header says where a throw goes");
+  // the local viewer's text paint, inside perfTimed (contract C7): try, the swap, the record cleared; catch, the record set, the line then the rows
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /perfTimed\("paint", \(\) => \{[^\n]*\n\s*if \(text === null\) return;[^\n]*\n\s*const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n/, "the place read, then the try");
+  assert.match(openFn, /try \{\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*renderFell = err instanceof Error && err\.message \? err\.message : String\(err\);\n\s*body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, path, true\)\);\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+    "the swap inside the try; the message recorded from an Error's message or the value's string; the line first, then codeBlock's rows; the rest of the pass runs as for any text paint (the folds, the stamp, the Outline, the hooks once, shownText, the seat); A6's empty-file line may follow the try");
+  assert.match(openFn, /\n\s*let renderFell: string \| null = null;/, "per-open state");
+  assert.match(openFn, /mode: \(\) => \(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\) \? "media" : isMd && fmt\.md === "rendered" && renderFell === null \? "rendered" : "raw",/, "mode() answers raw while the record stands (the Rendered button stays pressed: fmt.md is untouched)");
+  assert.match(openFn, /const rendered = isMd && fmt\.md === "rendered";/, "the paint's own choice still follows the buttons: the Rendered click tries again, the Raw click paints rows and clears the record");
+  // the URL viewer: the same try, the document's rows under the same line
+  const urlFn = VIEW.split("export function openUrlView")[1].split("\nfunction startDownload(")[0];
+  assert.match(urlFn, /\n\s*let renderFell: string \| null = null;/, "its own per-open record");
+  assert.match(urlFn, /const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n\s*\? mdBlock\(text, \{ kind: "url", href: loc \}\)[^\n]*\n\s*: codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*renderFell = err instanceof Error && err\.message \? err\.message : String\(err\);\n\s*body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, parts\.base, true\)\);\n\s*\}\n\s*folds\.restore\(\);/,
+    "the URL viewer's renderBody: build and swap in one try, the line then the rows in its catch, the folds' restore after");
+  assert.equal((VIEW.match(/renderFellLine\(renderFell\)/g) || []).length, 2, "the two viewers' catches, and nothing else, paint the line");
+  // the line: the exported sentence (contract C5), the message in parentheses, the period; the pane dress, no hint, no button
+  assert.match(VIEW, /\nexport const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";\n/);
+  assert.match(VIEW, /\nfunction renderFellLine\(msg: string\): HTMLElement \{\n\s*const why = el\("div", "fileview-err"\);\n\s*why\.textContent = RENDER_FELL \+ " \(" \+ msg \+ "\)\.";\n\s*return why;\n\}\n/);
+  // the fetch chain's own catch stands for a refused fetch and for a throw from the fallback itself
+  assert.match(openFn, /\}\)\)\.catch\(\(err\) => land\(\(\) => \{\n\s*if \(!stands\(\)\) return;/, "the chain's .catch, unchanged");
 });

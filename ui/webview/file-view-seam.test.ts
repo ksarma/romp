@@ -188,7 +188,15 @@ class El {
 // mintHeadingIds and the registered passes run over the empty body and find nothing.
 /** Every dirty string the stand-in was handed: one per Rendered paint (the record pin counts them). */
 const sanitized: string[] = [];
-const fakeSanitizer = { addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { sanitized.push(dirty); return new El("body"); } };
+/** Set for a case: the stand-in's sanitize throws this message instead of answering (item 1 of Slice 7: the render catch). */
+let sanitizeFails: string | null = null;
+/** Set for a case: what the stand-in's sanitize answers instead of an empty body (a throw from the adoption that follows it). */
+let sanitizeAnswers: (() => El) | null = null;
+const fakeSanitizer = { addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => {
+  if (sanitizeFails !== null) throw new Error(sanitizeFails);
+  sanitized.push(dirty);
+  return sanitizeAnswers ? sanitizeAnswers() : new El("body");
+} };
 setMdSanitizer(fakeSanitizer as unknown as Parameters<typeof setMdSanitizer>[0]);
 
 const doc = {
@@ -934,7 +942,8 @@ test("scrollToOffset maps a source offset to its Raw row: one .fv-cl per logical
 
 test("source: the seam's closures are the viewer's own state, and the fileSaved branch reads the kernel's logWarning", () => {
   assert.match(VIEW, /setEditBlocked: \(reason\) => \{\n\s*editBlocked = reason;/, "the reason is stored, not dropped");
-  assert.match(VIEW, /mode: \(\) => \(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\) \? "media" : isMd && fmt\.md === "rendered" \? "rendered" : "raw",/);
+  assert.match(VIEW, /mode: \(\) => \(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\) \? "media" : isMd && fmt\.md === "rendered" && renderFell === null \? "rendered" : "raw",/,
+    "the text arm reads renderFell (Slice 7 of plans/markdown-viewer.md, item 1; contract C7): over the Raw rows a failed render fell back to, mode() answers raw while the Rendered button stays pressed");
   assert.match(VIEW, /let editHooks: \{ reqId: number; logWarning: string \| null; saved: \(mtimeNs: string, logged: boolean\) => void;/, "the save's hooks carry the warning");
   const reply = VIEW.split('m.type === "fileSaved" && editHooks')[1].split("} else if")[0];
   assert.match(reply, /h\.logWarning = typeof m\.logWarning === "string" && m\.logWarning \? m\.logWarning : null;\n\s*h\.saved\(String\(m\.mtimeNs \|\| ""\), m\.logged === true\);/,
@@ -973,14 +982,15 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
-  // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
+  // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
+  // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
   const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));");   // the shared sanitizer, md-sanitize.ts, with the heading ids as its caller pass (before the fill)
-  const fallbackAt = mdFn.indexOf("box.textContent = text;");
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
-  assert.ok(sanitizeAt >= 0 && fallbackAt > sanitizeAt && rewriteAt > fallbackAt, "sanitize → (fallback) → rewrite, in that order, on `box`");
+  assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no fallback in mdBlock: the caller keeps the content (file-view.test.ts pins the try)");
+  assert.ok(sanitizeAt >= 0 && rewriteAt > sanitizeAt, "sanitize, then rewrite, in that order, on `box`");
   assert.ok(mdFn.indexOf("return box;") > rewriteAt);
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   // Slice 4 of plans/markdown-viewer.md widened the walk from `img[src]` to every attribute a figure fetches through
@@ -1695,4 +1705,81 @@ test("record pin: a Rendered paint sanitizes through the seam's stand-in, once p
   assert.equal(bare.isSupported, false, "no window.document: DOMPurify reports itself unsupported");
   assert.equal(bare.sanitize, undefined); assert.equal(bare.addHook, undefined);
   assert.equal(DOMPurify.isSupported, false, "the module-global instance is that factory under node too");
+});
+
+// ── item 1 of Slice 7 of plans/markdown-viewer.md: a render that throws shows the text under a line that says so ─────────
+// Every failure says what happened where the person is looking: mdBlock keeps no catch, and each viewer's renderBody wraps
+// the block's build and the swap in one try whose catch records the message (renderFell), paints the RENDER_FELL line as the
+// body's first child and the file's text as Raw rows under it (codeBlock), and lets the rest of the pass run, so the hooks
+// fire once and read the rows through mode(), which answers "raw" while the record stands. The Rendered button stays pressed
+// (the person's saved choice; the line says why rows show); the Raw click paints rows without the line; the Rendered click
+// tries again. Before: mdBlock's own catch wrote the note's text into `.fileview-md` as one unannounced paragraph and mode()
+// kept answering "rendered" (red at the first assertion over a git archive of the base with RENDER_FELL stubbed).
+test("a Rendered paint whose sanitizer throws paints the RENDER_FELL line first, naming the message, and the text as Raw rows under it: no .fileview-md, mode() raw, renderedImages() empty, the Outline button hidden, the Rendered button pressed, one paint; the Raw click leaves rows and no line; a Rendered click that throws again brings the line back; the Rendered click with the sanitizer healed renders again", async (t) => {
+  const { RENDER_FELL } = await mod();
+  assert.equal(RENDER_FELL, "This file could not be shown as rendered Markdown, so its text is shown as written", "the exported words (contract C5: the guide carries them; no terminal period, the line adds the message and its own)");
+  sanitizeFails = "synthetic sanitizer failure";
+  t.after(() => { sanitizeFails = null; sanitizeAnswers = null; });
+  const o = await open(REPORT, t);
+  const { ctx, body } = o;
+  const first = body.childNodes[0];
+  assert.ok(first instanceof El && first.matches("div.fileview-err"), "the body's first child is the failure line, in the pane dress");
+  assert.equal(first.textContent, RENDER_FELL + " (synthetic sanitizer failure).", "the sentence, then the error's message in parentheses");
+  assert.equal(first.querySelectorAll("button").length, 0, "no Download: the text is showing");
+  assert.equal(first.querySelectorAll(".fileview-err-hint").length, 0, "no hint row: the title bar names the path");
+  const second = body.childNodes[1];
+  assert.ok(second instanceof El && second.matches("div.fileview-code") && second.querySelector("code.hljs"), "the Raw rows' root under the line, its code element where the anchor map and the reader's place read rows");
+  assert.equal(body.childNodes.length, 2, "the line and the rows, nothing else");
+  assert.equal(body.querySelector(".fileview-md"), null, "no Rendered box: the failed block never reached the body");
+  assert.equal(ctx.mode(), "raw", "mode() answers raw over the rows (the panel pairs over code.hljs, the place reads rows)");
+  assert.equal(o.b.rendered.classList.contains("on"), true, "the Rendered button stays pressed: the person's saved choice, the line says why rows show");
+  assert.equal(o.b.rendered.getAttribute("aria-pressed"), "true");
+  assert.equal(o.b.raw.classList.contains("on"), false);
+  assert.equal(store.get("romp:fileviewFmt"), undefined, "the saved preference is untouched (the default, Rendered, was never written)");
+  assert.deepEqual(ctx.renderedImages(), [], "renderedImages() follows mode()");
+  assert.equal(o.wrap.querySelector(".fileview-outline-btn")!.hidden, true, "the Outline button hides: no .fileview-md holds a heading");
+  assert.equal(ctx.text(), DOC, "text() is the file's text: the rows are the content");
+  assert.equal(paints, 1, "one paint, the fallback's, fired the hooks");
+  assert.equal(errBar(body), first, "the card's first .fileview-err is the line in the body: no bar was raised");
+  // the Raw click: rows alone, the record cleared
+  o.b.raw.click();
+  assert.equal(body.childNodes.length, 1);
+  assert.ok((body.childNodes[0] as El).matches("div.fileview-code"), "rows alone");
+  assert.equal(body.querySelector(".fileview-err"), null, "the line went with the Rendered attempt");
+  assert.equal(ctx.mode(), "raw");
+  assert.equal(paints, 2);
+  // the Rendered click tries again: still throwing, the line comes back over rows
+  o.b.rendered.click();
+  assert.ok((body.childNodes[0] as El).matches("div.fileview-err") && (body.childNodes[1] as El).matches("div.fileview-code"), "the line over the rows again");
+  assert.equal(ctx.mode(), "raw");
+  assert.equal(paints, 3);
+  // healed: the Rendered click renders
+  sanitizeFails = null;
+  o.b.rendered.click();
+  assert.ok(body.querySelector(".fileview-md"), "the box mdBlock adopted the stand-in's body into");
+  assert.equal(body.querySelector(".fileview-err"), null, "no line over a render that stands");
+  assert.equal(ctx.mode(), "rendered");
+  assert.equal(paints, 4);
+  assert.equal(o.wrap.querySelector(".fileview-outline-btn")!.hidden, true, "no heading in the stand-in's empty body: the button stays hidden for that reason alone");
+});
+
+test("a throw from the DOM work after the sanitizer (adopting the body it answered) takes the same road as a sanitizer throw, and a thrown value that is not an Error is named by its string", async (t) => {
+  const { RENDER_FELL } = await mod();
+  // a body sanitizeMd's own passes can walk (querySelectorAll finds nothing) whose adoption, mdBlock's Array.from over its childNodes, throws
+  sanitizeAnswers = () => { const b = new El("body"); b.querySelectorAll = () => []; Object.defineProperty(b, "childNodes", { get() { throw new Error("synthetic adoption failure"); } }); return b; };
+  t.after(() => { sanitizeAnswers = null; sanitizeFails = null; });
+  const o = await open(REPORT, t);
+  assert.equal((o.body.childNodes[0] as El).textContent, RENDER_FELL + " (synthetic adoption failure).");
+  assert.ok((o.body.childNodes[1] as El).matches("div.fileview-code"));
+  assert.equal(o.ctx.mode(), "raw"); assert.equal(paints, 1);
+  // a bare string thrown (a library that throws a value): String(err)
+  sanitizeAnswers = () => { throw "bare string"; };   // eslint-disable-line no-throw-literal
+  o.b.rendered.click();
+  assert.equal((o.body.childNodes[0] as El).textContent, RENDER_FELL + " (bare string).");
+  assert.equal(paints, 2);
+  // an Error with an empty message: named by its String form, never an empty parenthesis
+  sanitizeAnswers = () => { throw new Error(""); };
+  o.b.rendered.click();
+  assert.equal((o.body.childNodes[0] as El).textContent, RENDER_FELL + " (Error).");
+  assert.equal(paints, 3);
 });
