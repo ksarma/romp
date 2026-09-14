@@ -287,8 +287,11 @@ let cur: World | null = null;
   const mt = cur!.mtimes[p];
   return { status: mt === undefined ? 404 : 200, headers: { get: (h: string) => (h === "X-Romp-Mtime-Ns" && mt !== undefined ? mt : null) } };
 };
+/** The row split codeBlock takes since Slice 7 of plans/markdown-viewer.md (contract C6): a CRLF as one ending, then a lone CR, then LF,
+ *  the one trailing empty piece popped; the panel's landing row is counted over the same three endings (anchor-map.ts rawOffsetToLine). */
+const ROW_SPLIT = /\r\n|\r|\n/;
 function rows(code: El, src: string): void {
-  const lines = src.split("\n");
+  const lines = src.split(ROW_SPLIT);
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
   code.replaceChildren(...lines.map((ln) => {
     const cl = new El("span"); cl.className = "fv-cl";
@@ -304,14 +307,14 @@ function renderedDoc(box: El): void {
   box.replaceChildren(el("h1", "Report"), el("h2", "Findings"), el("p", "The api session cut p95 latency by 40% and the p99 by 10%."),
     el("p", "We recommend shipping the cache in v1.2."), el("p", "Risks remain in the fallback path."), el("p", "Next steps: measure again."));
 }
-type WorldOpts = { mode?: "raw" | "rendered"; md?: boolean };
+type WorldOpts = { mode?: "raw" | "rendered"; md?: boolean; src?: string };
 function world(over: WorldOpts = {}): World {
   let mode: "raw" | "rendered" = over.mode || "raw";
   const md = over.md !== false;
   const main = new El("div"); main.className = "fileview-main";
   const body = new El("div"); body.className = "fileview-body";
   main.appendChild(body);
-  let text = DOC;
+  let text = over.src ?? DOC;
   const paintBody = () => {
     if (mode === "raw") {
       const wrap = new El("div"); wrap.className = "fileview-code";
@@ -344,14 +347,15 @@ function world(over: WorldOpts = {}): World {
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     // the real seam: `if (!isMd || editing) return; fmt.md = mode; saveFmt(fmt); renderBody();` — renderBody swaps the body and fires onRendered
     setMode: (m) => { w.modes.push(m); if (!md) return; mode = m; paintBody(); fireRendered(); },
-    // the real seam: the `.fv-cl` at the count of line ends before the offset, clamped to the last row, centred
+    // the real seam: the `.fv-cl` holding the offset (since Slice 7 through the verified row map, anchor-map.ts rawRowForOffset, which
+    // follows the three-ending split above; here the count over the same split), clamped to the last row, centred
     scrollToOffset: (n) => {
       w.scrolls.push(n);
       const code = body.querySelector("code.hljs");
       if (!code) return;
       const all = code.querySelectorAll(".fv-cl");
       if (!all.length) return;
-      const line = (text.slice(0, Math.max(0, n)).match(/\n/g) || []).length;
+      const line = text.slice(0, Math.max(0, n)).split(ROW_SPLIT).length - 1;
       all[Math.min(line, all.length - 1)].scrollIntoView();
     },
     reload: () => { w.reloads++; w.viewMtime = w.diskMtime; text = w.disk; paintBody(); fireRendered(); },
@@ -511,6 +515,29 @@ test("a file the viewer shows only Raw (setMode returns early): with the marks o
   assert.deepEqual(cued(w), [four], "the same row, cued once");
   assertCued(four, "still the landing");
   assert.equal(marksOf(w).length, 0, "off: no change mark in Raw");
+});
+
+test("a CR-only file (Slice 7, item 7: Raw splits rows on CR, CRLF and LF): with the marks off, Reveal cues the row that holds the change, the row the viewer centred, not the first row an LF count gave", async (t: TestContext) => {
+  store.set(SETTINGS_KEY, JSON.stringify({ changesInline: false }));
+  t.after(() => store.delete(SETTINGS_KEY));
+  const CR = DOC.replace(/\n/g, "\r");                  // the same text, every line ended by a lone CR: every offset the same
+  assert.equal(CR.length, DOC.length); assert.equal(CR.indexOf("\n"), -1);
+  const w = world({ md: false, src: CR }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h2, h3] }));
+  assert.equal(rawRows(w).length, 10, "one row per CR-ended line (before Slice 7 the viewer laid one row for the whole file)");
+  assert.ok(rawRows(w).every((r) => !/[\r\n]/.test(r.textContent)), "no row carries an ending");
+  revealOf(aside, "chg:h3").click();
+  assert.deepEqual(w.scrolls, [h3.curFrom], "Raw, at the change's start");
+  const six = rowAt(w, 6);
+  assert.equal(six.textContent, "We recommend shipping the cache in v1.2.", "the deletion's row");
+  assert.equal(scrolledInto[scrolledInto.length - 1], six, "the viewer centred it");
+  assertCued(six, "the cue is on the row holding the change (before: rawOffsetToLine counted LF alone, so every offset of a CR-only file cued row 1)");
+  assert.deepEqual(cued(w), [six], "one row cued");
+  assert.equal(marksOf(w).length, 0, "off: no change mark");
+  revealOf(aside, "chg:h1").click();
+  const four = rowAt(w, 4);
+  assert.equal(scrolledInto[scrolledInto.length - 1], four);
+  assertCued(four, "the substitution's row"); assert.deepEqual(cued(w), [four]);
 });
 
 test("pins: paintAll clears the landing before it paints; both Reveal branches cue right after the scroll; closePanel and dispose clear it; the dress names the accent tokens and no hex; the row is the one the viewer's scrollToOffset centres", () => {

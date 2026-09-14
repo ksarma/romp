@@ -23,7 +23,7 @@ import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
   paintRawPoint, paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, DEL_LABEL_MAX, PILCROW, type ChangePaint,
-  sourceBlockSpans, renderedBlockIndex,
+  sourceBlockSpans, renderedBlockIndex, rawRows, rawRowSpan,
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
@@ -581,7 +581,62 @@ test("rawOffsetToLine counts the Raw view's rows", () => {
   assert.equal(rawOffsetToLine(src, 7), 2, "the LF that ends line 3 still lies on it");
   assert.equal(rawOffsetToLine(src, 8), 3);
   assert.equal(rawOffsetToLine(src, 99), 3);
-  assert.equal(rawOffsetToLine("x\ry", 2), 0, "a lone CR stays inside its row, as the viewer's split has it");
+  assert.equal(rawOffsetToLine("x\ry", 2), 1, "a lone CR ends its row since Slice 7, as the viewer's split has it (before: 0, the CR inside its row)");
+});
+
+// ── Raw: the rows split on CR, CRLF and LF (Slice 7 of plans/markdown-viewer.md, item 7) ───────────────────────
+/** The row split file-view.ts takes in Slice 7 (contract C6): a CRLF as one ending, then a lone CR, then LF, the one trailing
+ *  empty piece popped; `wrapNumberedHtml` above stays the pinned replica of the viewer's text until that pin moves. */
+const ROW_SPLIT = /\r\n|\r|\n/;
+function rowsSplitOnEndings(html: string): string {
+  const lines = html.split(ROW_SPLIT);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.map((ln) => `<span class="fv-cl"><span class="fv-ct">${ln}</span></span>`).join("");
+}
+/** `code.hljs` holding `text`'s rows on that split (no highlighter: the endings are what these cases read). */
+function buildRawSplit(text: string): FakeElement {
+  const doc = new FakeDocument();
+  const code = doc.createElement("code"); code.setAttribute("class", "hljs");
+  for (const n of parseHTML(doc, rowsSplitOnEndings(escapeHtml(text)))) code.appendChild(n);
+  return code;
+}
+/** The row that holds `offset` by the split alone: the endings whose last character lies before the offset. */
+const rowBySplit = (text: string, offset: number): number => {
+  let row = 0;
+  for (const m of text.matchAll(/\r\n|\r|\n/g)) if ((m.index as number) + m[0].length <= offset) row++; else break;
+  return row;
+};
+
+test("Raw over a CR-only and a CRLF source: rows laid on the three-ending split verify against the file and give its offsets (rawRows, a selection, rawRowForOffset), and rawOffsetToLine answers the row the split gives for every offset, agreeing with rawRowForOffset row for row (before Slice 7: an LF-only count, every offset of a CR-only file on row 0); zero rows over an empty source are accepted", () => {
+  for (const [what, text] of [["CR-only", "alpha\rbeta\rgamma\r"], ["CRLF", "alpha\r\nbeta\r\ngamma\r\n"], ["mixed", "alpha\rbeta\r\ngamma\ndelta"], ["blank rows", "a\r\r\nb\n\rc"]] as Array<[string, string]>) {
+    const code = buildRawSplit(text);
+    const rows = rawRows(El(code), text) as unknown as FakeElement[] | null;
+    assert.ok(rows, what + ": the rows verify against the source");
+    const expected = text.split(ROW_SPLIT); if (expected[expected.length - 1] === "") expected.pop();
+    assert.deepEqual(rows!.map((r) => r.textContent), expected, what + ": one row per line, no row carrying an ending");
+    assert.ok(rows!.every((r) => !/[\r\n]/.test(r.textContent)), what + ": no CR or LF in a row's text");
+    for (let n = 0; n <= text.length; n++) {
+      const byMap = rawRowForOffset(El(code), text, n) as unknown as FakeElement | null;
+      const line = rawOffsetToLine(text, n);
+      assert.equal(line, rowBySplit(text, n), what + ": rawOffsetToLine at " + n + " is the split's row (unclamped: at the end of a text closed by an ending it counts one past the last row, and the callers clamp, as landOn does)");
+      assert.equal(byMap, rows![Math.min(line, rows!.length - 1)], what + ": rawRowForOffset and rawOffsetToLine agree at offset " + n);
+    }
+    assert.equal(rawOffsetToLine(text, text.length + 5), rows!.length - 1 + (text.endsWith("\r") || text.endsWith("\n") ? 1 : 0), what + ": past the end, one past the last row when the text ends in an ending (the caller clamps)");
+    // a selection from the first row's start to the end of the second row that holds text maps to the file's offsets, the file's
+    // own endings inside the quote (a blank row has no text node, so the second text node may sit a row further down)
+    const t = allText(code, isRow);
+    const rowOf = (n: FakeNode): FakeElement => { let e = n; while (!(e.nodeType === 1 && isRow(e as FakeElement))) e = e.parentNode as FakeNode; return e as FakeElement; };
+    const end = rawRowSpan(El(code), text, El(rowOf(t[1])))!.end;
+    const r = ok(mapRawSelection(sel({ node: t[0], offset: 0 }, { node: t[1], offset: t[1].data.length }), El(code), text), what + ": a selection across the first ending");
+    assert.equal(r.quote, text.slice(0, end), what + ": the quote keeps the file's endings");
+    assert.deepEqual(r.range, { start: 0, end });
+  }
+  // item 6's control: an empty file paints no rows, and zero rows over "" are the rows of that file, not a mismatch
+  const empty = buildRawSplit("");
+  assert.equal(empty.childNodes.length, 0, "no row for an empty file");
+  assert.deepEqual(rawRows(El(empty), ""), [], "zero rows over an empty source: accepted, no error");
+  assert.equal(rawRowForOffset(El(empty), "", 0), null, "no row to land on");
+  assert.equal(rawOffsetToLine("", 0), 0);
 });
 
 // ── Rendered: the aligned fixture ──────────────────────────────────────────────────────────────────

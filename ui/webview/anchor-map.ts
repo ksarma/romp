@@ -329,12 +329,13 @@ function refuse(reason: string, extra?: Partial<MapRefusal>): MapRefusal {
 
 // ── Raw view ───────────────────────────────────────────────────────────────────────────────────────
 //
-// The viewer builds one `.fv-cl` row per line by splitting the text on "\n" and setting the rows through
-// innerHTML, so a CRLF file's rows end in a "\r" that the HTML parser turns into "\n", and a lone CR
-// inside a line does the same. The walk below does not assume either split: it verifies every row's
-// text against the source character by character (a DOM "\n" may stand for a source "\r"), then consumes
-// whichever line ending the source has between rows. Within a verified row every DOM character is one
-// source character, so an (row, column) pair is a source offset with no further lookup.
+// The viewer builds one `.fv-cl` row per line and sets the rows through innerHTML. Since Slice 7 of
+// plans/markdown-viewer.md it splits the text on CRLF, a lone CR and LF alike (file-view.ts wrapNumberedHtml),
+// so no row's text carries a "\r"; before, it split on "\n" alone, so a CRLF file's rows ended in a "\r" that
+// the HTML parser turned into "\n", and a lone CR inside a line did the same. The walk below assumes neither
+// split: it verifies every row's text against the source character by character (a DOM "\n" may stand for a
+// source "\r"), then consumes whichever line ending the source has between rows. Within a verified row every
+// DOM character is one source character, so an (row, column) pair is a source offset with no further lookup.
 
 type RawRow = { el: DElement; text: string; srcStart: number };
 type RawIndex = { source: string; shape: Shape; rows: RawRow[]; els: DElement[]; rowOf: Map<DElement, number>; rowStart: number[]; total: number };
@@ -455,11 +456,23 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 
-/** 0-based line index of a source offset: the Raw view's row (rows split on LF; a lone CR stays in its row). */
+/** 0-based line index of a source offset: the Raw view's row, counted as the viewer splits its rows since Slice 7 of
+ *  plans/markdown-viewer.md (a CRLF, a lone CR and an LF each end a row, a CRLF as one ending; before, LF alone, so a
+ *  CR-only file was one row and every offset in it answered 0). An offset on an ending's own character (the CR or the LF
+ *  of a CRLF, a lone CR, an LF) still lies on the row the ending closes, as the verified row map places it
+ *  (rawRowForOffset: the last row whose start is at or before the offset), so the two agree row for row; the panel's
+ *  landing cue (file-comments.ts landOn) reads this one over the rows it finds. */
 export function rawOffsetToLine(source: string, offset: number): number {
   const upto = Math.max(0, Math.min(offset, source.length));
-  let line = 0, i = -1;
-  while ((i = source.indexOf("\n", i + 1)) !== -1 && i < upto) line++;
+  let line = 0;
+  for (let i = 0; i < upto; i++) {
+    const c = source.charCodeAt(i);
+    if (c === 10) line++;
+    else if (c === 13) {
+      if (source.charCodeAt(i + 1) === 10) { if (i + 1 < upto) line++; i++; }   // a CRLF ends its row at the LF
+      else line++;
+    }
+  }
   return line;
 }
 
