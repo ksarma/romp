@@ -1055,7 +1055,8 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /mtimeNs: \(\) => mtimeNs,\n\s*error: \(\) => viewError,/, "the closure answers the state, beside mtimeNs");
   assert.match(VIEW, /let viewError: string \| null = null;/, "per open");
   assert.equal((VIEW.match(/viewError = null;/g) || []).length, 3, "cleared at the text paint, the media arm (the SVG Source view, the pages, the frame or picture before whenShown) and the editor's entry");
-  assert.match(VIEW, /if \(text === null \|\| editing\) return;[^\n]*\n\s*viewError = null;/, "the text paint: after the guard, before the pass");
+  assert.match(VIEW, /renderFell = fell;[^\n]*\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\);/, "the text paint: after the try's close and the empty file's line, so a swap stood (the Rendered box, or the fallback's line and rows) before the pane's record clears; a fallback swap that throws propagates past it and leaves a standing pane's words (the review's round 3)");
+  assert.doesNotMatch(VIEW, /if \(text === null \|\| editing\) return;[^\n]*\n\s*viewError = null;/, "no longer before the pass (round 2's placement: a fallback throw over a standing pane left error() null while the pane stood)");
   assert.match(VIEW, /if \(objUrl === null\) return;[^\n]*\n\s*viewError = null;/, "the media arm: after the loader's return, before every media paint");
   assert.match(VIEW, /viewError = null;[^\n]*\n\s*fireRendered\(\);\n\s*\/\/ a notice over the read view/, "the editor's entry: before its edit-mode render");
   assert.equal((VIEW.match(/viewError = msg;/g) || []).length, 1, "set once at the fetch chain's catch"); assert.equal((VIEW.match(/viewError = words;/g) || []).length, 1, "and once at imgFailed");
@@ -1957,6 +1958,74 @@ test("a failed reload drops a standing Latin-1 line (the Slice 7 review's round 
   (globalThis as any).fetch = real;
 });
 
+test("after the failure pane, a format pick brings the Latin-1 line back over the repainted text (the Slice 7 review's round 3): a \"0\" .md whose reload met a 404 shows the pane with no line (round 2's case); the Raw click repaints the last landing's text with Edit still off, and the line stands over it again, one bar (before: the text with Edit off and nothing saying why, until the next \"0\" landing); the Rendered click over content raises no second bar; the seam's setMode takes the same road; a changed-on-disk bar re-armed over the pane keeps the row, and its Reload's landing brings the line back as before; a UTF-8 file's repaint raises nothing", async (t) => {
+  const LEGACY_MD = ROOT + "/docs/legacy.md";
+  const LEGACY_MD_TEXT = "# Café\n\nau lait: the notes-api readme an older editor wrote\n";
+  disk[LEGACY_MD] = { bytes: LEGACY_MD_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  t.after(() => { delete disk[LEGACY_MD]; });
+  const o = await open(LEGACY_MD, t);
+  const { fv, ctx, body, b } = o;
+  /** The card's notice bars (noteBar's element, id fileview-save-err), never a pane inside the body. */
+  const noticeBarsOf = (bd: El): El[] => cardOf(bd).childNodes.filter((x): x is El => x instanceof El && x.id === "fileview-save-err");
+  const noticeBar = (): El | null => noticeBarsOf(body)[0] ?? null;
+  assert.equal(noticeBar()?.textContent, fv.LATIN1_NOTICE, "the line is up"); assert.equal(b.edit.hidden, true); assert.equal(paints, 1);
+  // deleted on disk: the panel's poll meets a 404, the pane paints and the line goes (round 2)
+  delete disk[LEGACY_MD];
+  ctx.reload(); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "the pane is in the body"); assert.equal(noticeBar(), null, "no line over the pane");
+  assert.equal(ctx.error(), "no such file: " + LEGACY_MD); assert.equal(paints, 2);
+  // the Raw click: the last landing's text repaints over the pane, Edit still off, and the line says why again
+  b.raw.click(); await settle();
+  assert.equal(body.querySelector(".fileview-err"), null, "the pane went with the text's paint"); assert.ok(body.querySelector("code.hljs"), "the rows");
+  assert.equal(ctx.error(), null, "error() null: content shows"); assert.equal(ctx.mode(), "raw"); assert.equal(ctx.text(), LEGACY_MD_TEXT, "the last landing's text");
+  assert.equal(b.edit.hidden, true, "Edit still off (the gate reads the landing's verdict)");
+  assert.equal(noticeBar()?.textContent, fv.LATIN1_NOTICE, "the line is back over the repainted text (before: no notice, Edit off, nothing saying why)");
+  assert.equal(noticeBarsOf(body).length, 1, "one bar"); assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"]);
+  assert.equal(paints, 3);
+  // the Rendered click over content: the line stands, the same element, no second raise
+  const standing = noticeBar()!;
+  b.rendered.click(); await settle();
+  assert.equal(ctx.mode(), "rendered"); assert.ok(body.querySelector(".fileview-md"), "the note renders");
+  assert.equal(noticeBar(), standing, "the same bar: a pick over content raises nothing"); assert.equal(noticeBarsOf(body).length, 1); assert.equal(paints, 4);
+  // the seam's setMode (the Comments panel's switch to Raw) over the pane takes the same road
+  ctx.reload(); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "the pane again"); assert.equal(noticeBar(), null, "and the line dropped again"); assert.equal(paints, 5);
+  ctx.setMode("raw"); await settle();
+  assert.equal(ctx.mode(), "raw"); assert.equal(ctx.error(), null); assert.ok(body.querySelector("code.hljs"));
+  assert.equal(noticeBar()?.textContent, fv.LATIN1_NOTICE, "setMode's repaint brings the line back too"); assert.equal(noticeBarsOf(body).length, 1); assert.equal(paints, 6);
+  // a notice standing over the pane keeps the row (the one-bar rule): the changed-on-disk bar, whose own Reload met the 404 and
+  // re-armed above the pane, answers the person's click and is not replaced by the line
+  const MT7 = "1757145600000000007";
+  disk[LEGACY_MD] = { bytes: LEGACY_MD_TEXT + "one more line\n", type: "text/plain; charset=utf-8", mtimeNs: MT7, utf8: "0" };
+  focusWindow(); await settle();
+  assert.equal(barWords(body), "Changed on disk.", "the changed-on-disk bar took the row");
+  delete disk[LEGACY_MD];
+  const reload = errBar(body)!.querySelectorAll("button");
+  assert.equal(reload.length, 1); assert.equal(reload[0].textContent, "Reload");
+  reload[0].click(); await settle();
+  assert.ok(body.querySelector(".fileview-err"), "the bar's Reload met the 404: the pane"); assert.equal(paints, 7);
+  assert.equal(barWords(body), "Changed on disk.", "the bar stands over the pane, re-armed"); assert.equal(reload[0].disabled, false); assert.equal(reload[0].textContent, "Reload");
+  b.raw.click(); await settle();
+  assert.equal(body.querySelector(".fileview-err"), null, "the text repainted"); assert.equal(paints, 8);
+  assert.equal(barWords(body), "Changed on disk.", "the bar keeps the row: no line replaces a standing notice"); assert.equal(noticeBarsOf(body).length, 1);
+  assert.equal(errBar(body)!.querySelectorAll("button").length, 1, "its Reload still there");
+  // the bar's Reload with the file back, still Latin-1: the landing drops the bar and raises the line, as the round 1 case has it
+  disk[LEGACY_MD] = { bytes: LEGACY_MD_TEXT + "one more line\n", type: "text/plain; charset=utf-8", mtimeNs: MT7, utf8: "0" };
+  reload[0].click(); await settle();
+  assert.equal(ctx.mtimeNs(), MT7); assert.equal(paints, 9);
+  assert.equal(noticeBar()?.textContent, fv.LATIN1_NOTICE, "the landing's own raise"); assert.equal(noticeBarsOf(body).length, 1); assert.equal(errBar(body)!.querySelectorAll("button").length, 0);
+  // a UTF-8 note: the same repaint over a 404 pane raises nothing (no header said Latin-1)
+  fv.closeFileView();
+  const u = await open(REPORT, t);
+  delete disk[REPORT];
+  t.after(() => { disk[REPORT] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: MT }; });
+  u.ctx.reload(); await settle();
+  assert.ok(u.body.querySelector(".fileview-err"), "the pane"); assert.equal(u.ctx.error(), "no such file: " + REPORT);
+  u.b.raw.click(); await settle();
+  assert.equal(u.body.querySelector(".fileview-err"), null, "the note's text repainted"); assert.equal(u.ctx.error(), null);
+  assert.equal(noticeBarsOf(u.body).length, 0, "no bar: nothing to explain"); assert.equal(u.b.edit.hidden, false, "Edit shows over a UTF-8 file's text");
+});
+
 // ── item 1 of Slice 7 of plans/markdown-viewer.md: a render that throws shows the text under a line that says so ─────────
 // Every failure says what happened where the person is looking: mdBlock keeps no catch, and each viewer's renderBody wraps
 // the block's build and the swap in one try whose catch records the message (renderFell), paints the RENDER_FELL line as the
@@ -2109,6 +2178,36 @@ test("a fallback that throws too (the Slice 7 review's round 2; a bug, not a fil
   assert.deepEqual(swaps, ["fileview-err+fileview-code"]);
   assert.ok((body.childNodes[0] as El).matches("div.fileview-err") && (body.childNodes[1] as El).matches("div.fileview-code"), "the earlier fallback stands");
   assert.equal(ctx.mode(), "raw", "and its record with it"); assert.equal(paints, 3);
+});
+
+test("over a standing failure pane, a format click whose render swap and fallback swap both throw (the Slice 7 review's round 3; a bug, not a file) leaves error() answering the pane the body still shows: a note deleted on disk, the reload's 404 pane up with error() its words, every body swap made to throw, the Rendered click's throw propagates, the pane stands, no hook fires, and error() still answers the words (before: null, cleared before the pass, so the Comments panel's next pass at the same mtime would have said the view still showed the earlier text over a pane saying the file could not be read); the Raw click the same; a healed click paints and clears it", async (t) => {
+  const o = await open(REPORT, t);
+  const { ctx, body } = o;
+  t.after(() => { disk[REPORT] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: MT }; });
+  delete disk[REPORT];
+  ctx.reload(); await settle();
+  const words = "no such file: " + REPORT;
+  const pane = errBar(body)!;
+  assert.ok(pane && pane.parentNode === body, "the pane is in the body"); assert.equal(ctx.error(), words, "error() the pane's words"); assert.equal(paints, 2);
+  const mt = ctx.mtimeNs();
+  // every swap into the body throws: the render swap, then the fallback's (an own property shadows the stand-in's method)
+  const swaps: string[] = [];
+  (body as any).replaceChildren = (...nodes: Array<El | Txt>) => { swaps.push(nodes.map((n) => (n instanceof El ? n.className : "#text")).join("+")); throw new Error("synthetic everyswap failure " + swaps.length); };
+  const healSwap = () => { delete (body as any).replaceChildren; };
+  t.after(healSwap);
+  assert.throws(() => o.b.rendered.click(), /synthetic everyswap failure 2/, "the fallback's own throw propagates out of the click");
+  assert.deepEqual(swaps, ["fileview-md", "fileview-err+fileview-code"], "the render swap threw first, then the fallback's line and rows");
+  assert.equal(errBar(body), pane, "the pane still stands"); assert.equal(pane.parentNode, body); assert.equal(pane.textContent, words);
+  assert.equal(paints, 2, "no hook fired: the pass ended at the throw"); assert.equal(ctx.mtimeNs(), mt, "the mtime unchanged");
+  assert.equal(ctx.error(), words, "error() still answers the pane's words (before: null over the standing pane)");
+  assert.equal(ctx.mode(), "rendered", "mode() is the view's word, as over the pane's own paint (the contract's designed answer)");
+  assert.throws(() => o.b.raw.click(), /synthetic everyswap failure 4/, "the Raw click: the rows' swap, then the fallback's");
+  assert.equal(ctx.error(), words, "the Raw click the same"); assert.equal(errBar(body), pane); assert.equal(paints, 2);
+  // healed: the Rendered click paints the note and the record clears with the paint
+  healSwap();
+  o.b.rendered.click(); await settle();
+  assert.ok(body.querySelector(".fileview-md"), "the note repaints"); assert.equal(errBar(body), null, "the pane went");
+  assert.equal(ctx.error(), null, "error() null once content stands"); assert.equal(ctx.mode(), "rendered"); assert.equal(paints, 3);
 });
 
 test("a throw inside marked's own stage is named by its message alone (the Slice 7 review's round 2): marked 12 appends a bug-report sentence with its tracker's URL to every message its lexer, walkTokens or parser rethrow, and the RENDER_FELL line cuts it (before: \"(synthetic lexer failure\\nPlease report this to https://github.com/markedjs/marked.).\", a foreign URL and a request to report a romp file's failure to marked inside romp's own line); a throw whose message is nothing but that sentence is named by the error's name, as an empty message is; a message with a newline of its own is kept whole", async (t) => {

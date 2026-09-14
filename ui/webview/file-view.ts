@@ -417,7 +417,9 @@ function emptyFileLine(): HTMLElement {
  *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
  *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
  *  answer wears the "0" (notUtf8): before landTarget, so an open's own target notice takes the row under the one-bar rule, and
- *  again after a reload's landing has dropped the changed-on-disk bar. Shown alone in the bar (contract C5). */
+ *  again after a reload's landing has dropped the changed-on-disk bar; and raised again by a format pick whose paint puts the text
+ *  back over a failure pane (pickFormat: the pane's paint drops the line, and the pick's repaint is no landing). Shown alone in
+ *  the bar (contract C5). */
 export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.";
 /** The refusal Edit gives over pending changes on a file whose text holds a CR anywhere (plans/markdown-viewer.md Slice 7, item
  *  7; trackedRefusal): the editor rewrites the file's line endings as it loads the text. A CRLF is rewritten by norm before the
@@ -699,9 +701,9 @@ export interface FileViewActionCtx {
    *  network failure's message: the `msg` the catch paints), or a picture that failed to decode (that pane's own sentence,
    *  without its hint and its Download button); null while a text or media view shows, the loader included, and null over the
    *  Raw rows a failed render falls back to (mode() answers "raw" for that paint: the rows are the content). Closure state
-   *  (`viewError`) set at the two pane paints and cleared at every content paint (the text paint, the media arm before
-   *  whenShown, the SVG Source view, the editor's entry), never read from the body; text() and mtimeNs() keep answering the
-   *  last landing's */
+   *  (`viewError`) set at the two pane paints and cleared at every content paint (the text paint once its swap stands, so a
+   *  fallback swap that throws leaves a standing pane's words; the media arm before whenShown, the SVG Source view, the
+   *  editor's entry), never read from the body; text() and mtimeNs() keep answering the last landing's */
   error(): string | null;
   /** the kernel's media verdict off the Content-Type: an SVG is shown as an image but is TEXT to the kernel's allowlist */
   media(): "image" | "pdf" | "svg" | null;
@@ -1154,7 +1156,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const fmt = loadFmt();
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
   let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
-  let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
+  let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint once its swap stands, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
   let mtimeNs = "";                           // the file's mtime at load, NANOSECONDS AS A STRING —
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
@@ -1279,6 +1281,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // so the text comparison alone would call the buffer clean), or one a save carried that an undo took back (undoneLanded)
   const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0 || anyUndoneLanded(undoneLanded()); };
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
+  // The format pick, from the bar's Rendered and Raw buttons and from the seam's setMode alike (the Comments panel switches to
+  // Raw through it for a refused comment and for a Reveal): the saved choice, the paint, and one repair the paint does not make
+  // itself. Over a failure pane (a reload refused after a deletion or a growth past the cap; error() the pane's words) the paint
+  // puts the last landing's text back in the body, the pre-existing repaint (plans/markdown-viewer.md Slice 7, item 3), and on a
+  // file the kernel decoded as Latin-1 (notUtf8) that text stood with Edit off and, since the pane's paint drops the line that
+  // says why (dropLatin1Line, the review's round 2), nothing saying so until the next "0" landing (the review's round 3). So a
+  // pick whose paint replaced a pane raises the line again, when no other notice took the row meanwhile (a re-armed
+  // changed-on-disk bar, say, whose Reload answers the person's own click and stands). Keyed on the pane the paint replaced and
+  // the landing's header, never on the body's text or a timer; a pick over content raises nothing (the line stands from the
+  // landing, or another notice does), and a landing raises its own line below. The URL viewer has no such pick: no header.
+  const pickFormat = (mode: "rendered" | "raw"): void => {
+    const overPane = viewError !== null;      // read before the paint: the paint clears the record once its swap stands
+    fmt.md = mode; saveFmt(fmt); renderBody();
+    if (overPane && notUtf8 && viewError === null && note === null) noteBar(LATIN1_NOTICE);
+  };
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   if (isMd) {
     for (const mode of ["rendered", "raw"] as const) {
@@ -1286,7 +1303,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.type = "button";
       b.textContent = mode === "rendered" ? "Rendered" : "Raw";
       b.title = mode === "rendered" ? "The prose the markdown means" : "The file's actual bytes";
-      b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); takeKeyboard(); });   // the paint, then the keyboard (takeKeyboard: the button holds it)
+      b.addEventListener("click", () => { pickFormat(mode); takeKeyboard(); });   // the paint (pickFormat), then the keyboard (takeKeyboard: the button holds it)
       segBtns.push([mode, b]);
       acts.appendChild(b);
     }
@@ -1771,7 +1788,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       asideOpen = !!node;
       if (isPdf && objUrl !== null && asideOpen !== was) renderBody();
     },
-    setMode: (mode) => { if (!isMd || editing) return; fmt.md = mode; saveFmt(fmt); renderBody(); },
+    setMode: (mode) => { if (!isMd || editing) return; pickFormat(mode); },
     scrollToOffset: (n) => {
       const src = viewText();
       const code = body.querySelector("code.hljs");
@@ -2236,7 +2253,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // notice). The failure pane's paint (the fetch chain's catch: a 404 after a deletion, a 413 after a growth past the cap, a
   // network failure) drops it too: the line says the file can be read here and the pane says it could not be, and nothing else
   // removed the line over the pane until some other notice replaced it (the review's round 2); a later landing whose header
-  // says "0" raises it again. Known by its words, the one notice shown alone with them; a notice standing in its place (a
+  // says "0" raises it again, and so does a format pick whose paint puts the text back over the pane (pickFormat; the
+  // review's round 3). Known by its words, the one notice shown alone with them; a notice standing in its place (a
   // target's, a warning's, the changed-on-disk bar with its button) is not touched.
   const dropLatin1Line = (): void => {
     if (note !== null && note.textContent === LATIN1_NOTICE) { note.remove(); note = null; }
@@ -2338,7 +2356,6 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
     folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    viewError = null;                       // a text paint follows, the rows a failed render falls back to included (that paint's word is mode() "raw"): no pane shows (Slice 7, item 3)
     // The pass below builds the block and swaps it in one try (plans/markdown-viewer.md Slice 7, item 1): a marked bug must never
     // cost the content, and this is where the content is kept now that mdBlock carries no catch of its own. A throw from marked,
     // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the body gets the
@@ -2348,7 +2365,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // reads as "raw" for this paint). The fallback runs in the catch, and a throw from THAT propagates (into the fetch chain's
     // own catch at a landing): a second failure is a bug, not a file; the previous paint stands and its record with it, so
     // mode() still answers what the body shows (the review's round 2: recorded before the swap, a fallback throw from a click
-    // left mode() saying "raw" over a standing Rendered box). The rest of the pass runs as for any text paint, so the
+    // left mode() saying "raw" over a standing Rendered box) and so does error(), cleared after the swap for the same reason
+    // (the review's round 3: cleared before the pass, a fallback throw over a standing failure pane left error() null while
+    // the pane stood, and the Comments panel's next pass would have said the view still showed the earlier text). The rest of
+    // the pass runs as for any text paint, so the
     // hooks fire once and read the rows through mode(); the Rendered button stays pressed (fmt.md is the person's saved choice;
     // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
     // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
@@ -2365,6 +2385,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         renderFell = fell;                    // recorded once the fallback stands (the header): a throw from the fallback leaves the previous paint and its record
       }
       if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it
+      viewError = null;                       // the paint stands (the Rendered box, the rows, or the line over the rows a failed render fell back to, whose word is mode() "raw"): no pane shows (Slice 7, item 3). After the swap, as renderFell is recorded: a throw from the fallback's own swap propagates past this line and leaves the previous paint, a failure pane's included, with its record, so error() keeps answering the pane the body still shows (the review's round 3)
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
@@ -3441,7 +3462,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // (the past-the-end line, raised inside landTarget; the offset and missing-section notices a frame later) takes the row
       // under the one-bar rule, being the answer to the person's own click. A reload's landing has no target and raises the
       // line again, after settleDiskBar above has dropped the changed-on-disk bar, so a Reload brings it back. Keyed on the
-      // answer's header, never on the body or a timer; nothing else re-raises it.
+      // answer's header, never on the body or a timer; the one other raise is a format pick's, when its paint puts this text
+      // back over a failure pane whose paint dropped the line (pickFormat; the review's round 3).
       if (notUtf8) noteBar(LATIN1_NOTICE);
       landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
       if (reopenOutline) openOutline();
@@ -3469,7 +3491,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       closeOutline();                                           // the popover's rows were read off the DOM the pane replaces (the paint closer's rule; the review's round 2: a popover open at a failed reload stood over the pane, the hidden button reading expanded)
-      dropLatin1Line();                                         // a Latin-1 line a previous landing raised says the file can be read here; the pane says it could not be, so the line goes with the pane's paint, and a later "0" landing raises it again (the Slice 7 review's round 2)
+      dropLatin1Line();                                         // a Latin-1 line a previous landing raised says the file can be read here; the pane says it could not be, so the line goes with the pane's paint, and a later "0" landing raises it again (the Slice 7 review's round 2), as does a format pick that puts the text back over the pane (pickFormat; round 3)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
       viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)

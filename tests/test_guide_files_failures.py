@@ -210,7 +210,10 @@ class TheViewerDoesIt(unittest.TestCase):
         self.assertIn('v.notUtf8 = ct.startsWith("text/plain") && r.headers.get("X-Romp-Text-Utf8") === "0";', self.viewer)
         # raised at the text landing before landTarget, so an open's own notice takes the row; a reload's landing has none
         self.assertRegex(self.viewer, re.compile(r"^      if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n      landTarget\(\);", re.M))
-        self.assertEqual(self.viewer.count("noteBar(LATIN1_NOTICE)"), 1, "one raise site")
+        # the one other raise: a format pick (the bar's buttons and the seam's setMode) whose paint put the text back over a
+        # failure pane, which had dropped the line (the review's round 3); gated on the pane the paint replaced and an empty row
+        self.assertEqual(self.viewer.count("noteBar(LATIN1_NOTICE)"), 2, "two raise sites: the landing and the format pick")
+        self.assertIn("if (overPane && notUtf8 && viewError === null && note === null) noteBar(LATIN1_NOTICE);", self.viewer)
 
     def test_the_editor_refuses_pending_changes_over_any_cr(self):
         self.assertIn('if (text !== null && /\\r/.test(text)) return CR_REFUSAL + " " + pending.refusal;', self.viewer)
