@@ -442,6 +442,9 @@ coloured code are readable against the block. TeX math renders wherever the file
 pane. The **Outline** button above a rendered file lists the file's headings; pick one and
 the view scrolls to put it at the top, opening a closed fold around it. The printed page
 leaves out the title bar, the Comments panel and the Copy buttons.
+When a file cannot be shown as rendered Markdown, its text is shown as written, the way Raw
+shows it, under a line that says so and names the error; **Rendered** stays chosen, and the
+next reload or click of that button tries again.
 
 **Files written for Obsidian.** The constructs an Obsidian vault uses render as they do there.
 Front matter, the `---` block of keys at the top of a file, folds under a **Front matter** line;
@@ -472,6 +475,8 @@ and Space scroll it at once; a box you were typing in keeps the keyboard. When a
 changes on disk while you read it with the Comments panel closed, a line above the text says
 so the next time you return to the dashboard, and **Reload** reads it again with your place
 kept.
+An empty file says so in place of its text (**This file is empty**), and **Edit** still opens
+it.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
 modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
@@ -555,6 +560,9 @@ figure is stored on its embed line,
 with the rectangle: the session's tools and the other editors place it on that line, and this
 viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
 on a phone, comment on the file as a whole instead.
+A figure that cannot be loaded, because its file is missing or is not an image, shows a line
+where the picture would be: **Image failed to load**, then the figure's path as written in the
+file, and its alt text when it has one.
 
 **PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
 draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
@@ -618,8 +626,10 @@ writes the file and the changes together.
 A save that is refused, because the file or its changes moved on disk while you were editing,
 keeps your text and offers **Reload file**, which asks before discarding it; while you edit,
 the panel says when the file changed under you. The session's own track-edit keeps working
-throughout. A file with CRLF line endings cannot be edited while changes are pending, because
-the editor rewrites its line endings, which would move them; accept or reject them first.
+throughout. A file with CR or CRLF line endings cannot be edited while changes are pending,
+because the editor rewrites its line endings, which would move them; accept or reject them
+first. A file that is not UTF-8 on disk can be read but not edited, and a line above the
+text says why: a save would rewrite its bytes as UTF-8.
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
