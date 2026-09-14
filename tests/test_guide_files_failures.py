@@ -177,7 +177,10 @@ class TheViewerDoesIt(unittest.TestCase):
                       '"rendered" && renderFell === null ? "rendered" : "raw",', self.viewer)
 
     def test_a_failed_figure_wears_a_label_the_body_hears_the_error_for_and_both_text_walks_skip(self):
-        self.assertIn('return FIGURE_FAILED + " " + (pictureDest(img) ?? "") + (alt ? " (" + alt + ")" : "");', self.viewer)
+        # the source the label names: the candidate the browser asked for as the author wrote it (failedSource: pictureDest's rule
+        # for the img's own src, the srcset candidate in currentSrc otherwise), a data: source cut to its head (shownSource); the
+        # Slice 7 review's round 1
+        self.assertIn('return FIGURE_FAILED + " " + shownSource(failedSource(img) ?? "") + (alt ? " (" + alt + ")" : "");', self.viewer)
         # the img's error does not bubble: one capture-phase listener on the body per open, its twin removing the label
         self.assertIn('body.addEventListener("error", onError, true);', self.viewer)
         self.assertIn('const FIGERR_MARK = "data-fv-figerr";', self.viewer)

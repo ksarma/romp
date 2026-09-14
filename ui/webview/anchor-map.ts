@@ -467,15 +467,16 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
  *  landing cue (file-comments.ts landOn) reads this one over the rows it finds. */
 export function rawOffsetToLine(source: string, offset: number): number {
   const upto = Math.max(0, Math.min(offset, source.length));
-  let line = 0;
-  for (let i = 0; i < upto; i++) {
-    const c = source.charCodeAt(i);
-    if (c === 10) line++;
-    else if (c === 13) {
-      if (source.charCodeAt(i + 1) === 10) { if (i + 1 < upto) line++; i++; }   // a CRLF ends its row at the LF
-      else line++;
-    }
-  }
+  // Two native searches, never a per-character walk (Slice 7's review round 1: a charCodeAt loop over every character
+  // up to the offset took about twenty times the LF-only indexOf loop it replaced at the end of a 2 MB text, and the
+  // panel computes this once per Reveal title on every render). A row closes at an ending's last character, so the
+  // count is every LF before the offset (a CRLF's own LF among them, so a CRLF counts once, at its LF) plus every lone
+  // CR before it (a CR with no LF after it); a CR whose LF lies at or past the offset counts for nothing, the offset
+  // still on the row that CRLF closes.
+  let line = 0, i = -1;
+  while ((i = source.indexOf("\n", i + 1)) !== -1 && i < upto) line++;
+  i = -1;
+  while ((i = source.indexOf("\r", i + 1)) !== -1 && i < upto) if (source.charCodeAt(i + 1) !== 10) line++;
   return line;
 }
 

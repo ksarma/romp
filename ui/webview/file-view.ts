@@ -2217,6 +2217,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     note = bar2;
     return bar2;
   };
+  // The Latin-1 line (the raise at the text landing, item 5 of Slice 7) says why Edit is off; a landing whose header says the
+  // file is UTF-8 now (a session re-saved it) brings Edit back through the gate, so that landing drops the line when it is the
+  // notice standing, the settleDiskBar shape (the review's round 1: the line stood over a shown Edit button until the next
+  // notice). Known by its words, the one notice shown alone with them; a notice standing in its place (a target's, a warning's,
+  // the changed-on-disk bar with its button) is not touched.
+  const dropLatin1Line = (): void => {
+    if (note !== null && note.textContent === LATIN1_NOTICE) { note.remove(); note = null; }
+  };
 
   // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
   // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
@@ -2348,12 +2356,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
-  // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Landed over a body
+  // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Never spent over
+  // the rows a failed render fell back to (renderFell; Slice 7 of plans/markdown-viewer.md, item 1, the review's round 1): the
+  // rows hold no section to look for, so the target waits for the Rendered retry as it waits under the Raw preference; before,
+  // the frame judged the rows and raised "No section named" under the failure line, of a section the file has. Landed over a body
   // with a box alone: under a hidden pane scrollIntoView moves nothing and the landing would count as done, so the frame parks the
   // target again for the width hook's repaint at the show, which spends it through landTarget (the review's round 5, with the
   // line, the offset and the keyboard). Spent once per call: a second call before the frame (the landing's, after renderBody's own)
   // finds nothing pending and queues no frame.
   const spendHeading = (): void => {
+    if (renderFell !== null) return;          // the paint fell to the Raw rows: the target stays pending for the Rendered retry (the header)
     const h = pendingHeading; pendingHeading = null;
     if (h === null) return;
     requestAnimationFrame(() => {
@@ -3231,7 +3243,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const scrollToSourceOffset = (n: number) => {
     const src = viewText();
     if (src === null) return;
-    const rendered = isMd && fmt.md === "rendered";
+    // The view as the paint left it, mode()'s word, not the pressed button: over the rows a failed render fell back to (renderFell;
+    // Slice 7 of plans/markdown-viewer.md, item 1) fmt.md still says "rendered" while the body holds code.hljs rows, and a read of
+    // the button took the Rendered branch, found no .fileview-md and returned with nothing scrolled and a notice naming a block
+    // (the review's round 1: the person's own click landed at the top in silence).
+    const rendered = ctx.mode() === "rendered";
     if (n > src.length) noteBar("Offset " + n + " is past the end of this file, which has " + src.length + (src.length === 1 ? " character" : " characters") + "; showing the last " + (rendered ? "block." : "line."));
     const at = Math.min(n, src.length);
     if (!rendered) { ctx.scrollToOffset(at); return; }
@@ -3290,12 +3306,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     keyboardOnLanding();
   };
   // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
-  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
-  // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
-  // under the new mtime with no error row, while the same throw from an immediate landing reached the `.catch` below.
-  // The promise rejects with the parked run's throw into that same `.catch` now (review round 2, 2026-09-08;
-  // file-view-landing-throw-browser.test.ts); a parked run a later landing replaced resolves with nothing painted, which
-  // is what the hold's header says of an overtaken landing.
+  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (after the landing has taken
+  // the new mtime) reached nobody in round 1: an uncaught page error, the old text standing under the new mtime with no
+  // error row, while the same throw from an immediate landing reached the `.catch` below. The promise rejects with the
+  // parked run's throw into that same `.catch` now (review round 2, 2026-09-08), a parked run a later landing replaced
+  // resolves with nothing painted, which is what the hold's header says of an overtaken landing. Since Slice 7 of
+  // plans/markdown-viewer.md (item 1) the common throw never gets that far: a throw from the block's build or the swap is
+  // caught inside renderBody's own try, parked or immediate, which paints the RENDER_FELL line over the text's Raw rows
+  // (file-view-landing-throw-browser.test.ts drives both landings). What still rejects into the `.catch` below is a throw
+  // from the fallback itself or from the passes after the try (the folds' restore, the hooks, the seat): a bug, not a file.
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
@@ -3360,6 +3379,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       const got = v!;                                           // set with the headers above; a failure never reaches here
       isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
       settleDiskBar(my);                                        // the changed-on-disk bar goes with the landing that brings the moved file (or its own ask's)
+      if (!notUtf8) dropLatin1Line();                           // a UTF-8 answer (or a media one) drops a Latin-1 line a previous landing raised: Edit is back, or the file is no text at all (Slice 7, item 5)
       if (t instanceof Blob) {
         // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
         // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
@@ -3567,12 +3587,15 @@ export function openUrlView(href: string): void {
 
   // The URL's own #fragment (`evidence.md#results`) lands after the FIRST RENDERED paint — once. A
   // Raw view has no heading ids, so a saved Raw preference does not SPEND the landing: it waits for
-  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check).
+  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check). A
+  // render that fell to the Raw rows (renderFell; Slice 7 of plans/markdown-viewer.md, item 1) does
+  // not spend it either: the healed Rendered paint lands it (the Slice 7 review's round 1).
   let landed = false;
   const landFragment = () => {
     if (landed) return;
     let hash = "";
     try { hash = new URL(href).hash; } catch { /* not a URL — nothing to land on */ }
+    if (renderFell !== null) return;                   // the paint fell to the Raw rows (Slice 7, item 1): no section to land on; the healed Rendered paint tries again, the fragment kept
     if (!hash) { landed = true; return; }
     if (fmt.md !== "rendered") return;                 // nothing to land on yet; the next rendered paint tries again
     landed = true;
@@ -4161,6 +4184,9 @@ function mintHeadingIds(root: ParentNode): void {
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
 }
 
+/** The authored candidates of a srcset rewriteFigureSrcs rewrote, kept on the element beside the rewrite (the label of a figure
+ *  that failed names the candidate the browser asked for by them, failedSource). */
+const FV_SRCSET = "data-fv-srcset";
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
@@ -4198,8 +4224,11 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // reaches this walk in the product). Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
   // file were fetched from the PAGE's origin and 404'd, exactly as `![](plot.png)` once did. A srcset is rewritten
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
-  // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the
-  // plain `href` as the anchors' is in mdBlock, so the element carries one attribute every reader agrees on.
+  // img's src alone, the one attribute the comments panel pairs an embed by, and in `data-fv-srcset` (FV_SRCSET) for a
+  // rewritten srcset, the img's or a `<source>`'s, so a failed figure's label can name the candidate the browser asked for
+  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1). An svg
+  // image's xlink:href is moved to the plain `href` as the anchors' is in mdBlock, so the element carries one attribute
+  // every reader agrees on.
   const path = (src: string): string | null => {
     if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;   // a web address, a data: URL, an empty src: as written
     let rel = src;
@@ -4212,7 +4241,8 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
       const cands = parseSrcset(ref.value);
       let changed = false;
       for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
-      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      if (changed) { el.setAttribute(FV_SRCSET, ref.value); el.setAttribute("srcset", serializeSrcset(cands)); }   // the authored candidates beside the rewritten ones, in the same order (parseSrcset reads both back candidate for candidate)
+      else el.removeAttribute(FV_SRCSET);                // the attribute means this viewer rewrote this srcset, as data-fv-src does for a src
       continue;
     }
     const p = path(ref.value);
@@ -4257,33 +4287,78 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // no paint hook: the body's nodes stand and the panel's marks are unaffected, and a hook per failed figure would re-run
 // the panel's whole pass. A gated figure (figure-gate.ts) has no src and never errors, and a label inside its placeholder
 // would leave with restore, so an img under one is left alone. Images only, as the media body covers images alone: a
-// `<picture>` fires its img's error once every source fails, and gets its label after the picture element (a span is not
-// a picture's content); video, audio and an inline svg's `<image>` are recorded as a follow-up.
+// `<picture>` is heard through its img, whose error fires when the ONE candidate the browser chose (a matching `<source>`,
+// else the img's own srcset or src) fails, with no fall back to another, and its label goes after the picture element (a span
+// is not a picture's content) naming that candidate (failedSource); video, audio and an inline svg's `<image>` are recorded
+// as a follow-up. A link holding the figure alone (`[![alt](src)](url)`) is climbed too, so the label is not a click target
+// that follows the link (the review's round 1).
 /** The mark on the label: the label is found by it (figureLabelAfter) and never by its class. */
 const FIGERR_MARK = "data-fv-figerr";
 /** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
 const FIGERR_CLASS = "fv-figerr";
 /** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
- *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), and the regions layer's
+ *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
  *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
  *  dispose puts the img back in the wrap's place and removes the wrap with everything else in it, so a label inside would
- *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same). */
+ *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same), and
+ *  a link holding the figure alone (`[![alt](src)](url)`, a README's linked badge or picture: inside the `<a>` the label wore
+ *  the link's pointer and a click on it, to read it, followed the link; the review's round 1). A link with more in it (text
+ *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. */
 function figureAnchor(img: Element): Element {
   let a: Element = img;
-  for (let p = a.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap")); p = a.parentElement) a = p;
+  for (let p = a.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || linkAround(p, a)); p = a.parentElement) a = p;
   return a;
+}
+/** Whether `p` is a link holding `a` alone: an `<a>` whose one element child is `a` and whose text is blank. */
+function linkAround(p: Element, a: Element): boolean {
+  return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";
 }
 /** The label standing right after `anchor` (its next sibling carrying the mark), when one does. */
 function figureLabelAfter(anchor: Element): Element | null {
   const n = anchor.nextSibling;
   return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
 }
-/** The label's words (the slice's contract C2): FIGURE_FAILED, the authored source (pictureDest: `data-fv-src` when
- *  rewriteFigureSrcs rewrote the src, else `src`; a figure with neither names nothing) and the alt in parentheses when it is
- *  not empty. */
+/** `u` resolved against the document, as the browser resolves a figure's candidates for `currentSrc`; as written when it cannot be. */
+function absUrl(u: string): string {
+  try { return new URL(u, document.baseURI).href; } catch { return u; }
+}
+/** The source the browser asked for and could not load, as the author wrote it. The browser picks ONE candidate for an img (the
+ *  first `<source>` of an enclosing `<picture>` whose media and type match, else the img's own srcset by density, else its
+ *  src), fetches that one and fires the img's `error` when it fails, with no fall back to another candidate or to the src; so
+ *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
+ *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
+ *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
+ *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
+ *  written (a URL document's, a remote one's). The img's own src, or an img with no currentSrc to read (the node stand-in),
+ *  keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src, else `src`; a figure with neither names nothing. */
+function failedSource(img: Element): string | null {
+  const cur = (img as HTMLImageElement).currentSrc || "";
+  if (!cur || cur === absUrl(img.getAttribute("src") || "")) return pictureDest(img);
+  const picture = img.closest("picture");
+  const carriers: Element[] = picture ? [...Array.from(picture.querySelectorAll("source")), img] : [img];
+  for (const c of carriers) {
+    const now = parseSrcset(c.getAttribute("srcset") || "");
+    const was = c.hasAttribute(FV_SRCSET) ? parseSrcset(c.getAttribute(FV_SRCSET) || "") : now;
+    for (let i = 0; i < now.length; i++) if (absUrl(now[i].url) === cur) return (was[i] ?? now[i]).url;
+  }
+  return pictureDest(img);
+}
+/** The source as the label shows it: a `data:` URI is an inline image's whole encoded payload, thousands of characters that
+ *  the sheet's wrap turns into a box the height of the column (the review's round 1: a label 1518 px tall at 380 px, two
+ *  screens of base64 where the note should go on), so it is cut to its head, the scheme and the media type through the
+ *  comma, with an ellipsis; any other source as written. */
+function shownSource(src: string): string {
+  if (!/^data:/i.test(src)) return src;
+  const comma = src.indexOf(",");
+  return (comma >= 0 ? src.slice(0, comma + 1) : src.slice(0, 40)) + "…";
+}
+/** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
+ *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
+ *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) and the alt in parentheses when it
+ *  is not empty. */
 function figureLabelText(img: Element): string {
   const alt = img.getAttribute("alt");
-  return FIGURE_FAILED + " " + (pictureDest(img) ?? "") + (alt ? " (" + alt + ")" : "");
+  return FIGURE_FAILED + " " + shownSource(failedSource(img) ?? "") + (alt ? " (" + alt + ")" : "");
 }
 /** The figure an `error` or `load` heard on the body is about: an img inside the Rendered box and outside a gate's
  *  placeholder (`[data-act="fv-load"]`); null for anything else (the media view's own img, a control's, a gated figure). */

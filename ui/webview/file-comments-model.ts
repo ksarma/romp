@@ -1103,13 +1103,23 @@ export function sameRecords(a: unknown[], b: unknown[]): boolean {
 export const MOVED_UNDER_EDIT = "The file changed on disk while you were editing it. Save will refuse and offer Reload; "
   + "Cancel shows the file as it is now.";
 
-/** The source offset where 0-based line `line` starts (for the mapping refusal's scroll-to-block offer). */
+/** The source offset where 0-based row `line` starts, for the mapping refusal's scroll-to-block offer (the composer's
+ *  switchToRaw, when the refused passage has no verbatim copy in the source): the row number it inverts is
+ *  anchor-map's `rawOffsetToLine`, the numbering the refusal's `blockStartLine` carries, so the rows are counted as
+ *  that function and the Raw view count them since Slice 7 of plans/markdown-viewer.md (a CRLF, a lone CR and an LF each
+ *  end a row, a CRLF as one ending; before, LF alone, when the map counted LF alone too). The two must agree ending for
+ *  ending: the Slice 7 review's round 1 found the map counting a lone CR and this walk not, so on a CR-only file the
+ *  offer scrolled to the file's end (source.length, the "no more rows" answer) instead of the block's row. Past the last
+ *  row the answer is the source's length, as before. Written here rather than imported: this module takes no
+ *  anchor-map import. */
 export function lineStartOffset(source: string, line: number): number {
+  const ending = /\r\n|\r|\n/g;
   let at = 0;
   for (let i = 0; i < line; i++) {
-    const nl = source.indexOf("\n", at);
-    if (nl < 0) return source.length;
-    at = nl + 1;
+    ending.lastIndex = at;
+    const m = ending.exec(source);
+    if (!m) return source.length;
+    at = m.index + m[0].length;
   }
   return at;
 }

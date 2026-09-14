@@ -4,7 +4,8 @@
 // clicks a message's own `#` link over the real chat bundle. Here: the colour grammar an inline `style` is held to,
 // the profile's forbidden tags and attributes, the three hook bodies (the style rewrite, the comment drop, the body
 // title's drop), the hooks' install guard, and the source pins that
-// make md-sanitize.ts the ONE sanitizer the dashboard has (the chat's md() and userMd(), the viewer's mdBlock). The
+// make md-sanitize.ts the ONE sanitizer the dashboard has (the chat's md() and userMd(), the viewer's mdBlock) and its
+// setMdSanitizer seam a door no production module names (Slice 7's review, round 1). The
 // design is plans/markdown-viewer.md, Slice 1 (sanitize as GitHub does; the colour-only rule is its decision 6), and
 // the last test holds SECURITY.md's output-sanitization bullet to the math renderer's trust boundary and its bounds
 // (KaTeX after DOMPurify).
@@ -309,7 +310,16 @@ test("md-sanitize.ts holds the dashboard's ONLY call into DOMPurify's sanitize, 
   assert.match(SAN, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{\n\s*installMdSanitizeHooks\(\);\n\s*const clean = purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\) as HTMLElement;/,
     "the hook is installed before the first sanitize, and the profile is spread with RETURN_DOM; the caller's own pass is optional (the chat's md() and userMd() pass none)");
   assert.match(SAN, /export function setMdSanitizer\(p: MdSanitizer \| null\): void \{ installedSanitizer = p; \}\n(?:\/\*\*[^\n]*\*\/\n)?const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/,
-    "the seam: the installed stand-in, else the module-global instance (no production caller sets one)");
+    "the seam: the installed stand-in, else the module-global instance");
+  // The seam is the one export that can put something other than DOMPurify behind sanitizeMd, so the claim that no
+  // production caller sets one is held over the sources, not stated: a module that named it (an import, an alias, a call)
+  // would install a stand-in the two sweeps above cannot see, since it spells no `.sanitize(` and imports no dompurify
+  // (Slice 7's review, round 1: with such a module wired into a bundle entry, this test, render-sanitize.test.ts and
+  // md-url-view.test.ts all stayed green while marked's output reached the page unsanitized). The node suites install
+  // their stand-ins by name; a production module has no business with the name at all.
+  const seamCallers = sources.filter((f) => /\bsetMdSanitizer\b/.test(read(f)));
+  assert.deepEqual(seamCallers, ["md-sanitize.ts"], "setMdSanitizer is named by no production module: the seam is the node suites' alone");
+  assert.match(SAN, /\nlet installedSanitizer: MdSanitizer \| null = null;\n/, "the installed instance is module-private: setMdSanitizer is the seam's one door, and the sweep above covers it");
   assert.match(SAN, /export function installMdSanitizeHooks\(purify: Pick<DOMPurifyInstance, "addHook"> = purifier\(\)\): void \{/, "the hooks install reads the same instance");
   assert.match(SAN, /keepOnlyInertCheckboxes\(clean\);\n\s*if \(own\) own\(clean\);\n\s*for \(const pass of postPasses\) pass\(clean\);\n\s*return clean;/,
     "the input post-pass, then the caller's own pass (the viewer's heading ids, read from the text as written), then every registered post-pass (the math fill), on the sanitized DOM before it is handed back");

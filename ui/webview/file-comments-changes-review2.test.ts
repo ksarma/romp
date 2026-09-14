@@ -278,6 +278,9 @@ type World = {
   failReload: ((words: string) => void) | null;
   /** What error() answers: the pane's words after a failed landing, null after a content paint (contract C1). */
   viewError: string | null;
+  /** A format click's renderBody (file-view.ts): the last landing's text painted again over whatever the body held, the pane included,
+   *  error() null, onRendered fired, text() and mtimeNs() unchanged. */
+  repaint: () => void;
   /** Every throw a rendered hook made, as the real fireRendered would swallow it (file-view.ts): a probe, so a panel exception
    *  inside the hook fails the test instead of vanishing. */
   hookErrors: unknown[];
@@ -321,6 +324,7 @@ function world(over: WorldOpts = {}): World {
   const fire = () => { for (const cb of w.hooks.rendered) { try { cb(); } catch (e) { w.hookErrors.push(e); } } };
   const setText = (s: string) => { text = s; w.viewError = null; body.replaceChildren(wrap); rows(code, s); fire(); };
   const land = () => { w.landReload = null; w.failReload = null; w.viewMtime = w.diskMtime; setText(w.disk); };
+  w.repaint = () => setText(text);
   // the fetch chain's catch (file-view.ts): the pane swapped in, error() set, the hooks fired; the text and the mtime stay the landing's
   const fail = (words: string) => {
     w.landReload = null; w.failReload = null;
@@ -782,6 +786,107 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   assert.equal(a3.querySelectorAll(".fc-load").length, 0);
   assert.equal(marksOf(w3, "h5").length, 1, "the marks are back over the new text");
   assert.deepEqual(w3.hookErrors, []);
+});
+
+// ── the bytes row over a pane whose mtime is the status's, and over the earlier text (Slice 7 item 3, the review's round 1) ──
+
+test("a picture's landing moves mtimeNs() to the status's mtime BEFORE its bytes decode (file-view.ts assigns the mtime ahead of the Blob branch; the img's error fires imgFailed later), so the pane has the status's mtime under it: the row bytesFailed files at that paint stands, with the pane's sentence and Reload, the loader gone, through a status over the pane and the deadline's tick; a Reload whose bytes decode takes it away", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const DECODE = "this image failed to decode; it may be mid-write or truncated";   // the pane's own sentence, as error() answers it (contract C1)
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  const { BYTES_FAILED } = await import("./file-comments");
+  // the text stand-in with the media landing's ORDER, then the same over a media seam (mode() "media", text() null, as a picture's is)
+  for (const media of [false, true]) {
+    const w = world({ deferReload: true }); t.after(() => w.close());
+    if (media) { w.ctx.mode = () => "media"; w.ctx.text = () => null; }
+    const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+    act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+    w.disk = DOC.replace("cut", "reduced"); w.diskMtime = F11;
+    answer(w, after, lastOf(w, "fileComments", "reject"), { rejected: ["h1"] }); await flush(); await flush();
+    assert.ok(aside.querySelector('.fc-load[data-slot="bytes"]'), "the wait is up"); assert.ok(w.failReload, "the reload is out");
+    w.viewMtime = F11;                                   // the landing's mtime, ahead of the decode
+    w.failReload!(DECODE); await flush();
+    assert.equal(w.ctx.mtimeNs(), after.fileMtimeNs, "the view's mtime is the status's while the pane stands");
+    assert.deepEqual(w.hookErrors, []);
+    assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the loader went at the pane's paint");
+    const row = aside.querySelector('.fc-cards .fc-err[data-slot="bytes"]');
+    assert.ok(row, (media ? "media seam" : "text stand-in") + ": the row stands (before: filed by bytesFailed and deleted by bytesLanded in the same pass, the mtime under the pane being the status's)");
+    assert.equal(row!.childNodes[0].textContent, BYTES_FAILED + " (" + DECODE + "); the view shows that failure in place of the file, so no change is marked. Reload to read the file again.", "the pane's sentence, in the row's fixed shape");
+    assert.ok(act(row!, "fcreload"), "with Reload");
+    assert.equal(marksOf(w).length, 0, "nothing marked over the pane");
+    // a status over the standing pane (the poll): the mtime is the view's, so no wait and no loader; the row stands; the deadline's tick adds nothing
+    answer(w, after); await flush(); await flush();
+    assert.equal(w.reloads, 1, "the same mtime: no second fetch");
+    assert.equal(aside.querySelectorAll(".fc-load").length, 0, "no loader over the pane");
+    assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "the row stands through the status");
+    t.mock.timers.tick(15000); await flush();
+    assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "no deadline row joins it");
+    // the row's Reload: the bytes decode this time, and the landing that shows the file takes the row away (bytesLanded)
+    act(row!, "fcreload")!.click(); await flush();
+    assert.equal(w.reloads, 2, "Reload re-fetches");
+    answer(w, after); await flush(); await flush();
+    w.landReload!(); await flush(); await flush();
+    assert.equal(w.viewError, null, "a content paint clears error()");
+    assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "the landing answers the row");
+    assert.equal(aside.querySelectorAll(".fc-load").length, 0);
+    if (!media) assert.equal(marksOf(w, "h5").length, 1, "the marks are back over the new text");
+    assert.deepEqual(w.hookErrors, []);
+    w.close();
+  }
+});
+
+test("after the failure row, a Raw or Rendered click repaints the last landing's text over the pane (renderBody: error() null, the mtime still not the status's, so no landing answers the row): the row keeps the seam's words and takes the deadline row's tail, true of what shows now, with Reload; a second repaint leaves it; the pane coming back files the failure row again; the landing takes the row away", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const w = world({ deferReload: true }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+  w.disk = DOC.replace("cut", "reduced"); w.diskMtime = F11;
+  const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
+  answer(w, after, lastOf(w, "fileComments", "reject"), { rejected: ["h1"] }); await flush(); await flush();
+  const WORDS = "no such file: " + ABS;
+  w.failReload!(WORDS); await flush();
+  const { BYTES_FAILED } = await import("./file-comments");
+  const FAILED_ROW = BYTES_FAILED + " (" + WORDS + "); the view shows that failure in place of the file, so no change is marked. Reload to read the file again.";
+  const OVER_TEXT_ROW = BYTES_FAILED + " (" + WORDS + "); the view still shows the earlier text, with no change marked on it. Reload to read the file again.";
+  const rowText = () => { const r = aside.querySelector('.fc-cards .fc-err[data-slot="bytes"]'); return r ? r.childNodes[0].textContent : null; };
+  assert.equal(rowText(), FAILED_ROW, "the failure row over the pane");
+  assert.equal(w.body.querySelectorAll(".fv-cl").length, 0, "the pane, no rows");
+  // the format click: the earlier text is back, the pane gone, nothing landed
+  w.repaint(); await flush();
+  assert.equal(w.viewError, null, "a content paint: error() null");
+  assert.equal(w.body.querySelectorAll(".fv-cl").length, 10, "the last landing's rows are back");
+  assert.equal(w.viewMtime, F1, "the last landing's mtime, not the status's: no landing");
+  assert.equal(marksOf(w).length, 0, "no change is marked over the earlier text (the offsets index other bytes)");
+  assert.equal(rowText(), OVER_TEXT_ROW, "the seam's words, and the tail that says what shows now (before: the failure tail, false about a view showing the text)");
+  assert.ok(act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload"), "Reload stays");
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "no loader: nothing is out");
+  assert.deepEqual(w.hookErrors, []);
+  // the other format button: the same text again, the row left as it is
+  w.repaint(); await flush();
+  assert.equal(rowText(), OVER_TEXT_ROW, "a second repaint changes nothing");
+  assert.equal(aside.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "one row");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(rowText(), OVER_TEXT_ROW, "no deadline runs: the wait ended at the failure");
+  // the row's Reload fails again (the browser's order: the status lands first, over the earlier text; then the pane): the failure row anew
+  act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
+  assert.equal(w.reloads, 2);
+  answer(w, after); await flush(); await flush();
+  assert.equal(rowText(), null, "the click took the row, and the status over the earlier text files none (no pane)");
+  assert.ok(w.failReload, "the fetch is still out");
+  w.failReload!(WORDS); await flush();
+  assert.equal(aside.querySelectorAll(".fc-load").length, 0, "the pane's paint ends the wait");
+  assert.equal(rowText(), FAILED_ROW, "the pane is back, and so is the row that says so");
+  // and the landing: the row goes with the paint that shows the status's text
+  act(aside.querySelector('.fc-err[data-slot="bytes"]')!, "fcreload")!.click(); await flush();
+  answer(w, after); await flush(); await flush();
+  assert.equal(rowText(), FAILED_ROW, "the status over the standing pane files the row again (contract C3's standing-pane clause)");
+  w.landReload!(); await flush(); await flush();
+  assert.equal(w.viewError, null); assert.equal(w.viewMtime, F11);
+  assert.equal(rowText(), null, "the landing answers the row");
+  assert.equal(marksOf(w, "h5").length, 1, "the marks are back over the new text");
+  assert.deepEqual(w.hookErrors, []);
 });
 
 // ── every status brings the view's bytes to the text it describes (the review: stale bytes after a store-moved) ──

@@ -5227,36 +5227,55 @@ CR-only file gives three Raw rows. Tests: file-view, seam, host;
 `tests/test_kernel_file_comments_save.py`.
 
 **The Slice 7 build** (2026-09-14). Branch `mdviewer-s7`, cut from e6aeb1138, the head of `mdviewer-s6` (Slice 6, fork
-PR 753, in the manager's queue when the build began), every commit on it self-contained so that the branch rebases
-onto the fork's main once that PR lands, the PR opening against main after the rebase (the brief's open question 1 at
-its default, decided by the coordinating session as the worktree's base; Slice 6 and Slice 8 were cut the same way).
-At this note's writing the rebase has not happened: the base is e6aeb1138, and every commit message names its
-fails-before trees by shas of this lineage, which the rebase will re-mint into trees no clone of the fork reaches. The
-mapping from these shas to the branch's, which `git range-diff` over the two lineages reads as the same patch commit
-for commit, is recorded here at the rebase; the labels are the build's units, one builder each owning its files, under
-one session that coordinated them: 0ce202051 (A1), 934c7e6b6 (B), e5b44a89d (C1c), 1af2be2bd (D1), 123dcc8a9 (C0c),
-6299665d0 (C4c), 954e55c9a (A2), cb9aca26d (D2), a874ba578 (D3), f7902d170 (C3c), d1b0f6d62 (A3), 284d63f2c (C2c),
-fc6213e9a (A4), 07cbca7bc (A5), 1512a28c4 (A6), 441a70c4b (A7) and 5902b1265 (E1, the guide); this note and the ledger
-entry follow as E2 and E3. No commit of the build claims a file byte-identical between two trees, so nothing here is
-for the history module to check (tests/test_markdown_viewer_plan_note_history.py reads the Slice 6 note alone). The
-units: A the viewer (file-view.ts, md-sanitize.ts for its sanitizer seam, real-viewer-leg.ts and the viewer tests), B
-the sheets (the two sheets' viewer regions and fileview-parity), C the panel and the map (file-comments.ts,
-anchor-map.ts, reader-place.ts and their tests, and the stub sweep), D the host and the kernel
-(file-comments-host.mjs, kernel.py's `_save_file` and edit log, and their tests) and E the records (the guide, this
-note, the ledger entry). Every shape one unit coded against in another's file went through a contracts file in the
-notes directory outside the repo, one dated line each, written before the code that met it: C1 the seam's `error()`,
-C2 the figure label, C3 the panel's row, C4 the BOM rule, C5 the five exported strings, C6 the row split, C7 the text
-paint's try. This note and the ledger entry are ad7667f20 (E2) and 7c8a1905c (E3); the consolidation pass follows as
-one commit after them (it re-aimed the three source pins in unit C's files that read lines A7 changed, item 7; added
-the failures leg's panel scene and the landing's clearing of the panel's row that scene found, item 3; left the failed
-figure's label out of the Rendered pairing's top-level nodes, the defect its full npm test's browser legs found, item
-2, and re-aimed the one sanitizer pin the audit missed, item 1; and updated this note), then the review, the sweep,
-the rebase onto main and the PR. The principle every item serves, in one
-sentence: a failure shows text naming what happened where the person is looking, never a blank, a bare glyph or a
-console-only error; a source that cannot answer says so rather than degrading to a guess; and a mechanism fires on the
-exact event (an img's `error` event, a fetch chain's catch, the landing that applies bytes, the header a response
-carries), never a timer, a debounce, a grace period or an age threshold. What each item does, why, and the test that
-holds it:
+PR 753, in the manager's queue when the build began), every commit on it self-contained so that the branch could
+rebase onto the fork's main once that PR landed, the PR opening against main after the rebase (the brief's open
+question 1 at its default, decided by the coordinating session as the worktree's base; Slice 6 and Slice 8 were cut
+the same way). After the build's consolidation commit it was rebased on 2026-09-14 onto main 462ad3ccf, the merge of
+PR 753, the branch's base since. The rebase re-minted every commit, so a sha a commit message names for a fails-before
+tree is a tree no clone of the fork reaches, unless it is e6aeb1138 itself, which PR 753 carried onto main (the six
+such shas: 7c8a1905c, 123dcc8a9, fc6213e9a, f7902d170, 1512a28c4 and 07cbca7bc). The mapping, which `git range-diff
+e6aeb1138..9d0c719a0 462ad3ccf..HEAD` reads as the same patch commit for commit, with the build's label for each (the
+labels are the build's units, one builder each owning its files, under one session that coordinated them): 0ce202051
+(A1) is 023da39f1 on the branch, 934c7e6b6 (B) is db4bffd58, e5b44a89d (C1c) is 5e6728847, 1af2be2bd (D1) is
+44462600a, 123dcc8a9 (C0c) is 6e9f977e9, 6299665d0 (C4c) is ba3cd2d40, 954e55c9a (A2) is eac826b13, cb9aca26d (D2) is
+a58644912, a874ba578 (D3) is 79133ebdc, f7902d170 (C3c) is fcf8208ff, d1b0f6d62 (A3) is 69559aeb8, 284d63f2c (C2c) is
+a5b8a51a0, fc6213e9a (A4) is 7d2758183, 07cbca7bc (A5) is 20b573ff4, 1512a28c4 (A6) is 97b6ec958, 441a70c4b (A7) is
+3028370df, 5902b1265 (E1, the guide) is 4167fb59b, ad7667f20 (E2, this note) is c689a845d, 7c8a1905c (E3, the ledger
+entry) is 32cad5f72 and the consolidation's 9d0c719a0 is 103a13f32. Eighteen of the twenty replayed as the same patch;
+the range-diff shows what changed in the other two. A3's two hunk headers in file-view-reload.test.ts quote the title
+of the deleted-on-disk scene, which main's round 2 had renamed; the patch's lines are the same. A5 conflicted in two
+files main had also changed, file-view-links.test.ts (the landing-order pin) and real-viewer-leg.ts (the page stub's
+globals line), and two more pins merged clean but each allowed its own side's line alone: A5's landing-order pin in
+file-view.test.ts and main's re-open pin in file-view-outline.test.ts. The replayed A5 carries both sides in each of
+the four: the two landing-order pins and the re-open pin allow main's `reopenOutline` line before the paint and the
+Latin-1 raise after it, and the globals line carries main's `__reason` and A5's `__utf8`. Main's two commits between
+e6aeb1138 and 462ad3ccf, Slice 6's manager review rounds 2 and 3 (4a1c02fe8 and c5b89724d), change fourteen files,
+nine of them files this slice changes too: kernel.py, this plan, tests/test_kernel_preview.py, file-view.ts,
+real-viewer-leg.ts, file-view-links.test.ts, file-view-outline.test.ts, file-view-reload.test.ts and
+file-view.test.ts. So a fails-before run over a `git archive` of e6aeb1138 read those nine at the cut point, not at
+the base. Every count in this note is the count on the branch, the two rounds' additions included:
+file-view-reload.test.ts 22 where the cut point had 20 and file-view-outline.test.ts 15 where it had 14 (round 2's
+cases), tests/test_kernel_preview.py 31 where it had 25 (two cases from each round); the review's round 1 corrected
+these three, written at the cut point's numbers plus the slice's own (20, 14 and 27). No commit of the build claims a
+file byte-identical between two trees, so nothing here is for the history module to check
+(tests/test_markdown_viewer_plan_note_history.py reads the Slice 6 note alone). The units: A the viewer (file-view.ts,
+md-sanitize.ts for its sanitizer seam, real-viewer-leg.ts and the viewer tests), B the sheets (the two sheets' viewer
+regions and fileview-parity), C the panel and the map (file-comments.ts, anchor-map.ts, reader-place.ts and their
+tests, and the stub sweep), D the host and the kernel (file-comments-host.mjs, kernel.py's `_save_file` and edit log,
+and their tests) and E the records (the guide, this note, the ledger entry). Every shape one unit coded against in
+another's file went through a contracts file in the notes directory outside the repo, one dated line each, written
+before the code that met it: C1 the seam's `error()`, C2 the figure label, C3 the panel's row, C4 the BOM rule, C5 the
+five exported strings, C6 the row split, C7 the text paint's try. This note and the ledger entry are E2 and E3, mapped
+above; the consolidation pass followed as one commit after them (it re-aimed the three source pins in unit C's files
+that read lines A7 changed, item 7; added the failures leg's panel scene and the landing's clearing of the panel's row
+that scene found, item 3; left the failed figure's label out of the Rendered pairing's top-level nodes, the defect its
+full npm test's browser legs found, item 2, and re-aimed the one sanitizer pin the audit missed, item 1; and updated
+this note), then the rebase onto main, and the review (its rounds recorded below), the sweep and the PR. The principle
+every item serves, in one sentence: a failure shows text naming what happened where the person is looking, never a
+blank, a bare glyph or a console-only error; a source that cannot answer says so rather than degrading to a guess; and
+a mechanism fires on the exact event (an img's `error` event, a fetch chain's catch, the landing that applies bytes,
+the header a response carries), never a timer, a debounce, a grace period or an age threshold. What each item does,
+why, and the test that holds it:
 1. *Item 1, the render catch.* `mdBlock` keeps no try, no catch and no `rendered` flag: a throw from marked, from the
    sanitizer or from any DOM pass in it propagates, and both link passes run on every successful render. Each viewer's
    `renderBody` (the local viewer's text paint inside `perfTimed`, the URL viewer's) wraps the block's build AND the
@@ -5298,44 +5317,56 @@ holds it:
    probed since its browser legs bundle the module into a page; every one a swallowed throw before this slice. One
    fact the audit turned up: the outline fixture holds a formula heading (`Ratio $x$`), so with the seam the KaTeX
    fill runs for real over that suite's stand-in body, and the row's text is unchanged only because the formula is a
-   single letter rendered as html. file-view-seam.test.ts (49, ten new in the slice: A1's record pin that a Rendered
-   paint sanitizes through the stand-in once per paint and never on a Raw one and that DOMPurify over the stand-in's
-   window and the module-global instance are the bare factory, executed over the library; A2's two, the throwing
-   stand-in giving the line first with the message, `div.fileview-code` with `code.hljs` under it, no `.fileview-md`,
-   `mode()` raw, the Rendered button pressed with the preference unwritten, `renderedImages()` `[]`, the Outline
-   hidden, `text()` the file's text, one paint, then the Raw click's rows without the line, a Rendered click that
-   throws again bringing the line back and the healed Rendered click's `.fileview-md`, and a throw from the adoption
-   after the sanitizer taking the same road with a bare string and an empty-message Error named by `String(err)`; the
-   `mode()` closure and the sanitize-then-rewrite order re-pinned; items 3, 5, 6 and 7 add the rest),
-   file-view.test.ts (57, four new in the slice, A2's being the source pin over `mdBlock`'s shape, both renderBody try
-   shapes, `renderFell`, `mode()`, `RENDER_FELL` and `renderFellLine`, with the swap-line and `if (rendered)` pins
-   re-aimed), file-view-links.test.ts (28, the fallback pin re-aimed: no bare-text fallback in `mdBlock`, the Raw rows
-   codeBlock paints linkified by codeBlock; item 5 re-aims one adjacency pin), file-view-place.test.ts (8, both
-   viewers' read, swap, folds, stamp, hooks and seat pins re-aimed to the try; item 6's optional line allowed),
-   md-url-view.test.ts (29, the sanitize-count pin re-aimed to one `.sanitize(` call through `purifier()`, the `if
-   (rendered)` pin and the URL renderBody tail pin re-aimed; item 6 re-aims the tail to require its line),
-   md-sanitize.test.ts (19, one new: the seam executed, a stand-in receiving the one profile spread with RETURN_DOM
-   and its body coming back after the passes, null putting DOMPurify back, which under node then throws; the callers
-   list and the count re-aimed to `purifier().sanitize(`), render-sanitize.test.ts (3, the chat renderer's source pin
-   over `DOMPurify.sanitize(` in `sanitizeMd` re-aimed to `purifier().sanitize(` with the accessor's line pinned: a
-   pin outside A1's audit, which listed the suites that drive `openFileView`, found red by the consolidation pass's
-   full npm test), file-view-landing-throw-browser.test.ts (2 legs, both
-   scenes re-aimed: the line first, the new text's rows under it, no `.fileview-md`, one more paint, `mode()` raw, the
-   Rendered button pressed, `mtimeNs()` the new mtime, no uncaught error, the immediate scene going on to the Raw
-   click and the healed Rendered click), file-view-place-memory.test.ts (13, the stand-in installed and the intercept
-   retired, the marked import dropped), file-view-outline.test.ts (14, the same, the formula heading's row pinned as
-   KaTeX's html with the fill asserted to have run; item 3 re-aims its closers case), file-view-text-size.test.ts (33,
-   the stand-in installed, its browser legs included); the stand-in installed with no assertion changed in
-   file-view-tracked-edit, file-view-edit-events, file-view-edit-races, file-view-undo-landed,
-   file-view-undo-landed-ack, file-comments-save-busy-viewer, file-view-pdf-chunk-latch, file-view-pdf-frame and
-   file-view-pdf-lifecycle (counts in the list below). Recorded, not changed: a heading target (`at.heading`) over the
-   fallback rows is spent as before by renderBody's tail and by `landTarget`, so the notice bar can say "No section
-   named" under the failure line while the section exists; gating both spends on `renderFell === null` would keep the
-   target pending for the Rendered retry, as under a Raw preference, and needs the exact-line pin in
-   tests/test_guide_files_place_and_outline.py re-aimed with three of unit A's; the URL viewer's `landFragment` spends
-   the URL's own fragment over the fallback rows the same way. Also recorded: `setMdSanitizer` leaves the
-   module-global `hooksInstalled` latch alone, so a stand-in installed after a first `sanitizeMd` call gets no hooks
-   (every suite installs its stand-in at module load, before any paint).
+   single letter rendered as html. file-view-seam.test.ts (52, ten new in the build and three in the review's round 1:
+   A1's record pin that a Rendered paint sanitizes through the stand-in once per paint and never on a Raw one and that
+   DOMPurify over the stand-in's window and the module-global instance are the bare factory, executed over the
+   library; A2's two, the throwing stand-in giving the line first with the message, `div.fileview-code` with
+   `code.hljs` under it, no `.fileview-md`, `mode()` raw, the Rendered button pressed with the preference unwritten,
+   `renderedImages()` `[]`, the Outline hidden, `text()` the file's text, one paint, then the Raw click's rows without
+   the line, a Rendered click that throws again bringing the line back and the healed Rendered click's `.fileview-md`,
+   and a throw from the adoption after the sanitizer taking the same road with a bare string and an empty-message
+   Error named by `String(err)`; the `mode()` closure and the sanitize-then-rewrite order re-pinned; items 3, 5, 6 and
+   7 add the rest), file-view.test.ts (58, four new in the build and one in the review's round 1 over the offset
+   spender's `mode()` read, A2's being the source pin over `mdBlock`'s shape, both renderBody try shapes,
+   `renderFell`, `mode()`, `RENDER_FELL` and `renderFellLine`, with the swap-line and `if (rendered)` pins re-aimed),
+   file-view-links.test.ts (28, the fallback pin re-aimed: no bare-text fallback in `mdBlock`, the Raw rows codeBlock
+   paints linkified by codeBlock; item 5 re-aims one adjacency pin), file-view-place.test.ts (8, both viewers' read,
+   swap, folds, stamp, hooks and seat pins re-aimed to the try; item 6's optional line allowed), md-url-view.test.ts
+   (29, the sanitize-count pin re-aimed to one `.sanitize(` call through `purifier()`, the `if (rendered)` pin and the
+   URL renderBody tail pin re-aimed; item 6 re-aims the tail to require its line), md-sanitize.test.ts (19, one new:
+   the seam executed, a stand-in receiving the one profile spread with RETURN_DOM and its body coming back after the
+   passes, null putting DOMPurify back, which under node then throws; the callers list and the count re-aimed to
+   `purifier().sanitize(`), render-sanitize.test.ts (3, the chat renderer's source pin over `DOMPurify.sanitize(` in
+   `sanitizeMd` re-aimed to `purifier().sanitize(` with the accessor's line pinned: a pin outside A1's audit, which
+   listed the suites that drive `openFileView`, found red by the consolidation pass's full npm test),
+   file-view-landing-throw-browser.test.ts (2 legs, both scenes re-aimed: the line first, the new text's rows under
+   it, no `.fileview-md`, one more paint, `mode()` raw, the Rendered button pressed, `mtimeNs()` the new mtime, no
+   uncaught error, the immediate scene going on to the Raw click and the healed Rendered click),
+   file-view-place-memory.test.ts (13, the stand-in installed and the intercept retired, the marked import dropped),
+   file-view-outline.test.ts (15, the same, the formula heading's row pinned as KaTeX's html with the fill asserted to
+   have run; item 3 re-aims its closers case), file-view-text-size.test.ts (33, the stand-in installed, its browser
+   legs included); the stand-in installed with no assertion changed in file-view-tracked-edit, file-view-edit-events,
+   file-view-edit-races, file-view-undo-landed, file-view-undo-landed-ack, file-comments-save-busy-viewer,
+   file-view-pdf-chunk-latch, file-view-pdf-frame and file-view-pdf-lifecycle (counts in the list below). Recorded by
+   the build and closed in the review's round 1: a heading target (`at.heading`) over the fallback rows was spent as
+   before by renderBody's tail and by `landTarget`, so the notice bar could say "No section named" under the failure
+   line while the section existed, and the URL viewer's `landFragment` spent the URL's own fragment over the rows the
+   same way. `spendHeading` and `landFragment` return while `renderFell` is set, the target kept for the healed
+   Rendered paint as under a Raw preference (the seam case drives the open, a Raw click, a Rendered click that throws
+   again and the healed paint that lands the section; the failures leg's fifth scene drives the URL viewer's fragment
+   the same way, `## Later` landing at the body's top after the heal); the exact-line pin in
+   tests/test_guide_files_place_and_outline.py stands, and the pins in file-view.test.ts and md-url-view.test.ts
+   require the guard lines. From the same round: an `{ offset }` target over the fallen render landed nowhere and its
+   past-the-end notice named a block, because `scrollToSourceOffset` read the pressed button (`fmt.md`), took the
+   Rendered branch and found no `.fileview-md`; it reads `mode()` now, so over the rows it takes the Raw branch, lands
+   on the row through the seam's `scrollToOffset` and says "line". Recorded, not changed: after a fallback throw from
+   a click (`mdBlock` and the fallback `codeBlock` both throwing, a bug and not a file) the body keeps the previous
+   paint while `renderFell` names the failure, so `mode()` answers raw over a standing Rendered box until the next
+   paint; assigning `renderFell` after the fallback swap would trade that for the reverse mismatch on a
+   Raw-then-Rendered click (the click writes `fmt.md` before the paint), and at a landing the chain's catch repaints
+   with `error()` set, so the record stands. Also recorded: `setMdSanitizer` leaves the module-global `hooksInstalled`
+   latch alone, so a stand-in installed after a first `sanitizeMd` call gets no hooks (every suite installs its
+   stand-in at module load, before any paint).
 2. *Item 2, the figure label.* One capture-phase `error` listener on `.fileview-body` per open, installed once at the
    open beside the body's other listeners and dropped with the viewer (`armFigureLabels`; `ctx.onClose` in the local
    viewer, the close hooks in the URL viewer, which gets the same two), the `armReseat` idiom, since an img's `error`
@@ -5346,21 +5377,36 @@ holds it:
    `span.fc-imgwrap` around it (the regions layer wraps THE img while the Comments panel is open, before the error
    fires, and its dispose puts the img back and removes the wrap with everything in it, so a label inside would leave
    with the panel's close; anchor-map.ts reads that span as the img, so the label's place in the block is the same to
-   the map; the contract's addendum, written before the code). The label's text is the exported `FIGURE_FAILED`
-   ("Image failed to load:"), a space, the authored source by the panel's own `pictureDest` rule (`data-fv-src` when
-   the viewer rewrote the src, else `src`) and the alt in parentheses when it is not empty; one label per img, found
-   by the mark and never by the class (the figure gate's rule: an author can type the class): a second `error`, the
-   chat page's heal retrying, rewrites the one label's text; the img's `load` removes it. The img keeps every
-   attribute and its place, `img.onerror` is never set (the heal skips an img with one), the insertion fires no paint
-   hook (the body's nodes stand and the panel's marks are unaffected), and `headingWords` skips the mark, so a heading
-   holding a failed figure keeps an Outline row reading its words and the alt alone. The event carries no status, so
-   the label names the fact and the source, never a reason, and the viewer makes no second request. `fv-figerr` joins
-   both `CONTROL_CLASSES` lists (anchor-map.ts and reader-place.ts: the label's text is the viewer's, not the note's,
-   and a control's text in a block once refused the block's pairing and seated the reader's place fourteen paragraphs
-   off; the slice's first HIGH risk, closed in C1c before the label existed). The sheets (B) key one rule on the class
-   under the box, `.fileview-md .fv-figerr {`, in the gate's shape (inline-flex, centred, a 1px dashed
-   `var(--box-border)`, `var(--overlay-05)`, 0.86em, radius 6px, line-height 1.3, max-width 100%) with the error
-   dress's ink `var(--warn)`, a 0.3em side margin off the alt text or the prose beside it and `overflow-wrap:
+   the map; the contract's addendum, written before the code), or, since the review's round 1, a link holding the
+   figure alone (`linkAround`: an `<a>` whose one element child is the figure or its wrap and whose text is blank, a
+   README's linked badge; inside the link the label wore the pointer and a click on it followed the link, and a link
+   with text beside the figure keeps the label beside its img, as the browser's alt text is). The label's text is the
+   exported `FIGURE_FAILED` ("Image failed to load:"), a space, the source, and the alt in parentheses when it is not
+   empty. The source, since the review's round 1, is the candidate the browser asked for (`failedSource`): the browser
+   picks ONE candidate for an img, the first `<source>` of an enclosing `<picture>` whose media and type match, else
+   the img's own srcset by density, else its src, and fires the img's `error` when that one fails with no fall back to
+   another, so a label naming the src of a picture or a srcset img named a file the browser never asked for (the
+   build's header comment had the premise wrong: a picture does not fire once every source fails); when
+   `img.currentSrc` is set and is not the img's own src, the candidate is matched against the picture's sources and
+   the img, candidate for candidate through `parseSrcset` over the rewritten srcset and the authored one that
+   `rewriteFigureSrcs` keeps in `data-fv-srcset` (`FV_SRCSET`) beside every srcset it rewrote, and named by its
+   authored spelling, or as written when the srcset was left as written (a URL document's, a remote host's); the img's
+   own src, or no `currentSrc` to read (the node stand-in), keeps the panel's own `pictureDest` rule (`data-fv-src`
+   when the viewer rewrote the src, else `src`). A `data:` source is cut to its head through the comma with an
+   ellipsis (`shownSource`; the first forty characters when there is no comma): a broken inline image's label printed
+   the whole encoded payload, 1518 px tall at 380 px, two screens of base64 where the note should go on. One label per
+   img, found by the mark and never by the class (the figure gate's rule: an author can type the class): a second
+   `error`, the chat page's heal retrying, rewrites the one label's text; the img's `load` removes it. The img keeps
+   every attribute and its place, `img.onerror` is never set (the heal skips an img with one), the insertion fires no
+   paint hook (the body's nodes stand and the panel's marks are unaffected), and `headingWords` skips the mark, so a
+   heading holding a failed figure keeps an Outline row reading its words and the alt alone. The event carries no
+   status, so the label names the fact and the source, never a reason, and the viewer makes no second request.
+   `fv-figerr` joins both `CONTROL_CLASSES` lists (anchor-map.ts and reader-place.ts: the label's text is the
+   viewer's, not the note's, and a control's text in a block once refused the block's pairing and seated the reader's
+   place fourteen paragraphs off; the slice's first HIGH risk, closed in C1c before the label existed). The sheets (B)
+   key one rule on the class under the box, `.fileview-md .fv-figerr {`, in the gate's shape (inline-flex, centred, a
+   1px dashed `var(--box-border)`, `var(--overlay-05)`, 0.86em, radius 6px, line-height 1.3, max-width 100%) with the
+   error dress's ink `var(--warn)`, a 0.3em side margin off the alt text or the prose beside it and `overflow-wrap:
    anywhere` so a long src wraps inside the cap, without the gate's min-width, min-height and cursor (the label is not
    clicked, and no button stands in it, so the sizes test gains no chain); one line in each sheet's `@media print`
    block beside the gate's (black ink, black border, no wash); byte-equal in both sheets with the head in
@@ -5373,54 +5419,69 @@ holds it:
    sibling (the panel pairs embeds by img order and `data-fv-src`, the layer wraps THE img, the reader's place counts
    `<img` tags in a row: a sibling leaves all three alone), and the words the fact and the authored src with the alt,
    no reason. The departure from the plan's text: "an inline error naming its src" is a label beside a kept img, never
-   a replacement or a wrapper. file-view-figure-error.test.ts (7, new, over the seam suite's stand-in: one label after
-   the img with the mark, the class and the text, the authored `data-fv-src` for a rewritten img and the src for a
-   bare one with no parentheses for an empty alt; a second error rewriting the one label and a load removing it; the
-   img's attributes, place and onerror untouched; `renderedImages()` still listing both; no paint hook; the label
-   between the img and an authored `span.fv-figerr` without the mark, after a `<picture>` and never inside, after the
-   layer's wrap and kept through its dispose, none under a gate's placeholder or outside the box; a heading's Outline
-   row reading "Figure 3 detail"; one error listener per open, the same after a switch to Raw and back to Rendered,
-   gone after the close; the URL viewer arming and dropping the same two; a source pin over the call sites, the
-   listeners, the mark, the text and the skip; the shim's projection case), file-view-figure-error-browser.test.ts (2
-   legs, new: the real viewer with real-viewer-leg's new `serve` answering the note's figures, a 404, a text/plain
-   body the decoder refuses and an svg that loads, under styles.css on the pane and in the chat modal and under
-   feed.css: four figures, three labels with their authored src and alt, none on the svg, the img untouched, the label
-   in unit B's dress, the Outline's rows "Report" and "Figure 3 detail", a Raw switch from the failed figure's
-   paragraph seating on its row, and with the Comments panel open every figure taking a layer, each label following
-   its wrap and none inside one, and a comment on the failed figure's paragraph painting its highlight, the slice's
-   first HIGH risk measured; the chat page's heal installed through the leg's new `before`, three errors at the first
-   paint, a dispatched `romp:wsup` re-fetching the three and the same three labels rewritten in place, every wait on
-   the figures' `complete` or the panel's paint and never a timer), fileview-parity.test.ts (4, the `.fileview-md
-   .fv-figerr {` head in RULES, red over the base with no rule in either sheet; the print block already pinned whole),
-   anchor-map.test.ts (41, three new in the slice: C1c's, a paragraph holding the label pairing with its block, the
-   caption mapping and painting, a drag from inside the label landing at its edge, the label alone selecting nothing,
-   and a label beside a bare `<img>` html block leaving the block after it paired; item 7's C4c case; the
-   consolidation pass's case, below), anchor-map-fallback-markup.test.ts (25, the mirror list gaining the class, a
-   record change), md-config-figure-gate-place.test.ts (1, two scenes in the readPlace walk: the label inside the
-   block's `<p>` and beside the block's own text, red over the base with no place). The consolidation pass's full npm
-   test found the label at the box's TOP level misaligning the Rendered pairing: when the img is a top-level node of
-   an html block (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the
-   label is top-level too, `analyzeRendered` counted it among the nodes the blocks pair against, the img's block owned
-   the img and the label, and with the Comments panel open (the wrap and the label ahead of the div) the heading
-   nested in the div was refused as not matching the file (anchor-map-wrappers-browser.test.ts, two legs red).
-   anchor-map.ts now leaves the label out of the top-level nodes (`isFigureLabel` in `holdsContent`), the label alone
-   and not every control: a display formula the fill could not render at the top level is its block's node and a gated
-   figure's placeholder holds the block's img, and a first cut that left out every control turned
-   anchor-map-obsidian.test.ts (four formula cases) and md-config-figure-gate-place.test.ts red, so the pass narrowed
-   it. anchor-map.test.ts's third new case holds it (the bare img block owning its img alone with the label after it,
-   or the panel's wrap alone; the README shape's heading and paragraphs mapping with the label between the img and the
-   div, the panel open or closed; red over a git archive of 7c8a1905c at the block owning [IMG, SPAN]), with
+   a replacement or a wrapper. file-view-figure-error.test.ts (9, new, seven in the build over the seam suite's
+   stand-in: one label after the img with the mark, the class and the text, the authored `data-fv-src` for a rewritten
+   img and the src for a bare one with no parentheses for an empty alt; a second error rewriting the one label and a
+   load removing it; the img's attributes, place and onerror untouched; `renderedImages()` still listing both; no
+   paint hook; the label between the img and an authored `span.fv-figerr` without the mark, after a `<picture>` and
+   never inside, after the layer's wrap and kept through its dispose, none under a gate's placeholder or outside the
+   box; a heading's Outline row reading "Figure 3 detail"; one error listener per open, the same after a switch to Raw
+   and back to Rendered, gone after the close; the URL viewer arming and dropping the same two; a source pin over the
+   call sites, the listeners, the mark, the text and the skip; the shim's projection case; and two in the review's
+   round 1: a picture's source candidate named by its authored spelling, through the regions wrap too, an img's own 1x
+   candidate, an unrewritten remote candidate as written, the img's own src, no currentSrc and an unmatched currentSrc
+   keeping pictureDest's rule, a data: source of three thousand characters, an inline svg and a malformed URI cut to
+   the head, and the label after a link holding the figure alone, beside its img when the link has text or two
+   figures), file-view-figure-error-browser.test.ts (3 legs, new: two in the build, the real viewer with
+   real-viewer-leg's new `serve` answering the note's figures, a 404, a text/plain body the decoder refuses and an svg
+   that loads, under styles.css on the pane and in the chat modal and under feed.css: four figures, three labels with
+   their authored src and alt, none on the svg, the img untouched, the label in unit B's dress, the Outline's rows
+   "Report" and "Figure 3 detail", a Raw switch from the failed figure's paragraph seating on its row, and with the
+   Comments panel open every figure taking a layer, each label following its wrap and none inside one, and a comment
+   on the failed figure's paragraph painting its highlight, the slice's first HIGH risk measured; the chat page's heal
+   installed through the leg's new `before`, three errors at the first paint, a dispatched `romp:wsup` re-fetching the
+   three and the same three labels rewritten in place, every wait on the figures' `complete` or the panel's paint and
+   never a timer; and the round 1 scene on the pane: the browser asked for dark.webp and missing-1x.png and never
+   missing-2x.png, plot.png decoding as the plain figure, the labels reading `figs/dark.webp (plot)` and
+   `figs/missing-1x.png (dense)`, a data: figure's label under 60 px tall at 900 where it was 666, and a linked
+   figure's label a child of the paragraph with `closest("a")` null and no pointer cursor), fileview-parity.test.ts
+   (4, the `.fileview-md .fv-figerr {` head in RULES, red over the base with no rule in either sheet; the print block
+   already pinned whole), anchor-map.test.ts (43, three new in the build and two in the review's round 1: C1c's, a
+   paragraph holding the label pairing with its block, the caption mapping and painting, a drag from inside the label
+   landing at its edge, the label alone selecting nothing, and a label beside a bare `<img>` html block leaving the
+   block after it paired; item 7's C4c case; the consolidation pass's case, below; the review's two lay the CRLF
+   fixture and four small sources on the viewer's grid (`buildRawViewer`, the replica's three-ending split with the
+   highlighter, and `rawDomIndexOfSplit`) and drive `paintRawPoint`, `paintRaw` and `paintChangesRaw` over them:
+   sixteen rows with no ending in any, the same marks the older grid paints less its ending-only slices, every point
+   on the row `rawRowForOffset` and `rawOffsetToLine` give, the selection walks equal before and after the paint; the
+   nine older cases keep the LF-only grid as a standing input of the map, which assumes neither split, the build's
+   open question decided so; under three painter-local mutations of anchor-map.ts the two are the only reds),
+   anchor-map-fallback-markup.test.ts (25, the mirror list gaining the class, a record change),
+   md-config-figure-gate-place.test.ts (1, two scenes in the readPlace walk: the label inside the block's `<p>` and
+   beside the block's own text, red over the base with no place). The consolidation pass's full npm test found the
+   label at the box's TOP level misaligning the Rendered pairing: when the img is a top-level node of an html block
+   (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the label is
+   top-level too, `analyzeRendered` counted it among the nodes the blocks pair against, the img's block owned the img
+   and the label, and with the Comments panel open (the wrap and the label ahead of the div) the heading nested in the
+   div was refused as not matching the file (anchor-map-wrappers-browser.test.ts, two legs red). anchor-map.ts now
+   leaves the label out of the top-level nodes (`isFigureLabel` in `holdsContent`), the label alone and not every
+   control: a display formula the fill could not render at the top level is its block's node and a gated figure's
+   placeholder holds the block's img, and a first cut that left out every control turned anchor-map-obsidian.test.ts
+   (four formula cases) and md-config-figure-gate-place.test.ts red, so the pass narrowed it. anchor-map.test.ts's
+   third new case holds it (the bare img block owning its img alone with the label after it, or the panel's wrap
+   alone; the README shape's heading and paragraphs mapping with the label between the img and the div, the panel open
+   or closed; red over a git archive of 7c8a1905c at the block owning [IMG, SPAN]), with
    anchor-map-cells-browser.test.ts (6 legs, one read re-aimed: the leg serves no picture, so its table's `x.png`
    fails and wears the label since item 2, and the cell's text is read with the label aside and the label's presence
-   pinned). Recorded, not changed: an authored `<span
-   class="fc-imgwrap">` around an img puts the label after that span rather than after the img, still beside the
-   figure in the same block (the anchor climbs the layer's class, as anchor-map.ts recognises it); the browser leg's
-   count of six error events after `romp:wsup` relies on Chromium firing no `error` when the heal removes the src
-   before re-setting it (the HTML specification fires none for an img with no src and no srcset); the label's rendered
-   look, the side margin against the browser's alt-text rendering and the wrap of a long src, is asserted by computed
-   display, border and box width in the leg and not by eye; after `closeFileView` one of the Comments panel's three
-   capture-phase `load` listeners stays on the detached body (the viewer's own is gone), harmless while the body is
-   detached, so the node case asserts the count fell rather than reached zero.
+   pinned). Recorded, not changed: an authored `<span class="fc-imgwrap">` around an img puts the label after that
+   span rather than after the img, still beside the figure in the same block (the anchor climbs the layer's class, as
+   anchor-map.ts recognises it); the browser leg's count of six error events after `romp:wsup` relies on Chromium
+   firing no `error` when the heal removes the src before re-setting it (the HTML specification fires none for an img
+   with no src and no srcset); the label's rendered look, the side margin against the browser's alt-text rendering and
+   the wrap of a long src, is asserted by computed display, border and box width in the leg and not by eye; after
+   `closeFileView` one of the Comments panel's three capture-phase `load` listeners stays on the detached body (the
+   viewer's own is gone), harmless while the body is detached, so the node case asserts the count fell rather than
+   reached zero.
 3. *Item 3, `error()` and the hooks.* The fetch chain's `.catch` fires the hooks AFTER its swap, the `imgFailed`
    order: `body.replaceChildren(why)`, `syncOutline()`, then `viewError = msg; fireRendered();`, then
    `rearmDiskBar(my)` as before (the re-arm reads the keyboard after the paint, Slice 6's rule; a hook does not move
@@ -5461,41 +5522,54 @@ holds it:
    decode cases gaining `error()` as the pane's own sentence and null after a reload that decodes; the member, its
    placement, its doc through `docOf`, the closure line, the three clears by site, the two set sites and the count at
    eight pinned), file-view.test.ts (the catch-order pin re-aimed: swap, `syncOutline`, `viewError`, `fireRendered`,
-   `rearmDiskBar`, with a pin that the hooks never follow the re-arm), file-view-reload.test.ts (20, five failure
+   `rearmDiskBar`, with a pin that the hooks never follow the re-arm), file-view-reload.test.ts (22, five failure
    scenes gaining `error()` and the paint count: the first open's 404, the 404 pane under the deleted-on-disk bar, the
    deletion under the bar's own Reload, the overtaken bar ask with the poll's 404, the network failure whose `error()`
    is "network gone" with the path as the pane's hint alone; the brief's 413 scene does not exist in the suite, whose
    one 413 is a HEAD answer that retires the probe), file-view-outline.test.ts (the closers case, which pinned a
-   failed reload as no paint, re-aimed to the pane's paint with `error()`), file-view-failures-browser.test.ts (4
-   legs, new, shared with items 5 and 6: the reload scene over the real viewer in the pane surface, the report removed
-   from the page's docs and `__seam.reload()`, the paint count growing by one at the pane's paint, `error()` the
-   stub's words, the pane the body's child with the same words, `text()` and `mtimeNs()` the last landing's, then the
-   file back under a new mtime with a paint and `error()` null), file-comments-changes-review2.test.ts (15, a third
-   scene beside the deadline one: the deferred reload fails, the loader goes at that paint with no timer tick, the row
-   shows the seam's words in the fixed shape with Reload, nothing is marked over the pane, a later tick of the
+   failed reload as no paint, re-aimed to the pane's paint with `error()`), file-view-failures-browser.test.ts (5
+   legs, new, shared with items 1, 5 and 6: the reload scene over the real viewer in the pane surface, the report
+   removed from the page's docs and `__seam.reload()`, the paint count growing by one at the pane's paint, `error()`
+   the stub's words, the pane the body's child with the same words, `text()` and `mtimeNs()` the last landing's, then
+   the file back under a new mtime with a paint and `error()` null), file-comments-changes-review2.test.ts (17, a
+   third scene beside the deadline one: the deferred reload fails, the loader goes at that paint with no timer tick,
+   the row shows the seam's words in the fixed shape with Reload, nothing is marked over the pane, a later tick of the
    deadline raises no second row, a status landing over the standing pane arms no loader, Reload re-fetches and the
    landing clears `error()` and repaints the marks, and a probe hook recorded no swallowed error, the medium risk on
-   firing the hooks from the catch), file-comments.test.ts (35, the seam's member list gaining `error(): string |
-   null;`, the swap-line pin re-aimed to contract C7's try shape, `mode()`'s closure pinned to read `renderFell`; red
-   over A2's tree until C2c, the window both commits name), and the 118 swept files (one line each, no assertion
-   changed; four run as a sanity check). The panel scene the brief named for the failures leg was added by the
-   consolidation pass (C2c having landed after A3): the Comments panel open over a seeded comment, a status whose file
-   mtime moved (the page's table, asked by the panel's reopen) has it ask the reload and hold its loader; the reload
-   fails, and within two frames of the pane's paint the loader is gone and the "bytes" row reads the seam's words with
-   Reload, nothing marked over the pane, `error()` the pane's words and `mtimeNs()` the last landing's; the row's
-   Reload over the file put back lands the bytes and the comment's highlight is painted again (red at the loader over
-   a git archive of the branch with the panel's read of `error()` removed). That scene found an ordering hole in the
-   browser: the row's Reload sends the status ask and the fetch together, the status lands first over the standing
+   firing the hooks from the catch; and the review's round 1's two scenes: a landing whose bytes fail to decode with
+   the status's mtime already under the pane, in the text stand-in with the media landing's order and over a media
+   seam, the loader gone and the row standing with the pane's sentence and Reload through a status and the deadline's
+   tick until the row's Reload lands bytes that decode; and a Raw or Rendered click repainting the earlier text over a
+   standing failure row, through a `repaint` member of the suite's world, the row's tail flipping to the deadline
+   row's words at the repaint, a second repaint and the tick leaving it, the Reload failing again filing the failure
+   row anew and the landing taking it away), file-comments.test.ts (35, the seam's member list gaining `error():
+   string | null;`, the swap-line pin re-aimed to contract C7's try shape, `mode()`'s closure pinned to read
+   `renderFell`; red over A2's tree until C2c, the window both commits name), and the 118 swept files (one line each,
+   no assertion changed; four run as a sanity check). The panel scene the brief named for the failures leg was added
+   by the consolidation pass (C2c having landed after A3): the Comments panel open over a seeded comment, a status
+   whose file mtime moved (the page's table, asked by the panel's reopen) has it ask the reload and hold its loader;
+   the reload fails, and within two frames of the pane's paint the loader is gone and the "bytes" row reads the seam's
+   words with Reload, nothing marked over the pane, `error()` the pane's words and `mtimeNs()` the last landing's; the
+   row's Reload over the file put back lands the bytes and the comment's highlight is painted again (red at the loader
+   over a git archive of the branch with the panel's read of `error()` removed). That scene found an ordering hole in
+   the browser: the row's Reload sends the status ask and the fetch together, the status lands first over the standing
    pane, and the pass files the failure row again (C3's standing-pane clause); the fetch then lands and nothing
    cleared the row, which stood over the new text until dismissed. The pass fixed it in file-comments.ts:
    `bytesLanded`, the landing paint that shows the status's text, also deletes the "bytes" row (the deadline's as well
    as the failure's; the landing is the event the row was waiting for), no render of its own;
    file-comments-changes-review2.test.ts's third scene gained the browser's order (the status answered before the
-   fetch lands; red at the row's count over the tree before the fix, 14/15). Recorded, not changed: a hook a later
-   panel registers after a first-open failure's paint hears nothing (the low risk; the seam case pins one paint); the
-   media arm's one clear covers two sites the contract named and the pages path it did not; `imgFailed`'s sentence is
-   read off the pane's node rather than hoisted to an exported constant, so the guide does not pin it (its wording
-   predates the slice); the reload suite's 413 is a HEAD, as said.
+   fetch lands; red at the row's count over the tree before the fix, 14/15). The review's round 1 narrowed the clause
+   to a content paint (`error()` null): a picture's landing moves `mtimeNs()` to the new mtime before its bytes
+   decode, so under the decode pane `textCurrent` was true and the clause deleted the row `bytesFailed` had filed at
+   the head of the same pass; with `error()` set a wait can only have ended at that head, so nothing is lost. The same
+   round added `bytesPaneGone` on the clause's other branch (`error()` null, the view's mtime not the status's): a Raw
+   or Rendered click repaints the last landing's text in place of the pane while the row says the view shows the
+   failure, so the row keeps the seam's words and takes the deadline row's tail, true of what shows, its Reload kept;
+   a deadline row or no row is left alone, and no render of its own. Recorded, not changed: a hook a later panel
+   registers after a first-open failure's paint hears nothing (the low risk; the seam case pins one paint); the media
+   arm's one clear covers two sites the contract named and the pages path it did not; `imgFailed`'s sentence is read
+   off the pane's node rather than hoisted to an exported constant, so the guide does not pin it (its wording predates
+   the slice); the reload suite's 413 is a HEAD, as said.
 4. *Item 4, the BOM.* Both save doors put the BOM back, keyed on the disk read each already makes and never on the
    client's word (contract C4; open questions 10, 11 and 12 at their defaults): when the bytes the save read from disk
    begin EF BB BF and the content the request carries does not begin with U+FEFF, the door writes U+FEFF ahead of the
@@ -5565,17 +5639,26 @@ holds it:
    copy, a status with the same sidecar under the editor raising no head row, Save sending the editor's records
    unshifted with no flag, and the control without `bom`), tests/test_file_view.py (22, one record pin: `_decode_text`
    over EF BB BF plus "hi" keeps U+FEFF as the first character, the served shape the browser's fetch strips, and `b""`
-   decodes to ""). Recorded, not changed: Reveal's scroll and landing cue (file-comments.ts, the fcreveal branch
-   calling `ctx.scrollToOffset(c.curFrom)` then `landOn(c.curFrom, ...)`) read the host's offset unmapped on a BOM
-   file, a third site beyond the item's two, one character off and a row off exactly when the change's view position
-   is a line's ending (an insertion appended at a line's end), and the card's line suffix through `rawOffsetToLine`
-   has the same one-off read; each is one `- (s.bom ? 1 : 0)` with a test, left for the review's ruling; a status on a
-   file with no sidecar answers `bom` false because the host reads no text there, so the bit is trustworthy only once
-   a sidecar exists (pinned as a fact); both doors apply the rule to the read their mtime fence guards, so a file that
-   gained or lost its BOM between the read and the save refuses `changed on disk` or `file-moved` before the rule
-   runs, not separately tested; the host's `checkTooLarge` counts the BOM like the kernel's second comparison, not
-   separately tested on the host side; a raw-write scene in the host's tiebreak suite still simulates a BOM-dropping
-   write through fs, documenting the old outcome without requiring it.
+   decodes to ""). Recorded by the build and closed in the review's round 1: Reveal's scroll and landing cue
+   (file-comments.ts, the fcreveal branch) and the card's line suffix through `rawOffsetToLine` read the host's offset
+   unmapped on a BOM file, one character off and a row off exactly when the change sits at a line's ending (the mark
+   on row N, the Reveal and the title on row N+1), and the change cards' paragraph groups (`changeView`) read the
+   host's offsets over the view's text, so such a change grouped under the blank line after its paragraph, titled
+   "line N+1", or under a line past the file's end; every panel read of the host's offsets maps by `bom` now, the
+   Reveal through one `from` (`c.curFrom` less one on a BOM file, computed ahead of `revealInRaw`, so the switch still
+   precedes the scroll and the scroll the cue), the suffix by the same subtraction, and the groups over the host's
+   text with the U+FEFF put back ahead of the view's (`paragraphAt` over it is the host's paragraph, the title's trim
+   strips the mark with the other whitespace, the line count sees no ending in it; file-comments-model.ts unchanged).
+   file-comments-reveal-landing.test.ts's three BOM cases: a deletion at the end of line 6 and one at the file's last
+   ending scroll to, cue and title lines 6 and 10 with the groups under their paragraphs and the blank line 7 clean,
+   the marks off and on, and the control without the bit; file-comments-reveal-title.test.ts's BOM case reads "(line
+   6)" where the base read "(line 7)". Recorded, not changed: a status on a file with no sidecar answers `bom` false
+   because the host reads no text there, so the bit is trustworthy only once a sidecar exists (pinned as a fact); both
+   doors apply the rule to the read their mtime fence guards, so a file that gained or lost its BOM between the read
+   and the save refuses `changed on disk` or `file-moved` before the rule runs, not separately tested; the host's
+   `checkTooLarge` counts the BOM like the kernel's second comparison, not separately tested on the host side; a
+   raw-write scene in the host's tiebreak suite still simulates a BOM-dropping write through fs, documenting the old
+   outcome without requiring it.
 5. *Item 5, the Latin-1 line.* The fetch's `Verdict` gains `notUtf8`, true when the Content-Type starts with
    `text/plain` AND `X-Romp-Text-Utf8` is exactly "0" (never `!isText`: an image or a PDF carries no header at all,
    and an old kernel that sends none leaves `isText` true with Edit off through `!mtimeNs`), read with the other
@@ -5606,16 +5689,20 @@ holds it:
    scrollTop 400, no button, Edit hidden, the text painted with `error()` null; a window focus over a moved mtime
    raising the changed-on-disk bar in its place and its Reload's landing bringing the line back over the new text; an
    open at line 9999 in Raw showing the past-the-end notice and not the line, a reload bringing the line back),
-   tests/test_kernel_preview.py (27, two record pins: a file holding the bytes "caf", E9, " line" and a newline
+   tests/test_kernel_preview.py (31, two record pins: a file holding the bytes "caf", E9, " line" and a newline
    answering 200 text/plain with the body re-encoded as UTF-8, `X-Romp-Text-Utf8` "0" and the body's Content-Length,
    its HEAD answering 200 with no `X-Romp-Text-Utf8` and the size on disk, one byte short of the GET's body; a
    zero-byte `.md` answering 200 with an empty body, "1", Content-Length 0 and the mtime header, its HEAD 200 with
-   length 0, item 6's fact). Recorded, not changed: a reload's landing that brings a file re-saved as UTF-8 raises no
-   line and removes none, so a Latin-1 line standing from the previous landing stays until the next notice while Edit
-   reappears (the gate reads `isText`), a brief disagreement between the line and the button; a one-line clear at the
-   landing is the fix if the review wants it; every re-raise is a new `role="status"` element, so assistive technology
-   hears the sentence again at every Reload and at every poll-driven reload of the Comments panel, the notices'
-   ranking and de-duplication staying the recorded follow-up.
+   length 0, item 6's fact). Recorded by the build and closed in the review's round 1: a reload's landing that brought
+   a file re-saved as UTF-8 raised no line and removed none, so a Latin-1 line standing from the previous landing
+   stayed until the next notice while Edit reappeared (the gate reads `isText`); `dropLatin1Line`, called right after
+   `settleDiskBar` at every landing whose header does not say "0" (text and media alike), removes the standing notice
+   when its words are `LATIN1_NOTICE` and leaves a target's notice or the changed-on-disk bar standing in the row
+   alone (the seam case: a "0" open, a "1" reload with no bar and Edit shown, a "0" reload bringing the line back, and
+   an offset notice standing on a "0" open surviving a "1" reload; the raise line is unchanged, so its pins stand).
+   Recorded, not changed: every re-raise is a new `role="status"` element, so assistive technology hears the sentence
+   again at every Reload and at every poll-driven reload of the Comments panel, the notices' ranking and
+   de-duplication staying the recorded follow-up.
 6. *Item 6, the empty file.* In the text paint, when `text === ""`, the body holds one `.fileview-err` line with the
    exported `EMPTY_FILE` ("This file is empty.", the one constant of the slice with its own terminal period: the line
    shows it alone) ABOVE the block the view would paint (the empty `div.fileview-code` or the empty `.fileview-md`),
@@ -5689,7 +5776,24 @@ holds it:
    file's pending changes went into an editor that rewrote every ending under them. The departure from the plan's
    text: the refusal is widened from CRLF to CR or CRLF (the guide's sentence follows). Consumers that follow the
    split with no change: `rawRowSpan`, `rawRows`, the reader's Raw read, `scrollToLine` (by row index),
-   `linkifyFileText`'s line units, `normalizeSource` (the Rendered pairing's own CR map). file-view.test.ts (the
+   `linkifyFileText`'s line units, `normalizeSource` (the Rendered pairing's own CR map). One consumer the build
+   missed, found by the review's round 1: `lineStartOffset` (file-comments-model.ts), the counter behind the
+   composer's Switch to Raw offer, inverted `rawOffsetToLine`'s row while counting LF alone, so on a CR-only file the
+   offer scrolled to the file's end (`source.length`, its past-the-last-row answer) with the refused block out of
+   view; it walks the three endings now, written locally since the module takes no anchor-map import
+   (file-comments-model-line-start.test.ts, new: LF, CRLF, CR-only and mixed rows, the Switch to Raw scene over a
+   synthetic note joined with each ending, and a seeded fuzz holding it to an independent split and to
+   `rawOffsetToLine` at every offset; in headless Chromium the CR-only note's Switch to Raw centres row 53, the
+   block's row, as the LF and CRLF copies do, where it centred row 79 of 83 before). `rawOffsetToLine` itself counts
+   with two native searches since the same round, every LF before the offset and then every lone CR before it, in
+   place of the build's per-character walk, which took about twenty times the pre-Slice 7 LF-only loop at the end of a
+   2 MB text, once per Reveal title on every render of the Comments panel; the row answered at every offset is
+   unchanged (anchor-map-raw-offset-to-line.test.ts, new: a same-run ratio against the LF-only count over fifty Reveal
+   titles on a 2 MB LF and a 2 MB CRLF text, bound 6 where the build's body measured 20, and seeded texts over the
+   three endings answering the split's row at every offset). A consequence of this item's default, recorded in the
+   same round: a `path:N` link from an LF-counting tool (grep -n, a compiler, a traceback) lands on the viewer's row
+   N, above the tool's line N when lone CRs stand inside LF lines, where main's LF-only rows landed on the tool's
+   line; editors count a lone CR as a break too, and the producers disagree among themselves. file-view.test.ts (the
    `wrapNumberedHtml` replica splitting on the regex, with a CR case, a CRLF case with no phantom trailing row, a
    mixed case, two empty CR-ended lines, no CR or LF in any row's markup and a string span across a CR rebalanced, the
    template pin unchanged; source pins over `RAW_ROW_SPLIT` and both split lines with no LF-only split left between
@@ -5717,34 +5821,44 @@ holds it:
    CRLF, a mixed and a blank-rows source laid on the three-ending split, `rawRows` verifying rows carrying no ending,
    `rawOffsetToLine` answering the split's row at every offset and agreeing with `rawRowForOffset` row for row,
    unclamped past a trailing ending as before, a selection across the first ending quoting the file's own endings, and
-   item 6's control, zero rows over an empty source accepted with no error), file-comments-reveal-landing.test.ts (7,
-   the stand-in's rows and its `scrollToOffset` following the three-ending split; one scene over the same document
-   with every line ended by a lone CR: ten rows, Reveal on the deletion cueing line 6, the row holding the change and
-   the row the viewer centred, Reveal on the substitution moving the cue to line 4). Three source pins in unit C's
-   files read the lines A7 changed and were red from A7 until the consolidation pass re-aimed them to the contract's
-   addenda: file-comments.test.ts and file-comments-reveal-landing.test.ts pinned the LF counter line `scrollToOffset`
-   no longer holds and now pin `rawRowForOffset(code, src, n)`, the fallback's count over the source with
-   `RAW_ROW_SPLIT` clamped to the last row, and no LF-only count; anchor-map.test.ts pinned `const lines =
-   html.split("\n");` in `wrapNumberedHtml` and now pins the module-level `RAW_ROW_SPLIT` and
-   `html.split(RAW_ROW_SPLIT)`. The suite's own replica of that function now splits on the three endings and builds
-   the three-ending cases (C4c's local builder folded into it); the brief's premise that the older Raw grid cases hold
-   either way did not (nine went red: their offsets, row counts and quotes were written over the LF-only grid, where a
-   CRLF row carried a "\r" and a lone CR stayed inside its row), so those cases keep that grid as the map's input
-   through a builder named for it, `wrapNumberedHtmlLf`, with a comment saying why; the map takes whatever rows it is
-   given and verifies them against the source. The counts above are unchanged by the re-aim. Recorded, not changed:
-   without pending changes a save of a CR-only file writes LF where the file had CR (`norm` rewrites CRLF alone, the
-   editor's document model rewrites a lone CR on load, and the buffer is written as it is), the dirty flag true at
-   once over such a file so Save is offered before any keystroke, a pre-existing edge the alternative of open question
-   14 would close by teaching the editor a CR ending; `trackedRefusal` keys on `/\r/` over the whole text, so a stray
-   CR inside a line refuses too, accurate to the editor's behaviour though the sentence says "line endings"; hljs's
+   item 6's control, zero rows over an empty source accepted with no error), file-comments-reveal-landing.test.ts (10,
+   seven in the build and item 4's three BOM cases in the review's round 1; the stand-in's rows and its
+   `scrollToOffset` following the three-ending split; one scene over the same document with every line ended by a lone
+   CR: ten rows, Reveal on the deletion cueing line 6, the row holding the change and the row the viewer centred,
+   Reveal on the substitution moving the cue to line 4). Three source pins in unit C's files read the lines A7 changed
+   and were red from A7 until the consolidation pass re-aimed them to the contract's addenda: file-comments.test.ts
+   and file-comments-reveal-landing.test.ts pinned the LF counter line `scrollToOffset` no longer holds and now pin
+   `rawRowForOffset(code, src, n)`, the fallback's count over the source with `RAW_ROW_SPLIT` clamped to the last row,
+   and no LF-only count; anchor-map.test.ts pinned `const lines = html.split("\n");` in `wrapNumberedHtml` and now
+   pins the module-level `RAW_ROW_SPLIT` and `html.split(RAW_ROW_SPLIT)`. The suite's own replica of that function now
+   splits on the three endings and builds the three-ending cases (C4c's local builder folded into it); the brief's
+   premise that the older Raw grid cases hold either way did not (nine went red: their offsets, row counts and quotes
+   were written over the LF-only grid, where a CRLF row carried a "\r" and a lone CR stayed inside its row), so those
+   cases keep that grid as the map's input through a builder named for it, `wrapNumberedHtmlLf`, with a comment saying
+   why; the map takes whatever rows it is given and verifies them against the source. The counts above are unchanged
+   by the re-aim. Recorded, not changed: without pending changes a save of a CR-only file writes LF where the file had
+   CR (`norm` rewrites CRLF alone, the editor's document model rewrites a lone CR on load, and the buffer is written
+   as it is) once a keystroke has made the buffer dirty: `dirty` follows `onChange` (`docChanged` alone) and `doSave`
+   exits without writing when nothing is dirty (the review's round 1 corrected this note's earlier clause that Save
+   was offered before any keystroke), a pre-existing edge identical on main that the alternative of open question 14
+   would close by teaching the editor a CR ending; `trackedRefusal` keys on `/\r/` over the whole text, so a stray CR
+   inside a line refuses too, accurate to the editor's behaviour though the sentence says "line endings"; hljs's
    grammars key line starts on LF, so highlighting inside a CR-only file may be coarser than on the same LF file,
    cosmetic; the fallback count at an offset pointing AT the LF of a CRLF answers the row after where
    `rawRowForOffset` and `rawOffsetToLine` place it on the row the ending closes, reached only when the map refuses (a
    bug) and harmless, a count of endings whose last character lies before the offset being the exact form if wanted;
    `RAW_ROW_SPLIT` is declared below the closure that uses it, fine at run time and typecheck; `fencedRanges`
-   (file-comments.ts) splits the source on "\n" for embeds, a pre-existing CR edge outside this item; two chip suites'
-   `rawRows` helpers split on "\n" and pin the template line alone over LF-only fixtures, exact for them, a one-line
-   re-aim if wanted.
+   (file-comments.ts) splits the source on "\n" for embeds, a pre-existing CR edge outside this item, as `paragraphAt`
+   and `changeGroups` (file-comments-model.ts) do, so on a CR-only file the Comments panel's pending changes fall into
+   one group titled by the document's first sixty characters flattened, where the LF and CRLF copies of the same note
+   group by paragraph, the marks painting on the right rows (the review's round 1: pre-existing, identical on main,
+   routed); the gutter and the rows stay in step except when hljs closes a span after the file's final ending (the
+   markdown grammar's indented code block at a file's end), where the trailing piece holds closing spans alone and
+   survives the pop, so the Raw view shows one empty numbered row more than the file has lines and a `{ line: n+1 }`
+   target lands on it without the past-the-end notice, pre-existing with LF endings on main and reached with CR and
+   CRLF endings too since the split (a pop of a trailing piece holding closing spans alone is the fix, routed); two
+   chip suites' `rawRows` helpers split on "\n" and pin the template line alone over LF-only fixtures, exact for them,
+   a one-line re-aim if wanted.
 8. *Item 8, the records.* docs/guide.md, four paragraphs of the Files section, each by appended lines with every
    existing line byte-identical except the two of the CRLF sentence the slice widens, drafted with the jld skill: "How
    a markdown file reads" says a file that cannot be shown as rendered Markdown shows its text as written, the way Raw
@@ -5828,28 +5942,37 @@ holds it:
    state package), green in the full suite; and the known box-only failure on plain main stands
    (file-comments-regions-layout-browser's first leg, font metrics, green in CI), reported and never loosened. Tests,
    by file (every new node test on the shim's stand-ins with `hideEdges`; every browser leg over headless Chromium and
-   the real bundles, 0 skipped, counted on every run): file-view-seam (49, ten new), file-view (57, four new),
-   file-view-links (28, re-pinned), file-view-place (8, re-pinned), file-view-place-memory (13, the stand-in
-   installed), file-view-outline (14, the stand-in installed, one case re-aimed), file-view-text-size (33, the
-   stand-in installed), file-view-tracked-edit (13, three new), file-view-edit-events (6, the stand-in installed),
-   file-view-edit-races (10, the stand-in installed), file-view-undo-landed (11, the stand-in installed),
-   file-view-undo-landed-ack (5, the stand-in installed), file-view-pdf-chunk-latch (5, the stand-in installed),
-   file-view-pdf-frame (12, the stand-in installed), file-view-pdf-lifecycle (10, the stand-in installed),
-   file-view-reload (20, five scenes extended), file-comments-save-busy-viewer (3, the stand-in installed and the stub
-   line), md-url-view (29, re-pinned), md-sanitize (19, one new), file-view-landing-throw-browser (2 legs, re-aimed),
-   file-view-failures-browser (4 legs, new), file-view-figure-error (7, new), file-view-figure-error-browser (2 legs,
-   new), file-view-raw-rows-browser (2 legs, new), fileview-parity (4, one head), anchor-map (41, three new),
+   the real bundles, 0 skipped, counted on every run): file-view-seam (52, ten new in the build, three in the review's
+   round 1), file-view (58, four new in the build, one in the review's round 1), file-view-links (28, re-pinned),
+   file-view-place (8, re-pinned), file-view-place-memory (13, the stand-in installed), file-view-outline (15, the
+   stand-in installed, two cases re-aimed), file-view-text-size (33, the stand-in installed), file-view-tracked-edit
+   (13, three new), file-view-edit-events (6, the stand-in installed), file-view-edit-races (10, the stand-in
+   installed), file-view-undo-landed (11, the stand-in installed), file-view-undo-landed-ack (5, the stand-in
+   installed), file-view-pdf-chunk-latch (5, the stand-in installed), file-view-pdf-frame (12, the stand-in
+   installed), file-view-pdf-lifecycle (10, the stand-in installed), file-view-reload (22, five scenes extended),
+   file-comments-save-busy-viewer (3, the stand-in installed and the stub line), md-url-view (29, re-pinned, two more
+   in the review's round 1), md-sanitize (19, one new, the seam pin sweeping the production sources since the review's
+   round 1), file-view-landing-throw-browser (2 legs, re-aimed), file-view-failures-browser (5 legs, new: four in the
+   build, one in the review's round 1), file-view-figure-error (9, new: seven in the build, two in the review's round
+   1), file-view-figure-error-browser (3 legs, new: two in the build, one in the review's round 1),
+   file-view-raw-rows-browser (2 legs, new), fileview-parity (4, one head), anchor-map (43, three new in the build,
+   two in the review's round 1), anchor-map-raw-offset-to-line (2, new in the review's round 1),
    anchor-map-cells-browser (6 legs, one read re-aimed), render-sanitize (3, one pin re-aimed),
    anchor-map-fallback-markup (25, the mirror list), md-config-figure-gate-place (1, two scenes), file-comments (35,
-   re-pinned), file-comments-changes-review2 (15, one scene), file-comments-changes-review (12, one case flipped),
-   file-comments-about-fixes (8, one case flipped), file-comments-editing-races (14, one new),
-   file-comments-reveal-landing (7, one new), the 118 stub files of the sweep with one line each and no count moved,
-   the infrastructure real-viewer-leg.ts (`serve`, `before`, `waitFor`, the per-path header table, the map's exports)
-   and md-sanitize.ts's seam; tools/file-comments-host-save.test.mjs (17, three new),
-   tools/file-comments-host-untouched.test.mjs (9, one re-aimed); tests/test_savefile.py (24, six new),
-   tests/test_kernel_file_comments_save.py (24, two new), tests/test_kernel_file_comments_hardening.py (31, one
-   re-aimed), tests/test_kernel_preview.py (27, two record pins), tests/test_file_view.py (22, one record pin),
-   tests/test_guide_files_failures.py (13, new), tests/test_guide_files_place_and_outline.py (14, unchanged),
+   re-pinned), file-comments-changes-review2 (17, one scene in the build, two in the review's round 1),
+   file-comments-changes (23, one pin re-aimed in the review's round 1), file-comments-editing-round3 (7, one pin
+   re-aimed in the review's round 1), file-comments-changes-review (12, one case flipped), file-comments-about-fixes
+   (8, one case flipped), file-comments-editing-races (14, one new), file-comments-reveal-landing (10, one new in the
+   build, three in the review's round 1), file-comments-reveal-title (6, one new in the review's round 1),
+   file-comments-model-line-start (6, new in the review's round 1), the 118 stub files of the sweep with one line each
+   and no count moved (three of them, file-comments-changes, file-comments-editing-round3 and
+   file-comments-reveal-title, counted above since the review's round 1), the infrastructure real-viewer-leg.ts
+   (`serve`, `before`, `waitFor`, the per-path header table, the map's exports) and md-sanitize.ts's seam;
+   tools/file-comments-host-save.test.mjs (17, three new), tools/file-comments-host-untouched.test.mjs (9, one
+   re-aimed); tests/test_savefile.py (24, six new), tests/test_kernel_file_comments_save.py (24, two new),
+   tests/test_kernel_file_comments_hardening.py (31, one re-aimed), tests/test_kernel_preview.py (31, two record
+   pins), tests/test_file_view.py (22, one record pin), tests/test_guide_files_failures.py (13, new, the label's text
+   pin re-aimed in the review's round 1), tests/test_guide_files_place_and_outline.py (14, unchanged),
    tests/test_files_pane.py (24, unchanged), tests/test_markdown_viewer_plan_note_counts.py (5, unchanged; it accepts
    this note), tests/test_markdown_viewer_plan_note_history.py (10, unchanged), tests/test_upstream_ledger.py (83,
    unchanged). Every case that changes behaviour fails over a `git archive` of e6aeb1138 (the head the branch was cut
@@ -5866,6 +5989,67 @@ holds it:
    which item 2's label never enters, being a control to both walks; item 7's rows keep every character of the line,
    the separator alone consumed, so `rawIndex` still verifies character by character and `scrollToOffset`,
    `rawOffsetToLine` and the rows agree on a CR file; and the composer's quote stays the exact source slice.
+
+**Review round 1** (2026-09-14). The review of the branch at 103a13f32 over main 462ad3ccf, the first round after the
+rebase, under the owner's efficiency plan: a fresh-eyes finder, one refuter for a low and two for a medium or a high,
+one fixer per file, and one consolidation commit ("Slice 7: review round 1 fixes"). The rule the round judged by: a
+Slice 7 edge is fixed when it is a defect against a contract or the failure-says-what-happened principle, a regression
+against main, or the feature's own gap that one exact change closes with a test red over a `git archive` of 103a13f32;
+a decided default is recorded and not re-fixed; a pre-existing edge identical on main is recorded here and routed. The
+fixes, each recorded in its item above: item 1's heading target and URL fragment waiting for the Rendered retry over a
+fallen render, and the offset spender reading `mode()`; item 2's label naming the candidate the browser asked for, a
+`data:` source cut to its head, and the label outside a link holding the figure alone; item 3's landing clause over a
+content paint alone, and `bytesPaneGone`; item 4's three remaining panel reads of the host's offsets mapped by `bom`
+(Reveal's scroll and cue, the card's line suffix, the change groups), a wrong row on a BOM file being HIGH by the
+owner's rule, so the one refuter's "pre-existing, record and route" was overruled: the slice's own mapping of the
+paint pass had made the mark and the Reveal disagree; item 5's `dropLatin1Line`; item 7's `lineStartOffset` over the
+three endings, `rawOffsetToLine`'s two native searches, and anchor-map.test.ts's two cases over the viewer's grid. The
+records. This note's head said the rebase had not happened and that the mapping would be recorded at it, named E2 and
+E3 by their pre-rebase shas, and counted file-view-reload.test.ts, file-view-outline.test.ts and
+tests/test_kernel_preview.py at 20, 14 and 27, the cut point's numbers plus the slice's own, where main's two commits
+between the cut point and the base had added cases (the Slice 6 note counts the same files at 22, 15 and 29, so the
+later note read lower than the earlier for files it only extended); the head now names the base, maps all twenty shas,
+says what changed in the two patches that did not replay as written and which nine of the slice's files those commits
+touched, and the mentions read 22, 15 and 31 (tests/test_markdown_viewer_plan_note_counts.py holds an item's count to
+the list's, not to the file's, by design, since a later slice's additions leave an earlier note as written, so it
+accepted the stale numbers as it accepts the corrected ones; no new module, the head's sentences are the record). The
+ledger entry's `where:` line said this note mapped the pre-rebase shas when it did not; its opening clause records the
+rebase, the nine files and the range-diff's two re-resolved pairs, and its file clauses name this round's changes. The
+landing hold's comment above `fetchFile` described a path item 1 closed; it says now that a throw from the block's
+build or the swap is caught inside renderBody's own try, parked or immediate, and only a throw from the fallback or
+the passes after the try rejects into the chain's catch. md-sanitize.test.ts's seam pin said no production caller sets
+a sanitizer and asserted nothing about the other modules; it sweeps the non-test ui/webview sources for
+`setMdSanitizer` and holds the list to md-sanitize.ts alone, with `installedSanitizer` pinned module-private (red over
+the base with a stand-in module wired into files.ts; the count stays 19). The D2 commit's message (a58644912;
+cb9aca26d before the rebase, the same text) describes the typecheck window inverted, the stubs as missing a member
+with the sweep to follow, where at that tree the stubs already carried `error` (C0c, three commits before) and
+`FileViewActionCtx` lacked it until A3; C0c's, D3's and A3's messages and this note state it the right way round, and
+the message stands, since the round's rules bar a history rewrite (a reword before the PR opens is the owner's call).
+Two things the round confirmed as the build left them: the pairing's exclusion of the top-level label
+(`isFigureLabel`) and the landing's clearing of the panel's row drew no defect from the finders beyond item 3's
+narrowing. Pre-existing, identical on main, routed (low, the comments lens): the host's `readFile`
+(tools/file-comments-host.mjs) and the track-comment CLI decode a file that is not UTF-8 with a U+FFFD per invalid
+byte, while the kernel's `_decode_text` serves the viewer a latin-1 fallback, one character per byte, so on such a
+file the view's text and the host's differ at every non-ASCII byte (and in length where a run of invalid bytes folds
+into one U+FFFD): a comment made from the view over such a passage is refused `anchor-not-found`, a sidecar comment
+the CLI writes is placed in the view by its context alone and painted as changed text, and ASCII passages are whole;
+neither decode changed by the slice, item 5's gate already refusing the save that would rewrite such bytes; one decode
+rule for both sides is the follow-up, a design call, recorded in readFile's header comment. Observed on the way, not a
+finding: the row's Reload over the earlier text loses its loader when the status lands before the fetch (fcreload's
+`refresh(slot)` deletes the busy slot in its finally after `applyStatus`'s `awaitBytes` re-added it), identical on
+main for the deadline row's Reload; a fetch that then fails still files the row, one that never lands shows nothing at
+the deadline. Left for the coordinator: the failed-Reload 413 scene the brief's item 3 names for
+file-view-reload.test.ts, a test-only addition not taken this round, and the `where:` line's length. Tests, by file,
+this round: file-view-seam.test.ts (52, three new), file-view.test.ts (58, one new), md-url-view.test.ts (29, two pins
+re-aimed), file-view-figure-error.test.ts (9, two new), file-view-figure-error-browser.test.ts (3 legs, one new),
+file-view-failures-browser.test.ts (5 legs, one new), file-comments-reveal-landing.test.ts (10, three new),
+file-comments-reveal-title.test.ts (6, one new), file-comments-changes.test.ts (23, one pin re-aimed),
+file-comments-editing-round3.test.ts (7, one pin re-aimed), file-comments-changes-review2.test.ts (17, two new),
+file-comments-model-line-start.test.ts (6, new), anchor-map-raw-offset-to-line.test.ts (2, new), anchor-map.test.ts
+(43, two new), md-sanitize.test.ts (19, one pin widened), tests/test_guide_files_failures.py (13, one pin re-aimed);
+every new case red over a `git archive` of 103a13f32 at the assertion its file's report names, every re-aimed pin red
+there by construction, the typecheck clean after every edit, and the round's full runs (the full npm test, CI's tools
+step, the pytest modules) recorded in the build report outside the repo.
 
 ### Slice 8: a cell and a code line are commentable from Rendered (ruling 2026-09-07, decision 7)
 

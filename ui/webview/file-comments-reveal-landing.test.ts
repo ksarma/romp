@@ -540,10 +540,88 @@ test("a CR-only file (Slice 7, item 7: Raw splits rows on CR, CRLF and LF): with
   assertCued(four, "the substitution's row"); assert.deepEqual(cued(w), [four]);
 });
 
+// ── a BOM file (Slice 7 of plans/markdown-viewer.md, item 4; the review's round 1) ────────────────────────────────────
+// The host keeps the U+FEFF the fetch strips, so its offsets run one ahead of the view's and the status says so (`bom`). The paint
+// pass and the editor's seed mapped them in the build; Reveal's scroll and landing cue, the card's line suffix and the paragraph
+// groups still read the host's offset over the view's text. Row-granular, so the one-character error showed exactly when the change
+// sits at a line's ENDING: the ending's own offset closes its row, one past it opens the next, so a deletion at the end of line 6
+// scrolled to and cued the blank line 7, its title read "(line 7)" and its group "line 7", while the mark (mapped) sat on line 6;
+// one at the file's last ending read "(line 11)" of a ten-line file. Every read maps by `bom` now; without the bit nothing moves.
+const END6 = at("v1.2.") + "v1.2.".length;              // the "\n" ending line 6, in the view's text
+const LAST = DOC.length - 1;                              // the "\n" ending line 10, the file's last
+const hEnd = H("h9", "del", END6, END6, " (draft)", "", T0 - 40000);
+const hLast = H("h8", "del", LAST, LAST, " (v2)", "", T0 - 30000);
+const groupTitles = (aside: El): string[] => aside.querySelectorAll(".fc-group").map((g) => g.textContent);
+const OFF_TITLE = (line: number) => "Open the Raw view at the change (line " + line + "); the marks are off, so the change is not marked there";
+
+test("a BOM file, marks off: a deletion at a line's ending lands on the row that ending closes, line 6 (the scroll, the cue and the title agree, the blank line 7 untouched); one at the file's last ending on line 10, its title naming no line 11; the mid-line deletion on line 6 as before; the cards group under their paragraphs, not under a phantom blank line", async (t: TestContext) => {
+  assert.equal(DOC[END6], "\n"); assert.equal(DOC[LAST], "\n");
+  store.set(SETTINGS_KEY, JSON.stringify({ changesInline: false }));
+  t.after(() => store.delete(SETTINGS_KEY));
+  const w = world({ mode: "rendered" }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h3, hEnd, hLast].map((h) => shifted(h, 1)), bom: true }));
+  assert.deepEqual(groupTitles(aside), ["We recommend shipping the cache in v1.2.", "Next steps: measure again."], "the paragraph each change falls in, read over the text the host's offsets index (before: \"line 7\" and \"line 11\")");
+  assert.equal(revealOf(aside, "chg:h9").title, OFF_TITLE(6), "the line the ending closes (before: line 7)");
+  assert.equal(revealOf(aside, "chg:h8").title, OFF_TITLE(10), "the file's last line (before: line 11, which the file does not have)");
+  assert.equal(revealOf(aside, "chg:h3").title, OFF_TITLE(6), "mid-line: the same line either way");
+  revealOf(aside, "chg:h9").click();
+  assert.equal(w.modes[0], "raw"); assert.deepEqual(w.scrolls, [END6], "the view's offset of the ending, not the host's");
+  const six = rowAt(w, 6);
+  assert.equal(six.textContent, "We recommend shipping the cache in v1.2.");
+  assert.equal(scrolledInto[scrolledInto.length - 1], six, "the viewer centred the row the ending closes");
+  assertCued(six, "the cue is on it"); assert.deepEqual(cued(w), [six], "one row cued");
+  assert.equal(rowAt(w, 7).textContent, ""); assertClean(rowAt(w, 7), "the blank line after it, where the unmapped read landed");
+  revealOf(aside, "chg:h8").click();
+  assert.deepEqual(w.scrolls, [END6, LAST]);
+  const ten = rowAt(w, 10);
+  assert.equal(ten.textContent, "Next steps: measure again.");
+  assert.equal(scrolledInto[scrolledInto.length - 1], ten, "the last row, not a clamp from past the end");
+  assertCued(ten, "the file's last line"); assert.deepEqual(cued(w), [ten]);
+  revealOf(aside, "chg:h3").click();
+  assert.deepEqual(w.scrolls, [END6, LAST, h3.curFrom], "a change inside a line: the host's offset one back, the same row");
+  assert.deepEqual(cued(w), [rowAt(w, 6)]);
+  assert.equal(marksOf(w).length, 0, "off: no change mark anywhere");
+});
+
+test("a BOM file, marks on: the deletion at the line's ending paints its point on line 6 and Reveal centres that row with no cue (the mark is the cue); before, the mapped paint put the point on line 6 while the unmapped scroll centred line 7", async (t: TestContext) => {
+  store.delete(SETTINGS_KEY);
+  const w = world({ mode: "raw" }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, hEnd].map((h) => shifted(h, 1)), bom: true }));
+  const pt = marksOf(w, "h9");
+  assert.equal(pt.length, 1, "Raw paints the deletion's point"); assert.equal(pt[0].dataset.fcText, " (draft)");
+  assert.ok(rowAt(w, 6).contains(pt[0]), "on the row the ending closes (the paint pass's own mapping, Slice 7's build)");
+  assert.equal(revealOf(aside, "chg:h9").title, "Show the change in the Raw view (line 6)", "the title names the row the mark is on");
+  revealOf(aside, "chg:h9").click();
+  assert.deepEqual(w.scrolls, [END6]);
+  assert.equal(scrolledInto[scrolledInto.length - 1], rowAt(w, 6), "the scroll centres the marked row");
+  assert.equal(cued(w).length, 0, "no row cue beside a mark"); assertClean(rowAt(w, 7), "the blank line was never the landing");
+  assert.deepEqual(groupTitles(aside), ["## Findings", "We recommend shipping the cache in v1.2."], "the paragraphs (the heading and the sentence under it are one, as the model groups adjacent lines)");
+});
+
+test("the control: the same changes on a file without a BOM (no bit, or bom false) land, cue, title and group the same, from the unshifted offsets", async (t: TestContext) => {
+  store.set(SETTINGS_KEY, JSON.stringify({ changesInline: false }));
+  t.after(() => store.delete(SETTINGS_KEY));
+  for (const over of [{}, { bom: false }] as Array<Partial<Status>>) {
+    const w = world({ mode: "rendered" });
+    try {
+      const { aside } = await openPanel(w, status({ hunks: [h3, hEnd, hLast], ...over }));
+      assert.deepEqual(groupTitles(aside), ["We recommend shipping the cache in v1.2.", "Next steps: measure again."]);
+      assert.equal(revealOf(aside, "chg:h9").title, OFF_TITLE(6)); assert.equal(revealOf(aside, "chg:h8").title, OFF_TITLE(10));
+      revealOf(aside, "chg:h9").click();
+      assert.deepEqual(w.scrolls, [END6], "nothing moves without the bit");
+      assert.deepEqual(cued(w), [rowAt(w, 6)]); assert.equal(scrolledInto[scrolledInto.length - 1], rowAt(w, 6));
+      revealOf(aside, "chg:h8").click();
+      assert.deepEqual(cued(w), [rowAt(w, 10)]);
+    } finally { w.close(); }
+  }
+});
+
 test("pins: paintAll clears the landing before it paints; both Reveal branches cue right after the scroll; closePanel and dispose clear it; the dress names the accent tokens and no hex; the row is the one the viewer's scrollToOffset centres", () => {
   // the editor's stand-down keeps the first line (file-comments-behavior.test.ts pins it; the rows are the editor's then), the cue clears next
   assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.render\(\); return; \}[^\n]*\n\s+this\.clearLanding\(\);/, "the first statement of the read view's paint pass (the stand-down records the selection first, afterPaint, the Slice 5 review's round 1)");
-  assert.match(SRC, /this\.ctx\.scrollToOffset\(c\.curFrom\);\n\s+this\.landOn\(c\.curFrom, "fcchange", c\.id\);/, "a change: its start, its marks' action and id");
+  // the change's start in the VIEW's text: the card's offset is the host's, one ahead on a BOM file (Slice 7 of plans/markdown-viewer.md,
+  // item 4, the review's round 1), so the scroll and the cue read one value, mapped once, and land on the row the change's mark paints on
+  assert.match(SRC, /const from = c\.curFrom - \(this\.status && this\.status\.bom \? 1 : 0\);\n\s+this\.revealInRaw\(key\);\n\s+this\.ctx\.scrollToOffset\(from\);\n\s+this\.landOn\(from, "fcchange", c\.id\);/, "a change: its start in the view's text, then the switch, the scroll and the cue, its marks' action and id");
   assert.match(SRC, /this\.ctx\.scrollToOffset\(loc\.range\.start\);\n\s+this\.landOn\(loc\.range\.start, "fcopen", key\);/, "a comment: its range's start, its highlight's action and id");
   const close = SRC.slice(SRC.indexOf("  closePanel(): void {"), SRC.indexOf("  dispose(): void {"));
   assert.match(close, /this\.clearLanding\(\);/, "closePanel");

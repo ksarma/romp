@@ -178,3 +178,76 @@ test("in a browser, the chat modal: the page's heal (installMdImgHeal, before th
     await page.close();
   });
 });
+
+// ── the Slice 7 review's round 1: the source the label names, and where it goes beside a link ─────────────────────────────
+/** A real 1x1 PNG, for a figure that IS there: the browser decodes it (naturalWidth 1). */
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+/** Every /file ask the browser made, by its figs/ leaf. */
+const asked: string[] = [];
+/** The kernel's answers for the round 1 note: plot.png is there (the PNG), everything else 404s. */
+const serve2 = (u: URL): Served | null => {
+  if (u.pathname !== "/file") return null;
+  const p = u.searchParams.get("path") || "";
+  asked.push(p.startsWith(FIGS) ? p.slice(FIGS.length) : p);
+  if (p === FIGS + "plot.png") return { status: 200, type: "image/png", body: PNG as unknown as string };
+  return { status: 404, type: "text/plain; charset=utf-8", body: "not found: " + p };
+};
+/** An inline image whose payload the decoder refuses: the PNG signature, then base64 that decodes to nothing a decoder accepts. */
+const INLINE = "data:image/png;base64,iVBORw0KGgo" + "A".repeat(3000);
+/** The note: a <picture> whose webp source the browser picks (missing) over an img src that is there; an img with its own srcset
+ *  (both candidates missing, the 1x picked on a 1x display) over the same src; an inline data: figure the decoder refuses; a
+ *  linked figure (missing); the file that is there as a plain figure, the control. */
+const NOTE2 = ["# Report", "",
+  '<picture><source srcset="figs/dark.webp" type="image/webp"><img src="figs/plot.png" alt="plot"></picture>', "",
+  '<img srcset="figs/missing-2x.png 2x, figs/missing-1x.png 1x" src="figs/plot.png" alt="dense">', "",
+  "Inline: ![inline](" + INLINE + ") pasted.", "",
+  "After the inline figure: this paragraph follows it.", "",
+  "Link: [![linked](figs/missing5.png)](https://example.com/x) tail.", "",
+  "Plain: ![plain](figs/plot.png) loads.", ""].join("\n");
+type Fig2 = { alt: string | null; asked: string; natural: number; label: string | null; labelParent: string | null; inLink: boolean; cursor: string | null; display: string | null; labelHeight: number; labelWidth: number };
+/** Every figure of the box in order: the leaf of the URL the browser asked for (currentSrc), whether it decoded, and the label standing
+ *  after its anchor (the img, its <picture>, or the <a> holding it alone) with where it sits and how it is drawn. */
+const figures2 = (page: any): Promise<{ figs: Fig2[]; labels: number }> => page.evaluate((figs: string) => {
+  const md = document.querySelector(".fileview-md") as HTMLElement;
+  const leaf = (u: string): string => { const m = /[?&]path=([^&]*)/.exec(u); if (m) { const p = decodeURIComponent(m[1]); return p.startsWith(figs) ? p.slice(figs.length) : p; } return u.slice(0, 22); };
+  const out = (Array.from(md.querySelectorAll("img")) as HTMLImageElement[]).map((i) => {
+    let anchor: Element = i;
+    for (let p = anchor.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || (p.localName === "a" && p.children.length === 1)); p = anchor.parentElement) anchor = p;
+    const n = anchor.nextSibling as Element | null;
+    const lab = n && n.nodeType === 1 && n.hasAttribute("data-fv-figerr") ? n as HTMLElement : null;
+    const cs = lab ? getComputedStyle(lab) : null; const r = lab ? lab.getBoundingClientRect() : null;
+    return { alt: i.getAttribute("alt"), asked: leaf(i.currentSrc || ""), natural: i.naturalWidth, label: lab ? lab.textContent : null, labelParent: lab ? lab.parentElement!.localName : null,
+      inLink: !!lab && !!lab.closest("a"), cursor: cs ? cs.cursor : null, display: cs ? cs.display : null, labelHeight: r ? r.height : 0, labelWidth: r ? r.width : 0 };
+  });
+  return { figs: out, labels: md.querySelectorAll("[data-fv-figerr]").length };
+}, FIGS);
+
+test("in a browser (the Slice 7 review's round 1): a <picture>'s label names the source candidate the browser asked for and an img's its srcset candidate, never the src the browser skipped (a file that is there); an inline data: figure's label is its head with an ellipsis, one line tall, not the payload; a linked figure's label stands after the link, not inside it, with no pointer; the plain figure of the same file loads with no label; the sheet dresses every label", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    asked.length = 0;
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: NOTE2 }, serve: serve2 });
+    await page.waitForFunction(() => { const imgs = Array.from(document.querySelectorAll(".fileview-md img")) as HTMLImageElement[]; return imgs.length >= 5 && imgs.every((i) => i.complete); }, null, { timeout: 15000 });
+    await frames(page, 2);
+    const { figs, labels } = await figures2(page);
+    assert.equal(figs.length, 5, "five figures"); assert.equal(labels, 4, "four labels, one per failed figure; none on the plain figure that loaded");
+    assert.deepEqual(figs.map((f) => f.alt), ["plot", "dense", "inline", "linked", "plain"]);
+    // what the browser asked for: the picture's source, the img's 1x candidate, the inline bytes, the linked file, the plain file
+    assert.deepEqual(figs.map((f) => f.asked), ["dark.webp", "missing-1x.png", "data:image/png;base64,", "missing5.png", "plot.png"], "currentSrc names the one candidate the browser fetched for each: " + JSON.stringify(figs.map((f) => f.asked)));
+    assert.ok(asked.includes("dark.webp") && asked.includes("missing-1x.png") && asked.includes("missing5.png") && asked.includes("plot.png"), "the kernel was asked for each: " + JSON.stringify(asked));
+    assert.equal(asked.includes("missing-2x.png"), false, "the 2x candidate was never asked for on a 1x display");
+    assert.deepEqual(figs.map((f) => f.natural > 0), [false, false, false, false, true], "the plain figure alone decoded: the picture's and the srcset img's src is that same file, and the browser never fell back to it");
+    // the labels name what failed
+    assert.equal(figs[0].label, FAILED + " figs/dark.webp (plot)", "the picture's label names the source candidate the browser asked for, by its authored spelling (before: figs/plot.png, present and decodable, the file the browser never requested for it)");
+    assert.equal(figs[1].label, FAILED + " figs/missing-1x.png (dense)", "the srcset img's label names its chosen candidate (before: figs/plot.png)");
+    assert.equal(figs[2].label, FAILED + " data:image/png;base64,… (inline)", "the inline figure's label is the data: head with an ellipsis (before: the whole 3033-character URI)");
+    assert.ok(figs[2].labelHeight < 60, "…one line or two tall, not a column of base64: " + figs[2].labelHeight + " px (before: 666 px at this width)");
+    assert.equal(figs[3].label, FAILED + " figs/missing5.png (linked)", "the linked figure's label");
+    assert.equal(figs[3].inLink, false, "…stands outside the link (before: inside it, a click on it followed the link)");
+    assert.equal(figs[3].labelParent, "p", "…as the paragraph's child after the link");
+    assert.notEqual(figs[3].cursor, "pointer", "…and wears no pointer: " + figs[3].cursor);
+    assert.equal(figs[4].label, null, "the plain figure of the file that is there wears no label");
+    for (const f of figs.filter((x) => x.label !== null)) { assert.equal(f.display, "inline-flex", "the sheet dresses the label: " + f.alt); assert.ok(f.labelWidth > 20, "…with a box: " + f.alt); }
+    assert.deepEqual(errors, [], "no uncaught page error");
+    await page.close();
+  });
+});

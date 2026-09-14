@@ -2756,6 +2756,18 @@ class Panel {
     this.errors.set("bytes", { text: BYTES_FAILED + " (" + words + ")" + BYTES_FAILED_TAIL, reload: true });
     this.render();
   }
+  /** A content paint put the last landing's text back in place of the failure pane while the "bytes" row said the view showed
+   *  the failure (paintAll, error() null and the view's mtime still not the status's: a Raw or Rendered click runs renderBody over
+   *  the text in memory, so no landing answers the row; the review of Slice 7's round 1). The row keeps the seam's words and
+   *  takes the deadline row's tail, which says what shows now: the earlier text, with no change marked on it (paintChanges
+   *  refuses the status's offsets over it, textCurrent); its Reload stays. Keyed on the row's own text, so a deadline row, or no
+   *  row, is left as it is; no render of its own (paintAll renders at its end). The pane coming back (a Reload that fails again)
+   *  files the failure row anew (bytesFailed), and the landing that shows the status's text takes the row away (bytesLanded). */
+  private bytesPaneGone(): void {
+    const row = this.errors.get("bytes");
+    if (!row || !row.text.endsWith(BYTES_FAILED_TAIL)) return;
+    this.errors.set("bytes", { text: row.text.slice(0, -BYTES_FAILED_TAIL.length) + BYTES_LATE_TAIL, reload: true });
+  }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
   /** With no status behind it (refused, or never answered) the toggle showed "off" on nothing: re-ask under
@@ -3525,11 +3537,19 @@ class Panel {
     }
     return this.cardsMemo;
   }
-  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
+  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). A card's offsets are the
+   *  host's (ChangeCard.curFrom: the text the host read), and the groups read them over THAT text: on a BOM file the view's
+   *  text with the U+FEFF the fetch strips put back ahead of it (the status's `bom`, the rule every other reader of the host's
+   *  offsets applies, viewAt; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1), so a change at a line's
+   *  ending groups under the paragraph that line closes and not under the blank line after it (a title of "line N+1", or a
+   *  line past the file's end for a change at its last ending). The first paragraph's title trims the mark with the other
+   *  whitespace, and the line count sees no ending in it. Before, the groups read the host's offsets over the view's text,
+   *  one behind on a BOM file. */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
     const cards = s ? changeCards(s.store, s.hunks || [], s.log || [], s.decided) : [];
-    const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.indexedText());
+    const text = this.ctx.mode() === "media" ? null : this.indexedText();
+    const groups = changeGroups(cards, text !== null && s && s.bom ? "\uFEFF" + text : text);   // the host's text: the offsets index it
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
   /** The card a comment id opens: its own. Every comment is its own card since the about follow-on (2026-09-10);
@@ -3645,7 +3665,17 @@ class Panel {
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
+    // the view shows the status's text: a reject's reload has landed, and the row that waited for it is answered (bytesLanded).
+    // Over a CONTENT paint alone (error() null): a picture's landing moves mtimeNs() to the new mtime before its bytes decode, so
+    // the pane imgFailed then paints has the status's mtime under it while the file is not showing, and the row bytesFailed
+    // filed at the head of this pass went in the same pass (the review's round 1; before the consolidation's landing clause,
+    // bytesLanded returned at once with no wait up). And a content paint of the EARLIER text while the failure row stands (a
+    // Raw or Rendered click repaints the last landing's text over the pane, error() null, the mtime still not the status's):
+    // the row said the view showed the failure, so it takes the deadline row's tail, true of what shows now (bytesPaneGone)
+    if (failed === null) {
+      if (this.status && this.textCurrent(this.status)) this.bytesLanded();
+      else this.bytesPaneGone();
+    }
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
@@ -4587,9 +4617,14 @@ class Panel {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
+      // the card's offset is the host's, one ahead of the view's on a BOM file (the status's `bom`, the rule viewAt and the paint
+      // pass apply; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1): mapped into the view's text once, for the
+      // scroll and the cue both, so they land on the row the change's mark paints on and not on the next row when the change sits
+      // at a line's ending (the ending's own offset closes its row; one past it opens the next)
+      const from = c.curFrom - (this.status && this.status.bom ? 1 : 0);
       this.revealInRaw(key);
-      this.ctx.scrollToOffset(c.curFrom);
-      this.landOn(c.curFrom, "fcchange", c.id);
+      this.ctx.scrollToOffset(from);
+      this.landOn(from, "fcchange", c.id);
       this.settleRevealed(key);
       return;
     }
@@ -6407,7 +6442,10 @@ class Panel {
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
+          // the line of the change's start in the VIEW's text: the card's offset is the host's, one ahead on a BOM file (the
+          // status's `bom`, viewAt's rule; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1), and at a line's
+          // ending the unmapped read named the next line while the mark and the Reveal's landing were on this one
+          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom - (s && s.bom ? 1 : 0)) + 1) + ")" : "";
           // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
           // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
           // is what reaches a finger; on, Raw shows every change, a deletion as its point

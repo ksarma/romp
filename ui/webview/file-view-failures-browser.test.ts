@@ -35,7 +35,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, LONG, LONG2, REPORT, MT, MT2, ORIGIN, UI } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, PARA, LONG, LONG2, REPORT, MT, MT2, ORIGIN, UI } from "./real-viewer-leg";
 
 /** The Latin-1 line's exported sentence, read off the viewer's source (contract C5), so the leg follows the constant. */
 const LATIN1_NOTICE = (/^export const LATIN1_NOTICE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
@@ -315,6 +315,67 @@ test("in a browser: the Comments panel's wait for a reload that fails ends at th
     assert.equal(back.row, null, "the row went with the landing"); assert.equal(back.loaders, 0, "and no loader stands");
     assert.equal(back.marks, 1, "the comment's highlight is painted over the new text"); assert.equal(back.error, null, "error() null: the content shows");
     assert.equal(back.pane, false); assert.equal(back.mt, MT2, "the landing took the new mtime");
+    assert.deepEqual(errors, [], "no uncaught page error");
+    await page.close();
+  });
+});
+
+// ── the Slice 7 review's round 1: the URL viewer's own #fragment over a render that fell ───────────────────────────────────
+/** The render catch's exported sentence (contract C5), read off the source as the other constants are. */
+const RENDER_FELL = (/^export const RENDER_FELL = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
+/** A URL document with a section far down: sixty paragraphs, "## Later", forty more. */
+const URL_DOC = "# Report\n\n" + Array.from({ length: 60 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n\n## Later\n\n" + Array.from({ length: 40 }, (_, i) => PARA(61 + i)).join("\n\n") + "\n";
+const URL_PATH = "/notes/report.md";
+/** The fault (real-viewer-leg's `before`, so it stands at the first paint): replaceChildren on the Rendered box throws, inside
+ *  mdBlock and so inside the URL renderBody's try, which paints the RENDER_FELL line over the Raw rows; `__unfault` lifts it. */
+const faultRenderedBox = (page: any): Promise<void> => page.evaluate(() => {
+  const w = window as any; const orig = Element.prototype.replaceChildren; w.__threw = 0;
+  w.__unfault = () => { Element.prototype.replaceChildren = orig; };
+  Element.prototype.replaceChildren = function (this: Element, ...nodes: any[]) { if (this.classList && this.classList.contains("fileview-md")) { w.__threw++; throw new Error("synthetic render failure"); } return orig.apply(this, nodes); };
+});
+type UrlSeen = { kids: string[]; rows: number; paras: number; scrollTop: number; laterTop: number | null; threw: number; line: string | null; pressed: string[] };
+const urlSeen = (page: any): Promise<UrlSeen> => page.evaluate(() => {
+  const body = document.querySelector(".fileview-body") as HTMLElement; const br = body.getBoundingClientRect();
+  const later = document.getElementById("md-later"); const err = body.querySelector(":scope > .fileview-err");
+  return { kids: Array.from(body.children).map((k) => k.className.split(" ")[0]), rows: body.querySelectorAll(".fv-cl").length, paras: body.querySelectorAll(".fileview-md > p").length,
+    scrollTop: body.scrollTop, laterTop: later ? Math.round(later.getBoundingClientRect().top - br.top) : null, threw: (window as any).__threw ?? 0, line: err ? err.textContent : null,
+    pressed: Array.from(document.querySelectorAll('#romp-fileview .fileview-acts button[aria-pressed="true"]')).map((b) => b.textContent || "") };
+});
+
+test("in a browser, the URL viewer (the Slice 7 review's round 1): a document opened at its own #fragment whose Rendered paint throws shows the failure line over the Raw rows and keeps the fragment; the Raw click and a Rendered click that throws again keep it; the healed Rendered click lands the section at the body's top, where the control (no fault) lands at the open (before: landFragment spent the fragment against the rows and `landed` latched, so the healed paint rendered from the top)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const urls = { [ORIGIN + URL_PATH]: URL_DOC, [ORIGIN + URL_PATH + "#later"]: URL_DOC };
+    const click = async (page: any, label: string): Promise<void> => { await page.locator("#romp-fileview .fileview-acts button", { hasText: new RegExp("^" + label + "$") }).click(); await frames(page, 3); };
+    // the control: no fault, the fragment lands at the open
+    const c = await openViewer(browser, "pane", 700, 600, { url: URL_PATH + "#later", urls });
+    await frames(c.page, 3);
+    const ctl = await urlSeen(c.page);
+    assert.deepEqual(ctl.kids, ["fileview-md"]); assert.equal(ctl.paras, 100);
+    assert.ok(ctl.laterTop !== null && ctl.laterTop >= -1 && ctl.laterTop < 40, "control: the section at the body's top: " + JSON.stringify(ctl));
+    assert.deepEqual(c.errors, []); await c.page.close();
+    // the fault: the first paint falls to the rows, the fragment kept
+    const { page, errors } = await openViewer(browser, "pane", 700, 600, { url: URL_PATH + "#later", urls, before: faultRenderedBox, waitFor: ".fileview-body > .fileview-err" });
+    await frames(page, 3);
+    let r = await urlSeen(page);
+    assert.deepEqual(r.kids, ["fileview-err", "fileview-code"], "the failure line over the rows: " + JSON.stringify(r));
+    assert.ok(r.line && r.line.startsWith(RENDER_FELL) && r.line.includes("synthetic render failure"), "the line names the error: " + r.line);
+    assert.ok(r.rows > 100, "the document's rows: " + r.rows); assert.equal(r.threw, 1); assert.equal(r.scrollTop, 0); assert.equal(r.laterTop, null);
+    assert.deepEqual(r.pressed, ["Rendered"], "the Rendered button pressed (item 1)");
+    await click(page, "Raw");
+    r = await urlSeen(page);
+    assert.deepEqual(r.kids, ["fileview-code"], "rows alone after the Raw click"); assert.equal(r.scrollTop, 0);
+    await click(page, "Rendered");   // still throwing
+    r = await urlSeen(page);
+    assert.deepEqual(r.kids, ["fileview-err", "fileview-code"], "the line over the rows again"); assert.equal(r.threw, 2);
+    // healed: the Rendered click renders and the kept fragment lands
+    await page.evaluate(() => { (window as any).__unfault(); });
+    await click(page, "Rendered");
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
+    await frames(page, 4);
+    r = await urlSeen(page);
+    assert.deepEqual(r.kids, ["fileview-md"], "the note rendered"); assert.equal(r.paras, 100); assert.equal(r.threw, 2, "no further throw");
+    assert.ok(r.laterTop !== null && r.laterTop >= -1 && r.laterTop < 40, "the section at the body's top, as the control's (before: scrollTop 0 and the heading thousands of pixels down, the fragment spent over the rows): " + JSON.stringify(r));
+    assert.ok(r.scrollTop > 1000, "the body scrolled to it: " + r.scrollTop);
     assert.deepEqual(errors, [], "no uncaught page error");
     await page.close();
   });

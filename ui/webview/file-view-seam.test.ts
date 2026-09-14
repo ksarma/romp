@@ -1856,6 +1856,40 @@ test("a target's notice wins the row over the Latin-1 line (Slice 7, item 5, ope
   assert.equal(frames.length, 0, "a reload spends no target");
 });
 
+test("a landing whose header says UTF-8 drops a standing Latin-1 line (the Slice 7 review's round 1): the file re-saved as UTF-8 lands through the panel's door (ctx.reload) with Edit back and no line; a \"0\" landing after it raises the line again; a target's notice standing in the line's place is not touched by a UTF-8 landing", async (t) => {
+  withFrames(t);
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  t.after(() => { delete disk[LEGACY]; });
+  const o = await open(LEGACY, t);
+  const { fv, ctx, body, b } = o;
+  assert.equal(errBar(body)?.textContent, fv.LATIN1_NOTICE, "the line is up"); assert.equal(b.edit.hidden, true);
+  // re-saved as UTF-8 by a session: the Comments panel's poll lands the bytes through ctx.reload, the header saying "1" now
+  const MT8 = "1757145600000000008";
+  disk[LEGACY] = { bytes: LEGACY_TEXT + "utf-8 now\n", type: "text/plain; charset=utf-8", mtimeNs: MT8, utf8: "1" };
+  ctx.reload(); await settle();
+  assert.equal(ctx.mtimeNs(), MT8); assert.equal(ctx.text(), LEGACY_TEXT + "utf-8 now\n"); assert.equal(paints, 2, "the landing painted");
+  assert.equal(b.edit.hidden, false, "Edit is back (the gate's own verdict, isText)");
+  assert.equal(errBar(body), null, "the line went with the landing that made it false (before: it stood over the shown Edit button until the next notice, saying the file could not be edited)");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-main"], "title bar and body row: no notice");
+  // Latin-1 again (an older editor wrote it back): the line returns with the "0"
+  const MT9 = "1757145600000000009";
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT9, utf8: "0" };
+  ctx.reload(); await settle();
+  assert.equal(errBar(body)?.textContent, fv.LATIN1_NOTICE, "the line is back"); assert.equal(b.edit.hidden, true); assert.equal(paints, 3);
+  // a target's notice standing in the row (an offset past the end on a "0" file, raised a frame after the open) is not the line: a
+  // UTF-8 landing leaves it, since it is the answer to the person's own click and says nothing about Edit
+  fv.closeFileView();
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  const o2 = await open(LEGACY, t, SID, { at: { offset: LEGACY_TEXT.length + 9 } });
+  layRows(o2.body.querySelector("code.hljs")!, LEGACY_TEXT); flushFrames();
+  const words = "Offset " + (LEGACY_TEXT.length + 9) + " is past the end of this file, which has " + LEGACY_TEXT.length + " characters; showing the last line.";
+  assert.equal(errBar(o2.body)?.textContent, words, "the target's notice took the row");
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT8, utf8: "1" };
+  o2.ctx.reload(); await settle();
+  assert.equal(errBar(o2.body)?.textContent, words, "a UTF-8 landing drops the Latin-1 line alone: the target's notice stands (the one-bar rule's next notice replaces it)");
+  assert.equal(o2.b.edit.hidden, false, "Edit is back all the same");
+});
+
 // ── the sanitizer seam (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ─────
 // A record pin: the stand-in installed at the top of this file is what every Rendered paint here sanitizes through, and the
 // constraint it exists for is executed over the library itself. DOMPurify 3.4.10 built over a window with no `document`
@@ -1957,6 +1991,50 @@ test("a throw from the DOM work after the sanitizer (adopting the body it answer
   o.b.rendered.click();
   assert.equal((o.body.childNodes[0] as El).textContent, RENDER_FELL + " (Error).");
   assert.equal(paints, 3);
+});
+
+test("an open at a heading whose Rendered paint throws (the Slice 7 review's round 1): the heading is not spent over the fallback rows, so no \"No section named\" notice stands under the failure line of a section the file has; the Raw click keeps it pending, a Rendered click that throws again too; the healed Rendered click lands it (as the Raw preference's toggle does)", async (t) => {
+  withFrames(t);
+  sanitizeFails = "synthetic sanitizer failure";
+  t.after(() => { sanitizeFails = null; sanitizeAnswers = null; });
+  const o = await open(REPORT, t, SID, { at: { heading: "findings" } });   // DOC holds "## Findings"
+  assert.equal(o.ctx.mode(), "raw", "the paint fell to the rows");
+  assert.ok((o.body.childNodes[0] as El).matches("div.fileview-err"), "the failure line first");
+  assert.equal(frames.length, 0, "no landing frame queued from the fallback paint (before: one, whose run found no #md-findings among the rows and raised the notice)");
+  assert.equal(cardOf(o.body).querySelectorAll("#fileview-save-err").length, 0, "no notice bar: the failure line is the one notice");
+  o.b.raw.click();
+  assert.equal(frames.length, 0, "the Raw paint spends nothing either (a note's Raw view cannot judge)");
+  o.b.rendered.click();   // still throwing
+  assert.ok((o.body.childNodes[0] as El).matches("div.fileview-err"), "the line over the rows again");
+  assert.equal(frames.length, 0); assert.equal(cardOf(o.body).querySelectorAll("#fileview-save-err").length, 0, "still no bar");
+  sanitizeFails = null;
+  o.b.rendered.click();
+  assert.equal(o.ctx.mode(), "rendered", "healed");
+  assert.equal(frames.length, 1, "the Rendered paint that stands queues the landing");
+  const els = layRendered(o.body.querySelector(".fileview-md")!);
+  flushFrames();
+  assert.deepEqual(scrolls(els), [0, 1, 0, 0], "the section lands (before: the heading was spent, the healed paint rendered from the top with the false notice standing)");
+  assert.equal(cardOf(o.body).querySelectorAll("#fileview-save-err").length, 0, "and no notice");
+});
+
+test("an open at a source offset whose Rendered paint throws (the Slice 7 review's round 1): the offset lands on the row holding it through the seam's own scrollToOffset, the spender reading mode() and not the pressed button; an offset past the end lands on the last row and its notice says \"showing the last line.\"", async (t) => {
+  withFrames(t);
+  sanitizeFails = "synthetic sanitizer failure";
+  t.after(() => { sanitizeFails = null; sanitizeAnswers = null; });
+  const o = await open(REPORT, t, SID, { at: { offset: DOC.indexOf("We recommend") } });
+  assert.equal(o.ctx.mode(), "raw"); assert.equal(o.b.rendered.classList.contains("on"), true, "the Rendered button pressed over the rows (item 1)");
+  assert.equal(frames.length, 1, "the offset is spent at the landing and scrolled the next frame");
+  const rows = layRows(o.body.querySelector("code.hljs")!, DOC); flushFrames();
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 0, 0, 1], "the sixth row, the offset's line (before: nothing scrolled, the spender read the button, took the Rendered branch and found no box)");
+  assert.deepEqual(rows[5].scrolledWith, { block: "center" });
+  assert.equal(cardOf(o.body).querySelectorAll("#fileview-save-err").length, 0, "no notice: the offset is inside the text");
+  // past the end: the last row, and the notice names a line, what shows, not a block
+  o.fv.openFileView(REPORT, SID, { at: { offset: DOC.length + 50 } }); await settle();
+  const body2 = doc.getElementById("romp-fileview")!.querySelector(".fileview-body")!;
+  assert.ok((body2.childNodes[0] as El).matches("div.fileview-err"), "the failure line again");
+  const rows2 = layRows(body2.querySelector("code.hljs")!, DOC); flushFrames();
+  assert.deepEqual(scrolls(rows2), [0, 0, 0, 0, 0, 1], "the last row");
+  assert.equal(cardOf(body2).querySelector("#fileview-save-err")?.textContent, "Offset " + (DOC.length + 50) + " is past the end of this file, which has " + DOC.length + " characters; showing the last line.", "the notice names what shows (before: \"showing the last block.\" over rows, with nothing scrolled)");
 });
 
 // ── item 6 of Slice 7 of plans/markdown-viewer.md: an empty file says so ─────────────────────────────────────────────────

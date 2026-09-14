@@ -446,11 +446,30 @@ test("the bytes in flux with the marks off — a reject's reply landed, its relo
   store.delete(SETTINGS_KEY);
 });
 
+test("a BOM file (Slice 7 of plans/markdown-viewer.md, item 4; the review's round 1): the host's offsets run one ahead of the view's, and a deletion at the end of line 6 names line 6 in both titles, the line its mark paints on, where the unmapped read named the blank line 7; the click scrolls to the view's offset; the mid-line cards are unchanged", async (t: TestContext) => {
+  store.delete(SETTINGS_KEY);
+  const END6 = at("v1.2.") + "v1.2.".length;            // the "\n" ending line 6, in the view's text
+  assert.equal(DOC[END6], "\n");
+  const hEnd = H("h9", "del", END6, END6, " (draft)", "", T0 - 40000);
+  const w = world({ mode: "rendered" }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, hEnd].map((h) => shifted(h, 1)), bom: true }));
+  assert.equal(revealOf(aside, "chg:h9").title, ON + " (line 6)", "on: the row the point is painted on (before: line 7)");
+  assert.equal(revealOf(aside, "chg:h3").title, ON + " (line 6)", "a deletion inside the line: the same line either way");
+  toggle(aside)!.click(); await flush();
+  assert.equal(revealOf(aside, "chg:h9").title, OFF + " (line 6)" + OFF_TAIL, "off: the same line");
+  assert.equal(revealOf(aside, "chg:h1").title, OFF + " (line 4)" + OFF_TAIL);
+  revealOf(aside, "chg:h9").click();
+  assert.deepEqual(w.modes, ["raw"]); assert.deepEqual(w.scrolls, [END6], "the click goes where the title says: the view's offset, one back from the host's");
+  store.delete(SETTINGS_KEY);
+});
+
 test("pins: the title branches on the toggle's field, and both branches share the one line-number computation", () => {
   const i = SRC.indexOf('const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;');
   assert.ok(i >= 0);
   const block = SRC.slice(i, SRC.indexOf("acts.appendChild(rv)", i));
-  assert.match(block, /const line = src !== null && !inFlux \? " \(line " \+ \(rawOffsetToLine\(src, c\.curFrom\) \+ 1\) \+ "\)" : "";/, "one line suffix");
+  // over the change's start in the VIEW's text: the card's offset is the host's, one ahead on a BOM file (Slice 7 of plans/markdown-viewer.md,
+  // item 4, the review's round 1), and the row rawOffsetToLine names for the ending's own offset is the row it closes, one past it the next
+  assert.match(block, /const line = src !== null && !inFlux \? " \(line " \+ \(rawOffsetToLine\(src, c\.curFrom - \(s && s\.bom \? 1 : 0\)\) \+ 1\) \+ "\)" : "";/, "one line suffix, over the view's text");
   assert.match(block, /rv\.title = this\.inline \? "Show the change in the Raw view" \+ line\n\s+: "Open the Raw view at the change" \+ line \+ "; the marks are off, so the change is not marked there";/, "on: the mark; off: the place, and why");
 });
 

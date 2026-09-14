@@ -168,10 +168,14 @@ const wrapNumberedHtml = (html: string): string => wrapNumbered(html, /\r\n|\r|\
 // against the source character by character, so they keep it as the map's input; the viewer's rows since Slice 7 are the
 // replica's above (buildRawSplit and the three-ending cases). Re-aiming the replica alone turned nine of them red, so the
 // consolidation pass of Slice 7 kept the older grid here by name rather than re-derive them (recorded in the plan note).
+// Both grids are inputs the map takes, and both are built here: `buildRaw` the older one for those cases, `buildRawViewer`
+// the viewer's for the two cases after paintRawPoint's, which lay the CRLF fixture and four small sources on the three-ending
+// split and paint points, highlights and changes over them (Slice 7's review, round 1: until then the painters over a CR or
+// CRLF source on the viewer's own rows had no node case; the three-ending case covers the map's index, not the painters).
 const wrapNumberedHtmlLf = (html: string): string => wrapNumbered(html, "\n");
 type RawDom = { body: FakeElement; before: FakeElement; after: FakeElement; wrap: FakeElement; code: FakeElement };
-/** `.fileview-body > div.fileview-code > pre > code.hljs > rows`, with a sibling before and after. */
-function buildRaw(text: string, filePath: string): RawDom {
+/** `.fileview-body > div.fileview-code > pre > code.hljs > rows`, with a sibling before and after; `rowsOf` lays the rows. */
+function buildRawWith(rowsOf: (html: string) => string, text: string, filePath: string): RawDom {
   const doc = new FakeDocument();
   const lang = langFor(filePath);
   let hl: string | null = null;
@@ -181,12 +185,16 @@ function buildRaw(text: string, filePath: string): RawDom {
   const wrap = doc.createElement("div"); wrap.setAttribute("class", "fileview-code");
   const pre = doc.createElement("pre"); pre.setAttribute("class", "fileview-pre fileview-wrap");
   const code = doc.createElement("code"); code.setAttribute("class", "hljs");
-  for (const n of parseHTML(doc, wrapNumberedHtmlLf(hl !== null ? hl : escapeHtml(text)))) code.appendChild(n);   // the pre-Slice 7 grid these cases were written over (wrapNumberedHtmlLf)
+  for (const n of parseHTML(doc, rowsOf(hl !== null ? hl : escapeHtml(text)))) code.appendChild(n);
   pre.appendChild(code); wrap.appendChild(pre);
   const after = doc.createElement("div"); after.setAttribute("class", "fileview-footer"); after.appendChild(doc.createTextNode("footer text"));
   body.appendChild(before); body.appendChild(wrap); body.appendChild(after);
   return { body, before, after, wrap, code };
 }
+/** The older grid (wrapNumberedHtmlLf), which the cases built on it were written over. */
+function buildRaw(text: string, filePath: string): RawDom { return buildRawWith(wrapNumberedHtmlLf, text, filePath); }
+/** The viewer's grid since Slice 7 (the replica wrapNumberedHtml: the three-ending split), the highlighter included. */
+function buildRawViewer(text: string, filePath: string): RawDom { return buildRawWith(wrapNumberedHtml, text, filePath); }
 type MdDom = { body: FakeElement; box: FakeElement; before: FakeElement };
 /** `.fileview-body > div.fileview-md > marked output` (mdBlock without DOMPurify, see the header). */
 function buildRendered(text: string): MdDom {
@@ -261,6 +269,18 @@ function rawDomIndexOf(source: string): (srcOff: number) => number | null {
       }
     }
     return null;   // a "\n" between rows has no DOM character
+  };
+}
+/** Source offset → global Raw DOM index over the viewer's grid since Slice 7 (rows split on CRLF, a lone CR and LF, none
+ *  carrying an ending): an offset on an ending's own character has no DOM character. */
+function rawDomIndexOfSplit(source: string): (srcOff: number) => number | null {
+  const rows: { start: number; len: number; dom: number }[] = [];
+  let p = 0, g = 0;
+  for (const m of source.matchAll(/\r\n|\r|\n/g)) { rows.push({ start: p, len: (m.index as number) - p, dom: g }); g += (m.index as number) - p; p = (m.index as number) + m[0].length; }
+  if (p < source.length) rows.push({ start: p, len: source.length - p, dom: g });
+  return (srcOff) => {
+    for (const r of rows) if (srcOff >= r.start && srcOff < r.start + r.len) return r.dom + (srcOff - r.start);
+    return null;
   };
 }
 
@@ -1516,6 +1536,190 @@ function around(block: FakeNode, point: FakeNode): [string, string] {
 const nextSibling = (n: FakeNode): FakeNode | null => { const p = n.parentNode!; return p.childNodes[p.childNodes.indexOf(n) + 1] || null; };
 /** The nearest top-level block (a child of the .fileview-md box) holding `n`. */
 const blockOf = (box: FakeNode, n: FakeNode): FakeElement => { let x = n; while (x.parentNode && x.parentNode !== box) x = x.parentNode; return x as FakeElement; };
+
+// ── Raw change marks on the viewer's grid since Slice 7 (the three-ending split; plans/markdown-viewer.md item 7) ──────────
+// The Raw cases above lay the CRLF fixture on the older LF-only grid (buildRaw; see its comment). These two lay sources on
+// the grid the viewer builds now, where no row carries an ending and a lone CR ends a row, and drive the painters over it:
+// a point on an ending sits after its row's last character (on the older grid: before the CR shown as a line feed), an
+// empty CRLF row has no text node and takes its point in its text cell, a highlight or an insertion across an ending is one
+// mark per row with no ending in any, and every point lands on the row the verified row map and rawOffsetToLine give its
+// offset, so a point one row off from Reveal's row would show here (Slice 7's review, round 1).
+test("Raw change marks over the CRLF fixture laid on the viewer's grid: sixteen rows with no ending in any, the same marks as over the older grid, every point on the row its offset's ending closes and where the row map puts it, an empty CRLF row taking its point in its text cell, the walks exact over the paint, unpaint restores the DOM", () => {
+  const source = fixture("handlers-crlf.py");
+  const { code, wrap } = buildRawViewer(source, "handlers-crlf.py");
+  const rows = withClass(code, "fv-cl");
+  assert.equal(rows.length, 16, "the lone CR ends a row of its own (the older grid: 15 rows)");
+  assert.ok(allText(code, null).some((t) => (t.parentNode as FakeElement).getAttribute("class")?.startsWith("hljs-")), "highlight spans present");
+  assert.ok(rows.every((r) => !/[\r\n]/.test(r.textContent)), "no row's text carries an ending");
+  const mapped = rawRows(El(code), source) as unknown as FakeElement[] | null;
+  sameNodes(mapped, rows, "the map's rows verify against the source and are the grid's, in order");
+  const { changes, byId, longOld } = crlfChanges(source);
+  const before = serialize(code);
+  const textBefore = domText(code, isRow);
+  assert.equal(textBefore, noEol(source), "the rows' text is the file's without its endings");
+  const domIdx = rawDomIndexOfSplit(source);
+  const g = (i: number) => { const x = domIdx(i); assert.ok(x !== null, "offset " + i + " shows a character"); return x as number; };
+  const rowIndex = (n: FakeNode) => rows.indexOf(rowOf(n)!);
+  // selections to compare across the paint: over the painted regions, across a mark's edge, whole lines, across the lone CR
+  const probes: [number, number][] = [
+    [byId["c-ins"].curFrom, byId["c-ins"].curTo],
+    [byId["c-sub"].curFrom, byId["c-sub"].curTo],
+    [source.indexOf("if note is None"), source.indexOf('"missing")') + '"missing")'.length],
+    [0, source.indexOf("note_id):") + "note_id):".length],
+    [source.indexOf("LIMIT"), source.length - 2],
+    [byId["c-inscr"].curFrom + 5, byId["c-inscr"].curTo + 12],
+    [source.indexOf("comment"), source.indexOf("and this text") + "and".length],
+  ];
+  const probe = (root: FakeElement, [i, j]: [number, number]) => mapRawSelection(sel(boundaries(root, g(i), isRow).text[0], boundaries(root, g(j - 1) + 1, isRow).text[0]), El(root), source);
+  const pre = probes.map(([i, j]) => {
+    const r = ok(probe(code, [i, j]));
+    assert.deepEqual(r, { ok: true, range: { start: i, end: j }, quote: source.slice(i, j) }, `[${i},${j}) maps to its own offsets, the file's endings inside the quote`);
+    return r;
+  });
+  assert.equal(pre[2].quote, 'if note is None:\r\n\t\treturn respond(404, "missing")', "across a CRLF, now a row boundary, the quote keeps it");
+  assert.equal(pre[6].quote, "comment\rand", "across the lone CR, now a row boundary, the quote keeps the CR");
+
+  const painted = paintChangesRaw(El(code), source, changes, stylesFor) as unknown as FakeElement[];
+  assert.equal(domText(code, isRow), textBefore, "painting adds no text under any row");
+  assert.deepEqual([...new Set(painted.map((m) => m.getAttribute("data-id")))].sort(), ["c-del", "c-del0", "c-delempty", "c-delend", "c-deleof", "c-ins", "c-inscr", "c-sub"], "every change got paint");
+  assert.ok(painted.every((m) => !/[\r\n]/.test(m.textContent)), "no mark holds an ending: the rows have none");
+  for (const m of painted) {
+    const c = byId[m.getAttribute("data-id") as string];
+    assert.ok(rowOf(m), "every mark sits inside a row");
+    assert.equal(m.getAttribute("data-author"), c.author);
+    if (m.getAttribute("class") !== "fc-del") continue;
+    assert.equal(m.childNodes.length, 0, "a deletion point has no children");
+    assert.equal(m.getAttribute("data-fc-text"), deletionLabel(c.oldText));
+    assert.equal(rowTextBefore(code, m), noEol(source.slice(0, c.curFrom)), "point " + c.id + " sits exactly at its offset");
+    assert.equal(rowOf(m), rawRowForOffset(El(code), source, c.curFrom), "point " + c.id + " is on the row the verified row map gives its offset");
+    assert.equal(rowIndex(m), Math.min(rawOffsetToLine(source, c.curFrom), rows.length - 1), "point " + c.id + " is on the row rawOffsetToLine counts, the landing cue's");
+  }
+  const pointOf = (id: string) => painted.find((m) => m.getAttribute("class") === "fc-del" && m.getAttribute("data-id") === id)!;
+  const marksOf = (id: string) => painted.filter((m) => m.getAttribute("class") === "fc-ins" && m.getAttribute("data-id") === id);
+  assert.equal(rowOf(pointOf("c-del0")), rows[0]); assert.equal(rowTextBefore(code, pointOf("c-del0")), "", "the start of the file");
+  assert.equal(rowOf(pointOf("c-delend")), rows[0], "an offset on a CRLF's CR is the end of its row");
+  assert.equal(rowTextBefore(code, pointOf("c-delend")), "def get_note(store, note_id):", "after the row's last character (the older grid: before the CR shown as a line feed)");
+  assert.equal(rowOf(pointOf("c-delempty")), rows[12], "the point on an empty row is inside that row");
+  assert.equal((pointOf("c-delempty").parentNode as FakeElement).getAttribute("class"), "fv-ct", "an empty CRLF row has no text node on this grid, so the point goes into its text cell (the older grid: before its CR-as-LF)");
+  assert.equal(rowOf(pointOf("c-deleof")), rows[15], "the end of the file is the last row's end");
+  assert.equal(rowTextBefore(code, pointOf("c-deleof")), noEol(source));
+  const label = pointOf("c-del").getAttribute("data-fc-text")!;
+  assert.equal(label.length, DEL_LABEL_MAX);
+  assert.equal(label.slice(0, -1), longOld.replace(/\r\n/g, "\n").slice(0, DEL_LABEL_MAX - 1), "the label shows the endings as the rows do, whatever grid the rows are on");
+  // an insertion across a CRLF paints each row's slice, the ending in neither
+  sameNodes([...new Set(marksOf("c-ins").map(rowOf))], [rows[1], rows[2]], "the insertion's marks sit in rows 1 and 2, in order");
+  assert.equal(marksOf("c-ins").map((m) => m.textContent).join(""), noEol(byId["c-ins"].newText!));
+  // the substitution across the two blank CRLF rows: those rows hold no text node, so no mark (the older grid gave each a "\n" mark)
+  const subMarks = marksOf("c-sub");
+  sameNodes([...new Set(subMarks.map(rowOf))], [rows[4], rows[7]], "the substitution's marks sit in rows 4 and 7, the blank rows between them unmarked");
+  assert.equal(subMarks.map((m) => m.textContent).join(""), noEol(byId["c-sub"].newText!));
+  assert.equal(nextSibling(pointOf("c-sub")), subMarks[0], "the substitution's point right before its first mark");
+  // the lone-CR insertion: the CR ends a row on this grid, so the marks sit in two rows and the CR in neither (the older grid:
+  // one row, the CR shown as a line break inside the mark)
+  sameNodes([...new Set(marksOf("c-inscr").map(rowOf))], [rows[14], rows[15]], "the lone-CR insertion's marks sit in rows 14 and 15, in order");
+  assert.equal(marksOf("c-inscr").map((m) => m.textContent).join(""), noEol(byId["c-inscr"].newText!));
+  // the same marks as over the older grid, mark for mark: [id, class, text without endings], the older grid's marks that held
+  // only a CR-as-LF set aside, since these rows have no such character to wrap: the substitution's slices of the two blank
+  // rows, and the lone CR, which stands as its own text node there between the comment's span and the keyword's after it
+  const key = (ms: FakeElement[]) => ms.map((m) => [m.getAttribute("data-id"), m.getAttribute("class"), noEol(m.textContent)]).filter(([, cls, t]) => cls !== "fc-ins" || t !== "");
+  const older = buildRaw(source, "handlers-crlf.py");
+  const olderPainted = paintChangesRaw(El(older.code), source, changes, stylesFor) as unknown as FakeElement[];
+  assert.deepEqual(key(painted), key(olderPainted), "both grids paint the same marks, in the same order, over the same text");
+  const onlyEndings = olderPainted.filter((m) => m.getAttribute("class") === "fc-ins" && noEol(m.textContent) === "");
+  assert.equal(onlyEndings.length, olderPainted.length - painted.length, "the older grid's extra marks are exactly its ending-only slices");
+  assert.deepEqual(onlyEndings.map((m) => [m.getAttribute("data-id"), m.textContent]), [["c-sub", "\n"], ["c-sub", "\n"], ["c-inscr", "\n"]], "the two blank rows' CR-as-LF and the lone CR's");
+  // a comment highlight across the CRLF: marks in the two rows the range spans, the ending in none
+  const hlRange: SourceRange = { start: byId["c-ins"].curFrom - 7, end: byId["c-ins"].curTo };
+  const hl = paintRaw(El(wrap), source, hlRange, "fc-hl", { id: "k1" }) as unknown as FakeElement[];
+  assert.equal(hl.map((m) => m.textContent).join(""), noEol(source.slice(hlRange.start, hlRange.end)));
+  assert.equal(noEol(source.slice(hlRange.start, hlRange.end)), "note = store.get(note_id)\tif note is None");
+  sameNodes([...new Set(hl.map(rowOf))], [rows[1], rows[2]], "the highlight's marks sit in the two rows the range spans");
+  assert.equal(domText(code, isRow), textBefore);
+  // every Raw walk over the painted DOM: a fresh analysis (root = the wrapper, never analyzed) and the cached one, text and
+  // element boundaries
+  for (let k = 0; k < probes.length; k++) {
+    assert.deepEqual(ok(probe(wrap, probes[k])), pre[k], "fresh analysis, probe " + k);
+    assert.deepEqual(ok(probe(code, probes[k])), pre[k], "cached analysis, probe " + k);
+    const bs = boundaries(wrap, g(probes[k][0]), isRow), be = boundaries(wrap, g(probes[k][1] - 1) + 1, isRow);
+    if (bs.elem.length && be.elem.length) assert.deepEqual(ok(mapRawSelection(sel(bs.elem[bs.elem.length - 1], be.elem[be.elem.length - 1]), El(wrap), source)), pre[k], "element boundaries, probe " + k);
+  }
+  // a selection that starts ON the deletion point maps to the file's offsets
+  const j = byId["c-del"].curFrom + 'return respond(404, "missing")'.length;
+  assert.deepEqual(ok(mapRawSelection(sel({ node: pointOf("c-del"), offset: 0 }, boundaries(wrap, g(j - 1) + 1, isRow).text[0]), El(wrap), source)), { ok: true, range: { start: byId["c-del"].curFrom, end: j }, quote: 'return respond(404, "missing")' });
+  // unpaint: the change marks go, the highlight stays; with it unwrapped the way the panel unwraps it, the original bytes
+  unpaintChanges(El(code));
+  assert.equal(withClass(code, "fc-ins").length + withClass(code, "fc-del").length, 0);
+  assert.equal(withClass(code, "fc-hl").map((m) => m.textContent).join(""), noEol(source.slice(hlRange.start, hlRange.end)), "the comment highlight is not ours to remove");
+  unwrapAll(code, "fc-hl");
+  assert.equal(serialize(code), before, "the change marks left nothing behind");
+  const again = buildRawViewer(source, "handlers-crlf.py");
+  assert.equal(paintChangesRaw(El(again.code), source, changes, stylesFor).length, painted.length, "a repaint on a fresh body paints the same marks");
+  unpaintChanges(El(again.code));
+  assert.equal(serialize(again.code), before, "byte-identical to the unpainted DOM");
+});
+
+test("paintRawPoint, paintRaw and paintChangesRaw over LF, CRLF, CR-only and mixed sources laid on the viewer's grid: a point on any ending sits after its row's last character, on an empty row in its text cell, at the end of the file after the last row's text, always on the row the row map and rawOffsetToLine give; a highlight across an ending is one mark per row with no ending in any; changes across endings paint the same marks whichever ending the file has; unpaint restores the DOM", () => {
+  const VISIBLE = ["ab", "cd", "", "x", "yz"];
+  let control: (string | number | null)[][] | null = null;   // the LF file's marks: the other three files must paint the same
+  for (const [what, text] of [["LF", "ab\ncd\n\nx\nyz\n"], ["CRLF", "ab\r\ncd\r\n\r\nx\r\nyz\r\n"], ["CR-only", "ab\rcd\r\rx\ryz\r"], ["mixed", "ab\r\ncd\r\rx\nyz\r\n"]] as Array<[string, string]>) {
+    const code = buildRawSplit(text);
+    const rows = withClass(code, "fv-cl");
+    assert.deepEqual(rows.map((r) => r.textContent), VISIBLE, what + ": the same five rows");
+    const rowIndex = (n: FakeNode) => rows.indexOf(rowOf(n)!);
+    const cdAt = text.indexOf("cd"), xAt = text.indexOf("x"), yzAt = text.indexOf("yz");
+    const emptyAt = rawRowSpan(El(code), text, El(rows[2]))!.start;
+    const before = serialize(code), textBefore = domText(code, isRow);
+    // offset, what it is, the row it lies on, the rows' text before the point
+    const spots: [number, string, number, string][] = [
+      [0, "the start of the file", 0, ""],
+      [2, "the ending after ab, its first character", 0, "ab"],
+      [cdAt + 2, "the ending after cd", 1, "abcd"],
+      [emptyAt, "the empty row", 2, "abcd"],
+      [xAt + 1, "the ending after x", 3, "abcdx"],
+      [yzAt, "the start of yz", 4, "abcdx"],
+      [yzAt + 1, "inside yz", 4, "abcdxy"],
+      [text.length, "the end of the file", 4, "abcdxyz"],
+    ];
+    if (text.startsWith("ab\r\n")) spots.push([3, "the LF of the CRLF after ab", 0, "ab"]);
+    if (text.endsWith("\r\n")) spots.push([text.length - 1, "the LF of the file's last CRLF", 4, "abcdxyz"]);
+    for (const [offset, meaning, row, textBeforePoint] of spots) {
+      const p = paintRawPoint(El(code), text, offset, "fc-del", { act: "fcchange", id: "p" + offset, author: "web" }, "old") as unknown as FakeElement | null;
+      assert.ok(p, `${what}: a point at ${offset} (${meaning}) is placed`);
+      assert.equal(rowIndex(p!), row, `${what}: the point at ${offset} (${meaning}) is on row ${row}`);
+      assert.equal(rowTextBefore(code, p!), textBeforePoint, `${what}: the rows' text before the point at ${offset} (${meaning})`);
+      assert.equal(rowOf(p!), rawRowForOffset(El(code), text, offset), `${what}: the point at ${offset} is on the row the verified row map gives`);
+      assert.equal(row, Math.min(rawOffsetToLine(text, offset), rows.length - 1), `${what}: and on the row rawOffsetToLine counts for ${offset}`);
+      if (row === 2) assert.equal((p!.parentNode as FakeElement).getAttribute("class"), "fv-ct", what + ": an empty row takes the point in its text cell");
+    }
+    assert.equal(domText(code, isRow), textBefore, what + ": points add no text");
+    unpaintChanges(El(code));
+    assert.equal(serialize(code), before, what + ": unpaint restores the rows");
+    // a highlight across an ending: one mark per row it spans, none over the empty row, no ending in any; each painted on
+    // the restored rows and unwrapped the way the panel unwraps it, so the marks are the rows' slices and not a split's
+    const marks = (range: SourceRange) => {
+      const out = (paintRaw(El(code), text, range, "fc-hl") as unknown as FakeElement[]).map((m) => [m.textContent, rowIndex(m)]);
+      assert.equal(domText(code, isRow), textBefore, what + ": a highlight adds no text");
+      unwrapAll(code, "fc-hl");
+      assert.equal(serialize(code), before, what + ": the highlight unwrapped leaves the rows as they were");
+      return out;
+    };
+    assert.deepEqual(marks({ start: 1, end: cdAt + 1 }), [["b", 0], ["c", 1]], what + ": b and c, one mark per row");
+    assert.deepEqual(marks({ start: 0, end: 3 }), [["ab", 0]], what + ": a range ending inside the ending paints the row's text alone");
+    assert.deepEqual(marks({ start: 0, end: text.length }), [["ab", 0], ["cd", 1], ["x", 3], ["yz", 4]], what + ": the whole file, the empty row skipped");
+    // changes: an insertion across the first ending, a deletion on the second, a substitution of x
+    const changes = changesOf([op("c-ins", "web", 0, text.slice(0, cdAt + 2), ""), op("c-del", "api", cdAt + 2, "", "gone"), op("c-sub", "web", xAt, "x", "old")]);
+    assert.deepEqual(changes.map((c) => c.kind), ["ins", "del", "sub"]);
+    const painted = paintChangesRaw(El(code), text, changes, stylesFor) as unknown as FakeElement[];
+    const shape = painted.map((m) => [m.getAttribute("data-id"), m.getAttribute("class"), m.textContent, rowIndex(m)]);
+    assert.deepEqual(shape, [["c-ins", "fc-ins", "ab", 0], ["c-ins", "fc-ins", "cd", 1], ["c-del", "fc-del", "", 1], ["c-sub", "fc-del", "", 3], ["c-sub", "fc-ins", "x", 3]], what + ": the marks and their rows");
+    if (control) assert.deepEqual(shape, control, what + ": the same marks as the LF file's"); else control = shape;
+    assert.equal(rowTextBefore(code, painted[2]), "abcd", what + ": the deletion's point after cd");
+    assert.equal(nextSibling(painted[3]), painted[4], what + ": the substitution's point right before its mark");
+    assert.equal(domText(code, isRow), textBefore);
+    unpaintChanges(El(code));
+    assert.equal(serialize(code), before, what + ": unpaint restores the rows");
+  }
+});
 
 test("Rendered change marks: ins and sub paint their new text with the author's styles, a del is a point at its place and a sub's point sits right before its tint, unpaint restores the DOM", () => {
   const source = fixture("report.md");

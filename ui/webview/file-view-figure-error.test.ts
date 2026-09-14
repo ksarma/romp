@@ -533,6 +533,103 @@ test("the URL viewer arms the same two listeners on its body: a figure of a URL 
   assert.equal(captures(body, "error"), 0, "the close dropped both (closeHooks)"); assert.equal(captures(body, "load"), 0);
 });
 
+test("the label names the candidate the browser asked for (the Slice 7 review's round 1): an img inside a <picture> whose <source srcset> the browser chose, or an img with its own srcset, reports that candidate in currentSrc and never falls back to src, so the label names it by the authored spelling rewriteFigureSrcs kept in data-fv-srcset, or as written when the candidates were left as written; an img whose own src failed, or one with no currentSrc to read, keeps pictureDest's rule", async (t) => {
+  const { md } = await open(t);
+  const fv = await mod();
+  // a <picture> whose <source> the browser chose: the source's srcset rewritten through /file, the authored candidates kept beside it
+  const source = new El("source"); source.setAttribute("type", "image/webp");
+  source.setAttribute("srcset", fileSrc("figs/dark.webp")); source.setAttribute("data-fv-srcset", "figs/dark.webp");
+  const pImg = img({ src: fileSrc("figs/plot.png"), "data-fv-src": "figs/plot.png", alt: "plot" });
+  (pImg as any).currentSrc = fileSrc("figs/dark.webp");   // the browser's answer: the candidate it fetched (absolute in a browser; the stand-in resolves nothing, so as the attribute reads)
+  const picture = block("picture", source, pImg);
+  const p1 = block("p", picture); md.appendChild(p1);
+  fire(pImg, "error");
+  assert.equal(labelAfter(picture)!.textContent, fv.FIGURE_FAILED + " figs/dark.webp (plot)", "the source's candidate, as the author wrote it (before: figs/plot.png, a file the browser never asked for and that may well be there)");
+  // the Comments panel's wrap inside the picture: the img still finds its picture and the candidate
+  const wrapSpan = block("span", pImg); wrapSpan.className = "fc-imgwrap"; picture.appendChild(wrapSpan);
+  fire(pImg, "error");
+  assert.equal(labelAfter(picture)!.textContent, fv.FIGURE_FAILED + " figs/dark.webp (plot)", "through the layer's wrap");
+  assert.equal(p1.querySelectorAll("[data-fv-figerr]").length, 1);
+  // an img with its own srcset: the 1x candidate chosen (a 1x display)
+  const dense = img({ src: fileSrc("figs/plot.png"), "data-fv-src": "figs/plot.png", alt: "dense", srcset: fileSrc("figs/missing-2x.png") + " 2x, " + fileSrc("figs/missing-1x.png") + " 1x", "data-fv-srcset": "figs/missing-2x.png 2x, figs/missing-1x.png 1x" });
+  (dense as any).currentSrc = fileSrc("figs/missing-1x.png");
+  md.appendChild(block("p", dense));
+  fire(dense, "error");
+  assert.equal(labelAfter(dense)!.textContent, fv.FIGURE_FAILED + " figs/missing-1x.png (dense)", "the img's own candidate, by its authored spelling");
+  // candidates left as written (a remote host's, a URL document's): no data-fv-srcset, the candidate named as it stands in srcset
+  const remote = img({ src: "https://cdn.example/plot.png", alt: "remote", srcset: "https://cdn.example/plot-2x.png 2x" });
+  (remote as any).currentSrc = "https://cdn.example/plot-2x.png";
+  md.appendChild(block("p", remote));
+  fire(remote, "error");
+  assert.equal(labelAfter(remote)!.textContent, fv.FIGURE_FAILED + " https://cdn.example/plot-2x.png (remote)");
+  // the browser chose the img's own src (a light-scheme page under a dark-only source): pictureDest's rule, as before
+  const own = img({ src: fileSrc("figs/plot.png"), "data-fv-src": "figs/plot.png", alt: "own" });
+  (own as any).currentSrc = fileSrc("figs/plot.png");
+  const dark = new El("source"); dark.setAttribute("media", "(prefers-color-scheme: dark)"); dark.setAttribute("srcset", fileSrc("figs/dark.png")); dark.setAttribute("data-fv-srcset", "figs/dark.png");
+  const picture2 = block("picture", dark, own);
+  md.appendChild(block("p", picture2));
+  fire(own, "error");
+  assert.equal(labelAfter(picture2)!.textContent, fv.FIGURE_FAILED + " figs/plot.png (own)", "the img's own src failed: its authored spelling");
+  // a currentSrc no carrier accounts for (a browser spelling the URL another way): pictureDest's rule, never a blank
+  const odd = img({ src: fileSrc("figs/plot.png"), "data-fv-src": "figs/plot.png", alt: "odd", srcset: fileSrc("figs/x.png") + " 2x", "data-fv-srcset": "figs/x.png 2x" });
+  (odd as any).currentSrc = "http://elsewhere.test/x.png";
+  md.appendChild(block("p", odd)); fire(odd, "error");
+  assert.equal(labelAfter(odd)!.textContent, fv.FIGURE_FAILED + " figs/plot.png (odd)");
+  // no currentSrc to read (the stand-in's default, the first case's imgs): pictureDest's rule
+  const plain = img({ src: fileSrc("figs/p.png"), "data-fv-src": "figs/p.png", alt: "p", srcset: fileSrc("figs/p-2x.png") + " 2x", "data-fv-srcset": "figs/p-2x.png 2x" });
+  md.appendChild(block("p", plain)); fire(plain, "error");
+  assert.equal(labelAfter(plain)!.textContent, fv.FIGURE_FAILED + " figs/p.png (p)");
+});
+
+test("a data: source is cut to its head in the label (the Slice 7 review's round 1: an inline image's whole payload wrapped into a box the height of the column), the scheme and media type through the comma with an ellipsis; a link holding the figure alone gets the label after the link, never inside it (inside, the label wore the link's pointer and a click on it followed the link); a link with more in it keeps the label beside its img, one label per img", async (t) => {
+  const { md } = await open(t);
+  const fv = await mod();
+  const inline = img({ src: "data:image/png;base64,iVBORw0KGgo" + "A".repeat(3000), alt: "inline" });
+  md.appendChild(block("p", inline));
+  fire(inline, "error");
+  assert.equal(labelAfter(inline)!.textContent, fv.FIGURE_FAILED + " data:image/png;base64,\u2026 (inline)", "the head through the comma and an ellipsis (before: the whole URI, three thousand characters of base64)");
+  const svgInline = img({ src: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'/>", alt: "" });
+  md.appendChild(block("p", svgInline)); fire(svgInline, "error");
+  assert.equal(labelAfter(svgInline)!.textContent, fv.FIGURE_FAILED + " data:image/svg+xml;utf8,\u2026", "any data: source, whatever its length; an empty alt adds no parentheses");
+  const noComma = img({ src: "data:" + "x".repeat(100), alt: "" });   // malformed: no comma
+  md.appendChild(block("p", noComma)); fire(noComma, "error");
+  assert.equal(labelAfter(noComma)!.textContent, fv.FIGURE_FAILED + " data:" + "x".repeat(35) + "\u2026", "no comma: the first forty characters");
+  // a link holding the figure alone: [![linked](figs/missing5.png)](https://example.com/x)
+  const linked = img({ src: fileSrc("figs/missing5.png"), "data-fv-src": "figs/missing5.png", alt: "linked" });
+  const a = block("a", linked); a.setAttribute("href", "https://example.com/x");
+  const p = block("p", txt("Link: "), a, txt(" tail.")); md.appendChild(p);
+  fire(linked, "error");
+  assert.equal(labelAfter(linked), null, "nothing inside the link");
+  const la = labelAfter(a);
+  assert.ok(la, "the label is the link's next sibling"); assert.equal(la!.textContent, fv.FIGURE_FAILED + " figs/missing5.png (linked)");
+  sameNodes(p.childNodes, [p.childNodes[0], a, la!, p.childNodes[3]], "text, the link, the label, text");
+  sameNodes(a.childNodes, [linked], "the link holds the img alone still");
+  fire(linked, "error"); assert.equal(p.querySelectorAll("[data-fv-figerr]").length, 1, "a second error rewrites the one label after the link");
+  fire(linked, "load"); assert.equal(labelAfter(a), null, "the load removes it from there");
+  // the regions layer's wrap inside the link (the panel open): <a><span.fc-imgwrap><img></span></a>, the label after the link still
+  const wrapSpan = block("span", linked); wrapSpan.className = "fc-imgwrap"; a.appendChild(wrapSpan);
+  fire(linked, "error");
+  assert.equal(labelAfter(a)!.textContent, fv.FIGURE_FAILED + " figs/missing5.png (linked)", "climbed through the wrap and the link");
+  assert.equal(a.querySelectorAll("[data-fv-figerr]").length, 0);
+  fire(linked, "load"); assert.equal(labelAfter(a), null);
+  // a link with text beside the figure: the label stays beside its img, as the browser's alt text does
+  const inText = img({ src: fileSrc("figs/missing6.png"), "data-fv-src": "figs/missing6.png", alt: "badge" });
+  const a2 = block("a", inText, txt(" docs")); a2.setAttribute("href", "https://example.com/docs");
+  md.appendChild(block("p", a2));
+  fire(inText, "error");
+  assert.equal(labelAfter(inText)!.textContent, fv.FIGURE_FAILED + " figs/missing6.png (badge)", "inside the link, after the img");
+  assert.equal(labelAfter(a2), null);
+  // two figures in one link: each keeps its own label beside itself
+  const b1 = img({ src: fileSrc("figs/b1.png"), "data-fv-src": "figs/b1.png", alt: "b1" });
+  const b2 = img({ src: fileSrc("figs/b2.png"), "data-fv-src": "figs/b2.png", alt: "b2" });
+  const a3 = block("a", b1, b2); a3.setAttribute("href", "https://example.com/two");
+  md.appendChild(block("p", a3));
+  fire(b1, "error"); fire(b2, "error");
+  assert.equal(labelAfter(b1)!.textContent, fv.FIGURE_FAILED + " figs/b1.png (b1)"); assert.equal(labelAfter(b2)!.textContent, fv.FIGURE_FAILED + " figs/b2.png (b2)");
+  assert.equal(a3.querySelectorAll("[data-fv-figerr]").length, 2, "one label per img, both inside the link that holds more than one");
+  assert.equal(labelAfter(a3), null);
+});
+
 // ── source pins: what the node cases cannot execute here (the browser leg executes the rest) ──────────────────────────
 test("source: armFigureLabels is armed in both viewers and dropped with each (ctx.onClose in the local one, closeHooks in the URL one); it arms exactly two capture listeners, error and load, removes both, and never assigns img.onerror; the label is span.fv-figerr with the mark data-fv-figerr; its text is FIGURE_FAILED, a space, pictureDest's answer and the alt in parentheses (contract C2); FIGURE_FAILED's text is contract C5's; headingWords skips the mark's element after its img line", () => {
   assert.match(VIEW, /\n  ctx\.onClose\(armFigureLabels\(body\)\);\n/, "the local viewer: armed once at the open beside the re-seat's listener and dropped by onClose");
@@ -550,7 +647,19 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   assert.match(VIEW, /\nconst FIGERR_CLASS = "fv-figerr";\n/, "the class, for the sheets alone");
   assert.match(arm, /const label = el\("span", FIGERR_CLASS\);\n\s*label\.setAttribute\(FIGERR_MARK, ""\);/, "the label is a span wearing the class and the mark");
   assert.match(VIEW, /function figureLabelAfter\(anchor: Element\): Element \| null \{\n\s*const n = anchor\.nextSibling;\n\s*return n && n\.nodeType === 1 && \(n as Element\)\.hasAttribute\(FIGERR_MARK\) \? n as Element : null;/, "found by the mark on the anchor's next sibling, never by the class");
-  assert.match(VIEW, /return FIGURE_FAILED \+ " " \+ \(pictureDest\(img\) \?\? ""\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2): FIGURE_FAILED, a space, pictureDest's answer, the alt in parentheses when not empty");
+  assert.match(VIEW, /return FIGURE_FAILED \+ " " \+ shownSource\(failedSource\(img\) \?\? ""\) \+ \(alt \? " \(" \+ alt \+ "\)" : ""\);/, "the text (contract C2, and the review's round 1): FIGURE_FAILED, a space, the source the browser asked for (failedSource) as the label shows it (shownSource), the alt in parentheses when not empty");
+  // the review's round 1: the source is the candidate the browser asked for, read off currentSrc and matched against the srcset carriers
+  // by the authored candidates rewriteFigureSrcs keeps in data-fv-srcset; the img's own src, or no currentSrc, keeps pictureDest's rule
+  assert.match(VIEW, /\nconst FV_SRCSET = "data-fv-srcset";\n/, "the authored candidates' attribute");
+  assert.match(VIEW, /if \(changed\) \{ el\.setAttribute\(FV_SRCSET, ref\.value\); el\.setAttribute\("srcset", serializeSrcset\(cands\)\); \}[^\n]*\n\s*else el\.removeAttribute\(FV_SRCSET\);/, "rewriteFigureSrcs keeps the authored srcset beside its rewrite, for the img's and a source's alike, and clears a stale one");
+  const fs = VIEW.slice(VIEW.indexOf("function failedSource(img: Element): string | null {"), VIEW.indexOf("function shownSource(src: string): string {"));
+  assert.match(fs, /const cur = \(img as HTMLImageElement\)\.currentSrc \|\| "";\n\s*if \(!cur \|\| cur === absUrl\(img\.getAttribute\("src"\) \|\| ""\)\) return pictureDest\(img\);/, "the img's own src, or nothing to read: pictureDest's rule");
+  assert.match(fs, /const picture = img\.closest\("picture"\);\n\s*const carriers: Element\[\] = picture \? \[\.\.\.Array\.from\(picture\.querySelectorAll\("source"\)\), img\] : \[img\];/, "the carriers: the picture's sources, then the img");
+  assert.match(fs, /const was = c\.hasAttribute\(FV_SRCSET\) \? parseSrcset\(c\.getAttribute\(FV_SRCSET\) \|\| ""\) : now;\n\s*for \(let i = 0; i < now\.length; i\+\+\) if \(absUrl\(now\[i\]\.url\) === cur\) return \(was\[i\] \?\? now\[i\]\)\.url;/, "the candidate matched by its resolved URL, named by its authored spelling");
+  assert.doesNotMatch(fs, /fetch\(|new Image\(|\.src = /, "no second request");
+  assert.match(VIEW, /function shownSource\(src: string\): string \{\n\s*if \(!\/\^data:\/i\.test\(src\)\) return src;\n\s*const comma = src\.indexOf\(","\);\n\s*return \(comma >= 0 \? src\.slice\(0, comma \+ 1\) : src\.slice\(0, 40\)\) \+ "\u2026";\n\}/, "a data: source cut to its head with an ellipsis; anything else as written");
+  assert.match(VIEW, /function linkAround\(p: Element, a: Element\): boolean \{\n\s*return p\.localName === "a" && p\.children\.length === 1 && p\.children\[0\] === a && \(p\.textContent \|\| ""\)\.trim\(\) === "";\n\}/, "a link holding the figure alone is climbed (figureAnchor), so the label is not a click target that follows the link");
+  assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)/, "…beside the picture and the wrap");
   assert.match(VIEW, /\nimport \{ pictureDest \} from "\.\/file-comments";/, "pictureDest is the panel's own rule, imported (on a line of its own, as the preview imports are: the registry pin in file-comments.test.ts holds the action's import line), not a second reading of data-fv-src");
   assert.match(VIEW, /\nexport const FIGURE_FAILED = "Image failed to load:";\n/, "contract C5's text, exported for the guide's pin");
   assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\)/, "the anchor climbs a <picture> and the regions layer's wrap (C2 and its addendum)");

@@ -847,7 +847,15 @@ function openRegular(ctx) {
 // stamp over text the caller never saw. `isText` says whether the bytes ARE UTF-8 text (no NUL
 // byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
 // when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
-// the file refuse (`not-text`) rather than write that decode back over the bytes. A leading U+FEFF
+// the file refuse (`not-text`) rather than write that decode back over the bytes. The kernel
+// serves those same bytes to the viewer through a latin-1 fallback (`_decode_text`), one character
+// per byte where this decode puts a U+FFFD, so on such a file the view's text and this script's
+// differ at every non-ASCII byte (and in length where a run of invalid bytes folds into one
+// U+FFFD): a comment made from the view over such a passage is refused `anchor-not-found`, one the
+// CLI writes over this text is placed in the view by its context alone and painted as changed
+// text, and only ASCII passages are whole. Pre-existing, identical on the base this slice was built
+// on, and recorded rather than changed here: one decode rule for both sides is the follow-up (the
+// plan's Slice 7 note, review round 1, 2026-09-14). A leading U+FEFF
 // stays in `text` (decodeTextOrNull's ignoreBOM: true), as the CLIs keep it, while the fetch strips it
 // from the text the viewer shows, so on such a file this script's offsets run one ahead of the
 // view's: the status's `bom` bit reconciles them for the panel, and a save from the view puts the
