@@ -1690,7 +1690,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let placeScrollTop = -1;
   let placeHeld = false;   // `place` is the one a clamped seat was given, standing while the body stands where the clamp left it (seat, below)
   let asideScrollTop = -1;   // the body's scrollTop as the aside hook (ctx.aside, above) left it, -1 once a read has followed
-  const keptPlace = (): Place | null => (shownText === null ? null : placeHeld && place && body.scrollTop === placeScrollTop ? place : readPlace(body, shownText));
+  // A scroll whose frame found the body with no box (the pane hidden in the scroll's own task: a wheel tick, or a fling's last frame
+  // as the rail is clicked or a phone swaps tabs): nothing can measure it, the place stands a frame stale, and the show's repaint
+  // reads the offset the browser restores instead of seating over it (repaint, below; the review's round 6: the seat moved the
+  // body back to the place before that scroll, where the tree before round 5, its place cleared by the hide, had seated nothing).
+  // Set by the scroll listener's frame read (below) and cleared by the measurement it stands in for, a read of the place (notePlace)
+  // or a clamped seat's hold (seat), each of which makes the place current (the review's closing pass: the repaint alone had cleared
+  // it, past its early returns, so a flag set while the show's repaint stood down, the editor up or a media body shown, stayed armed
+  // for a later show with no scroll behind it, which then read the offset in place of seating and dropped a clamped seat's hold).
+  let scrollUnread = false;
+  /** The clamped seat's place stands: the body stands where the clamp left it (seat, below). */
+  const held = (): boolean => placeHeld && place !== null && body.scrollTop === placeScrollTop;
+  const keptPlace = (): Place | null => (shownText === null ? null : held() ? place : readPlace(body, shownText));
   /** The body has no box (its pane's document is display:none: the Files pane toggled off, a phone's tab swap): every rect reads
    *  zero and scrollTop 0, so nothing reads or seats until it shows. notePlace keeps the place as last measured, the width hook's
    *  repaint seats and lands nothing on the report of the box going (its reflow still reaches the panel's hooks) and seats at the
@@ -1698,7 +1709,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const unmeasurable = (): boolean => typeof body.getClientRects === "function" && body.getClientRects().length === 0;
   // a boxless body reads no place, so the last measured one stands (the review's round 5: the hide's own width report had run this
   // over the hidden layout and cleared it, and a leave under the hidden pane, a restart's pagehide, then wrote nothing)
-  const notePlace = () => { if (shownText !== null && textShowing() && !unmeasurable()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; asideScrollTop = -1; } };
+  const notePlace = () => { if (shownText !== null && textShowing() && !unmeasurable()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; asideScrollTop = -1; scrollUnread = false; } };
   // A seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the write asked for more scroll than the view has, and the
   // body stands at its end) keeps the place it was given instead of reading the body: the read would name the block the
   // clamp shows, a paragraph before the reader's, and the next swap would seat THAT, so the Rendered/Raw round trip from
@@ -1706,11 +1717,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // 65 to 107px; before the slice the Raw view was the taller and the same clamp drifted the other direction by up to
   // 264px). The held place stands while the body stands where the clamp left it (placeScrollTop): the seat's own scroll
   // event moves nothing and is skipped below, the first scroll that does move it is the reader's and is read, and a swap
-  // or a reflow that finds the hold seats the reader's own passage, which the other view can show. Either branch consumes
-  // the aside hook's number (asideScrollTop): the seat is the paint the hook's width change led to.
+  // or a reflow that finds the hold seats the reader's own passage, which the other view can show, and a leave writes it
+  // followed into the text that shows (liveRecord). Either branch consumes the aside hook's number (asideScrollTop): the seat
+  // is the paint the hook's width change led to, and either makes the place current, so the unread-scroll flag falls (scrollUnread).
   const seat = (kept: Place | null) => {
     const clamped = kept && shownText !== null ? seatPlaceOutcome(body, shownText, kept).clamped : false;
-    if (clamped && kept) { place = kept; placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = true; asideScrollTop = -1; }
+    if (clamped && kept) { place = kept; placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = true; asideScrollTop = -1; scrollUnread = false; }
     else notePlace();
   };
   const clamped = (): boolean => body.scrollTop < placeScrollTop && body.scrollTop >= body.scrollHeight - body.clientHeight - 1;
@@ -1878,7 +1890,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
    *  from, `place.source`) the block of shownText that followPlace puts the reader's block at, its neighbour's when the write
    *  rewrote it, as the seat steps (seatPlaceOutcome), with the record's depth and flag; null when no block of shownText stands at
    *  or before it. The review's round 6: the leave under the hide wrote the old text's span under the new mtime, a record that
-   *  claimed exactness and named a block the new text did not have at that offset, where the visible leave writes the followed one. */
+   *  claimed exactness and named a block the new text did not have at that offset, where the visible leave read the body anew; since the
+   *  review's closing pass the visible leave reads this too while a clamped seat's place is held (liveRecord). */
   const measuredPlace = (): Place | null => {
     if (!place || shownText === null || place.source === shownText) return place;
     const spans = sourceBlockSpans(shownText);
@@ -1892,9 +1905,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (shownText === null || !textShowing()) return null;
     // a body with no box (the pane hidden at a restart's pagehide, or at a close) reads no place and a scrollTop of 0: the place as
     // last measured stands, with its scrollTop (the review's round 5: the leave wrote nothing and the row kept the leave before it),
-    // followed into the text a reload landed under the hide (measuredPlace; round 6)
+    // followed into the text a reload landed under the hide (measuredPlace; round 6); a clamped seat's held place, which a reload's
+    // paint read over the text BEFORE the swap (renderBody reads `kept`, then replaces the body and seats it over the new text), is
+    // followed the same way (the review's closing pass: the visible leave after a reload whose seat clamped, the new text ending at
+    // or near the reader's block, wrote the old text's span under the new mtime through keptPlace's held arm, round 6's boxless
+    // defect on its other branch)
     const boxless = unmeasurable();
-    const p = boxless ? measuredPlace() : keptPlace();
+    const p = boxless || held() ? measuredPlace() : readPlace(body, shownText);
     if (!p) return null;
     const rec = rememberedPlaceOf(p, mtimeNs, boxless ? placeScrollTop : body.scrollTop);
     const folds = openFoldOrdinals(body) ?? heldFolds();   // the Rendered view's open folds, by ordinal (none for a Raw read or a note with no fold), else the ones a Raw first paint holds for a Rendered paint that has not come; put back by landRemembered
@@ -1906,12 +1923,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     rememberedPlaces.set(memKey, rec);
     if (leaveHost) { try { leaveHost(path, sid ?? null, rec); } catch { /* a host's store must never cost the leave */ } }
   };
-  let placeFrame = 0;
-  // A scroll whose frame found the body with no box (the pane hidden in the scroll's own task: a wheel tick, or a fling's last frame
-  // as the rail is clicked or a phone swaps tabs): nothing can measure it, the place stands a frame stale, and the show's repaint
-  // reads the offset the browser restores instead of seating over it (repaint, below; the review's round 6: the seat moved the
-  // body back to the place before that scroll, where the tree before round 5, its place cleared by the hide, had seated nothing).
-  let scrollUnread = false;
+  let placeFrame = 0;   // the pending frame read's handle, 0 for none (a read pending at the show's repaint is a scroll event since the hide's read: repaint, below)
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
     const read = () => {
@@ -1961,9 +1973,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // back to the place a frame stale; the review's round 6) and the body is not back at 0 (an engine that restores no offset comes
     // back there, and the seat is what puts the place back; a reader who reached the file's top in that frame is seated a frame
     // back, the one case the two cannot be told apart); a text or a width that changed under the hide keeps the seat, which follows
-    // the block into the new text or the new layout
-    const restored = scrollUnread && body.scrollTop > 0 && place !== null && place.source === shownText && body.clientWidth === placeWidth;
-    scrollUnread = false;
+    // the block into the new text or the new layout. And the restore is trusted only where it did not move the body: a scroll event
+    // since the hide's read, its own frame read still pending (placeFrame), is the restore's, since nothing scrolls a body with no
+    // box and an exact restore fires none (measured in headless Chromium: the Raw view's restore lands SHORT when the reader stood in
+    // the note's last 144 px at 900x520, a clamp against a layout pass shorter than the final one, where the Rendered view's is
+    // exact), and a restore that moved the body to below the place last measured is a bound under the reader's offset, not the offset,
+    // so the place is seated, the reader having stood there a frame before the unread scroll, and a clamped seat's hold stands (the
+    // review's closing pass: the show read the short offset as the reader's, 116 px short of the scroll and 86 px behind the place,
+    // and dropped the hold the Raw swap from the Rendered view's end had taken, so the swap back landed four blocks off); a restore
+    // that moved the body to or past the place is read, the reader having scrolled at least that far. A reader's own scroll in the
+    // frame between the show's layout and this repaint reads as the restore's. Either branch clears the flag (notePlace, seat)
+    const moved = placeFrame !== 0;
+    const restored = scrollUnread && body.scrollTop > 0 && place !== null && place.source === shownText && body.clientWidth === placeWidth && !(moved && body.scrollTop < placeScrollTop);
     if (restored) notePlace(); else seat(place);   // the restored offset read, or the place read before the width moved (see notePlace) seated
     landRemembered(); landTarget();                // then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
   };

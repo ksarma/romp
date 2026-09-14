@@ -19,7 +19,12 @@
 // `git archive` of 85fa51bf5): a reload that landed under the hide left `place` naming its block in the OLD text, and the leave
 // stamped that span with the NEW mtime; the leave now follows the place into the text that shows (measuredPlace). And a scroll in
 // the task of the hide, whose frame found no box, was undone at the show by the repaint's seat over the place read before it; the
-// show now reads the offset the browser restored (scrollUnread). Skips LOUDLY without a playwright browser (CI installs none).
+// show now reads the offset the browser restored (scrollUnread). The review's closing pass (the fifth leg, red over a `git archive`
+// of 14a246665): in the Raw view Chromium restores the offset SHORT when the reader stood in the note's last 144 px (a clamp
+// against a layout pass shorter than the final one; the Rendered view's restore is exact), and the show read that offset as the
+// reader's, so a clamped seat's hold was dropped and a small scroll into the end zone came back behind the place before it; a
+// restore that moved the body, told by its own scroll event, an exact restore firing none, and landed below the place last measured
+// now seats the place. Skips LOUDLY without a playwright browser (CI installs none).
 // Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -233,6 +238,77 @@ test("in a browser, the pane at 900 px (review round 6): a scroll in the task of
       await paintsReach(page, p2 + 1); await frames(page, 3);
       const reflowed = (await topBlock(page))!;
       assert.equal(reflowed.text, after.text, what + ": the reflow keeps the block the scroll put at the edge (before the fix: the place a frame stale)");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+/** Click the actions row's view toggle by its label ("Rendered" or "Raw"), as the person does. */
+const clickView = (page: any, label: string): Promise<void> => page.evaluate((l: string) => { (Array.from(document.querySelectorAll(".fileview-acts button")) as HTMLButtonElement[]).find((x) => x.textContent === l)!.click(); }, label);
+/** The body's scrollTop and its scroll extent. */
+const extent = (page: any): Promise<{ top: number; max: number }> => page.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; return { top: b.scrollTop, max: b.scrollHeight - b.clientHeight }; });
+
+test("in a browser, the pane at 900 px (review closing pass): in the Raw view Chromium restores the offset SHORT at the show when the reader stood in the note's last 144 px (a clamp against a layout pass shorter than the final one; the Rendered view's restore is exact), and the restore's own scroll event, which an exact restore never fires, tells the show's repaint the offset moved: a restore landing below the place last measured seats the place instead of reading the offset, so the hold a clamped Raw seat took from the Rendered view's end survives a hide in the seat's own scroll event and the swap back lands where the reader was (before the fix: the short offset read as the reader's, the hold dropped, the swap back four blocks off), and a small scroll into the end zone with the hide in its task comes back no further behind than the place a frame before it (before: 116 px short of the scroll and 86 px behind that place); the controls, the hide three frames after the swap, the scroll three frames before the hide, and the Rendered view's end zone, land exact", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    // (a) the hold: Rendered at the note's end, the swap to Raw clamps and holds; the hide in the seat's own scroll event, or three frames later
+    for (const sameEvent of [true, false]) {
+      const what = "the hold, the hide " + (sameEvent ? "in the seat's own scroll event" : "three frames after the swap (control)");
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG } });
+      await install(page);
+      await page.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop = b.scrollHeight; }); await frames(page, 3);
+      const before = (await topBlock(page))!;
+      const endR = await extent(page);
+      assert.equal(before.view, "rendered"); assert.equal(endR.top, endR.max, what + ": the Rendered view at its end (" + JSON.stringify(before) + ")");
+      const p0 = await paints(page);
+      if (sameEvent) await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).addEventListener("scroll", () => { document.body.classList.add("fv-pane-hidden"); }, { once: true }); });
+      await clickView(page, "Raw");
+      await paintsReach(page, p0 + 1);   // the swap's paint (its seat clamps at the Raw view's end and holds the Rendered place)
+      if (!sameEvent) { await frames(page, 3); await hide(page, true); }
+      await paintsReach(page, p0 + 2);   // the hide's report reaches the hooks as a reflow; nothing is seated over the boxless body
+      await frames(page, 3);
+      const under = await page.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; return { rects: b.getClientRects().length, scrollTop: b.scrollTop, raw: !!b.querySelector("code.hljs") }; });
+      assert.deepEqual(under, { rects: 0, scrollTop: 0, raw: true }, what + ": the Raw view painted, no box under the hide");
+      const p1 = await paints(page);
+      await hide(page, false);
+      await paintsReach(page, p1 + 1); await frames(page, 3);   // the show's report
+      const shown = (await topBlock(page))!;
+      const endRaw = await extent(page);
+      assert.equal(shown.view, "raw");
+      near(endRaw.top, endRaw.max, what + ": the body stands at the Raw view's end after the show, where the clamped seat left it (before the fix, in the seat's event: the short restore read as the reader's place; " + JSON.stringify({ shown, endRaw }) + ")");
+      const p2 = await paints(page);
+      await clickView(page, "Rendered");
+      await paintsReach(page, p2 + 1); await frames(page, 3);
+      const after = (await topBlock(page))!;
+      assert.equal(after.text, before.text, what + ": the swap back lands the block the reader had at the edge (before the fix, in the seat's event: four blocks earlier; " + JSON.stringify({ before, after }) + ")");
+      near(after.top, before.top, what + ": at the same edge"); near(after.scrollTop, before.scrollTop, what + ": the scrollTop back");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+    // (b) the end zone: Raw or Rendered, the reader 58 px from the end scrolls 30 px on, with the hide in the scroll's task or three frames later
+    for (const raw of [true, false]) for (const sameTask of [true, false]) {
+      const what = (raw ? "Raw" : "Rendered") + " end zone, the hide " + (sameTask ? "in the scroll's task" : "three frames after the scroll (control)");
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG }, raw });
+      await install(page);
+      await page.evaluate(() => { const b = document.querySelector(".fileview-body") as HTMLElement; b.scrollTop = b.scrollHeight - b.clientHeight - 58; }); await frames(page, 3);
+      const before = (await topBlock(page))!;
+      const { max } = await extent(page);
+      assert.equal(before.view, raw ? "raw" : "rendered"); near(before.scrollTop, max - 58, what + ": 58 px from the end, the place read there");
+      const p0 = await paints(page);
+      if (sameTask) await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop += 30; document.body.classList.add("fv-pane-hidden"); });
+      else { await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop += 30; }); await frames(page, 3); await hide(page, true); }
+      await paintsReach(page, p0 + 1); await frames(page, 3);   // the hide's report
+      const p1 = await paints(page);
+      await hide(page, false);
+      await paintsReach(page, p1 + 1); await frames(page, 3);   // the show's report
+      const after = (await topBlock(page))!;
+      if (raw && sameTask) {
+        // the reader's offset (max - 28) is lost to the clamp; the place a frame before it is what the show can seat
+        assert.ok(after.scrollTop >= before.scrollTop - 1, what + ": the body stands no further behind than the place a frame before the scroll (before the fix: the short restore, " + (max - 144) + ", read as the reader's; " + JSON.stringify({ before, after, max }) + ")");
+        assert.ok(after.scrollTop <= before.scrollTop + 31, what + ": and no further on than the scroll put it");
+      } else {
+        near(after.scrollTop, before.scrollTop + 30, what + ": the body stands where the scroll put it (" + JSON.stringify({ before, after, max }) + ")");
+      }
       assert.deepEqual(errors, [], what + ": no page errors");
       await page.close();
     }

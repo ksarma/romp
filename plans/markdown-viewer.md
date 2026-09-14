@@ -4124,91 +4124,111 @@ which test holds each rule:
    no box, the pane hidden in the scroll's own task, and marked it unread (`scrollUnread`), reads the offset the
    browser restored instead of seating over it, while the text and the width are the place's and the body is not back
    at 0 (an engine that restores no offset keeps the seat; round 6, a regression against ad612d193, whose cleared
-   place had seated nothing: the repaint's seat moved the body back a frame's scroll, 100 px; boxless leg 4),
-   `notePlace` keeps the last measured place under a boxless body and the leave, `liveRecord`, writes it with its
-   scrollTop, followed into the text a reload landed under the hide (`measuredPlace`: `followPlace`'s block, its
-   neighbour's when the write rewrote it, as the seat steps; round 6: the Comments panel's poll landed a session's
-   write under the hide and the pagehide wrote the old text's offset under the new mtime, a record that claimed
-   exactness; boxless leg 3), so a restart's pagehide or a close under a hidden pane no longer keeps the previous
-   leave's record on the row, and a Raw leave from an open holding a Rendered record's folds for a Rendered paint that
-   never came carries them on, `heldFolds`, where the held state had died with the open); and files-recent.ts's
-   `asPlace` accepts the field as a list of non-negative integers, anything else being no place. The brief's sentence
-   for the Recent leg ("twenty paragraphs inserted above and reopen: block 40 is at the top again") contradicted that
-   rule, so the leg asserts the same scrollTop with a different block there, and block 40 back within a pixel on an
-   unchanged file and a file changed below it. The remembered seat does not hold a clamped write the way `seat(kept)`
-   does (one seat path, one hold: a place at the file's end that the browser clamps reads back as the block the clamp
-   shows), a choice for the review. Two follow-ups the review's round 2 recorded as not closable within the record's
-   decided fields (spans, pixels and mtime, no text; open question 7) were closed in round 3, the fold state above
-   being the one field added, each with a test red over a `git archive` of 27c56fbf7: a fold the reader had OPEN whose
-   summary sat at or below the body's edge, or whose box started at or below it (the front matter at the note's top,
-   an author's `<details>`, a `[!tip]+` callout the reader had closed coming back closed), came back as authored on
-   the reopen, the content under the edge no longer showing, and the round 2 gate compared a pixel depth from the
-   leave's width against the shut box at the reopen's width, a few-px window in which a wrapping title read open at
-   900 px and reopened at 380 came back shut; the record's folds close every face, the same block at the edge; and the
-   numeric fallback after a page reload landed a picture's height off when a figure above the block loaded after the
-   seat (round 2 measured 384 px, one figure; Chromium's scroll anchoring keeps the span path exact by moving the
-   scrollTop, and an engine without it would show both paths a picture's height off): `armReseat` runs right after the
-   remembered seat when a picture in the body has not loaded, and a capture-phase `load` listener on the body (an
-   img's load does not bubble) writes the seat again at each picture's load while the body stands where the seat and
-   the browser's own adjustment left it, the same scrollTop or the same top block at the same offset; a scroll of the
-   reader's, the next text paint and the close retire it; no timer (the review's round 4 pins the scroll and the paint
-   retires as behaviour in files-recent-place-browser's third leg; the close discards the body with the listener, so
-   nothing of it can show, and it stays a source pin). The sentence above, that a changed width comes back near, not
-   exact, stands. The Files pane persists the record on the Recent row: `RecentFile` gains `place`, a stored one is
-   validated field by field on read (`asPlace`: a malformed record costs the place, never the row), `rememberRecent`
-   keeps a row's place across a re-open that brings none (the viewer hands the pane the place of the file it LEAVES
-   before the re-open's own row is written), `placeRecent` writes one on its row; files.ts wires `onLeave` to that
-   write, and `openHere` reads the latest record among the rows that name the same FILE by the viewer's `placeKey` (an
-   absolute or `~` path one file for every session, a relative one per session; files-recent.ts `latestPlace`) and
-   hands it back through `opts.place` on every open of the file, the row's click or any other (the review's round 1:
-   with the row's click alone handing it back, a chat click through the relay after a page reload opened the note at
-   its top and its leave wrote that top over the row, the place lost for good; round 5: with the open's own row alone
-   read, two sessions' rows for one absolute path landed at the file's latest place before a reload, the in-page
-   memory's shared key, and each at its own older place after one, the same row landing differently by whether the
-   page had reloaded; the record is read before the open, so a replace-open's leave, which rewrites a row during the
-   open, is kept, the viewer seating the later of the two; the write stays per path and session, so the rows and the
-   store's shape are unchanged); the JSON in localStorage holds the eight fields, and `folds` for a Rendered read of a
-   note with a fold, and nothing else (`asPlace` drops any other field). The chat modal and the feed viewer persist
-   nothing across a page load (open question 7's default); their in-page map covers a switch between files there.
-   Cost: one `readPlace` per leave, one `placeRecent` map over at most eight rows and one JSON write per leave. Not
-   built: the wrapper control the brief's routing (i) asked of the memory leg (the wrapper rulings stand through
-   `readPlace`, unchanged, and the place legs ran green). file-view-place-memory.test.ts (9, new: the real
-   openFileView over a stand-in that, unlike the seam's, has a layout, so the seat is read as a scrollTop; the two
-   pure functions, a close and a reopen to the pixel with nothing scrolled into view, a host's record and the later
-   `t`, a replace-open, a changed file in its four shapes, the views against each other, an `at` open, pagehide, the
-   editor, a picture and a missing file, source pins on the three write sites and the seat's place; from the review's
-   round 2, `placeKey`'s four shapes, two sessions' relative path as two files and an absolute path shared, and the
-   editor's leave writing the pre-Edit place at pagehide and at the close; from round 3, case 6 pins the reader's own
-   sequence, Edit saving the Raw preference, the un-cleared reopen painting Raw with block 12's first row at the edge,
-   the Raw close's record and a Rendered reopen after that round trip seating the block at the edge, and two source
-   pins moved with the record's fold field; in round 4 the replace path's pin admits the prior ring's read between the
-   guard and the leave, and landRemembered's the boxless-body guard; in round 5 the `liveRecord` pin reads the boxless
-   leave and `heldFolds`), files.test.ts (16, two new over the pure half, the wiring pins re-aimed and one executed;
-   from the review's round 1, `openHere`'s body lifted and run over stubs: the relay's open, a link's and the row's
-   click hand the record, an `at` open hands it too, a replace-open's fresher leave record stays on the row, a veto
-   records nothing; the eight-field pins gain the fold field in round 3; in round 5 the executed case runs `placeKey`
-   lifted from file-view.ts, another session's row for the same absolute path handing the file's record, of two rows
-   for one file the later seating whichever row is clicked, another session's relative path or no row handing null,
-   and one pure case over `latestPlace`), files-recent-place-shared-browser.test.ts (1 leg, new in the review's round
-   5: the real Files page in headless Chromium, two sessions reading one absolute path, the second's relay landing at
-   the first's place, either row landing at the file's latest read before and after a page reload, the rows told apart
-   by their session chips, a relative path keeping each session's own place across the reload, no word of the note in
-   the store; red over a `git archive` of ad612d193 at the post-reload landing), files-recent-place-browser.test.ts (3
-   legs, new: the real Files page in headless Chromium, the acceptance reopen within a pixel, the record's JSON, a
-   change below and above the block, a page reload with the shell's relay as the first open after it returning to the
-   block and its close keeping the block on the row, a replace-open with two rows, a relay re-open through the
-   viewer's in-page memory; from the review's round 3, a record read at Paragraph 65 with a figure loaded, a page
-   reload, the note changed above the passage (the numeric path), the figure held at the landing and released, the
-   body ending at the record's scrollTop with an earlier block at that pixel, over an .svg the leg's route serves as
-   image/svg+xml, never cached, held while the test says so, and from round 4 two figures held by path: after the
-   first figure's re-seat the reader scrolls 400 px on and the second figure's load leaves the reader's block at the
-   top with the record's number not written back, and after a second reload with five paragraphs inserted for twenty a
-   Rendered/Raw round trip before the loads leaves the paint's own block at the top, the record's number again not
-   written back, so the scroll and the next text paint retire the re-seat; the stored keys pin keeps its eight fields,
-   its message since round 3 saying that a note with no fold records no fold state: this leg's note has no
-   `<details>`, so the ninth key, `folds`, is pinned over a note with one in
-   file-view-place-memory-fold-browser.test.ts, and in files.test.ts's JSON case; the round 3 commit message's clause
-   that this leg's key pin gained the field is a slip and stands as history),
+   place had seated nothing: the repaint's seat moved the body back a frame's scroll, 100 px; boxless leg 4; since the
+   review's closing pass the flag falls with the measurement it stands in for, a read of the place or a clamped seat's
+   hold, and not with the repaint alone, since a flag set while the show's repaint stood down, the editor up or a
+   media body shown, had stayed armed for a later show with no scroll behind it, which then read the block a clamped
+   seat's landing showed in place of the held passage, place-memory case 9; and the restore is trusted only where it
+   did not move the body: a scroll event since the hide's read, its own frame read still pending at the repaint, is
+   the restore's, an exact restore firing none, and a restore that moved the body to below the place last measured
+   seats the place instead, measured in headless Chromium, where the Raw view's restore lands short when the reader
+   stood in the note's last 144 px at 900x520, a clamp against a layout pass shorter than the final one, and the
+   Rendered view's is exact: the show had read the short offset as the reader's, 116 px short of a 30 px scroll into
+   the end zone and 86 px behind the place before it, and dropped the hold a Raw swap from the Rendered view's end had
+   taken, so the swap back landed four blocks off; a restore that moved the body to or past the place is read, the
+   reader having scrolled at least that far, and a reader's own scroll in the frame between the show's layout and the
+   repaint reads as the restore's; boxless leg 5), `notePlace` keeps the last measured place under a boxless body and
+   the leave, `liveRecord`, writes it with its scrollTop, followed into the text a reload landed under the hide
+   (`measuredPlace`: `followPlace`'s block, its neighbour's when the write rewrote it, as the seat steps; round 6: the
+   Comments panel's poll landed a session's write under the hide and the pagehide wrote the old text's offset under
+   the new mtime, a record that claimed exactness; boxless leg 3), and so, since the closing pass, is a clamped seat's
+   held place at a visible leave (a reload's paint reads the place over the text before its swap and the seat holds it
+   in the old text's terms when the new text ends at or near the reader's block, so the leave after it wrote the old
+   text's span under the new mtime through `keptPlace`'s held arm, round 6's defect on the visible branch; `held`, the
+   one test the seat's read and the leave share; place-memory case 8), so a restart's pagehide or a close under a
+   hidden pane no longer keeps the previous leave's record on the row, and a Raw leave from an open holding a Rendered
+   record's folds for a Rendered paint that never came carries them on, `heldFolds`, where the held state had died
+   with the open); and files-recent.ts's `asPlace` accepts the field as a list of non-negative integers, anything else
+   being no place. The brief's sentence for the Recent leg ("twenty paragraphs inserted above and reopen: block 40 is
+   at the top again") contradicted that rule, so the leg asserts the same scrollTop with a different block there, and
+   block 40 back within a pixel on an unchanged file and a file changed below it. The remembered seat does not hold a
+   clamped write the way `seat(kept)` does (one seat path, one hold: a place at the file's end that the browser clamps
+   reads back as the block the clamp shows), a choice for the review. Two follow-ups the review's round 2 recorded as
+   not closable within the record's decided fields (spans, pixels and mtime, no text; open question 7) were closed in
+   round 3, the fold state above being the one field added, each with a test red over a `git archive` of 27c56fbf7: a
+   fold the reader had OPEN whose summary sat at or below the body's edge, or whose box started at or below it (the
+   front matter at the note's top, an author's `<details>`, a `[!tip]+` callout the reader had closed coming back
+   closed), came back as authored on the reopen, the content under the edge no longer showing, and the round 2 gate
+   compared a pixel depth from the leave's width against the shut box at the reopen's width, a few-px window in which
+   a wrapping title read open at 900 px and reopened at 380 came back shut; the record's folds close every face, the
+   same block at the edge; and the numeric fallback after a page reload landed a picture's height off when a figure
+   above the block loaded after the seat (round 2 measured 384 px, one figure; Chromium's scroll anchoring keeps the
+   span path exact by moving the scrollTop, and an engine without it would show both paths a picture's height off):
+   `armReseat` runs right after the remembered seat when a picture in the body has not loaded, and a capture-phase
+   `load` listener on the body (an img's load does not bubble) writes the seat again at each picture's load while the
+   body stands where the seat and the browser's own adjustment left it, the same scrollTop or the same top block at
+   the same offset; a scroll of the reader's, the next text paint and the close retire it; no timer (the review's
+   round 4 pins the scroll and the paint retires as behaviour in files-recent-place-browser's third leg; the close
+   discards the body with the listener, so nothing of it can show, and it stays a source pin). The sentence above,
+   that a changed width comes back near, not exact, stands. The Files pane persists the record on the Recent row:
+   `RecentFile` gains `place`, a stored one is validated field by field on read (`asPlace`: a malformed record costs
+   the place, never the row), `rememberRecent` keeps a row's place across a re-open that brings none (the viewer hands
+   the pane the place of the file it LEAVES before the re-open's own row is written), `placeRecent` writes one on its
+   row; files.ts wires `onLeave` to that write, and `openHere` reads the latest record among the rows that name the
+   same FILE by the viewer's `placeKey` (an absolute or `~` path one file for every session, a relative one per
+   session; files-recent.ts `latestPlace`) and hands it back through `opts.place` on every open of the file, the row's
+   click or any other (the review's round 1: with the row's click alone handing it back, a chat click through the
+   relay after a page reload opened the note at its top and its leave wrote that top over the row, the place lost for
+   good; round 5: with the open's own row alone read, two sessions' rows for one absolute path landed at the file's
+   latest place before a reload, the in-page memory's shared key, and each at its own older place after one, the same
+   row landing differently by whether the page had reloaded; the record is read before the open, so a replace-open's
+   leave, which rewrites a row during the open, is kept, the viewer seating the later of the two; the write stays per
+   path and session, so the rows and the store's shape are unchanged); the JSON in localStorage holds the eight
+   fields, and `folds` for a Rendered read of a note with a fold, and nothing else (`asPlace` drops any other field).
+   The chat modal and the feed viewer persist nothing across a page load (open question 7's default); their in-page
+   map covers a switch between files there. Cost: one `readPlace` per leave, one `placeRecent` map over at most eight
+   rows and one JSON write per leave. Not built: the wrapper control the brief's routing (i) asked of the memory leg
+   (the wrapper rulings stand through `readPlace`, unchanged, and the place legs ran green).
+   file-view-place-memory.test.ts (11, new: the real openFileView over a stand-in that, unlike the seam's, has a
+   layout, so the seat is read as a scrollTop; the two pure functions, a close and a reopen to the pixel with nothing
+   scrolled into view, a host's record and the later `t`, a replace-open, a changed file in its four shapes, the views
+   against each other, an `at` open, pagehide, the editor, a picture and a missing file, source pins on the three
+   write sites and the seat's place; from the review's round 2, `placeKey`'s four shapes, two sessions' relative path
+   as two files and an absolute path shared, and the editor's leave writing the pre-Edit place at pagehide and at the
+   close; from round 3, case 6 pins the reader's own sequence, Edit saving the Raw preference, the un-cleared reopen
+   painting Raw with block 12's first row at the edge, the Raw close's record and a Rendered reopen after that round
+   trip seating the block at the edge, and two source pins moved with the record's fold field; in round 4 the replace
+   path's pin admits the prior ring's read between the guard and the leave, and landRemembered's the boxless-body
+   guard; in round 5 the `liveRecord` pin reads the boxless leave and `heldFolds`; in round 6 that pin re-aimed and
+   one on `measuredPlace` added; in the closing pass case 8, the visible leave after a reload whose seat clamped,
+   through the seam's reload from a probe action, and case 9, the unread-scroll flag under the editor, through a
+   ResizeObserver stand-in the case reports through and the body's rects and width faked for the hide and the show,
+   with the `liveRecord` pin re-aimed to `held`), files.test.ts (16, two new over the pure half, the wiring pins
+   re-aimed and one executed; from the review's round 1, `openHere`'s body lifted and run over stubs: the relay's
+   open, a link's and the row's click hand the record, an `at` open hands it too, a replace-open's fresher leave
+   record stays on the row, a veto records nothing; the eight-field pins gain the fold field in round 3; in round 5
+   the executed case runs `placeKey` lifted from file-view.ts, another session's row for the same absolute path
+   handing the file's record, of two rows for one file the later seating whichever row is clicked, another session's
+   relative path or no row handing null, and one pure case over `latestPlace`),
+   files-recent-place-shared-browser.test.ts (1 leg, new in the review's round 5: the real Files page in headless
+   Chromium, two sessions reading one absolute path, the second's relay landing at the first's place, either row
+   landing at the file's latest read before and after a page reload, the rows told apart by their session chips, a
+   relative path keeping each session's own place across the reload, no word of the note in the store; red over a `git
+   archive` of ad612d193 at the post-reload landing), files-recent-place-browser.test.ts (3 legs, new: the real Files
+   page in headless Chromium, the acceptance reopen within a pixel, the record's JSON, a change below and above the
+   block, a page reload with the shell's relay as the first open after it returning to the block and its close keeping
+   the block on the row, a replace-open with two rows, a relay re-open through the viewer's in-page memory; from the
+   review's round 3, a record read at Paragraph 65 with a figure loaded, a page reload, the note changed above the
+   passage (the numeric path), the figure held at the landing and released, the body ending at the record's scrollTop
+   with an earlier block at that pixel, over an .svg the leg's route serves as image/svg+xml, never cached, held while
+   the test says so, and from round 4 two figures held by path: after the first figure's re-seat the reader scrolls
+   400 px on and the second figure's load leaves the reader's block at the top with the record's number not written
+   back, and after a second reload with five paragraphs inserted for twenty a Rendered/Raw round trip before the loads
+   leaves the paint's own block at the top, the record's number again not written back, so the scroll and the next
+   text paint retire the re-seat; the stored keys pin keeps its eight fields, its message since round 3 saying that a
+   note with no fold records no fold state: this leg's note has no `<details>`, so the ninth key, `folds`, is pinned
+   over a note with one in file-view-place-memory-fold-browser.test.ts, and in files.test.ts's JSON case; the round 3
+   commit message's clause that this leg's key pin gained the field is a slip and stands as history),
    file-view-place-memory-fold-browser.test.ts (13 legs, new in the review's round 1: at 900 and 380 px an authored
    `<details>` and a folded callout come back open with Paragraph 25 at the same edge and the scrollTop within a
    pixel, a fold the reader left shut stays shut with Paragraph 41 exact, and a Raw record reopened under the Rendered
@@ -4322,7 +4342,7 @@ which test holds each rule:
    and the Reload's record; six re-pinned for the signatures, the relay and render.ts's `openPath`; in round 5 pins
    re-aimed to `landTarget`, `spendHeading`, the repaint line, `parkedLanding`, `liveRecord` and the fold rule's flag;
    in round 6 to the raise's go line, the fold rule's arm, the repaint and the reader-place import),
-   file-view-boxless-browser.test.ts (4 legs, new in the review's round 5: in the pane at 900 px an open at a heading,
+   file-view-boxless-browser.test.ts (5 legs, new in the review's round 5: in the pane at 900 px an open at a heading,
    a line and an offset painted under a hidden overlay, the file GET held while the hide comes, lands its target with
    no notice once the overlay shows, the heading's top at the edge less its scroll margin, the row and the block
    inside the body's box, and the body holds the keyboard with PageDown scrolling, the visible control landing the
@@ -4333,8 +4353,13 @@ which test holds each rule:
    the reopen returning to it and the visible control writing the same span; and a scroll in the task of the hide,
    whose frame found no box, kept at the show, the body 100 px on where the browser restored it and a 1 px reflow
    keeping the block the scroll put at the edge, the control with the scroll three frames before the hide landing the
-   same; 0/2 over a `git archive` of 85fa51bf5), path-links.test.ts (14, four new: the grammar's spellings, the
-   controls with the default and `lineSuffix` walks unchanged, a section a highlight span cuts, `linkTarget`),
+   same; 0/2 over a `git archive` of 85fa51bf5; one in the closing pass, item 3's: the hold a clamped Raw seat took
+   from the Rendered view's end surviving a hide in the seat's own scroll event, the body at the Raw view's end after
+   the show and the swap back landing the block the reader had at the edge, a 30 px scroll into the Raw end zone with
+   the hide in its task coming back no further behind than the place a frame before it, and the controls, the hide
+   three frames after the swap, the scroll three frames before the hide and the Rendered end zone, exact; 0/1 over a
+   `git archive` of 14a246665), path-links.test.ts (14, four new: the grammar's spellings, the controls with the
+   default and `lineSuffix` walks unchanged, a section a highlight span cuts, `linkTarget`),
    render-open-path-target.test.ts (5, new: `openPath` and `openLinkedPath` lifted and executed for the in-document
    route, the pane relay and the host's `line`; the window stand-in's projection, added by the consolidation pass when
    the full npm test's shim ratchet named the file), user-todo-links.test.ts (12, the executed payload gains `at` with
@@ -4593,23 +4618,41 @@ which test holds each rule:
    (item 3); and the raise's release guard reading whether the body still shows the file the HEAD compared against
    (item 5); and the records: `placeKey`'s doc comments in file-view.ts, files.ts and files-recent.ts stating the
    rule's limit at one kernel, the tests-by-file counts, the ledger's `where:` line, and this note's sentences on each
-   of these. Recorded in round 6, not changed: an absolute or `~` path named by a session of this kernel and by a
-   session attached from another kernel (a `host:`-prefixed sid, host-prefix.ts's `hostOf`; the viewer's read goes
-   through preview.ts's `fileUrl` to `/remote/<host>/file`, the kernel's `_remote_file`, and that kernel's disk) is
-   two files under one `placeKey`, so a reopen of either seats the other's later record, in the page's map since round
-   2 and through the rows' `latestPlace` after a reload since round 5, the span landing where a block of the other
-   file's text starts at the same offset, else the clamped numeric scrollTop, and either file's leave overwriting the
-   key for both (item 3; not on main 0bf0465b4, which keeps no place; the review's round 6, from a headless-Chromium
-   probe over the real Files page with the remote route served as another text); it waits because the path key is the
-   brief's decided default (question 7) and the fix, the host folded into the key of an absolute or `~` path for a
-   remote session, read from the sid's host prefix as `fileUrl` reads it or from the identity the relay carries, is a
-   design call for the owner; a Comment float the reader Tabbed onto losing the keyboard when the panel hides it at
-   the bar's raise, recorded above beside routing (a) and below with the Tab-focused highlight, the same drop; a Files
-   pane toggled off and on after the landing dropping the body's keyboard to the pane document's body with nothing
-   re-taking it at the show, item 1's edge, recorded below; the other-view bound judged against the reopen body's
-   height, recorded in item 3; and a later one-line notice taking the changed-on-disk line, recorded in item 5.
-   Recorded in round 5, not changed: a heading target under a plain `hidden` wrapper, pre-existing and routed below,
-   stands as round 4 recorded it, and a Tab-focused in-body path link losing the keyboard at a poll's landing,
+   of these. The review's closing pass (2026-09-14), after the cap, closed the three edges round 6's own fixes had
+   left, each with a test red over a `git archive` of 14a246665: the visible leave after a reload whose seat clamped
+   following the held place into the text that landed as the boxless leave does (`liveRecord` reads `measuredPlace`
+   under `held`, the one test `keptPlace` uses; place-memory case 8), the unread-scroll flag cleared by the
+   measurement it stands in for, a read of the place or a clamped seat's hold, and no longer by the repaint alone
+   (place-memory case 9), and the show's repaint seating the place when the browser's restore moved the body to below
+   it, told by the restore's own scroll event with its frame read pending, the Raw view's short restore near the
+   note's end (boxless leg 5); and the records: this note's sentences on each of these (items 3 and 4), the
+   tests-by-file counts, the ledger's `where:` line, and the pins re-aimed in file-view-place, file-view,
+   file-view-text-size and place-memory. After this pass the owner's termination rule applies: only a wrong mapping or
+   a Rendered comments regression reopens the review. Recorded in the closing pass, not changed: the rule above reads
+   the restore's scroll event at the show's repaint, where the harness puts it (the viewer's overlay hidden by a rule
+   while the pane's document renders, so the hide's frame read runs and the show's width report follows); in a Files
+   pane whose iframe the parent hides, rendering pauses with the iframe by the event loop's rules, so a scroll's frame
+   read pending at the hide runs at the show, finds a box and reads the restored offset as the reader's, exact in
+   Rendered and short in Raw near the note's end, with no width report and no flag for the repaint to act on
+   (unmeasured here: the boxless legs model the pane's hide as the overlay's rule); it waits on the layout pass that
+   clamps the restore, its cause inside Chromium unverified, since nothing the read measures tells a restore's scroll
+   event from a reader's. Recorded in round 6, not changed: an absolute or `~` path named by a session of this kernel
+   and by a session attached from another kernel (a `host:`-prefixed sid, host-prefix.ts's `hostOf`; the viewer's read
+   goes through preview.ts's `fileUrl` to `/remote/<host>/file`, the kernel's `_remote_file`, and that kernel's disk)
+   is two files under one `placeKey`, so a reopen of either seats the other's later record, in the page's map since
+   round 2 and through the rows' `latestPlace` after a reload since round 5, the span landing where a block of the
+   other file's text starts at the same offset, else the clamped numeric scrollTop, and either file's leave
+   overwriting the key for both (item 3; not on main 0bf0465b4, which keeps no place; the review's round 6, from a
+   headless-Chromium probe over the real Files page with the remote route served as another text); it waits because
+   the path key is the brief's decided default (question 7) and the fix, the host folded into the key of an absolute
+   or `~` path for a remote session, read from the sid's host prefix as `fileUrl` reads it or from the identity the
+   relay carries, is a design call for the owner; a Comment float the reader Tabbed onto losing the keyboard when the
+   panel hides it at the bar's raise, recorded above beside routing (a) and below with the Tab-focused highlight, the
+   same drop; a Files pane toggled off and on after the landing dropping the body's keyboard to the pane document's
+   body with nothing re-taking it at the show, item 1's edge, recorded below; the other-view bound judged against the
+   reopen body's height, recorded in item 3; and a later one-line notice taking the changed-on-disk line, recorded in
+   item 5. Recorded in round 5, not changed: a heading target under a plain `hidden` wrapper, pre-existing and routed
+   below, stands as round 4 recorded it, and a Tab-focused in-body path link losing the keyboard at a poll's landing,
    pre-existing, is recorded below with the Tab-focused highlight, the same edge. Recorded in round 2, not changed:
    the Outline button's wrap of the actions row at 800 and 900 px, an accepted cost measured in item 2; and the
    Outline focusout closer's null case, whose comment now names its two moves (a window blur, the body taking the
@@ -4689,12 +4732,13 @@ which test holds each rule:
    review's round 4). Tests, by file (every new node test on the shim's stand-ins with `hideEdges`; every browser leg
    over headless Chromium and the real bundles, 0 skipped, counted on every run): file-view-seam (39, eight new),
    file-view-focus-body-browser (3 legs, new), fileview-parity (3, eight heads; the changed-on-disk bar's Reload rule
-   in round 5), file-view-place (8, two re-pinned, one in round 4, two and a narrowed one in round 5, two in round 6),
-   file-view (52, four new and six re-pinned; pins re-aimed in rounds 4, 5 and 6), file-view-links (28, re-pinned),
-   md-url-view (29, re-pinned), pdf-new-tab (12, re-pinned), file-view-notebar-browser (9 legs, one new and one
-   re-aimed in the build, three in the review's round 1, one of them restructured in round 2 into six holder cells and
-   given a seventh in round 3, one new in round 3, and two in round 5), file-view-place-memory (9, new; case 6
-   re-aimed in the review's round 3, two pins in round 4, one in round 5, one re-aimed and one added in round 6),
+   in round 5), file-view-place (8, two re-pinned, one in round 4, two and a narrowed one in round 5, two in round 6,
+   four re-aimed in the closing pass), file-view (52, four new and six re-pinned; pins re-aimed in rounds 4, 5 and 6
+   and in the closing pass), file-view-links (28, re-pinned), md-url-view (29, re-pinned), pdf-new-tab (12,
+   re-pinned), file-view-notebar-browser (9 legs, one new and one re-aimed in the build, three in the review's round
+   1, one of them restructured in round 2 into six holder cells and given a seventh in round 3, one new in round 3,
+   and two in round 5), file-view-place-memory (11, new; case 6 re-aimed in the review's round 3, two pins in round 4,
+   one in round 5, one re-aimed and one added in round 6, two cases and one re-aimed pin in the closing pass),
    file-view-place-svg-source (1, re-pinned), file-view-reload (19, ten new in the build, two in the review's round 3,
    one extended in rounds 4 and 5, one new in round 6), file-view-outline (10, new; the closers case counting over the
    module's listener since round 4), file-view-outline-browser (3 legs, new, one extended in round 2), files (16, two
@@ -4702,17 +4746,18 @@ which test holds each rule:
    third extended in round 4), file-view-place-memory-fold-browser (13 legs, new; four in the review's round 4, two in
    round 5, one in round 6), file-view-keyboard-frames-browser (2 legs, new in the review's round 2; comments in round
    3), file-view-focus-ring-browser (3 legs, new in the review's round 3; the third in round 4),
-   file-view-focus-ring-openers-browser (2 legs, new in the review's round 4), file-view-boxless-browser (4 legs, new
-   in the review's round 5, two in round 6), files-recent-place-shared-browser (1 leg, new in the review's round 5),
-   path-links (14, four new), render-open-path-target (5, new), user-todo-links (12, cases extended and re-pinned),
-   waiting-detail-link (5, one new), todo-link-target-browser (2 legs, new), waiting-file-chip (12, re-aimed),
-   user-todo-title-links (12, re-pinned), url-links (15, re-pinned), file-uri-link (4, re-pinned), chat-space-paths
-   (5, re-pinned), user-img-dedup (4, re-pinned), render-todo-file-chip (14, re-pinned), waiting-link-focus (4,
-   re-pinned), waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6, re-pinned), menu-theme-tokens (7, the
-   surfaces list), file-comments (35, one re-pinned), file-view-text-size (33, one count pin re-aimed in the review's
-   round 5 to the width frame's reshaped repaint, and in round 6 to its restored branch), styles-fileview-err-sizes
-   (7, one pin admitting a line in the review's round 2), the fixture file-view-outline-fixture.ts (new) and
-   real-viewer-leg.ts (the HEAD-aware stub, `__heads`, `chatKeysScript`); tests/test_files_pane.py (24, one new),
+   file-view-focus-ring-openers-browser (2 legs, new in the review's round 4), file-view-boxless-browser (5 legs, new
+   in the review's round 5, two in round 6, one in the closing pass), files-recent-place-shared-browser (1 leg, new in
+   the review's round 5), path-links (14, four new), render-open-path-target (5, new), user-todo-links (12, cases
+   extended and re-pinned), waiting-detail-link (5, one new), todo-link-target-browser (2 legs, new),
+   waiting-file-chip (12, re-aimed), user-todo-title-links (12, re-pinned), url-links (15, re-pinned), file-uri-link
+   (4, re-pinned), chat-space-paths (5, re-pinned), user-img-dedup (4, re-pinned), render-todo-file-chip (14,
+   re-pinned), waiting-link-focus (4, re-pinned), waiting-pane-browser (6 legs, re-pinned), chat-relpath-link (6,
+   re-pinned), menu-theme-tokens (7, the surfaces list), file-comments (35, one re-pinned), file-view-text-size (33,
+   one count pin re-aimed in the review's round 5 to the width frame's reshaped repaint, in round 6 to its restored
+   branch, and in the closing pass to its moved-restore test), styles-fileview-err-sizes (7, one pin admitting a line
+   in the review's round 2), the fixture file-view-outline-fixture.ts (new) and real-viewer-leg.ts (the HEAD-aware
+   stub, `__heads`, `chatKeysScript`); tests/test_files_pane.py (24, one new),
    tests/test_guide_files_place_and_outline.py (14, new; two pins re-aimed in round 4, the heading gate's and the
    Recent lookup's in round 5), tests/test_reference_todo_file.py (20, two re-pinned),
    tests/test_markdown_viewer_plan_note_history.py (10, five in the review's round 2: the head's sentence on the three
@@ -4725,16 +4770,17 @@ which test holds each rule:
    six files the head of this note names), or of a head of the pre-rebase lineage (the mapping at the head of this
    note), with the new exports stubbed where a test imports one, and says how and over which tree in its commit (a
    review round's case over a `git archive` of the tree that round reviewed, d91f0c19d for round 1, c88444f85 for
-   round 2, 27c56fbf7 for round 3, 7fbced030 for round 4, ad612d193 for round 5 and 85fa51bf5 for round 6); a pin over
-   a shape this slice moved is titled a re-pin and is red by construction over those trees; the guards say they are
-   guards. The guarantees the families re-verify: highlights are measured `<mark class="fc-hl">` elements over the
-   range's text nodes with their data-act, id, tabIndex, role and title, the margin layout reading their boxes, and
-   the panel's press-time strip takes the tabindex off marks alone, never off the body, whose own `tabindex` stands
-   through a press; the panel's boxes, the editor and a mark keep the keyboard through every paint this slice adds a
-   focus to; the poll asks one reload per mtime and the save fence compares mtime strings, and the probe reads the
-   same header with the same two functions and never writes `mtimeNs`; the pairing, the change marks and the selection
-   map read the one block table, which item 3's span check and item 4's offset landing READ and do not change; the Raw
-   view and the anchor map are untouched; and the composer's quote stays the exact source slice.
+   round 2, 27c56fbf7 for round 3, 7fbced030 for round 4, ad612d193 for round 5, 85fa51bf5 for round 6 and 14a246665
+   for the closing pass); a pin over a shape this slice moved is titled a re-pin and is red by construction over those
+   trees; the guards say they are guards. The guarantees the families re-verify: highlights are measured `<mark
+   class="fc-hl">` elements over the range's text nodes with their data-act, id, tabIndex, role and title, the margin
+   layout reading their boxes, and the panel's press-time strip takes the tabindex off marks alone, never off the
+   body, whose own `tabindex` stands through a press; the panel's boxes, the editor and a mark keep the keyboard
+   through every paint this slice adds a focus to; the poll asks one reload per mtime and the save fence compares
+   mtime strings, and the probe reads the same header with the same two functions and never writes `mtimeNs`; the
+   pairing, the change marks and the selection map read the one block table, which item 3's span check and item 4's
+   offset landing READ and do not change; the Raw view and the anchor map are untouched; and the composer's quote
+   stays the exact source slice.
 ### Slice 7: every failure says what happened
 
 The render catch shows Raw rows under a `.fileview-err` line; a failed figure shows an inline error

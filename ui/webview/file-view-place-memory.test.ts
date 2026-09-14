@@ -11,8 +11,10 @@
 // markup codeBlock writes (the .fv-cl rows, hljs spans inside), and the `.fileview-md` box renders its text through
 // marked when mdBlock falls back to the bare text, which it does under node because DOMPurify has no document to work in
 // (the sanitizer returns its input, and mdBlock's catch writes the text): the blocks' elements, unsanitized (the fixture
-// is plain markdown) and without the heading ids the sanitizer's own pass mints. Synthetic fixtures only: the notes-api
-// world, placeholder ids, hostname none.
+// is plain markdown) and without the heading ids the sanitizer's own pass mints. The review's closing pass adds two cases over the
+// same stand-ins: the visible leave after a reload whose seat the browser clamped (the seam's reload, a ResizeObserver-free open),
+// and the unread-scroll flag under the editor (a ResizeObserver stand-in the case reports through, the body's rects and width
+// faked for the hide and the show). Synthetic fixtures only: the notes-api world, placeholder ids, hostname none.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
@@ -407,6 +409,12 @@ const GROWN = NOTE.replace(PARA(12), PARA(12) + " And one more sentence the sess
 const INSERTED = "# Report\n\n" + Array.from({ length: 20 }, (_, i) => `Preface ${i + 1}: a paragraph the session put in above.`).join("\n\n") + "\n\n" + NOTE.slice("# Report\n\n".length);
 /** The note cut to eight paragraphs: nine blocks, 160px of scroll. */
 const SHORT = "# Report\n\n" + Array.from({ length: 8 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+/** The note with the twenty paragraphs put in above and its last eight cut: the reader's block moved down and the file's end up
+ *  to it, so a seat of the block clamps at the end (53 blocks, 1920px of scroll; paragraph 30 is block 50, at 2000px). */
+const INSERTED_CUT = "# Report\n\n" + Array.from({ length: 20 }, (_, i) => `Preface ${i + 1}: a paragraph the session put in above.`).join("\n\n") + "\n\n" + Array.from({ length: 32 }, (_, i) => PARA(i + 1)).join("\n\n") + "\n";
+/** The note with a sixty-item list after paragraph 40: one block (the 42nd), sixty Raw rows, so the Raw view's end lies inside it
+ *  and its Rendered box, one block tall, cannot show the rows the Raw view had at the edge: the Rendered seat clamps and holds. */
+const LISTED = NOTE + "\n" + Array.from({ length: 60 }, (_, i) => `- item ${i + 1}`).join("\n") + "\n";
 /** A code file, thirty lines with no blank line: one block to the lexer, thirty Raw rows. */
 const PY = Array.from({ length: 30 }, (_, i) => `value_${i + 1} = ${i + 1}`).join("\n") + "\n";
 const PLOT = ROOT + "/docs/plot.png";
@@ -713,6 +721,110 @@ test("the memory's key (review round 2): a RELATIVE path carries the session, si
 });
 
 // ── the source: where the write and the seat sit ─────────────────────────────────────────────────
+// ── the visible leave after a reload whose seat clamped (review closing pass) ─────────────────────────────────────
+test("a reload whose seat the browser CLAMPS (the session's write moved the reader's block down and the file's end up to it: the block wants more scroll than the new view has) holds the place read before the swap, in the OLD text's terms (seat's hold, the Slice 3 round trip), and the visible leave after it, the pagehide or a close with the body standing where the clamp left it, writes that block followed into the text that landed, at its mtime (review closing pass: through keptPlace's held arm it wrote the old text's offset under the new mtime, a record that claimed exactness and named an offset no block of the new text starts at, so the reopen fell to the numeric scrollTop; the mirror of round 6's boxless defect); a reload seated without a clamp writes the block read anew over the new body, before and after", async (t) => {
+  const fv = await mod();
+  const probe: { seam: { reload(): void; mtimeNs(): string } | null } = { seam: null };   // a holder: the mount below assigns it, which a bare `let` would not carry past the assignment
+  fv.registerFileViewAction({ id: "closing-pass-seam", mount: (ctx) => { probe.seam = ctx; return null; } });   // the seam, for the reload the Comments panel's poll calls (registered once; every later open mounts it, adding no node)
+  const P = notePath("clamped-reload");
+  const o = await open(P, NOTE, t);
+  assert.ok(probe.seam, "the probe mounted");
+  o.body.scrollTop = 30 * BLOCK_H;   // paragraph 30 (block 30) at the edge
+  assert.equal(topOf(blocks(o)[30]), 0);
+  // the session's write lands through the seam's reload (the panel's poll): twenty paragraphs above the reader's block, the last eight gone
+  disk[P] = { bytes: INSERTED_CUT, type: "text/plain; charset=utf-8", mtimeNs: MT2 };
+  probe.seam!.reload(); await settle();
+  assert.equal(probe.seam!.mtimeNs(), MT2, "the reload landed");
+  const spans = sourceBlockSpans(INSERTED_CUT);
+  assert.equal(spans.length, 53); assert.equal(blocks(o).length, 53);
+  const max = 53 * BLOCK_H - BODY_H;
+  assert.equal(o.body.scrollTop, max, "the seat clamped: paragraph 30, block 50 of the new text, wants " + 50 * BLOCK_H + " and the body ends at " + max);
+  assert.equal(topOf(blocks(o)[50]), 50 * BLOCK_H - max, "paragraph 30 stands 80px below the edge, where the clamp left it");
+  assert.ok(blocks(o)[50].textContent.startsWith("Paragraph 30:"));
+  const n0 = leaves.length;
+  win.dispatchEvent(new Event("pagehide"));
+  assert.equal(leaves.length, n0 + 1, "the pagehide wrote a record");
+  const rec = leaves[n0].rec;
+  assert.equal(rec.mtimeNs, MT2, "at the landed file's mtime");
+  assert.equal(rec.start, spans[50].start, "the record names paragraph 30's block in the text that landed (before the fix: " + NOTE_SPANS[30].start + ", the old text's offset, at which no block of the new text starts)");
+  assert.equal(rec.end, spans[50].end);
+  assert.deepEqual([rec.top, rec.view, rec.scrollTop], [0, "rendered", max], "with the depth as read before the swap, the view, and the clamp's scrollTop");
+  assert.ok(o.fv.placeFromRemembered(rec, INSERTED_CUT), "a block of the new text starts at the record's offset, so the reopen seats by span");
+  o.fv.closeFileView();
+  assert.equal(leaves.length, n0 + 2);
+  assert.equal(leaves[n0 + 1].rec.start, spans[50].start, "the close writes the same block");
+  // the reopen seats the block and clamps at the same end the reader saw
+  const back = await reopen(o.fv, P);
+  assert.equal(back.body.scrollTop, max); assert.ok(blocks(back)[50].textContent.startsWith("Paragraph 30:"));
+  o.fv.closeFileView();
+  // control: the write with the file long enough below the block seats without a clamp, and the leave reads the body anew
+  const C = notePath("followed-reload");
+  const c = await open(C, NOTE, t);
+  c.body.scrollTop = 30 * BLOCK_H;
+  disk[C] = { bytes: INSERTED, type: "text/plain; charset=utf-8", mtimeNs: MT2 };
+  probe.seam!.reload(); await settle();
+  assert.equal(probe.seam!.mtimeNs(), MT2);
+  assert.equal(c.body.scrollTop, 50 * BLOCK_H, "seated, not clamped: paragraph 30 back at the edge");
+  const n1 = leaves.length;
+  c.fv.closeFileView();
+  assert.equal(leaves[n1].rec.start, sourceBlockSpans(INSERTED)[50].start, "the followed block, read anew");
+});
+
+// ── the unread-scroll flag falls with the measurement it stands in for (review closing pass) ─────────────────────
+test("scrollUnread, the flag a scroll's frame read sets when it finds the body with no box, is cleared by the measurement it stands in for, a read of the place or a clamped seat's hold, so a flag set while the show's repaint stood down (the editor holding the body) never makes a later show read a scroll that did not happen (review closing pass: only the repaint cleared it, past its early returns, so the stale flag made the show after a clamped Rendered seat read the block the clamp shows in place of the held passage, and the swap back to Raw landed that block's first row, 1160px above the rows the reader had)", async (t) => {
+  // the body's width report, through a ResizeObserver stand-in the case reports through (the viewer's repaint is keyed on it; with
+  // no requestAnimationFrame the report itself is the frame, and the scroll listener reads at the event)
+  const observers: Array<{ cb: (entries: unknown[]) => void; targets: unknown[] }> = [];
+  (globalThis as any).ResizeObserver = class {
+    private rec: { cb: (entries: unknown[]) => void; targets: unknown[] };
+    constructor(cb: (entries: unknown[]) => void) { this.rec = { cb, targets: [] }; observers.push(this.rec); }
+    observe(el: unknown): void { this.rec.targets.push(el); }
+    disconnect(): void { /* inert */ }
+  };
+  t.after(() => { delete (globalThis as any).ResizeObserver; });
+  const P = notePath("stale-flag");
+  const o = await open(P, LISTED, t);
+  // the pane's hide and show: no rects and a width of 0 under the hide, and the width hook's report of each
+  let hidden = false;
+  (o.body as any).getClientRects = () => (hidden ? [] : [rect(EDGE, BODY_H)]);
+  Object.defineProperty(o.body, "clientWidth", { get: () => (hidden ? 0 : BODY_W), configurable: true });
+  const report = () => { for (const ob of observers) if (ob.targets.includes(o.body)) ob.cb([{ contentRect: { width: hidden ? 0 : BODY_W } }]); };
+  report();   // the first report describes the size at observe(), not a change
+  const maxRendered = 42 * BLOCK_H - BODY_H, maxRaw = 142 * ROW_H - BODY_H;
+  assert.equal(blocks(o).length, 42);
+  // the editor holds the body; the pane is hidden in the task of a scroll, whose read finds no box (the flag), and shown again: the
+  // show's repaint stands down under the editor and the flag stays
+  btn(o, "Edit").click(); await settle();
+  assert.ok(o.body.querySelector(".fileview-cm"), "the editor holds the body");
+  hidden = true; dispatch(o.body, new Ev("scroll")); report();
+  hidden = false; report();
+  // Cancel: the exit paints Raw (the preference Edit saved) at the top, a measured read
+  btn(o, "Cancel").click(); await settle();
+  assert.equal(rows(o).length, 142, "the Raw view, 142 rows");
+  assert.equal(o.body.scrollTop, 0);
+  // the reader scrolls to the Raw view's end, inside the list, and swaps to Rendered: the list's one block cannot show its rows, the
+  // seat clamps at the Rendered end and holds the Raw place (seat)
+  o.body.scrollTop = maxRaw; dispatch(o.body, new Ev("scroll"));
+  assert.equal(topOf(rows(o)[132]), 0); assert.ok(rows(o)[132].textContent.startsWith("- item 51"), "item 51 at the edge");
+  btn(o, "Rendered").click(); await settle();
+  assert.equal(o.body.scrollTop, maxRendered, "clamped at the Rendered end");
+  assert.equal(topOf(blocks(o)[37]), 0, "paragraph 37 at the edge, the clamp's landing; the list block below the view");
+  // the pane hidden and shown with no scroll: the show's repaint seats the held place again (before the fix: the stale flag read the
+  // clamp's landing as the reader's place and dropped the hold)
+  hidden = true; report();
+  hidden = false; report();
+  assert.equal(o.body.scrollTop, maxRendered);
+  // the swap back to Raw seats the reader's own rows
+  btn(o, "Raw").click(); await settle();
+  assert.equal(o.body.scrollTop, maxRaw, "item 51's row back at the edge (before the fix: paragraph 37's first row, " + 37 * 2 * ROW_H + ")");
+  assert.ok(rows(o)[132].textContent.startsWith("- item 51"));
+  // and the leave writes the list block, the reader's passage
+  const n0 = leaves.length;
+  o.fv.closeFileView();
+  assert.equal(leaves[n0].rec.start, sourceBlockSpans(LISTED)[41].start, "the record names the list block");
+  assert.equal(leaves[n0].rec.view, "raw");
+});
+
 test("file-view.ts: runLeave runs once the close guard has passed in closeFileView and both replace paths (three sites), landRemembered runs right after the first paint's own seat in both text branches, the leave writes the place read at Edit while the editor is up and stands down without a text view, pagehide runs the live write without retiring it, and the option and the host type carry RememberedPlace", () => {
   const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
@@ -729,7 +841,7 @@ test("file-view.ts: runLeave runs once the close guard has passed in closeFileVi
   assert.match(openFn, /const memKey = placeKey\(path, sid\);[^\n]*\n\s*let pendingPlace: RememberedPlace \| null = at === null \? newerPlace\(opts\?\.place, rememberedPlaces\.get\(memKey\)\) : null;/, "a target stands the memory down; else the later of the host's and the memory's, read by the file's key (placeKey: the path, and the session for a relative path)");
   assert.match(openFn, /const landRemembered = \(\) => \{\n\s*if \(pendingPlace === null \|\| shownText === null\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(unmeasurable\(\)\) return;\n\s*const rec = pendingPlace; pendingPlace = null;/, "spent once, at a text paint over a body that has a box (a paint under a hidden pane keeps it for the width hook's repaint at the show; the review's round 4)");
   assert.match(openFn, /const measuredPlace = \(\): Place \| null => \{\n\s*if \(!place \|\| shownText === null \|\| place\.source === shownText\) return place;\n\s*const spans = sourceBlockSpans\(shownText\);\n\s*const \{ at, step \} = followPlace\(place, shownText\);\n\s*const found = blockIndexAt\(spans, at\);\n\s*if \(found < 0\) return null;\n\s*const b = Math\.max\(0, Math\.min\(spans\.length - 1, found \+ step\)\);\n\s*return \{ \.\.\.place, source: shownText, start: spans\[b\]\.start, end: spans\[b\]\.end, prev: null, next: null, line: null, row: null, after: undefined, pic: null, lead: null \};\n\s*\};/, "the last measured place, followed into the text that shows when a reload landed under a boxless body (the paint's seat could read nothing there, so `place` still names its block in the text it was read from): the block followPlace puts the reader's block at, stepped to its neighbour when the write rewrote it, as the seat steps; null when no block stands at or before it (review round 6: the boxless leave wrote the old text's span under the new mtime)");
-  assert.match(openFn, /const liveRecord = \(\): RememberedPlace \| null => \{\n\s*if \(shownText === null \|\| !textShowing\(\)\) return null;\n(?:\s*\/\/[^\n]*\n)*\s*const boxless = unmeasurable\(\);\n\s*const p = boxless \? measuredPlace\(\) : keptPlace\(\);\n\s*if \(!p\) return null;\n\s*const rec = rememberedPlaceOf\(p, mtimeNs, boxless \? placeScrollTop : body\.scrollTop\);\n\s*const folds = openFoldOrdinals\(body\) \?\? heldFolds\(\);[^\n]*\n\s*return folds \? \{ \.\.\.rec, folds \} : rec;\n\s*\};/, "the live record: a non-text body writes nothing; one keptPlace read, or the place as last measured with its scrollTop under a body with no box (review round 5: a leave under a hidden pane wrote nothing), followed into the text a reload landed under the hide (round 6); the Rendered view's open folds ride on it by ordinal, else the folds a Raw first paint holds for a Rendered paint that has not come (round 5), absent when there is nothing to record (review round 3)");
+  assert.match(openFn, /const liveRecord = \(\): RememberedPlace \| null => \{\n\s*if \(shownText === null \|\| !textShowing\(\)\) return null;\n(?:\s*\/\/[^\n]*\n)*\s*const boxless = unmeasurable\(\);\n\s*const p = boxless \|\| held\(\) \? measuredPlace\(\) : readPlace\(body, shownText\);\n\s*if \(!p\) return null;\n\s*const rec = rememberedPlaceOf\(p, mtimeNs, boxless \? placeScrollTop : body\.scrollTop\);\n\s*const folds = openFoldOrdinals\(body\) \?\? heldFolds\(\);[^\n]*\n\s*return folds \? \{ \.\.\.rec, folds \} : rec;\n\s*\};/, "the live record: a non-text body writes nothing; one keptPlace read, or the place as last measured with its scrollTop under a body with no box (review round 5: a leave under a hidden pane wrote nothing), followed into the text a reload landed under the hide (round 6), and so is a clamped seat's held place, read over the old text before a reload's swap (the closing pass); the Rendered view's open folds ride on it by ordinal, else the folds a Raw first paint holds for a Rendered paint that has not come (round 5), absent when there is nothing to record (review round 3)");
   assert.match(openFn, /leaveLive = \(\) => \{\n\s*const rec = editing \? editPlace : liveRecord\(\);\n\s*if \(!rec\) return;\n\s*rememberedPlaces\.set\(memKey, rec\);/, "the write: the place read at Edit while the editor is up, else the live one, by the file's key");
   assert.match(openFn, /if \(refused\) \{ noteBar\(refused\); return; \}\n\s*editPlace = liveRecord\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(isMd && fmt\.md === "rendered"\) \{ fmt\.md = "raw"; saveFmt\(fmt\); \}/, "enterEdit reads the place past the guard and before the Raw switch (the view the reader read)");
   assert.match(openFn, /editing = false; dirty = false; ta = null;\n\s*editPlace = null;/, "exitEdit clears it: the text view is back and the leave reads it live");
