@@ -1276,7 +1276,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
   assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
   assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
   assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
-  assert.match(openFn, /renderBody\(\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5)");
+  assert.match(openFn, /renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5); the Latin-1 line's raise stands between the paint and the spend (Slice 7, item 5)");
   assert.match(openFn, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*if \(pendingHeading !== null && \(!isMd \|\| fmt\.md === "rendered"\)\) spendHeading\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/,
     "spent at the landing like the line, scrolled the next frame (the heading landing's timing), before the keyboard");
   const sso = openFn.slice(openFn.indexOf("const scrollToSourceOffset = "), openFn.indexOf("let pendingOffset"));
@@ -1466,4 +1466,23 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   assert.match(VIEW, /\nfunction renderFellLine\(msg: string\): HTMLElement \{\n\s*const why = el\("div", "fileview-err"\);\n\s*why\.textContent = RENDER_FELL \+ " \(" \+ msg \+ "\)\.";\n\s*return why;\n\}\n/);
   // the fetch chain's own catch stands for a refused fetch and for a throw from the fallback itself
   assert.match(openFn, /\}\)\)\.catch\(\(err\) => land\(\(\) => \{\n\s*if \(!stands\(\)\) return;/, "the chain's .catch, unchanged");
+});
+
+test("source: a Latin-1 file's line (Slice 7 of plans/markdown-viewer.md, item 5): the verdict is its own flag off the header's VALUE \"0\" with the text/plain type, never !isText; applied with the other verdicts at the landing; the raise is one noteBar of the exported LATIN1_NOTICE between the text paint and landTarget, so a target's notice wins the row and a reload's landing raises it again after settleDiskBar; the Edit gate is unchanged", () => {
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(VIEW, /\nexport const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8\.";\n/, "the exported sentence (contract C5)");
+  assert.match(openFn, /type Verdict = \{ isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean \};/, "one more field in the verdict shape");
+  assert.match(openFn, /v = \{ isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false \};/, "initialised with the others");
+  assert.match(openFn, /\n\s*v\.notUtf8 = ct\.startsWith\("text\/plain"\) && r\.headers\.get\("X-Romp-Text-Utf8"\) === "0";\n/, "the header's value \"0\" with the text type: an image or a PDF carries no header, and an old kernel sends none");
+  assert.doesNotMatch(openFn, /notUtf8 = !isText|notUtf8 = !v\.isText|notUtf8 = !got\.isText|notUtf8 = !\(/, "never the text verdict's negation");
+  assert.match(openFn, /\n\s*let notUtf8 = false;/, "per-open state, beside isText");
+  assert.match(openFn, /isText = got\.isText; notUtf8 = got\.notUtf8; mtimeNs = got\.mtimeNs; isImage = got\.isImage; isPdf = got\.isPdf; isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "applied with the other verdicts, before the bar's settle");
+  const landing = openFn.slice(openFn.indexOf("const got = v!;"), openFn.indexOf("})).catch((err) => land(() => {"));
+  assert.match(landing, /text = t;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/,
+    "the text landing: the paint, the raise, then the target's spend (the past-the-end line notice, raised inside landTarget, takes the row from the line; the offset and missing-section notices land a frame later and take it the same way); the parked landing's Outline re-open flag is read before the paint (the PR review's round 2)");
+  assert.ok(landing.indexOf("settleDiskBar(my);") >= 0 && landing.indexOf("settleDiskBar(my);") < landing.indexOf("if (notUtf8) noteBar(LATIN1_NOTICE);"), "the changed-on-disk bar's settle precedes the raise, so a Reload's landing brings the line back over the dropped bar");
+  assert.equal((openFn.match(/noteBar\(LATIN1_NOTICE\)/g) || []).length, 1, "one raise site, the text landing (a reload's landing runs it again; nothing else re-raises it)");
+  assert.equal((VIEW.match(/LATIN1_NOTICE/g) || []).length, 4, "the constant's definition, its doc comment, the flag's comment and the one raise; no other reader in the viewer");
+  assert.match(openFn, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/, "the gate is unchanged: the line explains it and does not replace it");
+  assert.match(openFn, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)\n\s+&& r\.headers\.get\("X-Romp-Text-Utf8"\) !== "0";/, "and the text verdict's two lines stand as file-edit.test.ts pins them");
 });

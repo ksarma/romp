@@ -381,6 +381,12 @@ function renderFellLine(msg: string): HTMLElement {
  *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
  *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
 export const FIGURE_FAILED = "Image failed to load:";
+/** The note bar's line over a file the kernel decoded as Latin-1 (plans/markdown-viewer.md Slice 7, item 5): the kernel serves
+ *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
+ *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
+ *  answer wears the "0" (notUtf8): before landTarget, so an open's own target notice takes the row under the one-bar rule, and
+ *  again after a reload's landing has dropped the changed-on-disk bar. Shown alone in the bar (contract C5). */
+export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.";
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1109,6 +1115,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
   let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
+  let notUtf8 = false;                        // text/plain whose X-Romp-Text-Utf8 is exactly "0": the kernel decoded the bytes as Latin-1, so the text landing raises LATIN1_NOTICE (plans/markdown-viewer.md Slice 7, item 5). Its own flag, never !isText: an image or a PDF carries no header at all, and an old kernel that sends none leaves isText true (Edit off through !mtimeNs)
   // ── the media verdicts: a .png used to open as line-numbered mojibake — the fetch pipeline called
   // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
   // re-test (the authoritative-source rule; the kernel derives the mime locally and the relay
@@ -3251,7 +3258,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // is what the hold's header says of an overtaken landing.
   const fetchFile = () => {
     const my = ++fetchSeq;
-    type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
+    type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
     // Whether this fetch's answer STANDS to land: its viewer is up (wrap.isConnected: a close removes the wrap, and a
@@ -3288,7 +3295,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
       // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
       // kernel that sends neither simply gets no Edit button).
-      v = { isText: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false };
+      v = { isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false };
       v.isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
         && r.headers.get("X-Romp-Text-Utf8") !== "0";
       v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
@@ -3299,6 +3306,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       v.isImage = ct.startsWith("image/");
       v.isPdf = ct.startsWith("application/pdf");
       v.isSvgImage = ct === "image/svg+xml";
+      // The Latin-1 verdict keys on the header's VALUE with the text type, never on !isText: an image or a PDF carries no
+      // X-Romp-Text-Utf8 at all (tests/test_kernel_preview.py pins that absence), and an old kernel that sends none leaves
+      // isText true with Edit off through !mtimeNs. The text landing below says so in the note bar (LATIN1_NOTICE;
+      // plans/markdown-viewer.md Slice 7, item 5).
+      v.notUtf8 = ct.startsWith("text/plain") && r.headers.get("X-Romp-Text-Utf8") === "0";
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
@@ -3306,7 +3318,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
-      isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
+      isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
       settleDiskBar(my);                                        // the changed-on-disk bar goes with the landing that brings the moved file (or its own ask's)
       if (t instanceof Blob) {
         // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
@@ -3342,6 +3354,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // the open's target: a line takes the Raw view for this open (unsaved: the preference stays), then the row; an offset the next frame
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
+      // A file the kernel decoded as Latin-1 says why Edit is off (plans/markdown-viewer.md Slice 7, item 5; open question 13):
+      // one noteBar line, raised at every text landing that wears the "0" and BEFORE landTarget, so an open's own target notice
+      // (the past-the-end line, raised inside landTarget; the offset and missing-section notices a frame later) takes the row
+      // under the one-bar rule, being the answer to the person's own click. A reload's landing has no target and raises the
+      // line again, after settleDiskBar above has dropped the changed-on-disk bar, so a Reload brings it back. Keyed on the
+      // answer's header, never on the body or a timer; nothing else re-raises it.
+      if (notUtf8) noteBar(LATIN1_NOTICE);
       landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
       if (reopenOutline) openOutline();
     })).catch((err) => land(() => {

@@ -308,7 +308,7 @@ win.__rompPdf = {
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
-type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string };
+type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; utf8?: "0" | "1" };   // utf8: the kernel's X-Romp-Text-Utf8 on a text answer ("1" unless a case says "0", the Latin-1 fallback; plans/markdown-viewer.md Slice 7, item 5)
 const disk: Record<string, Served> = {};
 const fetches: string[] = [];
 (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
@@ -317,7 +317,7 @@ const fetches: string[] = [];
   if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
   const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
   const f = disk[p];
-  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? "1" : null) : null) };
+  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? (f.utf8 ?? "1") : null) : null) };
   if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
   return {
     ok: true, status: 200, headers,
@@ -1740,6 +1740,85 @@ test("an open at a source offset: the block holding it is scrolled to the centre
   assert.deepEqual(scrolls(rrows), [0, 0, 0, 0, 0, 1], "the sixth row (the offset's line, one .fv-cl per logical line)");
   assert.deepEqual(rrows[5].scrolledWith, { block: "center" });
   assert.equal(store.get("romp:fileviewFmt"), JSON.stringify({ md: "raw" }), "the preference stands as it was");
+});
+
+// ── a Latin-1 file's line (plans/markdown-viewer.md Slice 7, item 5) ─────────────────────────────────────────────────────
+// The kernel serves a file its UTF-8 decode refused re-encoded from Latin-1, text/plain with X-Romp-Text-Utf8 "0", and the
+// Edit gate hides its button on that verdict (file-edit.test.ts pins the gate); before item 5 nothing said why. The stub's
+// `utf8` entry answers the header. The reading is the card's notice bar (errBar and aboveRow: the card's child directly above
+// the body row, one notice at a time) and the Edit button's hidden bit. The file is one open() never resets, so a case sets
+// its entry and removes it after. Synthetic text with one non-ASCII character, as the kernel would have re-encoded it.
+const LEGACY = ROOT + "/docs/legacy.txt";
+const LEGACY_TEXT = "café au lait\nthe notes-api readme an older editor wrote\n";
+const focusWindow = () => { win.dispatchEvent(new Event("focus")); };   // the changed-on-disk probe's event (file-view-reload.test.ts's idiom)
+const cardRows = (body: El): string[] => cardOf(body).childNodes.filter((x): x is El => x instanceof El).map((x) => x.className);
+/** The bar's own words: its text nodes, without a button's label. */
+const barWords = (body: El): string => { const bar = errBar(body); return bar ? bar.childNodes.filter((x): x is Txt => x instanceof Txt).map((x) => x.textContent).join("") : ""; };
+
+test("a Latin-1 file says why Edit is off (Slice 7 of plans/markdown-viewer.md, item 5): a text/plain answer wearing X-Romp-Text-Utf8 \"0\" raises LATIN1_NOTICE in the notice bar, the card's child directly above the body row, with Edit hidden and the text shown (text() answers it, error() null: the file is readable); a reload raises it again; the changed-on-disk bar takes the row and its Reload's landing brings the line back over the new text; a \"1\" file and an image raise nothing", async (t) => {
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  t.after(() => { delete disk[LEGACY]; });
+  const o = await open(LEGACY, t);
+  const { fv, ctx, body, b } = o;
+  const bar = errBar(body);
+  assert.ok(bar, "the line is up (before item 5: no bar, and Edit hidden with no word)");
+  assert.equal(bar!.textContent, fv.LATIN1_NOTICE, "the exported sentence, alone");
+  assert.equal(fv.LATIN1_NOTICE, "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.", "contract C5's text");
+  assert.equal(bar!.id, "fileview-save-err", "the notice bar (noteBar), not a pane in the body");
+  assert.ok(aboveRow(body), "a child of the card directly above the body row");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"], "title bar, notice, body row: one notice at a time");
+  assert.equal(bar!.querySelectorAll("button").length, 0, "no button: the way out is another encoding, not a click");
+  assert.equal(b.edit.hidden, true, "Edit is off (the gate's own verdict, unchanged)");
+  assert.equal(ctx.text(), LEGACY_TEXT, "text() answers the re-encoded text: the file is readable");
+  assert.equal(ctx.error(), null, "error() null: the file shows; the line is a notice, not a pane in place of the file");
+  assert.equal(ctx.mode(), "raw"); assert.ok(body.querySelector("code.hljs"), "the text is painted as rows");
+  assert.equal(paints, 1);
+  // a reload's landing raises the line again: a fresh bar with the same words
+  ctx.reload(); await settle();
+  const bar2 = errBar(body);
+  assert.ok(bar2 && bar2 !== bar, "the reload raised a fresh bar"); assert.equal(bar2!.textContent, fv.LATIN1_NOTICE);
+  assert.equal(paints, 2); assert.equal(b.edit.hidden, true);
+  // the changed-on-disk bar, raised later, takes the row (the one-bar rule); its Reload's landing drops that bar
+  // (settleDiskBar, before the text paint) and the line returns over the new text
+  const MT7 = "1757145600000000007";
+  disk[LEGACY] = { bytes: LEGACY_TEXT + "one more line\n", type: "text/plain; charset=utf-8", mtimeNs: MT7, utf8: "0" };
+  focusWindow(); await settle();
+  assert.equal(barWords(body), "Changed on disk.", "the changed-on-disk bar took the row");
+  const reload = errBar(body)!.querySelectorAll("button");
+  assert.equal(reload.length, 1); assert.equal(reload[0].textContent, "Reload");
+  reload[0].click(); await settle();
+  assert.equal(paints, 3, "the Reload's landing painted");
+  assert.equal(ctx.mtimeNs(), MT7); assert.equal(ctx.text(), LEGACY_TEXT + "one more line\n");
+  assert.equal(errBar(body)?.textContent, fv.LATIN1_NOTICE, "the line is back over the dropped bar (before item 5: nothing said why Edit stayed off)");
+  assert.equal(errBar(body)!.querySelectorAll("button").length, 0, "the bar's Reload went with it");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"], "still one notice");
+  assert.equal(b.edit.hidden, true);
+  // a "1" file (the stub's default) raises nothing and arms Edit; an image, whose answer wears no text type, raises nothing either
+  fv.closeFileView();
+  const u = await open(APP, t);
+  assert.equal(errBar(u.body), null, "a faithful UTF-8 file: no line"); assert.equal(u.b.edit.hidden, false, "and Edit is on");
+  u.fv.closeFileView();
+  const i = await open(PLOT, t);
+  assert.equal(errBar(i.body), null, "an image: no line (the verdict reads the text type with the value, never !isText)");
+  assert.equal(i.b.edit.hidden, true, "Edit off for the image's own reason");
+});
+
+test("a target's notice wins the row over the Latin-1 line (Slice 7, item 5, open question 13): an open at an offset past the end on a \"0\" file shows the line at the landing and the offset notice replaces it a frame later; a reload has no target and brings the line back (the past-the-end LINE notice, raised inside landTarget, wins by the raise's place before it: file-view.test.ts pins the order and the failures leg drives it, since this stand-in lays no rows at a landing)", async (t) => {
+  withFrames(t);
+  disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
+  t.after(() => { delete disk[LEGACY]; });
+  const o = await open(LEGACY, t, SID, { at: { offset: LEGACY_TEXT.length + 9 } });
+  assert.equal(errBar(o.body)?.textContent, o.fv.LATIN1_NOTICE, "at the landing the line stands (the offset is spent a frame later)");
+  assert.equal(frames.length, 1, "the offset's frame is queued");
+  const rows = layRows(o.body.querySelector("code.hljs")!, LEGACY_TEXT); flushFrames();
+  assert.deepEqual(scrolls(rows), [0, 1], "past the end: the last row");
+  assert.equal(errBar(o.body)?.textContent, "Offset " + (LEGACY_TEXT.length + 9) + " is past the end of this file, which has " + LEGACY_TEXT.length + " characters; showing the last line.",
+    "the target's notice took the row: the answer to the person's own click");
+  assert.deepEqual(cardRows(o.body), ["fileview-bar", "fileview-err", "fileview-main"], "one notice");
+  assert.equal(o.b.edit.hidden, true, "Edit still off");
+  o.ctx.reload(); await settle();
+  assert.equal(errBar(o.body)?.textContent, o.fv.LATIN1_NOTICE, "the reload's landing raised the line again");
+  assert.equal(frames.length, 0, "a reload spends no target");
 });
 
 // ── the sanitizer seam (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ─────

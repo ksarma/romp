@@ -88,7 +88,9 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
 
 /** The page: the surface's sheet (and the kernel's inlined THEME_CSS after it when `theme` carries it), the bundle, the file
  *  table and fetch stub, the status-answering poster, the probe action.
- *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
+ *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a text answer's
+ *  `X-Romp-Text-Utf8` is `window.__utf8[path]` when a test set one ("0": the kernel's Latin-1 fallback; Slice 7, item 5) and
+ *  "1" otherwise; a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
  *  is on. `window.__fetches` counts every request the stub answers and `window.__heads` the `HEAD`s among them (the Comments
@@ -107,7 +109,7 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, t
   const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
+window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__utf8 = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url, init) {
   url = String(url); window.__fetches++;
   var head = !!(init && init.method === "HEAD"); if (head) window.__heads++;   // the kernel's HEAD /file: the headers alone
@@ -118,7 +120,7 @@ window.fetch = async function (url, init) {
   var text = window.__docs[p];
   if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404, headers: window.__reason ? { "X-Romp-Reason": window.__reason } : {} });   // the kernel's one-word cause on a 404 (the header above)
   if (/\.svg$/i.test(p)) return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
-  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
+  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": window.__utf8[p] !== undefined ? window.__utf8[p] : "1" } });   // the kernel's decode verdict per path: "0" for a Latin-1 fallback (window.__utf8), "1" otherwise
 };
 window.__paints = 0; window.__reflows = 0; window.__seam = null; window.__autoReply = true;
 FV.initFileView(function (m) {
@@ -171,10 +173,12 @@ export type Served = { status: number; type?: string; body?: string };
  *  rewriteFigureSrcs's URL): a Served answer for a URL of the origin is fulfilled as given (a 404 for a missing figure, a
  *  text/plain body the decoder refuses, an image/svg+xml that loads), null falls through to the page, as every request of the
  *  origin did before. `before` runs in node with the page after it is loaded and before the open, for a page global that must
- *  stand before the first paint (the chat page's heal, installMdImgHeal, registers a failed picture at its error event). */
+ *  stand before the first paint (the chat page's heal, installMdImgHeal, registers a failed picture at its error event).
+ *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
+ *  for a file the kernel decoded as Latin-1; every other path keeps "1"). */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
   opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
-    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void> } = {}): Promise<Opened> {
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1"> } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -186,6 +190,7 @@ export async function openViewer(browser: any, mode: Mode, width: number, height
   });
   await page.goto(ORIGIN + "/");
   if (opts.before) await opts.before(page);
+  if (opts.utf8) await page.evaluate((u: Record<string, string>) => { Object.assign((window as any).__utf8, u); }, opts.utf8);
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   if (opts.url) {
     await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, ORIGIN + opts.url]);
