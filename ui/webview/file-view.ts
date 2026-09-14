@@ -28,7 +28,7 @@ import { headVerdict, mtimeMoved } from "./file-comments-model";   // the panel'
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { readPlace, seatPlaceOutcome, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts (Slice 6)
+import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
@@ -396,7 +396,10 @@ function newerPlace(a: RememberedPlace | null | undefined, b: RememberedPlace | 
 /** The memory's key for a file: the path as openFileView receives it, and for a RELATIVE path the session too, since the kernel
  *  resolves such a path against the SESSION's cwd (_resolve_open_path: neither `/`- nor `~`-rooted), so `docs/report.md` in two
  *  sessions on two repos names two files (the review's round 2: the second session's file, never read, opened at the first's
- *  place). An absolute or `~` path stays the key alone: the same bytes are the same file for every session that names it. */
+ *  place). An absolute or `~` path stays the key alone: the same bytes are the same file for every session that names it on
+ *  this kernel; a session attached from another kernel (a `host:` sid, hostOf, whose read fileUrl routes to that kernel's disk)
+ *  reads its own file under the same key, two files under one key, recorded in plans/markdown-viewer.md's Slice 6 note, item 6
+ *  (the review's round 6). */
 export function placeKey(path: string, sid: string | null | undefined): string {
   return /^[/~]/.test(path) ? path : path + "\u0000" + (sid ?? "");
 }
@@ -1755,7 +1758,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // when the record's folds WERE put back, the block's own fold stands as they say and the depth rule does not run over it
   // (the review's round 4: a fold left SHUT at 380 px with the edge 50 px into its two-line shut box, reopened at 900 where
   // the box is one line, met a depth past the shut box and came back open, the reverse face of the width window round 3
-  // closed; restoreFolds says whether it applied, and revealRemembered takes that).
+  // closed; restoreFolds says whether it applied, and revealRemembered takes that; the other-view rule runs whatever it says, a
+  // Raw record's carried folds being older evidence than its place, the review's round 6).
   const revealRemembered = (p: Place, depth: number, otherView: boolean, restored: boolean): void => {
     const md = body.querySelector(".fileview-md");
     if (!md || shownText === null) return;
@@ -1770,8 +1774,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // record inside a folded callout reopened under the Rendered preference seated the shut summary at the edge; round 4: a Raw
       // record at the file's top had opened the front matter; round 5: round 4's sign test, the block's top at most 0, had left a
       // callout shut whose rows the reader had in view under the blank row at the edge); a fold the record's own state put back
-      // (restored) is as the reader left it, and neither rule runs over it
-      if (e.localName === "details" && !e.hasAttribute("open") && !restored && (otherView ? !p.atTop && p.top < body.clientHeight : depth > 0 && depth >= e.getBoundingClientRect().height - 0.5)) e.setAttribute("open", "");
+      // (restored) is as the reader left it, and the depth rule does not run over it; the other-view rule does, since a Raw record's
+      // folds are older evidence than its place: read at a Rendered paint before the Raw read named the fold's rows, and carried on
+      // by the Raw leave (heldFolds; the review's round 6: a Rendered read with the callout shut as authored, Edit, a Raw read into
+      // its rows and a Rendered reopen put the callout back shut, its summary at the edge over the passage the rows had shown)
+      if (e.localName === "details" && !e.hasAttribute("open") && (otherView ? !p.atTop && p.top < body.clientHeight : !restored && depth > 0 && depth >= e.getBoundingClientRect().height - 0.5)) e.setAttribute("open", "");
     }
   };
   // The record's folds (RememberedPlace.folds), put back before the seat: every `<details>` of the Rendered body open or shut as
@@ -1866,12 +1873,28 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
    *  view carries them on, so the next Rendered reopen puts them back (the review's round 5: the Raw leave wrote a record with no
    *  fold state, and the held state died with the open). */
   const heldFolds = (): number[] | null => (pendingFolds && pendingFolds.folds && pendingFolds.mtimeNs === mtimeNs ? pendingFolds.folds : null);
+  /** The place as last measured, in the text that shows: `place` itself while nothing landed since the read; else (a reload landed
+   *  under a body with no box, whose paint could read and seat nothing, so `place` still names its block in the text it was read
+   *  from, `place.source`) the block of shownText that followPlace puts the reader's block at, its neighbour's when the write
+   *  rewrote it, as the seat steps (seatPlaceOutcome), with the record's depth and flag; null when no block of shownText stands at
+   *  or before it. The review's round 6: the leave under the hide wrote the old text's span under the new mtime, a record that
+   *  claimed exactness and named a block the new text did not have at that offset, where the visible leave writes the followed one. */
+  const measuredPlace = (): Place | null => {
+    if (!place || shownText === null || place.source === shownText) return place;
+    const spans = sourceBlockSpans(shownText);
+    const { at, step } = followPlace(place, shownText);
+    const found = blockIndexAt(spans, at);
+    if (found < 0) return null;
+    const b = Math.max(0, Math.min(spans.length - 1, found + step));
+    return { ...place, source: shownText, start: spans[b].start, end: spans[b].end, prev: null, next: null, line: null, row: null, after: undefined, pic: null, lead: null };
+  };
   const liveRecord = (): RememberedPlace | null => {
     if (shownText === null || !textShowing()) return null;
     // a body with no box (the pane hidden at a restart's pagehide, or at a close) reads no place and a scrollTop of 0: the place as
-    // last measured stands, with its scrollTop (the review's round 5: the leave wrote nothing and the row kept the leave before it)
+    // last measured stands, with its scrollTop (the review's round 5: the leave wrote nothing and the row kept the leave before it),
+    // followed into the text a reload landed under the hide (measuredPlace; round 6)
     const boxless = unmeasurable();
-    const p = boxless ? place : keptPlace();
+    const p = boxless ? measuredPlace() : keptPlace();
     if (!p) return null;
     const rec = rememberedPlaceOf(p, mtimeNs, boxless ? placeScrollTop : body.scrollTop);
     const folds = openFoldOrdinals(body) ?? heldFolds();   // the Rendered view's open folds, by ordinal (none for a Raw read or a note with no fold), else the ones a Raw first paint holds for a Rendered paint that has not come; put back by landRemembered
@@ -1884,10 +1907,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (leaveHost) { try { leaveHost(path, sid ?? null, rec); } catch { /* a host's store must never cost the leave */ } }
   };
   let placeFrame = 0;
+  // A scroll whose frame found the body with no box (the pane hidden in the scroll's own task: a wheel tick, or a fling's last frame
+  // as the rail is clicked or a phone swaps tabs): nothing can measure it, the place stands a frame stale, and the show's repaint
+  // reads the offset the browser restores instead of seating over it (repaint, below; the review's round 6: the seat moved the
+  // body back to the place before that scroll, where the tree before round 5, its place cleared by the hide, had seated nothing).
+  let scrollUnread = false;
   body.addEventListener("scroll", () => {
     if (placeFrame) return;
     const read = () => {
       placeFrame = 0;
+      if (unmeasurable()) { scrollUnread = true; return; }         // the body lost its box since the scroll: read at the show (scrollUnread)
       if (placeHeld && body.scrollTop === placeScrollTop) return;   // the clamped seat's own scroll event: the body has not moved since
       if (body.clientWidth === placeWidth || (pastAside() && !clamped())) notePlace();
     };
@@ -1927,7 +1956,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // place stands as last read (notePlace: before the review's round 5 the seat below ran over the hidden layout and cleared it,
     // and a leave under the hidden pane then wrote nothing); the show's report seats over the box
     if (unmeasurable()) return;
-    seat(place); landRemembered(); landTarget();   // the place read before the width moved (see notePlace); then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
+    // the show's report over a scroll the hide kept from being read (scrollUnread): the offset the browser restored is the reader's, so
+    // it is read, not seated over, while the text and the width are the ones the place was read under (a seat would move the body
+    // back to the place a frame stale; the review's round 6) and the body is not back at 0 (an engine that restores no offset comes
+    // back there, and the seat is what puts the place back; a reader who reached the file's top in that frame is seated a frame
+    // back, the one case the two cannot be told apart); a text or a width that changed under the hide keeps the seat, which follows
+    // the block into the new text or the new layout
+    const restored = scrollUnread && body.scrollTop > 0 && place !== null && place.source === shownText && body.clientWidth === placeWidth;
+    scrollUnread = false;
+    if (restored) notePlace(); else seat(place);   // the restored offset read, or the place read before the width moved (see notePlace) seated
+    landRemembered(); landTarget();                // then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
   };
   const stampBodyWidth = watchBodyWidth(body, (w) => {
     if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }   // the first report describes the size at observe(), not a change
@@ -2906,15 +2944,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (v.kind !== "value" || editing || !mtimeNs || !wrap.isConnected) return;   // an unknown answer, or the world moved while the HEAD was out
       const moved = v.value;
       if (!mtimeMoved(mtimeNs, moved)) return;
+      const was = mtimeNs;                       // the mtime the answer was compared against: the file the body shows
       // The raise waits out a press on the body row (raiseHold: the body and the aside). The mousedown that begins a drag in a
       // Files iframe that did not hold the page's focus is itself the window focus that ran this HEAD, and the bar is a row of
       // the card above that row, so a raise while the pointer was down moved the body under the press and the drag's selection
       // ended on other text (the review's round 3: with the Comments panel open the composer quoted the wrong passage; round 4:
       // a press in the aside was not held, and the card head under it moved before the release). The guards re-run at the
-      // release for what moved while the raise was parked: a landing that brought the file, the editor's entry, the close; a
-      // landing parked under the same press runs first, the raise waiting for its settle (parkedLanding; round 5).
+      // release for what moved while the raise was parked: a landing that brought a file, the editor's entry, the close; a
+      // landing parked under the same press runs first, the raise waiting for its settle (parkedLanding; round 5). The guard is
+      // that the body still shows the file the HEAD compared against (`was`): any landing since makes the HEAD's evidence stale,
+      // whatever mtime it brought, and the next focus asks again (the review's round 6: a landing parked under the press that
+      // brought a SECOND write, newer than the HEAD's answer, read as moved against that answer and raised the bar over the
+      // newest file, where it stood until Reload; the trade, recorded in the plan: a parked landing that brought an OLDER mtime
+      // than the HEAD saw, a GET served before a write the HEAD saw, stands the raise down too, and with the Comments panel open,
+      // the one source of a parked landing, its poll re-asks within its interval).
       raiseHold.defer(() => {
-        const go = (): void => { if (!editing && mtimeNs && wrap.isConnected && mtimeMoved(mtimeNs, moved)) raiseDiskBar(); };
+        const go = (): void => { if (!editing && wrap.isConnected && mtimeNs === was) raiseDiskBar(); };
         const landing = parkedLanding;   // a landing parked under the same press settles first, and the guards read the file it brought (parkedLanding)
         if (landing) void landing.then(go); else go();
       });

@@ -790,3 +790,49 @@ test("in a browser, at 900 px (review round 5): a record's folds held past a Raw
     await page.close();
   });
 });
+
+// ── review round 6: the other-view rule runs over a fold the carried state put back shut when that fold is the Raw record's block ──
+test("in a browser, at 900 px (review round 6): a record's folds carried on by a Raw leave (round 5's heldFolds) say the fold is SHUT when the Raw read's block IS that fold: the reader reads the note with the callout shut as authored, clicks Edit and closes from the editor (the record Rendered with folds [], the Raw preference saved), the Raw reopen holds that state, the reader reads into the callout's rows and closes (the Raw record's block is the callout, folds [] carried on), and the Rendered reopen opens the callout with the passage shown, the Raw place being newer evidence than the carried state (before the fix: restoreFolds put the callout back shut and the `!restored` gate skipped the other-view rule, so the shut summary stood at the edge over the passage the rows had shown); the same for the front matter, its `tags:` row at the edge", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const CALLOUT = ".fileview-md details.md-callout", FM = ".fileview-md details.md-frontmatter";
+    for (const [what, note, row, sel, passage, blockStart] of [
+      ["the callout", CALLOUT_NOTE, "> Paragraph 25", CALLOUT, "Paragraph 25", CALLOUT_NOTE.indexOf("> [!note]-")],
+      ["the front matter", FM_NOTE, "tags:", FM, null, 0],
+    ] as Array<[string, string, string, string, string | null, number]>) {
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: note } });
+      await hookLeaves(page);
+      await page.evaluate(putAbove, ["Paragraph 5", 20]); await frames(page, 2);
+      const before: FoldRead = await page.evaluate(readFold, sel);
+      assert.equal(before.open, false, what + ": shut as authored at the Rendered read");
+      await page.evaluate(() => { const b = Array.from(document.querySelectorAll(".fileview-acts button")).find((x) => x.textContent === "Edit") as HTMLElement; b.click(); });
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body textarea"), null, { timeout: 5000 });
+      let p0: number = await page.evaluate(() => (window as any).__paints);
+      await page.evaluate(() => { (window as any).FV.closeFileView(); });
+      const rec1 = await lastLeave(page);
+      assert.ok(rec1 && rec1.view === "rendered" && Array.isArray(rec1.folds) && rec1.folds.length === 0, what + ": the close from the editor writes the Rendered read with every fold shut, folds [] (" + JSON.stringify(rec1) + ")");
+      assert.equal(await page.evaluate(() => localStorage.getItem("romp:fileviewFmt")), JSON.stringify({ md: "raw" }), what + ": Edit saved the Raw preference");
+      // the Raw reopen holds the folds for a Rendered paint that never comes; the reader reads into the fold's own rows
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+      await paintsReach(page, p0 + 1); await frames(page, 3);
+      assert.equal(await page.evaluate(() => !!document.querySelector("code.hljs .fv-cl")), true, what + ": the reopen painted Raw");
+      await page.evaluate(putRowAbove, [row, 0]); await frames(page, 2);
+      const raw = await page.evaluate(rawTop);
+      assert.ok(raw && raw.text.startsWith(row) && raw.scrollTop > 0, what + ": the fold's own row at the edge, the body scrolled (" + JSON.stringify(raw) + ")");
+      await page.evaluate(() => { (window as any).FV.closeFileView(); });
+      const rec2 = await lastLeave(page);
+      assert.ok(rec2 && rec2.view === "raw" && rec2.start === blockStart && rec2.atTop === false, what + ": the Raw record's block is the fold, the body not at the file's top (" + JSON.stringify(rec2) + ")");
+      assert.deepEqual(rec2.folds, [], what + ": the Raw leave carries the held state on (round 5)");
+      // the Rendered reopen: the carried state puts every fold back shut, and the other-view rule opens the record's own block
+      p0 = await page.evaluate(() => (window as any).__paints);
+      await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "rendered" })); });
+      await page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [REPORT, SID]);
+      await paintsReach(page, p0 + 1); await frames(page, 3);
+      const after: FoldRead = await page.evaluate(readFold, sel);
+      assert.equal(after.open, true, what + ": the fold that is the Raw record's block opens on the Rendered reopen, its rows having shown (before the fix: shut, its summary at the edge over the passage)");
+      if (passage) assert.equal(await page.evaluate(paraShown, passage), true, what + ": " + passage + " is shown inside it");
+      else assert.equal(await page.evaluate((s: string) => { const pre = document.querySelector(s + " pre") as HTMLElement | null; return !!pre && pre.checkVisibility(); }, sel), true, what + ": its text is shown");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+  });
+});

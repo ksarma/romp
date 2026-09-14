@@ -898,3 +898,44 @@ test("changed on disk (review round 3): a HEAD answered while the pointer is pre
   assert.equal(heads(), 4, "no second HEAD");
   win.dispatchEvent(new Event("pointerup"));
 });
+
+test("changed on disk (review round 6): a landing parked under the same press that brings a mtime NEWER than the one the HEAD saw (a second write between the HEAD's answer and the poll's GET, all under one drag) stands the raise down, since the body no longer shows the file the HEAD compared against (before the fix: the release guard read the landed mtime as moved against the HEAD's answer and raised a false bar over the newest file, standing until Reload); the trade, recorded in the plan: a parked landing that brought an OLDER mtime than the HEAD saw (a GET served before the write the HEAD saw) stands the raise down too, and the next focus HEAD raises the bar over the file that shows", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  // the HEAD sees MT2 under the press; a second write lands MT3 under the same press
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  body.dispatchEvent(new Ev("pointerdown", { button: 0 }));   // the drag's press on the body
+  focusWindow(); await settle();                               // the focus grant's HEAD: the file moved to MT2
+  assert.equal(heads(), 1, "the HEAD ran"); assert.equal(barOf(wrap), null, "no bar while the pointer is down");
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };       // the second write, after the HEAD's answer
+  ctx.reload(); await settle();                                // the poll's GET brings MT3, parked under the same press
+  assert.equal(ctx.mtimeNs(), MT, "the landing waits for the release");
+  const card = wrap.querySelector(".fileview")!; const ins = card.insertBefore.bind(card); let raised = 0;
+  card.insertBefore = ((n: El | Txt, ref: El | Txt | null) => { if (n instanceof El && n.id === "fileview-save-err") raised++; return ins(n, ref); }) as unknown as typeof card.insertBefore;
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(ctx.mtimeNs(), MT3, "the landing ran at the release and the body shows the newest file");
+  assert.equal(barOf(wrap), null, "no bar over the newest file (before the fix: `Changed on disk.` with Reload, MT3 read as moved against the HEAD's MT2)");
+  assert.equal(raised, 0, "and none was inserted at the release");
+  delete (card as any).insertBefore;
+  focusWindow(); await settle();                               // the next HEAD sees the mtime the body shows
+  assert.equal(heads(), 2); assert.equal(barOf(wrap), null, "the next HEAD finds nothing moved");
+  // the trade: a GET served under MT4 and parked, then a write to MT5 the HEAD sees under the same press: the landing brings MT4 and the
+  // raise stands down (the body no longer shows MT3, the file the HEAD compared against); the next focus HEAD finds MT5 against the MT4
+  // that shows and raises
+  body.dispatchEvent(new Ev("pointerdown", { button: 0 }));
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT4 };
+  ctx.reload(); await settle();                                // the GET's headers read MT4; its landing parks under the press
+  assert.equal(ctx.mtimeNs(), MT3, "parked");
+  disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT5 };       // the write after the GET was served
+  focusWindow(); await settle();                               // the HEAD sees MT5 against MT3; the raise parks
+  assert.equal(heads(), 3); assert.equal(barOf(wrap), null, "no bar while the pointer is down");
+  win.dispatchEvent(new Event("pointerup"));
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(ctx.mtimeNs(), MT4, "the parked landing brought the older file");
+  assert.equal(barOf(wrap), null, "the raise stood down: a landing since the HEAD's compare, whatever it brought (the trade)");
+  focusWindow(); await settle();
+  assert.equal(heads(), 4);
+  assert.equal(readBar(wrap).text, CHANGED, "the next focus HEAD finds MT5 against the MT4 that shows and raises the bar at once");
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT5);
+});

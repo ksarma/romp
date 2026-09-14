@@ -64,8 +64,10 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
  *  structure) is read from the rows HERE and handed back through openFileView's `place` on every open of the file,
  *  whatever opened it: the shell's relay (a chat click), a link inside a shown file, a pick from the listing or a
  *  row's click. The rows are per path + session; the record read is the latest among the rows that name the same
- *  FILE by the viewer's own rule (placeKey: an absolute or ~ path is one file for every session, a relative one is
- *  per session), the file's last leave, which is what the viewer's in-page memory holds for it until a page reload.
+ *  FILE by the viewer's own rule (placeKey: an absolute or ~ path is one file for every session of this kernel, a
+ *  relative one is per session; a session attached from another kernel reads that kernel's disk under the same key,
+ *  two files under one key, recorded in the plan's Slice 6 note, item 6, the review's round 6), the file's last
+ *  leave, which is what the viewer's in-page memory holds for it until a page reload.
  *  So the note returns to where it was read after a reload as it does before one (the viewer seats the later of the
  *  two records): with the row's click alone handing the record back, a chat click after a reload opened the note at
  *  its top and its leave wrote that top over the row (the Slice 6 review, round 1); with the open's own row alone
@@ -75,7 +77,7 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
  *  re-open is no longer that todo). */
 function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null): void {
   if (sid && identity) identities.set(sid, identity);
-  const key = placeKey(path, sid);                                                // the viewer's rule for one file (file-view.ts placeKey): an absolute or ~ path is one file for every session, a relative one is per session
+  const key = placeKey(path, sid);                                                // the viewer's rule for one file (file-view.ts placeKey): an absolute or ~ path is one file for every session of this kernel (a remote session's under the same key: the plan's Slice 6 note, item 6), a relative one is per session
   const place = latestPlace(recent, (r) => placeKey(r.path, r.sid) === key);      // the rows' latest record for the file, read before the open: a replace-open's leave may rewrite a row, and the viewer takes the later record
   if (!openFileView(path, sid, { todoId, at, place })) return;
   const known = identity ?? (sid ? identities.get(sid) ?? null : null);
