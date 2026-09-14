@@ -1923,3 +1923,122 @@ test("a throw from the DOM work after the sanitizer (adopting the body it answer
   assert.equal((o.body.childNodes[0] as El).textContent, RENDER_FELL + " (Error).");
   assert.equal(paints, 3);
 });
+
+// ── item 6 of Slice 7 of plans/markdown-viewer.md: an empty file says so ─────────────────────────────────────────────────
+// A zero-byte file painted zero Raw rows or an empty Rendered box and nothing else: a blank pane with Edit shown, so nothing
+// told the reader an empty file from a paint that had not happened. Now the text paint puts the EMPTY_FILE line, in the
+// .fileview-err dress, ABOVE the block the view would paint, a sibling of the root and never inside code.hljs or classed
+// fv-cl (the anchor map's rawIndex sees zero rows over "" and accepts them; the Rendered pairing sees no block); text() is ""
+// and never null, Edit stays shown, the Outline button hides, error() is null and mode() follows the buttons; a reload that
+// lands bytes repaints without the line, and one that lands "" again brings it back. The stub serves "" as a text/plain
+// answer wearing "1", the kernel's own answer for a zero-byte file (tests/test_kernel_preview.py pins it). Before item 6: the
+// body held the empty root alone (red at the first assertion over a git archive of the base with EMPTY_FILE stubbed).
+const EMPTY_MD = ROOT + "/docs/empty.md";
+const EMPTY_TXT = ROOT + "/notes/todo.txt";
+const MT_E2 = "1757145600000000021";
+const MT_E3 = "1757145600000000022";
+/** The body's first child as the empty-file line: the exported sentence alone, in the pane dress, the body's own child, outside
+ *  code.hljs, not a row, no button and no hint. */
+const emptyLine = (fv: typeof import("./file-view"), body: El): El => {
+  const first = body.childNodes[0];
+  assert.ok(first instanceof El && first.matches("div.fileview-err"), "the body's first child is the line, in the pane dress (before item 6: the empty root alone)");
+  assert.equal(first.textContent, fv.EMPTY_FILE, "the exported sentence, alone");
+  assert.equal(first.parentNode, body, "the body's own child: a sibling of the root");
+  assert.equal(first.closest("code.hljs"), null, "never inside code.hljs (rawIndex reads rows from the code root)");
+  assert.equal(first.classList.contains("fv-cl"), false, "never a row");
+  assert.equal(first.querySelectorAll("button").length, 0, "no button"); assert.equal(first.querySelectorAll(".fileview-err-hint").length, 0, "no hint row");
+  return first;
+};
+
+test("an empty markdown file says so (Slice 7 of plans/markdown-viewer.md, item 6): the body's first child is the EMPTY_FILE line above the empty Rendered box, text() \"\" and never null, error() null, mode() rendered, Edit shown, the Outline hidden, one paint, no bar; the Raw click paints the line above the empty rows' root with mode() raw; a reload that lands bytes repaints without the line, and one that lands \"\" again brings it back", async (t) => {
+  disk[EMPTY_MD] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  t.after(() => { delete disk[EMPTY_MD]; });
+  const o = await open(EMPTY_MD, t);
+  const { fv, ctx, body, b } = o;
+  assert.equal(fv.EMPTY_FILE, "This file is empty.", "contract C5's text, the one constant with its own period: the line shows it alone");
+  const line = emptyLine(fv, body);
+  assert.equal(body.childNodes.length, 2, "the line and the root, nothing else");
+  const root = body.childNodes[1];
+  assert.ok(root instanceof El && root.matches("div.fileview-md"), "the empty Rendered box under the line");
+  assert.equal(root.childNodes.length, 0, "empty: nothing to render");
+  assert.equal(ctx.text(), "", "text() is the empty string, never null (null means not landed, to the seam and the panel)");
+  assert.equal(ctx.error(), null, "error() null: the content, all none of it, shows; the line is not a pane in place of the file");
+  assert.equal(ctx.mode(), "rendered", "mode() follows the buttons");
+  assert.equal(ctx.mtimeNs(), MT, "the landing took the mtime: a text landing like any other");
+  assert.equal(b.edit.hidden, false, "Edit shown: an empty file is editable (the gate reads the text type and the mtime)");
+  assert.equal(o.wrap.querySelector(".fileview-outline-btn")!.hidden, true, "the Outline button hides: no heading");
+  assert.equal(paints, 1, "one paint");
+  assert.equal(errBar(body), line, "the card's first .fileview-err is the line in the body: no bar was raised");
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-main"], "no notice bar: the line is in the body, not the one-bar row");
+  assert.deepEqual(ctx.renderedImages(), [], "no figure");
+  // the Raw click: the line above the rows' root, which holds zero rows
+  b.raw.click();
+  emptyLine(fv, body);
+  assert.equal(body.childNodes.length, 2, "the line and the rows' root");
+  const code = body.childNodes[1];
+  assert.ok(code instanceof El && code.matches("div.fileview-code") && code.querySelector("code.hljs"), "the rows' root under the line, its code element where the anchor map and the reader's place read rows");
+  assert.equal(code.querySelectorAll(".fv-cl").length, 0, "zero rows");
+  assert.equal(ctx.mode(), "raw", "mode() follows the buttons"); assert.equal(ctx.text(), ""); assert.equal(ctx.error(), null);
+  assert.equal(paints, 2); assert.equal(b.edit.hidden, false, "Edit still shown");
+  assert.equal(o.wrap.querySelector(".fileview-outline-btn")!.hidden, true);
+  // Rendered again: the line over the box
+  b.rendered.click();
+  emptyLine(fv, body);
+  assert.ok((body.childNodes[1] as El).matches("div.fileview-md")); assert.equal(ctx.mode(), "rendered"); assert.equal(paints, 3);
+  // a reload that lands bytes repaints without the line
+  disk[EMPTY_MD] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: MT_E2 };
+  ctx.reload(); await settle();
+  assert.equal(paints, 4, "the landing's paint");
+  assert.equal(body.querySelector(".fileview-err"), null, "the line went with the bytes");
+  assert.equal(body.childNodes.length, 1); assert.ok((body.childNodes[0] as El).matches("div.fileview-md"), "the box alone");
+  assert.equal(ctx.text(), DOC); assert.equal(ctx.mtimeNs(), MT_E2); assert.equal(ctx.error(), null); assert.equal(b.edit.hidden, false);
+  // and a reload that lands "" again (a session emptied the file) brings the line back
+  disk[EMPTY_MD] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT_E3 };
+  ctx.reload(); await settle();
+  assert.equal(paints, 5);
+  emptyLine(fv, body);
+  assert.equal(ctx.text(), "", "text() \"\" again"); assert.equal(ctx.mtimeNs(), MT_E3); assert.equal(ctx.mode(), "rendered");
+});
+
+test("an empty text file says so (Slice 7, item 6): a file with no Rendered view paints the line above the empty rows' root, mode() raw, text() \"\", error() null, Edit shown, no Outline button, one paint, no bar; a reload that lands bytes repaints without the line", async (t) => {
+  disk[EMPTY_TXT] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  t.after(() => { delete disk[EMPTY_TXT]; });
+  const o = await open(EMPTY_TXT, t);
+  const { fv, ctx, body, b } = o;
+  emptyLine(fv, body);
+  assert.equal(body.childNodes.length, 2, "the line and the rows' root, nothing else");
+  const code = body.childNodes[1];
+  assert.ok(code instanceof El && code.matches("div.fileview-code") && code.querySelector("code.hljs"), "the empty rows' root under the line");
+  assert.equal(code.querySelectorAll(".fv-cl").length, 0, "zero rows");
+  assert.equal(ctx.mode(), "raw"); assert.equal(ctx.text(), ""); assert.equal(ctx.error(), null); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(b.edit.hidden, false, "Edit shown"); assert.equal(o.wrap.querySelector(".fileview-outline-btn"), null, "a text file has no Outline button");
+  assert.equal(paints, 1); assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-main"], "no bar");
+  disk[EMPTY_TXT] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT_E2 };
+  ctx.reload(); await settle();
+  assert.equal(paints, 2); assert.equal(body.querySelector(".fileview-err"), null, "the line went with the bytes");
+  assert.equal(body.childNodes.length, 1); assert.ok((body.childNodes[0] as El).matches("div.fileview-code"));
+  assert.equal(ctx.text(), PY); assert.equal(ctx.mtimeNs(), MT_E2); assert.equal(b.edit.hidden, false);
+});
+
+test("record pin: a target over an empty file lands nothing and throws nothing, and the line stands (Slice 7, item 6, beside the Slice 6 PR body's open ruling): an offset open of an empty note raises the offset notice as worded today (past the end of a file with 0 characters) a frame after the paint with the line still above the box; a line open of an empty text file raises nothing (scrollToLine returns over zero rows) and the line above the rows' root says why", async (t) => {
+  withFrames(t);
+  disk[EMPTY_MD] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  disk[EMPTY_TXT] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  t.after(() => { delete disk[EMPTY_MD]; delete disk[EMPTY_TXT]; });
+  const o = await open(EMPTY_MD, t, SID, { at: { offset: 3 } });
+  emptyLine(o.fv, o.body);
+  assert.equal(frames.length, 1, "the offset's frame is queued at the landing");
+  flushFrames();
+  assert.equal(errBar(o.body)?.textContent, "Offset 3 is past the end of this file, which has 0 characters; showing the last block.", "the notice bar's words as worded today (a record: the line in the body says what the offset found)");
+  assert.equal(errBar(o.body)!.id, "fileview-save-err", "the bar, not the line: the card's first .fileview-err is the bar above the body");
+  emptyLine(o.fv, o.body);
+  assert.ok((o.body.childNodes[1] as El).matches("div.fileview-md"), "the landing threw nothing: no pane replaced the body");
+  assert.equal(o.ctx.error(), null); assert.equal(o.ctx.text(), ""); assert.equal(paints, 1);
+  o.fv.closeFileView();
+  const u = await open(EMPTY_TXT, t, SID, { at: { line: 2 } });
+  emptyLine(u.fv, u.body);
+  assert.equal(frames.length, 0, "a line lands at once, no frame");
+  assert.deepEqual(cardRows(u.body), ["fileview-bar", "fileview-main"], "no notice: scrollToLine returns over zero rows (a record; the line above the rows' root is what says the file has no line 2)");
+  assert.ok((u.body.childNodes[1] as El).matches("div.fileview-code"), "the landing threw nothing");
+  assert.equal(u.ctx.error(), null); assert.equal(u.ctx.text(), ""); assert.equal(paints, 1);
+});

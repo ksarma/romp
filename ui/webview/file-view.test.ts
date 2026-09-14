@@ -1458,8 +1458,8 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   // the URL viewer: the same try, the document's rows under the same line
   const urlFn = VIEW.split("export function openUrlView")[1].split("\nfunction startDownload(")[0];
   assert.match(urlFn, /\n\s*let renderFell: string \| null = null;/, "its own per-open record");
-  assert.match(urlFn, /const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n\s*\? mdBlock\(text, \{ kind: "url", href: loc \}\)[^\n]*\n\s*: codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*renderFell = err instanceof Error && err\.message \? err\.message : String\(err\);\n\s*body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, parts\.base, true\)\);\n\s*\}\n\s*folds\.restore\(\);/,
-    "the URL viewer's renderBody: build and swap in one try, the line then the rows in its catch, the folds' restore after");
+  assert.match(urlFn, /const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n\s*\? mdBlock\(text, \{ kind: "url", href: loc \}\)[^\n]*\n\s*: codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*renderFell = err instanceof Error && err\.message \? err\.message : String\(err\);\n\s*body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, parts\.base, true\)\);\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*folds\.restore\(\);/,
+    "the URL viewer's renderBody: build and swap in one try, the line then the rows in its catch, the folds' restore after (A6's empty-file line may stand between)");
   assert.equal((VIEW.match(/renderFellLine\(renderFell\)/g) || []).length, 2, "the two viewers' catches, and nothing else, paint the line");
   // the line: the exported sentence (contract C5), the message in parentheses, the period; the pane dress, no hint, no button
   assert.match(VIEW, /\nexport const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";\n/);
@@ -1485,4 +1485,23 @@ test("source: a Latin-1 file's line (Slice 7 of plans/markdown-viewer.md, item 5
   assert.equal((VIEW.match(/LATIN1_NOTICE/g) || []).length, 4, "the constant's definition, its doc comment, the flag's comment and the one raise; no other reader in the viewer");
   assert.match(openFn, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/, "the gate is unchanged: the line explains it and does not replace it");
   assert.match(openFn, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)\n\s+&& r\.headers\.get\("X-Romp-Text-Utf8"\) !== "0";/, "and the text verdict's two lines stand as file-edit.test.ts pins them");
+});
+
+test("source: an empty file's line (Slice 7 of plans/markdown-viewer.md, item 6): EMPTY_FILE is contract C5's text, the one constant with its own period; emptyFileLine builds the pane-dress div holding it alone; each viewer's text paint prepends it to the body when the text is \"\", right after the try's close and before the folds' restore, so it stands above whichever root the try left and the hooks, the Outline and the seat read the paint with it; the landing applies \"\" as it came (never null) and the Edit gate is unchanged, so Edit shows", () => {
+  assert.match(VIEW, /\nexport const EMPTY_FILE = "This file is empty\.";\n/, "contract C5's text, exported for the guide's pin");
+  assert.match(VIEW, /\nfunction emptyFileLine\(\): HTMLElement \{\n\s*const why = el\("div", "fileview-err"\);\n\s*why\.textContent = EMPTY_FILE;\n\s*return why;\n\}\n/, "the line: the pane dress, the sentence alone, no hint, no button");
+  assert.equal((VIEW.match(/if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);/g) || []).length, 2, "the two viewers' text paints, and nothing else, prepend the line");
+  assert.equal((VIEW.match(/emptyFileLine\(/g) || []).length, 3, "the builder and its two calls: no other site paints the sentence");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  const urlFn = VIEW.split("export function openUrlView")[1].split("\nfunction startDownload(")[0];
+  assert.match(openFn, /body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, path, true\)\);\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);/,
+    "the local viewer: after the try's close (the swap stood, or the catch painted its line and rows) and before the folds' restore (contract C7's optional line): a prepend, so the line is the body's first child above the root, outside code.hljs and .fileview-md");
+  assert.match(urlFn, /body\.replaceChildren\(renderFellLine\(renderFell\), codeBlock\(text, parts\.base, true\)\);\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*folds\.restore\(\);/,
+    "the URL viewer: the same place (a document read through capped-read.ts can be empty)");
+  assert.match(openFn, /\n\s*text = t;\n/, "the landing applies the text as it came: \"\" stays \"\"");
+  assert.doesNotMatch(openFn, /text = t \|\| null|text = t === "" \? null|text = t \? t : null/, "never null for an empty file: null means not landed, to the seam and the panel");
+  assert.match(openFn, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/, "the Edit gate unchanged: \"\" is text under an mtime, so Edit shows and the editor mounts over it");
+  assert.match(VIEW, /\n {3}\*  An empty file answers "" \(never null: the body shows the EMPTY_FILE line above its empty root, and that is the content\) \*\//, "text()'s doc says so");
+  assert.doesNotMatch(VIEW, /emptyFileLine\(\)[^\n]*fv-cl|"fileview-err fv-cl"/, "the line is never a row");
+  assert.doesNotMatch(VIEW, /text\.length === 0|text\.trim\(\) === ""|!text\.length/, "keyed on the text the landing applied being the empty string, never a byte count, a trim or a timer");
 });

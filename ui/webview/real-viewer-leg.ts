@@ -175,10 +175,12 @@ export type Served = { status: number; type?: string; body?: string };
  *  origin did before. `before` runs in node with the page after it is loaded and before the open, for a page global that must
  *  stand before the first paint (the chat page's heal, installMdImgHeal, registers a failed picture at its error event).
  *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
- *  for a file the kernel decoded as Latin-1; every other path keeps "1"). */
+ *  for a file the kernel decoded as Latin-1; every other path keeps "1"). `waitFor` is the selector the first paint is awaited
+ *  on in place of the default (`.fileview-md > p`, or a `.fv-cl` row under `raw`), for a scene whose first paint holds neither:
+ *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
   opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
-    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1"> } = {}): Promise<Opened> {
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
@@ -197,7 +199,8 @@ export async function openViewer(browser: any, mode: Mode, width: number, height
   } else {
     await page.evaluate(([p, sid, o]: [string, string, Record<string, unknown> | null]) => { (window as any).FV.openFileView(p, sid, o); }, [REPORT, SID, opts.openOpts || null]);
   }
-  await page.waitForFunction((raw: boolean) => !!document.querySelector(raw ? ".fileview-body .fv-cl" : ".fileview-md > p"), !!opts.raw, { timeout: 10000 });
+  const first = opts.waitFor || (opts.raw ? ".fileview-body .fv-cl" : ".fileview-md > p");   // the first paint's own element, the event awaited (never a timer)
+  await page.waitForFunction((sel: string) => !!document.querySelector(sel), first, { timeout: 10000 });
   await frames(page, 2);
   return { page, errors };
 }

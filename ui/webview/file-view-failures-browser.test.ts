@@ -18,16 +18,26 @@
 // row when a window focus finds a moved mtime and its Reload's landing brings the line back over the new text; an open at a
 // line past the end shows the past-the-end notice and not the line (the raise precedes landTarget), and a reload, which has
 // no target, brings the line back. Before item 5: no bar at all over such a file (red at the scene's first read over a git
-// archive of the branch before it, whose real-viewer-leg has no utf8 table either). Synthetic values only: an invented
-// report, /repo/notes-api paths, the placeholder sid.
+// archive of the branch before it, whose real-viewer-leg has no utf8 table either). Item 6's scene: an empty file says so in
+// the body's own dress. A zero-byte file painted zero rows or an empty box and nothing else, a blank pane with Edit shown; now
+// the text paint prepends the EMPTY_FILE line (read off the source) above the empty root, a child of the body outside code.hljs
+// and .fileview-md and never a row, laid out in the pane's colour (var(--warn)) and padding, with Edit shown, the Outline hidden,
+// error() null, text() "" and mode() following the buttons; the Raw click paints it above the empty rows' root; a reload that
+// lands bytes repaints without it, and one that lands "" again brings it back; the URL viewer's renderBody does the same over an
+// empty document. openViewer's default wait (a paragraph or a row) would time out over an empty document, so the scene waits on
+// the line itself through the `waitFor` option. Before item 6: no line, the wait for it timed out (red over a git archive of the
+// base with EMPTY_FILE stubbed). Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openViewer, frames, paintsReach, LONG, LONG2, REPORT, MT, MT2, UI } from "./real-viewer-leg";
+import { inBrowser, openViewer, frames, paintsReach, LONG, LONG2, REPORT, MT, MT2, ORIGIN, UI } from "./real-viewer-leg";
 
 /** The Latin-1 line's exported sentence, read off the viewer's source (contract C5), so the leg follows the constant. */
 const LATIN1_NOTICE = (/^export const LATIN1_NOTICE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
+/** The empty file's exported sentence (contract C5), read the same way. */
+const EMPTY_FILE = (/^export const EMPTY_FILE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
+const MT3 = "1757145600000000011";
 
 type Seen = { paints: number; error: string | null; text: string | null; mt: string; mode: string; pane: string | null; paneInBody: boolean; mdBox: boolean };
 /** What the page shows and what the seam says: the paint count, error(), text(), mtimeNs(), mode(), the pane's text when one
@@ -149,5 +159,93 @@ test("in a browser: a Latin-1 file says why Edit is off (Slice 7, item 5): opene
       assert.deepEqual(second.errors, [], mode + ": no uncaught page error");
       await second.page.close();
     }
+  });
+});
+
+type Empty = { kids: string[]; line: string | null; lineParent: string | null; inCode: boolean; isRow: boolean; blocks: number; rows: number; edit: boolean | null; outline: boolean | null; paints: number; error: string | null; text: string | null; mode: string; mt: string; bars: number; color: string; warn: string; padTop: string; height: number; onScreen: boolean };
+/** The body over an empty file: its children's first class in order, the line's words when the body's own first-level child
+ *  carries the dress, where the line stands (its parent, inside code.hljs or not, a row or not), the blocks and rows under it,
+ *  the Edit and Outline buttons' hidden bits, the seam's numbers where a seam exists (the URL viewer mounts none), the bars in the
+ *  card, and the line's computed colour against a probe painted var(--warn), its padding and its box. */
+const seenEmpty = (page: any): Promise<Empty> => page.evaluate(() => {
+  const w = window as any;
+  const body = document.querySelector(".fileview-body") as HTMLElement;
+  const line = body.querySelector(":scope > .fileview-err") as HTMLElement | null;
+  const acts = Array.from(document.querySelectorAll("#romp-fileview .fileview-acts button")) as HTMLButtonElement[];
+  const edit = acts.find((x) => x.textContent === "Edit");
+  const outline = document.querySelector("#romp-fileview .fileview-outline-btn") as HTMLButtonElement | null;
+  const probe = document.createElement("div"); probe.style.color = "var(--warn)"; document.querySelector(".fileview")!.appendChild(probe);
+  const warn = getComputedStyle(probe).color; probe.remove();
+  const r = line ? line.getBoundingClientRect() : null;
+  return {
+    kids: Array.from(body.children).map((x) => x.classList[0] || ""),
+    line: line ? line.textContent : null, lineParent: line ? (line.parentElement as HTMLElement).classList[0] : null,
+    inCode: !!line && !!line.closest("code.hljs"), isRow: !!line && line.classList.contains("fv-cl"),
+    blocks: body.querySelectorAll(".fileview-md > *").length, rows: body.querySelectorAll("code.hljs .fv-cl").length,
+    edit: edit ? edit.hidden : null, outline: outline ? outline.hidden : null,
+    paints: w.__paints, error: w.__seam ? w.__seam.error() : null, text: w.__seam ? w.__seam.text() : null, mode: w.__seam ? w.__seam.mode() : "", mt: w.__seam ? w.__seam.mtimeNs() : "",
+    bars: document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length,
+    color: line ? getComputedStyle(line).color : "", warn, padTop: line ? getComputedStyle(line).paddingTop : "",
+    height: r ? r.height : 0, onScreen: !!r && r.top >= 0 && r.bottom <= innerHeight && r.height > 0,
+  };
+});
+
+test("in a browser: an empty file says so (Slice 7, item 6): opened over a zero-byte text answer, the body's first child is the EMPTY_FILE line above the empty Rendered box, in the pane's colour and padding, on screen, a child of the body and never inside code.hljs or a row, with zero blocks, Edit shown, the Outline hidden, error() null, text() \"\", mode() rendered and no bar; the Raw click paints it above the empty rows' root (zero rows, mode() raw); Rendered again; a reload that lands bytes repaints without it, and one that lands \"\" again brings it back; the URL viewer paints the same line over an empty document; pane and chat", { timeout: 180000 }, async (t) => {
+  assert.ok(EMPTY_FILE, "the constant is read off the source");
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "chat"] as const) {
+      const { page, errors } = await openViewer(browser, mode, 700, 600, { docs: { [REPORT]: "" }, waitFor: ".fileview-body > .fileview-err" });
+      let e = await seenEmpty(page);
+      assert.equal(e.line, EMPTY_FILE, mode + ": the sentence in the body (before item 6: a blank pane, and the wait for the line timed out)");
+      assert.deepEqual(e.kids, ["fileview-err", "fileview-md"], mode + ": the line above the empty Rendered box, nothing else");
+      assert.equal(e.lineParent, "fileview-body", mode + ": the body's own child, a sibling of the root");
+      assert.equal(e.inCode, false, mode + ": never inside code.hljs"); assert.equal(e.isRow, false, mode + ": never a row");
+      assert.equal(e.blocks, 0, mode + ": zero blocks in the box"); assert.equal(e.rows, 0, mode + ": zero rows");
+      assert.equal(e.edit, false, mode + ": Edit shown: an empty file is editable"); assert.equal(e.outline, true, mode + ": the Outline hidden: no heading");
+      assert.equal(e.error, null, mode + ": error() null: the content shows"); assert.equal(e.text, "", mode + ": text() is the empty string, never null");
+      assert.equal(e.mode, "rendered", mode + ": mode() follows the buttons"); assert.equal(e.mt, MT, mode + ": the landing took the mtime");
+      assert.equal(e.bars, 0, mode + ": no bar: the line is in the body, not the one-bar row");
+      assert.equal(e.color, e.warn, mode + ": the body's dress: the pane's colour (var(--warn))"); assert.equal(e.padTop, "18px", mode + ": and its padding");
+      assert.ok(e.onScreen, mode + ": laid out and on screen");
+      const p1 = e.paints;
+      // the Raw click: the line above the empty rows' root
+      await page.locator("#romp-fileview .fileview-acts button", { hasText: /^Raw$/ }).click();
+      await paintsReach(page, p1 + 1); await frames(page, 2);
+      e = await seenEmpty(page);
+      assert.equal(e.line, EMPTY_FILE, mode + ": the line over the Raw view too"); assert.deepEqual(e.kids, ["fileview-err", "fileview-code"], mode + ": above the rows' root");
+      assert.equal(e.rows, 0, mode + ": zero rows"); assert.equal(e.inCode, false); assert.equal(e.isRow, false);
+      assert.equal(e.mode, "raw", mode + ": mode() follows the buttons"); assert.equal(e.edit, false, mode + ": Edit still shown"); assert.equal(e.paints, p1 + 1, mode + ": one paint for the click");
+      assert.equal(e.color, e.warn); assert.ok(e.onScreen);
+      await page.locator("#romp-fileview .fileview-acts button", { hasText: /^Rendered$/ }).click();
+      await paintsReach(page, p1 + 2); await frames(page, 2);
+      e = await seenEmpty(page);
+      assert.equal(e.line, EMPTY_FILE); assert.deepEqual(e.kids, ["fileview-err", "fileview-md"]); assert.equal(e.mode, "rendered");
+      // bytes land (a session wrote the file): the landing's paint carries no line
+      await page.evaluate(([p, tx, m]: [string, string, string]) => { const w = window as any; w.__docs[p] = tx; w.__mtime = m; w.__seam.reload(); }, [REPORT, LONG2, MT2]);
+      await paintsReach(page, p1 + 3); await frames(page, 2);
+      e = await seenEmpty(page);
+      assert.equal(e.line, null, mode + ": the line went with the bytes"); assert.deepEqual(e.kids, ["fileview-md"], mode + ": the box alone");
+      assert.ok(e.blocks > 0, mode + ": the note is painted"); assert.equal(e.text, LONG2); assert.equal(e.mt, MT2); assert.equal(e.edit, false); assert.equal(e.error, null);
+      // and "" again (a session emptied it): the line is back
+      await page.evaluate(([p, tx, m]: [string, string, string]) => { const w = window as any; w.__docs[p] = tx; w.__mtime = m; w.__seam.reload(); }, [REPORT, "", MT3]);
+      await paintsReach(page, p1 + 4); await frames(page, 2);
+      e = await seenEmpty(page);
+      assert.equal(e.line, EMPTY_FILE, mode + ": the line is back over the emptied file"); assert.deepEqual(e.kids, ["fileview-err", "fileview-md"]);
+      assert.equal(e.text, ""); assert.equal(e.mt, MT3); assert.equal(e.blocks, 0);
+      assert.deepEqual(errors, [], mode + ": no uncaught page error");
+      await page.close();
+    }
+    // the URL viewer over an empty document (read through capped-read.ts): the same line above the empty root, no seam to read
+    const u = await openViewer(browser, "pane", 700, 600, { url: "/notes/empty.md", urls: { [ORIGIN + "/notes/empty.md"]: "" }, waitFor: ".fileview-body > .fileview-err" });
+    let e = await seenEmpty(u.page);
+    assert.equal(e.line, EMPTY_FILE, "URL: the sentence in the body (before item 6: a blank pane)");
+    assert.deepEqual(e.kids, ["fileview-err", "fileview-md"], "URL: above the empty Rendered box"); assert.equal(e.blocks, 0); assert.equal(e.bars, 0);
+    assert.equal(e.inCode, false); assert.equal(e.isRow, false); assert.equal(e.color, e.warn, "URL: the pane's colour"); assert.ok(e.onScreen);
+    await u.page.locator("#romp-fileview .fileview-acts button", { hasText: /^Raw$/ }).click();
+    await frames(u.page, 2);
+    e = await seenEmpty(u.page);
+    assert.equal(e.line, EMPTY_FILE); assert.deepEqual(e.kids, ["fileview-err", "fileview-code"], "URL: above the empty rows' root"); assert.equal(e.rows, 0);
+    assert.deepEqual(u.errors, [], "URL: no uncaught page error");
+    await u.page.close();
   });
 });

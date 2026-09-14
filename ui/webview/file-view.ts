@@ -381,6 +381,24 @@ function renderFellLine(msg: string): HTMLElement {
  *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
  *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
 export const FIGURE_FAILED = "Image failed to load:";
+/** The line an empty file shows in place of its text (plans/markdown-viewer.md Slice 7, item 6). A zero-byte file painted zero
+ *  Raw rows or an empty Rendered box and nothing else, a blank pane with Edit shown, so nothing told the reader an empty file from
+ *  a paint that had not happened. Now both viewers' text paints put this sentence, in the `.fileview-err` dress, ABOVE the block
+ *  the view would paint (the empty `div.fileview-code` or the empty `.fileview-md`): a sibling of that root, never inside
+ *  `code.hljs` and never classed `fv-cl`, so the anchor map's rawIndex still sees zero rows over "" and accepts them, and the
+ *  Rendered pairing sees no block. `text` stays "" (never null: null means not landed, to the seam and the panel), Edit stays
+ *  shown (an empty file is editable; the editor mounts over ""), the Outline button hides (no heading), error() is null (the
+ *  content, all none of it, shows) and mode() follows the buttons; a reload that lands bytes repaints without the line. Keyed on
+ *  the text the landing applied, never on a byte count or a timer. The one constant of the slice with its own terminal period:
+ *  the line shows it alone (contract C5), and the guide carries the words. */
+export const EMPTY_FILE = "This file is empty.";
+/** The `.fileview-err` line for an empty file (EMPTY_FILE, above): prepended to the body right after the text paint's swap in
+ *  both viewers, so it stands above the empty root and outside it. */
+function emptyFileLine(): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = EMPTY_FILE;
+  return why;
+}
 /** The note bar's line over a file the kernel decoded as Latin-1 (plans/markdown-viewer.md Slice 7, item 5): the kernel serves
  *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
  *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
@@ -647,7 +665,8 @@ export interface FileViewActionCtx {
   /** which view the body shows now; "media" for an image/PDF body (the SVG Source view counts as raw) */
   mode(): "raw" | "rendered" | "media";
   /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media.
-   *  After a failed reload it still answers the last landing's text, and error() tells the pane the body shows in its place */
+   *  After a failed reload it still answers the last landing's text, and error() tells the pane the body shows in its place.
+   *  An empty file answers "" (never null: the body shows the EMPTY_FILE line above its empty root, and that is the content) */
   text(): string | null;
   /** the file's mtime at load, nanoseconds AS A STRING (the save fence's own value) */
   mtimeNs(): string;
@@ -2297,6 +2316,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         renderFell = err instanceof Error && err.message ? err.message : String(err);
         body.replaceChildren(renderFellLine(renderFell), codeBlock(text, path, true));
       }
+      if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
@@ -3580,6 +3600,7 @@ export function openUrlView(href: string): void {
       renderFell = err instanceof Error && err.message ? err.message : String(err);
       body.replaceChildren(renderFellLine(renderFell), codeBlock(text, parts.base, true));
     }
+    if (text === "") body.prepend(emptyFileLine());    // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
