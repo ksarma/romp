@@ -273,6 +273,14 @@ type World = {
   mtimes: Record<string, string>;
   /** The held reload's landing (deferReload): the bytes and mtime now on disk, repainted, onRendered fired. */
   landReload: (() => void) | null;
+  /** The held reload's FAILURE (Slice 7 of plans/markdown-viewer.md, item 3): the real seam's fetch catch paints a `div.fileview-err`
+   *  pane in place of the file, sets error() to its words and fires onRendered, text() and mtimeNs() still the last landing's. */
+  failReload: ((words: string) => void) | null;
+  /** What error() answers: the pane's words after a failed landing, null after a content paint (contract C1). */
+  viewError: string | null;
+  /** Every throw a rendered hook made, as the real fireRendered would swallow it (file-view.ts): a probe, so a panel exception
+   *  inside the hook fails the test instead of vanishing. */
+  hookErrors: unknown[];
   close(): void;
 };
 let cur: World | null = null;
@@ -308,13 +316,20 @@ function world(over: WorldOpts = {}): World {
     posted: [] as any[], main, body,
     hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> },
     disk: text, diskMtime: F1, viewMtime: F1, reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>,
-    landReload: null as (() => void) | null,
+    landReload: null as (() => void) | null, failReload: null as ((words: string) => void) | null, viewError: null as string | null, hookErrors: [] as unknown[],
   } as World;
-  const setText = (s: string) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
-  const land = () => { w.landReload = null; w.viewMtime = w.diskMtime; setText(w.disk); };
+  const fire = () => { for (const cb of w.hooks.rendered) { try { cb(); } catch (e) { w.hookErrors.push(e); } } };
+  const setText = (s: string) => { text = s; w.viewError = null; body.replaceChildren(wrap); rows(code, s); fire(); };
+  const land = () => { w.landReload = null; w.failReload = null; w.viewMtime = w.diskMtime; setText(w.disk); };
+  // the fetch chain's catch (file-view.ts): the pane swapped in, error() set, the hooks fired; the text and the mtime stay the landing's
+  const fail = (words: string) => {
+    w.landReload = null; w.failReload = null;
+    const why = new El("div"); why.className = "fileview-err"; why.appendChild(new Txt(words));
+    body.replaceChildren(why); w.viewError = words; fire();
+  };
   w.ctx = {
     path: ABS, sid: SID, todoId: null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => w.viewError, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -322,7 +337,7 @@ function world(over: WorldOpts = {}): World {
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: an async GET in the real seam — held here until the test lands it (deferReload), else at once
-    reload: () => { w.reloads++; if (over.deferReload) w.landReload = land; else land(); },
+    reload: () => { w.reloads++; if (over.deferReload) { w.landReload = land; w.failReload = fail; } else land(); },
   };
   w.close = () => { for (const cb of w.hooks.close) cb(); if (cur === w) cur = null; };
   cur = w;
@@ -710,6 +725,52 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   w2.landReload!(); answer(w2, after); await flush(); await flush();
   assert.equal(a2.querySelectorAll(".fc-load").length, 0);
   assert.equal(marksOf(w2, "h5").length, 1);
+  w2.close();
+  // Slice 7 of plans/markdown-viewer.md, item 3: the deferred reload FAILS. The viewer paints its failure pane in place of the file
+  // and fires onRendered with error() set (contract C1); the panel's hook reads it and ends the wait at that paint (bytesFailed):
+  // no timer tick, the loader gone, the row in the seam's words with Reload, nothing marked over the pane, and a later tick changes
+  // nothing since the deadline is cleared. Before Slice 7 the viewer fired nothing for a failed fetch and the loader stood the 15 s out.
+  const w3 = world({ deferReload: true }); t.after(() => w3.close());
+  const { aside: a3 } = await openPanel(w3, status({ hunks: [h1, h3, h5] }));
+  act(card(a3, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+  w3.disk = DOC.replace("cut", "reduced"); w3.diskMtime = F11;
+  answer(w3, after, lastOf(w3, "fileComments", "reject"), { rejected: ["h1"] }); await flush(); await flush();
+  assert.ok(a3.querySelector('.fc-load[data-slot="bytes"]'), "the wait is up"); assert.ok(w3.failReload, "the reload is out");
+  const hooksBefore = w3.hooks.rendered.length;
+  const WORDS = "no such file: " + ABS;                 // the kernel's 404 body, the words the seam's error() answers (contract C1)
+  w3.failReload!(WORDS); await flush();
+  assert.deepEqual(w3.hookErrors, [], "the panel's hook threw nothing over the pane (the real fireRendered would swallow it)");
+  assert.equal(w3.hooks.rendered.length, hooksBefore, "no hook re-registered");
+  assert.equal(a3.querySelectorAll(".fc-load").length, 0, "the loader went at the paint, with no timer tick");
+  const row3 = a3.querySelector('.fc-cards .fc-err[data-slot="bytes"]')!;
+  assert.ok(row3, "…to a row where it was");
+  const { BYTES_FAILED } = await import("./file-comments");
+  assert.equal(row3.childNodes[0].textContent, BYTES_FAILED + " (" + WORDS + "); the view shows that failure in place of the file, so no change is marked. Reload to read the file again.", "the seam's words, verbatim, in the row's fixed shape (contract C3)");
+  assert.ok(act(row3, "fcreload"), "with Reload");
+  assert.equal(marksOf(w3).length, 0, "nothing is marked over the pane");
+  assert.equal(w3.body.querySelectorAll(".fileview-err").length, 1, "the viewer's pane stands in the body");
+  assert.equal(w3.viewMtime, F1, "the view's mtime is still the last landing's: the wait ended on the failure, not on the bytes");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "the deadline was cleared: a later tick raises no second row");
+  assert.equal(row3.textContent.includes("have not arrived"), false, "…and the row is the failure's, not the deadline's");
+  // a status landing while the pane stands (the poll): its mtime is still not the view's, so a wait is armed again, and the pass
+  // that follows reads the pane and ends it at once, since no bytes can land while the view shows the pane; no loader, the row stays
+  answer(w3, after); await flush(); await flush();
+  assert.equal(w3.reloads, 1, "the same mtime: no second fetch");
+  assert.equal(a3.querySelectorAll(".fc-load").length, 0, "no loader over a standing pane");
+  assert.ok(a3.querySelector('.fc-cards .fc-err[data-slot="bytes"]'), "the row stands");
+  t.mock.timers.tick(15000); await flush();
+  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 1, "…and its deadline was cleared too");
+  // Reload from the row re-fetches and re-asks, as the deadline row's does; the landing then ends the new wait with the paint
+  const asks3 = countOf(w3, "fileComments", "status");
+  act(row3, "fcreload")!.click(); await flush();
+  assert.equal(w3.reloads, 2); assert.equal(countOf(w3, "fileComments", "status"), asks3 + 1);
+  assert.ok(a3.querySelector('.fc-load[data-slot="bytes"]'), "the slot wears the loader for the re-read");
+  w3.landReload!(); answer(w3, after); await flush(); await flush();
+  assert.equal(w3.viewError, null, "a content paint clears error()");
+  assert.equal(a3.querySelectorAll(".fc-load").length, 0);
+  assert.equal(marksOf(w3, "h5").length, 1, "the marks are back over the new text");
+  assert.deepEqual(w3.hookErrors, []);
 });
 
 // ── every status brings the view's bytes to the text it describes (the review: stale bytes after a store-moved) ──

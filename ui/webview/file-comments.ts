@@ -259,7 +259,18 @@ export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that wer
 // (feed.ts's redistill watch is the same shape, and ui/CLAUDE.md wants every wait to have a backstop).
 // `status` only: a mutating verb that is failed here could have landed on disk, and the kept note would
 // invite a duplicate — those keep waiting for the kernel's own answer.
+// The wait for a reload's bytes (awaitBytes) shares the bound for the same older kernel alone: since Slice 7 of
+// plans/markdown-viewer.md a reload that fails paints a pane the seam reports (error()) and the wait ends on that
+// paint (bytesFailed), so with a current kernel the bytes either land (bytesLanded) or fail (bytesFailed), each an
+// event, and the timer speaks only where no kernel answers the fetch at all.
 const STATUS_DEADLINE_MS = 15000;
+// The head's row when the reload the panel asked for FAILED (the seam's error() on the paint that put the failure pane
+// in place of the file, Slice 7 item 3): the seam's own words in parentheses, then what the person is looking at and
+// the way out, the shape of the deadline row (bytesLate). Exported so the guide's sentence can carry the words.
+export const BYTES_FAILED = "The file could not be read again";
+// The tail both bytes rows share: what the view shows and the way out (the Reload the row offers, fcreload).
+const BYTES_LATE_TAIL = "; the view still shows the earlier text, with no change marked on it. Reload to read the file again.";
+const BYTES_FAILED_TAIL = "; the view shows that failure in place of the file, so no change is marked. Reload to read the file again.";
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
@@ -1476,9 +1487,12 @@ class Panel {
   // the reload the panel asked for (syncBytes: a status whose file mtime is not the view's) is out: the body shows
   // the bytes from before, with no marks over them, until the fetch lands. The wait wears the loader at the head of
   // the cards (the "bytes" busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll →
-  // bytesLanded). The seam reports no failed fetch — the viewer shows its own error in the body and fires no
-  // onRendered — so the loader has the same backstop a status ask has: after STATUS_DEADLINE_MS it yields to a row
-  // with Reload (bytesLate). `reloadFor` is the file mtime the last ask was for: one ask per mtime, so a second
+  // bytesLanded) or on the paint that shows a failure pane in place of the file (the seam's error(), read at the head
+  // of the pass, paintAll → bytesFailed: the fetch refused or failed, and the row carries the seam's words with Reload).
+  // Since Slice 7 of plans/markdown-viewer.md the viewer fires onRendered for that pane too; before, it fired nothing
+  // for a failed fetch and the loader stood until the deadline. The deadline stays for a kernel from before this
+  // feature alone (STATUS_DEADLINE_MS: a reload that neither lands nor fails through the seam yields to a row with
+  // Reload, bytesLate). `reloadFor` is the file mtime the last ask was for: one ask per mtime, so a second
   // status carrying the same mtime while that fetch is out (the moved-fence retry: the refresh's status, then the
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
@@ -1739,6 +1753,8 @@ class Panel {
     // ...and on a reflow the Rendered marks' collapsed blanks are measured again first (trimBlanks: a space that rendered at the
     // old width may be the wrap point at the new one, and its mark would be the sheet's padding around nothing), in the same
     // frame, so the cards are placed over the marks that stay
+    // ...and a paint that put a failure pane in place of the file (a reload refused or failed: the seam's error(), Slice 7 of
+    // plans/markdown-viewer.md, item 3) ends the wait for the bytes at once, in the seam's words, at the head of the pass (paintAll → bytesFailed)
     ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
@@ -2712,14 +2728,27 @@ class Panel {
     clearTimeout(this.bytesWait); this.bytesWait = null;
     this.busy.delete("bytes");
   }
-  /** The deadline: the fetch neither landed nor told the seam it failed. The loader yields to a row, and its Reload
-   *  re-fetches the bytes and re-asks status (fcreload) — the loader never traps the person (ui/CLAUDE.md). */
+  /** The deadline: the fetch neither landed nor told the seam it failed (a kernel from before this feature; a current one
+   *  answers every fetch, and the seam reports a failure through error(), bytesFailed). The loader yields to a row, and its
+   *  Reload re-fetches the bytes and re-asks status (fcreload) — the loader never traps the person (ui/CLAUDE.md). */
   private bytesLate(): void {
     this.bytesWait = null;
     if (!this.busy.has("bytes")) return;
     this.busy.delete("bytes");
-    this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000
-      + " s; the view still shows the earlier text, with no change marked on it. Reload to read the file again.", reload: true });
+    this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000 + " s" + BYTES_LATE_TAIL, reload: true });
+    this.render();
+  }
+  /** The reload the panel asked for failed: the paint that put the failure pane in place of the file fired onRendered with
+   *  the seam's error() set (paintAll reads it at its head; Slice 7 of plans/markdown-viewer.md, item 3). The wait is over
+   *  at that paint, an event and never the timer: the deadline is cleared, the loader goes, and the row where it stood
+   *  says what happened in the seam's own words, with Reload (fcreload re-fetches the bytes and re-asks status). Before
+   *  Slice 7 the viewer fired no hook for a failed fetch and the loader stood the 15 s out. The pass then stands down over
+   *  the pane (no root), so nothing is marked over it. */
+  private bytesFailed(words: string): void {
+    if (this.bytesWait) clearTimeout(this.bytesWait);
+    this.bytesWait = null;
+    this.busy.delete("bytes");
+    this.errors.set("bytes", { text: BYTES_FAILED + " (" + words + ")" + BYTES_FAILED_TAIL, reload: true });
     this.render();
   }
 
@@ -3579,6 +3608,13 @@ class Panel {
   paintAll(): void {
     if (this.ctx.editing()) { this.afterPaint(); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
+    // the body shows a failure pane in place of the file (the seam's error(): a reload refused or failed; Slice 7 of
+    // plans/markdown-viewer.md, item 3): a wait for that reload's bytes ends here, at the paint that showed the pane, in the
+    // seam's words (bytesFailed), and so does a wait a later status arms while the pane still stands (awaitBytes, then this
+    // pass): the bytes the wait is for cannot land while the view shows the pane, so the row says so at once, never the timer
+    // (under the editor error() is null, the editor's entry being a content paint, and a reload is a no-op there)
+    const failed = this.ctx.error();
+    if (failed !== null && this.bytesWait) this.bytesFailed(failed);
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
     // refusal has since replaced in the same slot is left alone)
