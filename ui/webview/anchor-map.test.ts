@@ -23,6 +23,7 @@ import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
   paintRawPoint, paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, DEL_LABEL_MAX, PILCROW, type ChangePaint,
+  sourceBlockSpans, renderedBlockIndex,
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
@@ -1012,6 +1013,64 @@ test("caches re-analyze when a container's children are replaced or the source c
   for (const n of parseHTML(raw.code.ownerDocument, wrapNumberedHtml(escapeHtml("three\nfour\n")))) raw.code.appendChild(n);
   t = allText(raw.code, isRow);
   assert.equal(ok(mapRawSelection(sel({ node: t[0], offset: 0 }, { node: t[1], offset: 4 }), El(raw.code), "three\nfour\n")).quote, "three\nfour");
+});
+
+// ── Rendered: a failed figure's label is a control (Slice 7 of plans/markdown-viewer.md, item 2) ──────────────────
+/** The label file-view.ts parks beside a figure whose `error` event fired (contract C2): `span.fv-figerr[data-fv-figerr]`, the
+ *  img's next sibling in the img's own parent, its text the viewer's (the fact, the authored source, the alt), never the note's. */
+function failedFigureLabel(img: FakeElement, text: string): FakeElement {
+  const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+  const label = doc.createElement("span"); label.setAttribute("class", "fv-figerr"); label.setAttribute("data-fv-figerr", "");
+  label.appendChild(doc.createTextNode(text));
+  const i = parent.childNodes.indexOf(img);
+  parent.insertBefore(label, parent.childNodes[i + 1] ?? null);
+  return label;
+}
+
+test("Rendered: a failed figure's label (span.fv-figerr, the img's next sibling) is a control: the paragraph holding it pairs with its block, its prose maps and paints, a drag from inside the label lands at the label's edge, the label alone selects no text of the note, and a label beside a bare <img> html block leaves the blocks after it paired", () => {
+  const caption = "The caption says what the plot showed.";
+  const source = "# Report\n\nBefore the figure.\n\n![p95 latency](figs/missing.png) " + caption + "\n\nAfter the figure.\n";
+  const { box } = buildRendered(source);
+  const p = firstEl(box, "P", 1);
+  const img = firstEl(p, "IMG");
+  assert.ok(img && img.parentNode === p, "the fixture's img sits in the second paragraph");
+  const label = failedFigureLabel(img, "Image failed to load: figs/missing.png (p95 latency)");
+  assert.equal(p.childNodes.indexOf(label), p.childNodes.indexOf(img) + 1, "the label is the img's next sibling");
+  const spans = sourceBlockSpans(source);
+  assert.equal(source.slice(spans[2].start, spans[2].end), "![p95 latency](figs/missing.png) " + caption, "block 2 is the figure's paragraph");
+  assert.equal(renderedBlockIndex(El(box), source, El(p)), 2, "the paragraph is block 2's node (a refused block answers its index by tag, so this held before Slice 7 too)");
+  const start = source.indexOf(caption);
+  const capText = allText(p, null).find((t) => t.data.includes(caption))!;
+  assert.ok(capText, "the caption's text node");
+  const at = capText.data.indexOf(caption);
+  const r = ok(mapRenderedSelection(sel({ node: capText, offset: at }, { node: capText, offset: at + caption.length }), El(box), source),
+    "the caption maps (before Slice 7 the label's text read as the note's, so the paragraph's text did not match its source and every selection in it was refused)");
+  assert.deepEqual(r.range, { start, end: start + caption.length }); assert.equal(r.quote, caption);
+  // a drag that starts inside the label and ends in the caption: the endpoint inside the control sits at its edge (the footnote back link's rule)
+  const lt = allText(label, null)[0];
+  const fromLabel = ok(mapRenderedSelection(sel({ node: lt, offset: 6 }, { node: capText, offset: at + "The caption".length }), El(box), source), "from the label into the caption");
+  assert.equal(fromLabel.quote, "The caption");
+  // the label alone selects no text of the note
+  assert.equal(bad(mapRenderedSelection(sel({ node: lt, offset: 0 }, { node: lt, offset: lt.data.length }), El(box), source), "the label alone").reason, "Select some text to comment on.");
+  // a highlight over the caption paints on the caption's characters and never on the label's
+  const marks = paintRendered(El(box), source, { start, end: start + caption.length }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(marks && marks.length, "the highlight paints (before: the pairing refused and paintRendered answered null)");
+  assert.equal(marks!.map((m) => m.textContent).join(""), caption);
+  assert.equal(label.parentNode, p, "the label stands where it was"); assert.equal(label.childNodes.length, 1);
+  // a bare <img> html block: the img is a top-level node of the box, so its label lands at the top level too; the blocks after it
+  // still pair, so a comment on the paragraph after the figure paints
+  const src2 = "# Report\n\n<img src=\"figs/missing.png\" alt=\"fig\">\n\nAfter the figure.\n";
+  const { box: box2 } = buildRendered(src2);
+  const img2 = firstEl(box2, "IMG");
+  assert.equal(img2.parentNode, box2, "the html block's img is a top-level node");
+  failedFigureLabel(img2, "Image failed to load: figs/missing.png (fig)");
+  const after = firstEl(box2, "P", 0);
+  assert.equal(after.textContent, "After the figure.");
+  assert.equal(renderedBlockIndex(El(box2), src2, El(after)), 2, "the paragraph after the figure pairs with its block");
+  const s2 = src2.indexOf("After the figure.");
+  const m2 = paintRendered(El(box2), src2, { start: s2, end: s2 + "After the figure.".length }, "fc-hl") as unknown as FakeElement[] | null;
+  assert.ok(m2 && m2.length, "the comment after a failed top-level figure paints");
+  assert.equal(m2!.map((m) => m.textContent).join(""), "After the figure.");
 });
 
 // ── change marks (Slice 2, contract D4) ────────────────────────────────────────────────────────────

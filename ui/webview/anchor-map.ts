@@ -156,13 +156,15 @@ const isFormula = (n: DNode): boolean => FORMULA_CLASSES.some((cls) => hasClass(
  *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it, and since
  *  Slice 4 the other elements whose text is not the note's: a formula in any of the fill's three shapes (FORMULA_CLASSES: the
  *  paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's back link, the
- *  front matter's fold label, and a gated figure's placeholder. */
+ *  front matter's fold label, a gated figure's placeholder, and since Slice 7 the label the viewer parks beside a figure
+ *  that failed to load (`span.fv-figerr`, the img's next sibling: its text names the source and is not the note's). */
 const CONTROL_CLASSES = [
   "code-copy",              // the fence's Copy button (code-block.ts)
   ...FORMULA_CLASSES,       // a formula, rendered or shown as its TeX (math.ts renderMathPlaceholders)
   "md-fnback",              // a footnote definition's back link (md-config.ts): its label is the footnote's number
   "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
+  "fv-figerr",              // a failed figure's label (file-view.ts, Slice 7): the img's next sibling, naming the source that failed
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
 /** The span the regions layer wraps a picture in while the Comments panel is open (file-comments-regions.ts: the <img> and its

@@ -8,8 +8,10 @@
 // trip landed fourteen paragraphs past the figure in the review's measurement). The rendered side is now read as the
 // anchor map reads it, the viewer's controls skipped (anchor-map.ts CONTROL_CLASSES), so the gated block reads as its
 // block, whether the placeholder sits inside the block's `<p>` or IS the block's element (a bare `<img>` line), and so
-// does an html `<pre><code>` the viewer parked a Copy button in (the same rule, the fence's control). The skip is the
-// controls' alone: text in the rendered element that is not the block's still refuses the pairing.
+// does an html `<pre><code>` the viewer parked a Copy button in (the same rule, the fence's control), and since Slice 7 a
+// block whose figure failed to load and wears the viewer's label beside the img (`span.fv-figerr`, anchor-map.ts's and
+// reader-place.ts's lists both). The skip is the controls' alone: text in the rendered element that is not the block's still
+// refuses the pairing.
 // The stand-in is a minimal tree with a box per element (the file-view-place-blocks.test.ts shape, cut to what these
 // scenes read), and its DOMParser parses the block's source into the same kind of tree; the placeholder is built here as
 // figure-gate.ts builds it (its classes and action imported from the module). The real thing, over the real bundle in
@@ -111,6 +113,10 @@ const SRC = `https://${HOST}/a.png`;
 const gated = (media: FakeElement, kind = "Image"): FakeElement => el("span", { class: GATE_CLASS, "data-act": GATE_ACT, role: "button", tabindex: "0", "data-fv-hosts": HOST, "data-fv-host": HOST, title: "Load from " + HOST },
   [media, el("span", { class: GATE_LABEL_CLASS }, [txt(`${kind} from ${HOST}. Click to load.`)])]);
 const gatedImg = (): FakeElement => el("img", { width: "120", height: "80", alt: "fig", "data-fv-gated-src": SRC });
+/** The label file-view.ts parks beside a figure whose `error` event fired (Slice 7, contract C2): `span.fv-figerr[data-fv-figerr]`,
+ *  the img's next sibling in the img's own parent; its text the viewer's (the fact, the authored source, the alt), not the note's. */
+const figerr = (src: string, alt: string): FakeElement => el("span", { class: "fv-figerr", "data-fv-figerr": "" }, [txt("Image failed to load: " + src + (alt ? " (" + alt + ")" : ""))]);
+const LOCAL = "figs/missing.png";
 
 /** `.fileview-body > div.fileview-md > [h1, p1, p2, X, p3, p4]`, each box 40px tall with an 8px gap, stacked so that
  *  X (the fourth element) straddles the body's top edge at 100 (its box 80..120): the scene of a reader 20px into it. */
@@ -132,6 +138,10 @@ test("readPlace: an html block whose figure the gate wrapped reads as its block,
     ["a gated picture beside the block's own text", `<p>Figure 1. <img src="${SRC}" alt="fig"> The caption.</p>`, el("p", {}, [txt("Figure 1. "), gated(el("img", { alt: "fig", "data-fv-gated-src": SRC })), txt(" The caption.")])],
     ["a gated video (its label says Video)", `<video src="https://${HOST}/clip.mp4" width="160" height="90"></video>`, gated(el("video", { width: "160", height: "90", "data-fv-gated-src": `https://${HOST}/clip.mp4` }), "Video")],
     ["an html <pre><code> with the viewer's Copy button", "<pre><code>x = 1\ny = 2</code></pre>", el("pre", { class: "has-copy" }, [el("code", {}, [txt("x = 1\ny = 2")]), el("button", { class: "code-copy", type: "button" }, [txt("Copy")])])],
+    // Slice 7: a figure that failed to load wears the viewer's label as the img's next sibling (span.fv-figerr), text the block's
+    // source never held; read through textContent the block would refuse to pair, as the gate's label made it before Slice 4
+    ["a failed figure's label inside the block's <p>", `<p><img src="${LOCAL}" alt="fig"></p>`, el("p", {}, [el("img", { src: LOCAL, alt: "fig" }), figerr(LOCAL, "fig")])],
+    ["a failed figure's label beside the block's own text", `<p>Figure 2. <img src="${LOCAL}" alt="fig"> The caption.</p>`, el("p", {}, [txt("Figure 2. "), el("img", { src: LOCAL, alt: "fig" }), figerr(LOCAL, "fig"), txt(" The caption.")])],
   ];
   for (const [what, html, rendered] of scenes) {
     const doc = docWith(html);
