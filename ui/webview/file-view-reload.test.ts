@@ -690,9 +690,12 @@ test("changed on disk: a picture probes too (a regenerated figure is a change on
   const first = img(body)!.src;
   reloadButton(wrap).click(); await settle();
   assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT2); assert.notEqual(img(body)!.src, first, "the new bytes' URL");
+  const before = paints;
   assert.equal(fv.openFileView(ROOT + "/docs/missing.md", SID), true); await settle();
   const wrap2 = doc.getElementById("romp-fileview")!;
   assert.ok(wrap2.querySelector(".fileview-body .fileview-err"), "the 404 pane");
+  assert.equal(paints, before + 1, "a first open's failure is a paint (Slice 7 of plans/markdown-viewer.md, item 3)");
+  assert.equal(seam!.error(), "no such file: " + ROOT + "/docs/missing.md", "error() the pane's words"); assert.equal(seam!.text(), null);
   fetches.length = 0;
   focusWindow(); visibility(false); await settle();
   assert.equal(heads(), 0, "no mtime to compare against: no HEAD");
@@ -717,6 +720,8 @@ test("changed on disk (PR review round 1): a HEAD answering 404 with the kernel'
   assert.ok(pane, "the 404 pane is in the body");
   assert.match(pane!.textContent, /no such file/, "the kernel's words for a missing file");
   assert.equal(body.querySelectorAll("button").length, 0, "no Download offer: the file is not there");
+  assert.equal(paints, 2, "the pane's paint fired the hooks (Slice 7 of plans/markdown-viewer.md, item 3; before: no paint, and the Comments panel's wait ran to its deadline)");
+  assert.equal(ctx.error(), "no such file: " + APP, "error() is the pane's words"); assert.equal(ctx.text(), PY, "text() the last landing's");
   b = readBar(wrap);
   assert.equal(b.text, "Deleted on disk.", "the bar stands over the pane"); assert.equal(b.button, "Reload"); assert.equal(b.disabled, false, "its button re-armed: the bar is no dead end");
   // the file back on disk (a session wrote it again): the bar's own Reload lands it and clears the bar
@@ -724,6 +729,7 @@ test("changed on disk (PR review round 1): a HEAD answering 404 with the kernel'
   reloadButton(wrap).click(); await settle();
   assert.equal(barOf(wrap), null, "the own ask's landing clears the bar"); assert.equal(ctx.text(), PY2); assert.equal(ctx.mtimeNs(), MT2);
   assert.equal(body.querySelector(".fileview-err"), null, "the pane went with the landing");
+  assert.equal(paints, 3, "the landing's paint"); assert.equal(ctx.error(), null, "a text view again: error() null");
 });
 
 test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HEAD answered after a newer landing had already put the moved file in the body raised it over the file that shows); a Reload that fails leaves the failure pane in the body, the bar standing and its button armed again", async (t) => {
@@ -747,7 +753,8 @@ test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HE
   btn.click(); await settle();
   assert.ok(body.querySelector(".fileview-err"), "the failure pane says what happened");
   assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.textContent, "Reload"); assert.equal(btn.disabled, false, "armed again: no dead end");
-  assert.equal(ctx.mtimeNs(), MT3, "a failed landing lends no mtime"); assert.equal(paints, 3, "and no paint");
+  assert.equal(ctx.mtimeNs(), MT3, "a failed landing lends no mtime"); assert.equal(paints, 4, "and the pane's paint (Slice 7 of plans/markdown-viewer.md, item 3: a failed reload fires the hooks; before: no paint)");
+  assert.equal(ctx.error(), "no such file: " + APP, "error() the pane's words"); assert.equal(ctx.text(), PY3, "text() the last landing's");
 });
 
 test("changed on disk: the Reload button holds the keyboard at its click (a click focuses a button), the click's disable drops it to the document's body (the browser's rule), and the landing that removes the bar hands it to the body, so PageDown reads on; a bar another ask's landing clears while a box in the aside holds the keyboard leaves it there; a failed Reload puts it back on the re-armed button", async (t) => {
@@ -812,11 +819,12 @@ test("changed on disk: the bar's Reload overtaken by another ask during its flig
   assert.equal(ctx.mtimeNs(), MT, "a failed landing lends no mtime");
   slow.release(); await settle();                          // the overtaken GET answers late: it reads nothing and never lands
   assert.ok(body.querySelector(".fileview-err"), "the pane stands"); assert.equal(btn.disabled, false, "the button stays armed"); assert.equal(ctx.mtimeNs(), MT);
-  assert.equal(paints, 1, "the open's paint alone: neither failure painted text, and the overtaken answer painted nothing");
+  assert.equal(paints, 2, "the open's paint and the newer fetch's failure pane (Slice 7 of plans/markdown-viewer.md, item 3): the overtaken answer painted nothing");
+  assert.equal(ctx.error(), "no such file: " + APP, "error() the newer fetch's words");
   // the way out the re-armed button offers: the file is back, the click lands it and clears the bar
   disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
   btn.click(); await settle();
-  assert.equal(barOf(wrap), null, "the bar's own landing clears it"); assert.equal(ctx.text(), PY3); assert.equal(ctx.mtimeNs(), MT3); assert.equal(paints, 2);
+  assert.equal(barOf(wrap), null, "the bar's own landing clears it"); assert.equal(ctx.text(), PY3); assert.equal(ctx.mtimeNs(), MT3); assert.equal(paints, 3); assert.equal(ctx.error(), null);
   // the other face: the bar's ask overtaken by a poll's reload that lands the moved file clears the bar (the later landing rules, as before)
   disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };
   focusWindow(); await settle();
@@ -847,7 +855,7 @@ test("a stand-in node enumerates its primitives alone, so a failing assertion's 
 
 // ── review round 3 ───────────────────────────────────────────────────────────────────────────────────────────────────
 test("changed on disk (review round 3): a failed Reload re-arms its button AFTER the failure pane's paint, so a keyboard the reader put on the old body's content during the flight, which that paint removes, goes back on the re-armed button (before: the re-arm ran first, read the content's element as the holder and stood down, and the paint's removal left the keyboard on the document's body, where PageDown, Space and Enter did nothing until a click)", async (t) => {
-  const { wrap, body } = await open(APP, t);
+  const { wrap, ctx, body } = await open(APP, t);
   disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
   focusWindow(); await settle();
   const btn = reloadButton(wrap);
@@ -861,6 +869,8 @@ test("changed on disk (review round 3): a failed Reload re-arms its button AFTER
   assert.equal(doc.activeElement, inner, "the content holds the keyboard mid-flight");
   slow.fail("network gone"); await settle();
   assert.ok(body.querySelector(".fileview-err"), "the failure pane replaced the content");
+  assert.equal(ctx.error(), "network gone", "error() is the message alone (Slice 7 of plans/markdown-viewer.md, item 3): the hint naming the path is the pane's, since this message does not name it");
+  assert.equal(body.querySelector(".fileview-err")!.textContent, "network gone" + APP, "the pane the person reads: the message, then the path as its hint");
   assert.equal(inner.isConnected, false, "…and the element the reader held is gone with it");
   assert.equal(readBar(wrap).text, CHANGED, "the bar stands"); assert.equal(btn.disabled, false, "re-armed");
   assert.equal(doc.activeElement, btn, "the re-armed button has the keyboard: nothing held it once the paint removed the holder (before the fix: the document's body)");

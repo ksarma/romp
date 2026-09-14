@@ -665,7 +665,8 @@ test("closers (review round 2): the fetch pipeline's failure pane closes an open
   const painted = paints;
   delete disk[REPORT];                                     // gone by the time the poll's reload asks
   o.ctx.reload(); await settle();
-  assert.equal(paints, painted, "a failure paints no text");
+  assert.equal(paints, painted + 1, "a failure paints no text, and the pane's paint fires the hooks once (Slice 7 of plans/markdown-viewer.md, item 3; before Slice 7: no paint)");
+  assert.equal(o.ctx.error(), "no such file: " + REPORT, "the seam's error() is the pane's words");
   assert.ok(o.body.querySelector(".fileview-err"), "the failure pane is in the body");
   assert.equal(popover(o), null, "the pane's paint closed the popover (before the fix: it stood over the pane with its stale rows)");
   assert.equal(pop.parentNode, null, "\u2026and the popover left the card");

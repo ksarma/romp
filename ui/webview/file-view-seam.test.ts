@@ -564,10 +564,15 @@ test("onRendered for an image fires on the img's load, once; mediaElement() is t
   assert.equal(paints, 1, "the load event is the media paint");
   img.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "once: a second load (a browser re-decode) does not repaint");
+  assert.equal(ctx.error(), null, "a media view shows: no pane (Slice 7 of plans/markdown-viewer.md, item 3)");
   // the bytes would not decode: imgFailed's pane takes the body, and the seam stops naming the picture
   img.dispatchEvent(new Ev("error"));
   assert.equal(img.isConnected, false, "the picture left with the pane swap");
-  assert.ok(body.querySelector(".fileview-err"), "the failure pane is up");
+  const pane = body.querySelector(".fileview-err")!;
+  assert.ok(pane, "the failure pane is up");
+  assert.equal(ctx.error(), pane.childNodes[0].textContent, "error() is the pane's own sentence, set before the hooks fire (Slice 7, item 3)");
+  assert.ok(ctx.error()!.startsWith("this image failed to decode") && !ctx.error()!.includes(PLOT) && !ctx.error()!.includes("Download"),
+    "the sentence alone: not the hint naming the path, not the button's label, which the pane's textContent carries: " + ctx.error());
   assert.equal(ctx.mode(), "media", "still a media body to the seam…");
   assert.equal(ctx.mediaElement(), null, "…but no media element: nothing to overlay");
   assert.equal(paints, 2, "the pane swap is a paint: the panel hears the picture is gone and takes its layer down (a reload whose bytes would not decode left the old picture's overlay standing before)");
@@ -580,6 +585,7 @@ test("a load that lands after the viewer moved on fires nothing: the decode fail
   const img = body.querySelector("img.fileview-img")!;
   img.dispatchEvent(new Ev("error"));                      // the pane took the body before the picture ever showed
   assert.equal(paints, 1, "the failure pane is the paint (imgFailed fires the hooks itself)");
+  assert.match(ctx.error()!, /^this image failed to decode/, "error() names the pane (Slice 7 of plans/markdown-viewer.md, item 3)");
   img.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "a load on the replaced picture is not a paint");
   disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02]), type: "image/png", mtimeNs: "1757145600000000007" };
@@ -587,6 +593,7 @@ test("a load that lands after the viewer moved on fires nothing: the decode fail
   await settle();
   const img2 = body.querySelector("img.fileview-img")!;
   assert.notEqual(img2, img, "the reload built a new picture");
+  assert.equal(ctx.error(), null, "a reload that decodes clears error() at the media arm's paint, before the picture's load: a media view is up, no pane");
   assert.equal(ctx.mediaElement(), img2 as unknown as HTMLElement);
   img.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "the old picture's late load: nothing");
@@ -923,6 +930,41 @@ test("onSelection fires on mouseup inside the body ahead of the quote-chip gate;
   assert.equal(doc.body.classList.contains("fileview-open"), false);
 });
 
+test("a failed reload is a paint the seam hears (Slice 7 of plans/markdown-viewer.md, item 3): the fetch chain's catch fires the hooks once after the pane's swap, error() answers the pane's words, and text(), mtimeNs() and mode() keep the last landing's; the file back, the next landing paints again and error() is null", async (t) => {
+  const { ctx, body } = await open(REPORT, t);
+  assert.equal(paints, 1); assert.equal(ctx.error(), null, "a text view: no pane");
+  delete disk[REPORT];                                     // a session removed the file; the panel's poll asks a reload
+  ctx.reload(); await settle();
+  assert.equal(paints, 2, "the pane's paint fired the hooks once (before: no hook fired for a failed reload, and the Comments panel's loader stood until its 15 s deadline)");
+  const words = "no such file: " + REPORT;                 // the stub's 404 body, as the kernel's names the resolved path
+  assert.equal(ctx.error(), words, "error() is the pane's words");
+  const pane = errBar(body)!;
+  assert.ok(pane && pane.parentNode === body, "the pane is in the body");
+  assert.equal(pane.textContent, words, "the same words the person reads (the message names the path, so no hint; a 404 offers no Download)");
+  assert.equal(body.querySelector(".fileview-md"), null, "the note left with the swap");
+  assert.equal(ctx.text(), DOC, "text() still answers the last landing's text…");
+  assert.equal(ctx.mtimeNs(), MT, "…under its mtime: a failed landing lends none");
+  assert.equal(ctx.mode(), "rendered", "mode() is unchanged: the view's word, not the pane's; error() is the pane's");
+  assert.deepEqual(ctx.renderedImages(), [], "no figures over the pane"); assert.equal(ctx.mediaElement(), null);
+  // the file is back: the landing's text paint clears the record and fires the hooks as any paint
+  disk[REPORT] = { bytes: DOC, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000007" };
+  ctx.reload(); await settle();
+  assert.equal(paints, 3, "the landing's paint");
+  assert.equal(ctx.error(), null, "a text view again: error() null");
+  assert.ok(body.querySelector(".fileview-md") && !errBar(body), "the note is back and the pane gone");
+  assert.equal(ctx.mtimeNs(), "1757145600000000007");
+});
+
+test("a first open whose fetch fails paints the pane and fires the hooks like a reload's failure (Slice 7, item 3, open question 5): paints 1, error() the pane's words, text() null and mtimeNs() empty, nothing to overlay", async (t) => {
+  const MISSING = ROOT + "/docs/missing.md";
+  const { ctx, body } = await open(MISSING, t);
+  assert.equal(paints, 1, "the pane is the open's one paint (before: nothing fired, and a panel mounted later would have waited for a paint that never came)");
+  assert.equal(ctx.error(), "no such file: " + MISSING, "the stub's 404 words");
+  assert.equal(errBar(body)!.textContent, ctx.error(), "the pane in the body carries them");
+  assert.equal(ctx.text(), null, "no landing: no text"); assert.equal(ctx.mtimeNs(), "", "and no mtime");
+  assert.equal(ctx.mediaElement(), null); assert.deepEqual(ctx.renderedImages(), []);
+});
+
 test("scrollToOffset maps a source offset to its Raw row: one .fv-cl per logical line", async (t) => {
   const o = await open(REPORT, t);
   o.b.raw.click();
@@ -965,6 +1007,24 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(docOf("renderedImages():"), /in document order/);
   assert.match(docOf("renderedImages():"), /data-fv-src/, "the doc names where the authored src went");
   assert.match(docOf("onRendered(cb"), /a media body once it shows/, "onRendered's doc no longer says TEXT bodies only");
+  // Slice 7 of plans/markdown-viewer.md, item 3 (contract C1): error() is a REQUIRED member directly after mtimeNs(), with its doc
+  assert.ok(VIEW.includes("  error(): string | null;\n"), "FileViewActionCtx has error()");
+  assert.ok(iface.indexOf("\n  mtimeNs(): string;\n") >= 0 && iface.indexOf("\n  error(): string | null;") > iface.indexOf("\n  mtimeNs(): string;\n"), "placed after mtimeNs()");
+  assert.equal(iface.slice(iface.indexOf("\n  mtimeNs(): string;\n") + "\n  mtimeNs(): string;\n".length).indexOf("  /** the words of the pane"), 0, "directly after it: the next line opens error()'s doc");
+  const errDoc = docOf("error():");
+  assert.match(errDoc, /the words of the pane the body shows IN PLACE of the file/, "what it answers");
+  assert.match(errDoc, /null while a text or media view shows, the loader included, and null over the\s*\*?\s*Raw rows a failed render falls back to/, "and when it is null: item 1's fallback rows are content");
+  assert.match(errDoc, /Closure state\s*\*?\s*\(`viewError`\) set at the two pane paints and cleared at every content paint/, "the mechanism, in the doc");
+  assert.match(errDoc, /never read from the body; text\(\) and mtimeNs\(\) keep answering the\s*\*?\s*last landing's/);
+  assert.match(docOf("text():"), /error\(\) tells the pane the body shows in its place/, "text()'s doc points at error() for a failed reload");
+  assert.match(docOf("onRendered(cb"), /A failure pane is a paint too/, "onRendered's doc says a failure pane is a paint");
+  assert.match(VIEW, /mtimeNs: \(\) => mtimeNs,\n\s*error: \(\) => viewError,/, "the closure answers the state, beside mtimeNs");
+  assert.match(VIEW, /let viewError: string \| null = null;/, "per open");
+  assert.equal((VIEW.match(/viewError = null;/g) || []).length, 3, "cleared at the text paint, the media arm (the SVG Source view, the pages, the frame or picture before whenShown) and the editor's entry");
+  assert.match(VIEW, /if \(text === null \|\| editing\) return;[^\n]*\n\s*viewError = null;/, "the text paint: after the guard, before the pass");
+  assert.match(VIEW, /if \(objUrl === null\) return;[^\n]*\n\s*viewError = null;/, "the media arm: after the loader's return, before every media paint");
+  assert.match(VIEW, /viewError = null;[^\n]*\n\s*fireRendered\(\);\n\s*\/\/ a notice over the read view/, "the editor's entry: before its edit-mode render");
+  assert.equal((VIEW.match(/viewError = msg;/g) || []).length, 1, "set once at the fetch chain's catch"); assert.equal((VIEW.match(/viewError = words;/g) || []).length, 1, "and once at imgFailed");
   // both read the LIVE body under the mode gate — never a handle kept at paint time
   assert.match(VIEW, /mediaElement: \(\) => \(ctx\.mode\(\) === "media" \? body\.querySelector\("img\.fileview-img, iframe\.fileview-frame, \.fileview-pdf"\) as HTMLElement \| null : null\),/,
     "…the pages root joins the selector for a PDF the chunk renders (Slice 4)");
@@ -977,11 +1037,12 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 7, "the SVG Source view, the text views, the decode-failure pane, the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly as a paint; the media arm hands it to whenShown (file-comments.test.ts pins the floor); the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 8, "the SVG Source view, the text views, the decode-failure pane, the fetch chain's catch (Slice 7 of plans/markdown-viewer.md, item 3: a refused or failed fetch's pane is a paint, on a first open too), the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly as a paint; the media arm hands it to whenShown (file-comments.test.ts pins the floor); the two reflows of a text view with its text unchanged (a text-size step, the body's width changing) go through fireRenderedKeepingSelection, which fires the hooks with why 'reflow' (below) so the panel re-places its cards and leaves its marks standing, and a standing selection outlives any hook that does re-wrap (file-view-text-size.test.ts, file-view-reflow-browser.test.ts)");
   assert.equal((VIEW.match(/fireRendered\("reflow"\);/g) || []).length, 1, "the reflows' one call, inside fireRenderedKeepingSelection");
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
-  assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
+  assert.match(failed, /body\.replaceChildren\(why\);\n\s*viewError = words;[^\n]*\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none; error() is set between them (Slice 7, item 3)");
+  assert.match(failed, /why\.textContent = "this image failed to decode[^"]*";\n\s*const words = why\.textContent;/, "the sentence alone, taken before the hint and the button join the pane");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,

@@ -633,10 +633,19 @@ export interface FileViewActionCtx {
   body(): HTMLElement;
   /** which view the body shows now; "media" for an image/PDF body (the SVG Source view counts as raw) */
   mode(): "raw" | "rendered" | "media";
-  /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media */
+  /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media.
+   *  After a failed reload it still answers the last landing's text, and error() tells the pane the body shows in its place */
   text(): string | null;
   /** the file's mtime at load, nanoseconds AS A STRING (the save fence's own value) */
   mtimeNs(): string;
+  /** the words of the pane the body shows IN PLACE of the file: a fetch refused or failed (the kernel's 404, 413 or 415 body, a
+   *  network failure's message: the `msg` the catch paints), or a picture that failed to decode (that pane's own sentence,
+   *  without its hint and its Download button); null while a text or media view shows, the loader included, and null over the
+   *  Raw rows a failed render falls back to (mode() answers "raw" for that paint: the rows are the content). Closure state
+   *  (`viewError`) set at the two pane paints and cleared at every content paint (the text paint, the media arm before
+   *  whenShown, the SVG Source view, the editor's entry), never read from the body; text() and mtimeNs() keep answering the
+   *  last landing's */
+  error(): string | null;
   /** the kernel's media verdict off the Content-Type: an SVG is shown as an image but is TEXT to the kernel's allowlist */
   media(): "image" | "pdf" | "svg" | null;
   /** the media element the body shows now: the `<img>` for an image (an SVG shown as an image included), the frame
@@ -661,6 +670,9 @@ export interface FileViewActionCtx {
    *  after every later page it could not draw (the chunk removes that page's canvas and puts its notice in the shell; the
    *  overlay leaves with the canvas on this paint, and the card says the page did not render). A Rendered body's figures
    *  are in the DOM by then with their own loads still pending. The panel re-runs its paint pass.
+   *  A failure pane is a paint too (plans/markdown-viewer.md Slice 7, item 3): the fetch chain's catch (a refused or failed
+   *  fetch, a reload's or a first open's, text() null then) and a picture's decode failure (imgFailed) fire the hooks after
+   *  their swap, with error() the pane's words, so a hook waiting on a reload hears it fail at the paint and never at a deadline.
    *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
@@ -1085,6 +1097,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const fmt = loadFmt();
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
   let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
+  let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
   let mtimeNs = "";                           // the file's mtime at load, NANOSECONDS AS A STRING —
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
@@ -1667,6 +1680,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" && renderFell === null ? "rendered" : "raw",
     text: () => (editing && bufValue() !== null ? bufValue() : viewText()),   // in edit mode the buffer is the text (Slice 5)
     mtimeNs: () => mtimeNs,
+    error: () => viewError,
     media: () => (isPdf ? "pdf" : isSvgImage ? "svg" : isImage ? "image" : null),
     // both read the LIVE body under the mode gate rather than a handle kept at paint time: a reload swaps the
     // <img>, imgFailed's pane removes it, and a rendered README may itself carry an <img class="fileview-img">
@@ -2159,6 +2173,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (!wrap.isConnected) return;              // settled after a close/replace — paint nothing
     const why = el("div", "fileview-err");
     why.textContent = "this image failed to decode — it may be mid-write or truncated";
+    const words = why.textContent;              // the sentence alone, taken before the hint and the button join the pane: error()'s answer, never read back off the body
     const hint = el("div", "fileview-err-hint");
     hint.textContent = path;
     why.appendChild(hint);
@@ -2168,6 +2183,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
     body.replaceChildren(why);
+    viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
     // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
     // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
     // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
@@ -2212,6 +2228,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
+      viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
       // with a box, names it in the notice bar (the PR review's round 1; the review's round 3 had the heading judged here)
       if (svgSource && svgText !== null) {
@@ -2241,6 +2258,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
     folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    viewError = null;                       // a text paint follows, the rows a failed render falls back to included (that paint's word is mode() "raw"): no pane shows (Slice 7, item 3)
     // The pass below builds the block and swaps it in one try (plans/markdown-viewer.md Slice 7, item 1): a marked bug must never
     // cost the content, and this is where the content is kept now that mdBlock carries no catch of its own. A throw from marked,
     // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the message is recorded
@@ -2718,6 +2736,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
+    viewError = null;                           // the editor takes the body: no pane shows (a failed reload's pane over the text, say; the exit re-reads and says why then)
     fireRendered();
     // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
     // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar), THIS card's
@@ -3341,6 +3360,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       closeOutline();                                           // the popover's rows were read off the DOM the pane replaces (the paint closer's rule; the review's round 2: a popover open at a failed reload stood over the pane, the hidden button reading expanded)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
+      viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
+      fireRendered();                                           // the pane is a paint of the body like imgFailed's: fired AFTER the swap (a hook reading the body finds the pane) and before the re-arm (the re-arm reads the keyboard after the hooks), on every failure path, a first open's included, so a hook waiting on a reload hears it fail at the paint (before: no hook fired, and the Comments panel's loader stood until its 15 s deadline)
       rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane, AFTER the pane's paint: a keyboard the reader put on the old body's content during the flight (a link, a fold's summary), which that paint removed, then reads as nothing holding it and goes back on the button (the review's round 3: read before the paint, the link held it, the re-arm stood down, and the removal left the keyboard on the document's body)
     }));
   };
