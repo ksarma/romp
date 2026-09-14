@@ -330,7 +330,9 @@ export function readAt(x: unknown): At | null {
  *  folds, a note with no fold, a record an older store wrote), put back on the reopen before the seat when the file's
  *  mtime is the record's (the same bytes render the same
  *  folds; the review's round 3: a reopen painted every fold as authored, so a fold the reader had open with its summary
- *  at or just above the body's edge came back shut and the passage under it gone). No text field, ever: the Files pane
+ *  at or just above the body's edge came back shut and the passage under it gone); a Raw read of an open that held a
+ *  Rendered record's folds for a Rendered paint that never came carries them on at the same mtime (the review's round 5).
+ *  No text field, ever: the Files pane
  *  persists this record in localStorage beside its Recent entry, and a block's words there would put file content into
  *  the store. The record is in the file's own terms, as the reader's place across a paint is (reader-place.ts Place). */
 export type RememberedPlace = { start: number; end: number; top: number; atTop: boolean; view: "rendered" | "raw"; mtimeNs: string; scrollTop: number; t: number; folds?: number[] };
@@ -1686,7 +1688,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let placeHeld = false;   // `place` is the one a clamped seat was given, standing while the body stands where the clamp left it (seat, below)
   let asideScrollTop = -1;   // the body's scrollTop as the aside hook (ctx.aside, above) left it, -1 once a read has followed
   const keptPlace = (): Place | null => (shownText === null ? null : placeHeld && place && body.scrollTop === placeScrollTop ? place : readPlace(body, shownText));
-  const notePlace = () => { if (shownText !== null && textShowing()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; asideScrollTop = -1; } };
+  /** The body has no box (its pane's document is display:none: the Files pane toggled off, a phone's tab swap): every rect reads
+   *  zero and scrollTop 0, so nothing reads or seats until it shows. notePlace keeps the place as last measured, the width hook's
+   *  repaint seats and lands nothing on the report of the box going (its reflow still reaches the panel's hooks) and seats at the
+   *  show's, landRemembered and landTarget wait for that repaint, and the leave writes the last measured place (liveRecord). A stand-in without getClientRects is measured as before. */
+  const unmeasurable = (): boolean => typeof body.getClientRects === "function" && body.getClientRects().length === 0;
+  // a boxless body reads no place, so the last measured one stands (the review's round 5: the hide's own width report had run this
+  // over the hidden layout and cleared it, and a leave under the hidden pane, a restart's pagehide, then wrote nothing)
+  const notePlace = () => { if (shownText !== null && textShowing() && !unmeasurable()) { place = readPlace(body, shownText); placeWidth = body.clientWidth; placeScrollTop = body.scrollTop; placeHeld = false; asideScrollTop = -1; } };
   // A seat the browser CLAMPED (reader-place.ts seatPlaceOutcome: the write asked for more scroll than the view has, and the
   // body stands at its end) keeps the place it was given instead of reading the body: the read would name the block the
   // clamp shows, a paragraph before the reader's, and the next swap would seat THAT, so the Rendered/Raw round trip from
@@ -1732,10 +1741,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the seat is then the exact one; a depth inside the summary's own height says nothing, since the summary straddles the edge
   // the same open or shut, and the fold stays as authored (the review's round 2: a shut callout whose summary straddled the
   // edge came back open, thirty paragraphs taller). A record read in the other view (a Raw row inside a fold Rendered shuts)
-  // opens the fold too, and shows the passage the reader had, when the record's block began at or above the edge (its `top`
-  // at most 0: the edge lay on or inside the block's rows; a Raw record left at the file's very top, the front matter's block
-  // starting UNDER the edge, names rows the reader never saw and leaves the fold shut; the review's round 4: round 3's rule
-  // had read no sign, and every Rendered reopen after a Raw leave at the top unfolded the front matter). Since the review's
+  // opens the fold too, and shows the passage the reader had, every Raw row having shown, unless the body stood at the file's
+  // very top (the record's `atTop`: the state a close from the editor leaves a reader in, nothing chosen, where the front
+  // matter's block starts under the edge; the review's round 4: round 3's rule had read no sign, and every Rendered reopen after a
+  // Raw leave at the top unfolded the front matter) or the block starts below the body's height (a Raw row read as the block after
+  // a run of comment or closing-tag rows can name a block under the view's bottom). The review's round 5: round 4 had keyed the
+  // rule on the block's top sign, `top` at most 0, which also covered the blank row before a shut callout at the edge, the
+  // callout's rows all in view under it, and left that callout shut where round 3 had opened it; the record's own flag names
+  // the one state round 4 meant. Since the review's
   // round 3 the record carries the Rendered view's open folds by ordinal (restoreFolds, below), so at the record's mtime every
   // fold comes back as the reader left it before any of this runs (an open fold whose summary sat at or just above the edge,
   // a fold read at another pane width), and the rules here are the fallback: a changed file, a record with no fold state;
@@ -1751,11 +1764,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     for (const e of renderedBlockElements(md, shownText, b)) {
       revealFragmentTarget(e);
       // the fold's own shut box (its summary) shows the same open or shut, so only a depth past it says the content was showing;
-      // a record read in the other view, Raw, where every row shows, names the fold's rows when its block began at or above the
-      // edge (the review's round 3: a Raw record inside a folded callout reopened under the Rendered preference seated the shut
-      // summary at the edge; round 4: a Raw record at the file's top, the block below the edge, had opened the front matter);
-      // a fold the record's own state put back (restored) is as the reader left it, and neither rule runs over it
-      if (e.localName === "details" && !e.hasAttribute("open") && !restored && (otherView ? p.top <= 0 : depth > 0 && depth >= e.getBoundingClientRect().height - 0.5)) e.setAttribute("open", "");
+      // a record read in the other view, Raw, where every row shows, names the fold's rows unless the body stood at the file's
+      // very top (atTop: nothing chosen, the state a close from the editor leaves) or the block starts below the body's height (a
+      // row read as the block after a run of comment or closing-tag rows can name one under the view) (the review's round 3: a Raw
+      // record inside a folded callout reopened under the Rendered preference seated the shut summary at the edge; round 4: a Raw
+      // record at the file's top had opened the front matter; round 5: round 4's sign test, the block's top at most 0, had left a
+      // callout shut whose rows the reader had in view under the blank row at the edge); a fold the record's own state put back
+      // (restored) is as the reader left it, and neither rule runs over it
+      if (e.localName === "details" && !e.hasAttribute("open") && !restored && (otherView ? !p.atTop && p.top < body.clientHeight : depth > 0 && depth >= e.getBoundingClientRect().height - 0.5)) e.setAttribute("open", "");
     }
   };
   // The record's folds (RememberedPlace.folds), put back before the seat: every `<details>` of the Rendered body open or shut as
@@ -1782,8 +1798,6 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // for the Rendered toggle under the Raw preference.
   let pendingFolds: RememberedPlace | null = null;
   const restoreHeldFolds = (): void => { if (!pendingFolds || ctx.mode() !== "rendered") return; const r = pendingFolds; pendingFolds = null; restoreFolds(r); };
-  /** The body has no box (its pane's document is display:none): nothing reads or seats until it shows (landRemembered). */
-  const unmeasurable = (): boolean => typeof body.getClientRects === "function" && body.getClientRects().length === 0;
   const landRemembered = () => {
     if (pendingPlace === null || shownText === null) return;
     // A first text paint under a body with no box (the Files pane hidden while the fetch was in flight, a phone's tab swap, the
@@ -1848,12 +1862,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // the read before this one (the review's round 2; round 3 removed the sentence here that still said the leave wrote
   // nothing while editing).
   let editPlace: RememberedPlace | null = null;
+  /** A record's folds held past a Raw first paint (pendingFolds) and not painted yet, at this file's mtime: a leave from that Raw
+   *  view carries them on, so the next Rendered reopen puts them back (the review's round 5: the Raw leave wrote a record with no
+   *  fold state, and the held state died with the open). */
+  const heldFolds = (): number[] | null => (pendingFolds && pendingFolds.folds && pendingFolds.mtimeNs === mtimeNs ? pendingFolds.folds : null);
   const liveRecord = (): RememberedPlace | null => {
     if (shownText === null || !textShowing()) return null;
-    const p = keptPlace();
+    // a body with no box (the pane hidden at a restart's pagehide, or at a close) reads no place and a scrollTop of 0: the place as
+    // last measured stands, with its scrollTop (the review's round 5: the leave wrote nothing and the row kept the leave before it)
+    const boxless = unmeasurable();
+    const p = boxless ? place : keptPlace();
     if (!p) return null;
-    const rec = rememberedPlaceOf(p, mtimeNs, body.scrollTop);
-    const folds = openFoldOrdinals(body);         // the Rendered view's open folds, by ordinal (none for a Raw read or a note with no fold); put back by landRemembered
+    const rec = rememberedPlaceOf(p, mtimeNs, boxless ? placeScrollTop : body.scrollTop);
+    const folds = openFoldOrdinals(body) ?? heldFolds();   // the Rendered view's open folds, by ordinal (none for a Raw read or a note with no fold), else the ones a Raw first paint holds for a Rendered paint that has not come; put back by landRemembered
     return folds ? { ...rec, folds } : rec;
   };
   leaveLive = () => {
@@ -1900,7 +1921,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     frame = 0;
     if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
     paintedWidth = seenWidth;
-    if (textShowing()) { fireRenderedKeepingSelection(); seat(place); landRemembered(); }   // the place read before the width moved (see notePlace); then a remembered place a first paint under a boxless body left pending (landRemembered)
+    if (!textShowing()) return;
+    fireRenderedKeepingSelection();   // the panel's hooks hear every report of a text view, the hide's (no width) included: its trim keeps every mark there and re-trims at the show's report (plans/markdown-viewer.md Slice 4, the retrim events)
+    // the report of the box going (the pane hidden: no rects) seats and lands nothing, since nothing is measurable and the reader's
+    // place stands as last read (notePlace: before the review's round 5 the seat below ran over the hidden layout and cleared it,
+    // and a leave under the hidden pane then wrote nothing); the show's report seats over the box
+    if (unmeasurable()) return;
+    seat(place); landRemembered(); landTarget();   // the place read before the width moved (see notePlace); then a remembered place a first paint under a boxless body left pending (landRemembered), and the target and the keyboard such a paint left pending (landTarget)
   };
   const stampBodyWidth = watchBodyWidth(body, (w) => {
     if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }   // the first report describes the size at observe(), not a change
@@ -2082,16 +2109,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       seat(kept);                             // then the place, after the hooks as the selection keeper orders it: the same passage at the same height
       landRemembered();                       // the first text paint of an open with a remembered place seats it (once; RememberedPlace)
     });
-    if ((rendered || !isMd) && pendingHeading !== null) {   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
-      const h = pendingHeading; pendingHeading = null;
-      requestAnimationFrame(() => {
-        if (!wrap.isConnected || scrollToFragment(body, h)) return;
-        // no such section: named as the link wrote it, decoded where the browser's encoding allows
-        const name = h.replace(/^#/, "");
-        let shown = name; try { shown = decodeURIComponent(name); } catch { /* a stray %: named as written */ }
-        noteBar('No section named "' + shown + '" in this file.');
-      });
-    }
+    if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
+  };
+  // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
+  // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Landed over a body
+  // with a box alone: under a hidden pane scrollIntoView moves nothing and the landing would count as done, so the frame parks the
+  // target again for the width hook's repaint at the show, which spends it through landTarget (the review's round 5, with the
+  // line, the offset and the keyboard). Spent once per call: a second call before the frame (the landing's, after renderBody's own)
+  // finds nothing pending and queues no frame.
+  const spendHeading = (): void => {
+    const h = pendingHeading; pendingHeading = null;
+    if (h === null) return;
+    requestAnimationFrame(() => {
+      if (wrap.isConnected && unmeasurable()) { pendingHeading = h; return; }   // no box yet: held for the show's repaint (landTarget)
+      if (!wrap.isConnected || scrollToFragment(body, h)) return;
+      // no such section: named as the link wrote it, decoded where the browser's encoding allows
+      const name = h.replace(/^#/, "");
+      let shown = name; try { shown = decodeURIComponent(name); } catch { /* a stray %: named as written */ }
+      noteBar('No section named "' + shown + '" in this file.');
+    });
   };
 
   // Selection → labeled quote chip (the user 2026-08-23): mouseup is the gesture's settle point.
@@ -2786,6 +2822,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // nothing). Its own hold, since the landing's (`hold`, on the body) parks one run at a time and a raise must never
   // displace a parked landing.
   const raiseHold = pressHold(main);
+  // A landing the body's hold parked under the press now under way (fetchFile's land), null when none is: settled once it has run,
+  // was replaced or threw. The raise's parked run reads it at the release and runs after it, so a landing parked under the same
+  // press runs first and the raise's guards read the file it brought (the review's round 5: the row's hold, on `main`, hears the
+  // press before the body's, so its release listener was installed first and its parked run went on the zero timer first; the
+  // raise then inserted the bar over the old mtime and the landing's settle removed it in the next task; before round 4, with both
+  // holds on the body, the landing's ran first by the same listener order).
+  let parkedLanding: Promise<void> | null = null;
+  const noteParkedLanding = (p: Promise<void>): void => {
+    const settled = p.then(() => undefined, () => undefined);
+    parkedLanding = settled;
+    void settled.then(() => { if (parkedLanding === settled) parkedLanding = null; });
+  };
   let probeOut = false;                        // a HEAD is out: the next event is folded into it
   let probeStopped = false;                    // a 413/415 retired the probe for this open
   let diskBar: { el: HTMLElement; btn: HTMLButtonElement; under: string; asked: number; held: boolean; ring: boolean } | null = null;   // the bar, the mtime it was raised under, its own ask's fetch, whether the bar held the keyboard at its Reload's click and whether with the ring
@@ -2812,7 +2860,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const raiseDiskBar = (): void => {
     if (diskBarUp()) return;                   // one bar, the same words: a second move while it stands replaces nothing
     const bar2 = noteBar(CHANGED_ON_DISK);
-    const re = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
+    const re = el("button", "fileview-btn fileview-err-act") as HTMLButtonElement;   // on the words' line (.fileview-err-act), not the refusal pane's block Download (the review's round 5: the bar was two rows, 89 px)
     re.type = "button"; re.textContent = "Reload";
     re.title = "Read the file as it is now; your place is kept";
     re.addEventListener("click", () => {
@@ -2863,8 +2911,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // the card above that row, so a raise while the pointer was down moved the body under the press and the drag's selection
       // ended on other text (the review's round 3: with the Comments panel open the composer quoted the wrong passage; round 4:
       // a press in the aside was not held, and the card head under it moved before the release). The guards re-run at the
-      // release for what moved while the raise was parked: a landing that brought the file, the editor's entry, the close.
-      raiseHold.defer(() => { if (!editing && mtimeNs && wrap.isConnected && mtimeMoved(mtimeNs, moved)) raiseDiskBar(); });
+      // release for what moved while the raise was parked: a landing that brought the file, the editor's entry, the close; a
+      // landing parked under the same press runs first, the raise waiting for its settle (parkedLanding; round 5).
+      raiseHold.defer(() => {
+        const go = (): void => { if (!editing && mtimeNs && wrap.isConnected && mtimeMoved(mtimeNs, moved)) raiseDiskBar(); };
+        const landing = parkedLanding;   // a landing parked under the same press settles first, and the guards read the file it brought (parkedLanding)
+        if (landing) void landing.then(go); else go();
+      });
     }).catch(() => { /* a network failure: nothing the reader sees has changed; the next event asks again */ })
       .finally(() => { probeOut = false; });
   };
@@ -2939,6 +2992,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     target.scrollIntoView({ block: "center" });
   };
   let pendingOffset: number | null = at !== null && "offset" in at && at.offset >= 0 ? Math.floor(at.offset) : null;
+  // The open's target and its keyboard at the first text landing (items 4 and 1), over a body with a box: the line's row centred at
+  // once, the offset's block or row one frame later (scrollToSourceOffset's comment), a heading a hidden paint's frame left pending
+  // (renderBody's own spendHeading runs at each paint that can land one), then the body takes the keyboard (keyboardOnLanding, spent
+  // once). Under a body with no box (the pane's document display:none while the fetch was in flight: a phone's tab swap, the pane
+  // toggled off) every scrollIntoView moves nothing and body.focus() is a no-op, so each stays pending for the width hook's repaint
+  // at the show, which calls this again (the review's round 5: the target was spent over the zero layout, the note stood at its top
+  // with no notice once the pane showed, and nothing held the keyboard until a click; item 3's remembered place has had the same
+  // guard since round 4, landRemembered). A reflow after the spends runs nothing here: the pendings are null and the keyboard taken.
+  const landTarget = (): void => {
+    if (unmeasurable()) return;
+    if (pendingLine !== null) { const n = pendingLine; pendingLine = null; scrollToLine(n); }
+    if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
+    if (pendingHeading !== null && (!isMd || fmt.md === "rendered")) spendHeading();
+    keyboardOnLanding();
+  };
   // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
   // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
   // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
@@ -2963,7 +3031,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // round 3, 2026-09-09; file-view-landing-order-browser.test.ts). An answer that does not stand paints nothing, parks
     // nothing and displaces nothing; the guards re-run inside the parked run for what changes while it is parked.
     const stands = (): boolean => wrap.isConnected && my === fetchSeq;
-    const land = (run: () => void): Promise<void> | void => { if (stands()) return hold.defer(run); };
+    const land = (run: () => void): Promise<void> | void => {
+      if (!stands()) return;
+      const p = hold.defer(run);
+      if (hold.held()) noteParkedLanding(p);   // parked under a press: the bar's raise parked under the same press waits for this one's settle (parkedLanding)
+      return p;
+    };
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
       if (my !== fetchSeq) return Promise.resolve("");   // a newer fetch is out: read nothing, set nothing
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
@@ -3022,9 +3095,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // the open's target: a line takes the Raw view for this open (unsaved: the preference stays), then the row; an offset the next frame
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
-      if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
-      if (pendingOffset !== null) { const n = pendingOffset; pendingOffset = null; requestAnimationFrame(() => { if (wrap.isConnected) scrollToSourceOffset(n); }); }
-      keyboardOnLanding();                       // the open's first paint: the body takes the keyboard (never a reload's landing)
+      landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
     })).catch((err) => land(() => {
       if (!stands()) return;                                    // the same guards as a landing: an older failure, or a gone viewer's, paints over nothing…
       if (editing) { refetchAfterEdit = true; return; }         // …and never over the editor's host (the exit re-reads and says why then)

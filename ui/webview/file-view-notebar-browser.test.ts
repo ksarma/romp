@@ -245,7 +245,7 @@ test("in a browser, the real module (review round 1): the Reload's click disable
       // the keyboard path: the button focused (a Tab's outcome), Enter
       await raiseBar(page, rewritten(60, true), MT3);
       await page.evaluate(() => { (document.querySelector("#fileview-save-err button") as HTMLElement).focus(); });
-      assert.equal(await activeName(page), "BUTTON.fileview-btn.fileview-err-dl", cell + ": the button holds the keyboard before Enter");
+      assert.equal(await activeName(page), "BUTTON.fileview-btn.fileview-err-act", cell + ": the button holds the keyboard before Enter");
       paints = await page.evaluate(() => (window as any).__paints);
       await page.keyboard.press("Enter");
       await paintsReach(page, paints + 1); await frames(page, 3);
@@ -429,5 +429,82 @@ test("in a browser, the real module (review round 3): a heading target on a pict
       assert.deepEqual(errors, [], mode + ": no page errors");
       await page.close();
     }
+  });
+});
+
+// ── the review's round 5: the bar is one line, and the Comment float goes when the bar's raise moves the passage ──────────────
+type Row = { barHeight: number; textTop: number; textBottom: number; btnTop: number; btnBottom: number; mainTop: number };
+/** In the page: the bar's own words' box (a Range over its first text node), its button's box, its height, and the body row's top. */
+function readRow(): Row {
+  const bar = document.getElementById("fileview-save-err")!;
+  const txt = Array.from(bar.childNodes).find((n) => n.nodeType === 3)!;
+  const range = document.createRange(); range.selectNodeContents(txt);
+  const tr = range.getBoundingClientRect(), br = bar.getBoundingClientRect(), bt = bar.querySelector("button")!.getBoundingClientRect();
+  const main = document.querySelector(".fileview-main")!.getBoundingClientRect();
+  return { barHeight: br.height, textTop: tr.top, textBottom: tr.bottom, btnTop: bt.top, btnBottom: bt.bottom, mainTop: main.top };
+}
+
+test("in a browser, the real module (review round 5): the changed-on-disk bar is ONE line, its Reload on the words' line (before the fix: dressed as the refusal pane's block Download, the button stood on a second row under the words and the bar was 89 px tall at every width); the body row moves down by the bar's height; pane at 300 and 700 px and the chat modal at 380", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    for (const [mode, w] of [["pane", 300], ["pane", 700], ["chat", 380]] as Array<["pane" | "chat", number]>) {
+      const cell = mode + " " + w + "px";
+      const { page, errors } = await openViewer(browser, mode, w, 600);
+      const mainBefore: number = await page.evaluate(() => document.querySelector(".fileview-main")!.getBoundingClientRect().top);
+      await raiseBar(page, LONG2, MT2);
+      const r: Row = await page.evaluate(readRow);
+      const centre = (a: number, b: number) => (a + b) / 2;
+      assert.ok(r.btnTop < r.textBottom && r.btnBottom > r.textTop, cell + `: the button shares the words' line (button ${r.btnTop} to ${r.btnBottom}, words ${r.textTop} to ${r.textBottom}; before the fix: under it)`);
+      assert.ok(Math.abs(centre(r.btnTop, r.btnBottom) - centre(r.textTop, r.textBottom)) < 8, cell + `: one row: the button's centre within 8 px of the words' (${centre(r.btnTop, r.btnBottom)} vs ${centre(r.textTop, r.textBottom)})`);
+      assert.ok(r.barHeight < 70, cell + ": the bar is one line tall (" + r.barHeight + " px; before the fix: 88.9)");
+      near(r.mainTop - mainBefore, r.barHeight, cell + ": the body row moved down by the bar's height");
+      assert.deepEqual(errors, [], cell + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+/** With the body at its top, drag across the first twelve characters of the paragraph starting with `text`, so the panel's mouseup
+ *  offers the Comment float (file-comments-float-scroll-browser.test.ts's gesture). */
+async function selectIn(page: any, text: string): Promise<void> {
+  await page.evaluate(() => { getSelection()!.removeAllRanges(); (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; });
+  await frames(page, 2);
+  const r = await page.evaluate((t: string) => {
+    const p = Array.from(document.querySelectorAll(".fileview-md > p")).find((e) => (e.textContent || "").startsWith(t)) as HTMLElement;
+    const range = document.createRange(); range.setStart(p.firstChild!, 0); range.setEnd(p.firstChild!, 12);
+    const b = range.getBoundingClientRect();
+    return { x1: b.left + 1, x2: b.right - 1, y: b.top + b.height / 2 };
+  }, text);
+  await page.mouse.move(r.x1, r.y);
+  await page.mouse.down();
+  await page.mouse.move(r.x2, r.y, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForFunction(() => { const f = document.querySelector(".fc-float") as HTMLElement | null; return !!f && !f.hidden; }, null, { timeout: 5000 });
+}
+type Float = { bar: boolean; hidden: boolean; floatTop: number; paraTop: number; selected: string };
+/** In the page: whether the bar stands, the Comment float's state and top, the selected paragraph's top, the selection's text. */
+function readFloat(): Float {
+  const f = document.querySelector(".fc-float") as HTMLElement;
+  const p = Array.from(document.querySelectorAll(".fileview-md > p")).find((e) => (e.textContent || "").startsWith("Paragraph 2:")) as HTMLElement;
+  return { bar: !!document.getElementById("fileview-save-err"), hidden: f.hidden, floatTop: f.getBoundingClientRect().top, paraTop: p.getBoundingClientRect().top, selected: String(getSelection()) };
+}
+
+test("in a browser, the real module and the REAL panel (review round 5): with a selection standing and the Comment float offered beside it, the changed-on-disk bar's raise moves the body row down and the float hides, the panel's body size report re-running the float's subject test as the body's scroll and a figure's load do (before the fix: the button stayed where the offer put it, over other text, until a scroll); the selection stands; pane at 800 px", { timeout: 120000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 800, 600);
+    await openPanel(page);
+    await selectIn(page, "Paragraph 2:");
+    const before: Float = await page.evaluate(readFloat);
+    assert.equal(before.hidden, false, "the float is offered beside the selection");
+    assert.equal(before.selected, "Paragraph 2:", "over the selected words");
+    assert.equal(before.bar, false, "no bar yet");
+    await raiseBar(page, LONG2, MT2);   // the file moved on disk; the reader's return (the window's focus) runs the HEAD and raises the bar
+    await frames(page, 2);
+    const after: Float = await page.evaluate(readFloat);
+    assert.equal(after.bar, true, "the bar stands (read before the panel's own poll can land a reload)");
+    assert.ok(after.paraTop > before.paraTop + 10, "the passage moved down under the bar (" + before.paraTop + " to " + after.paraTop + ")");
+    assert.equal(after.hidden, true, "the float hid with the move (before the fix: shown where the offer put it, " + Math.round(after.paraTop - before.floatTop) + " px above the passage, over other text)");
+    assert.equal(after.selected, "Paragraph 2:", "the selection stands");
+    assert.deepEqual(errors, [], "no script error");
+    await page.close();
   });
 });

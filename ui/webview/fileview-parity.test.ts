@@ -42,6 +42,7 @@ const RULES = [
   ".fileview-outline {", ".fileview-outline:focus {", ".fileview-outline-row {", ".fileview-outline-row:hover, .fileview-outline-row.current {", '.fileview-outline-btn[aria-expanded="true"] {',
   "@property --fv-body-w {", ".fileview-md {",
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
+  ".fileview-err-act {",   // the changed-on-disk bar's Reload on the words' line (Slice 6, item 5; the review's round 5)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
   // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
   ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",

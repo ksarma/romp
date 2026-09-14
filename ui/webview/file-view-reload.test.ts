@@ -850,18 +850,28 @@ test("changed on disk (review round 3): a HEAD answered while the pointer is pre
   assert.equal(readBar(wrap).disabled, false); assert.equal(heads(), 1, "no second HEAD");
   reloadButton(wrap).click(); await settle();
   assert.equal(barOf(wrap), null); assert.equal(ctx.mtimeNs(), MT2);
-  // a landing during the press (the panel's poll reloaded the moved file, parked by the same press and run first at the release):
-  // the raise's guards re-run at the release and find the file that shows is the moved one
+  // a landing during the press (the panel's poll reloaded the moved file, parked by the same press and run first at the release,
+  // the raise waiting for its settle: parkedLanding, the review's round 5): the raise's guards re-run after it and find the file
+  // that shows is the moved one
   disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT3 };
   body.dispatchEvent(new Ev("pointerdown", { button: 0 }));
   focusWindow(); await settle();
   assert.equal(barOf(wrap), null);
   ctx.reload(); await settle();                                // parked too (the landing's own hold)
   assert.equal(ctx.mtimeNs(), MT2, "the landing waits for the release as every landing does");
+  // the release order (the review's round 5): both holds listen for the press in the capture phase and `main` is the body's
+  // ancestor, so the row's hold heard it first, installed its release listener first, and its parked run went on the zero timer
+  // first; the raise then inserted a bar over the old mtime, which the landing's settle removed a task later (a flash, and a
+  // press on a bar that then went). The raise now waits for the parked landing's settle, so no bar is inserted at the release.
+  // Counted at the card's insertBefore, the one call noteBar makes (the bar carries its id before it).
+  const card = wrap.querySelector(".fileview")!; const ins = card.insertBefore.bind(card); let raised = 0;
+  card.insertBefore = ((n: El | Txt, ref: El | Txt | null) => { if (n instanceof El && n.id === "fileview-save-err") raised++; return ins(n, ref); }) as unknown as typeof card.insertBefore;
   win.dispatchEvent(new Event("pointerup"));
   await new Promise<void>((r) => setTimeout(r, 2)); await settle();
   assert.equal(ctx.mtimeNs(), MT3, "the landing ran at the release");
   assert.equal(barOf(wrap), null, "…and the raise stood down: the moved file is what shows");
+  assert.equal(raised, 0, "the landing ran first: no bar was inserted and removed at the release (before the fix: one, over the old mtime, gone a task later)");
+  delete (card as any).insertBefore;
   // a press on the bar (the title and actions row ABOVE the notice, which a raise never moves) holds nothing: a HEAD answered
   // under it raises at once
   disk[APP] = { bytes: PY3, type: TEXT, mtimeNs: MT4 };

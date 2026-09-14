@@ -183,10 +183,16 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_a_recent_row_hands_its_place_back_and_the_pane_stores_the_place_the_viewer_hands_it(self):
         files = _read("ui", "webview", "files.ts")
-        # the row's click opens through openHere like every other open, and openHere reads the row's record itself, so the
-        # guide's clause holds for a chat click after a page reload as well (the Slice 6 review, round 1)
+        # the row's click opens through openHere like every other open, and openHere reads the rows' record itself, so the
+        # guide's clause holds for a chat click after a page reload as well (the Slice 6 review, round 1); the record is the
+        # latest among the rows that name the same FILE by the viewer's rule (placeKey: two sessions' rows for one absolute
+        # path are one file), so either session's row lands at the place the file was last read, after a reload as before
+        # one (round 5)
         self.assertIn("openHere(r.path, r.sid, r.identity); }", files)
-        self.assertIn("const place = recent.find((r) => r.path === path && r.sid === sid)?.place ?? null;", files)
+        self.assertIn("const key = placeKey(path, sid);", files)
+        self.assertIn("const place = latestPlace(recent, (r) => placeKey(r.path, r.sid) === key);", files)
+        self.assertIn("export function latestPlace(list: RecentFile[], sameFile: (r: RecentFile) => boolean): RecentPlace | null {",
+                      _read("ui", "webview", "files-recent.ts"))
         self.assertIn("onLeave: (p, sid, rec) => { recent = placeRecent(recent, p, sid, rec); writeStore(); },", files)
         self.assertIn("if (!openFileView(path, sid, { todoId, at, place })) return;", files)
         recent = _read("ui", "webview", "files-recent.ts")
@@ -220,12 +226,16 @@ class TheViewerDoesIt(unittest.TestCase):
         # the guide's Raw clause reads off this gate: a Rendered paint, or the first text paint of a file with no Rendered
         # toggle, spends the heading; a markdown file's Raw paint holds it for the toggle, and the notice waits with it
         self.assertIn('    const rendered = isMd && fmt.md === "rendered";\n', self.viewer)
-        self.assertIn("    if ((rendered || !isMd) && pendingHeading !== null) {", self.viewer)
-        gate = self.viewer[self.viewer.index("if ((rendered || !isMd) && pendingHeading !== null) {"):]
-        gate = gate[:gate.index("\n    }\n")]
+        self.assertIn("    if ((rendered || !isMd) && pendingHeading !== null) spendHeading();", self.viewer)
+        gate = self.viewer[self.viewer.index("const spendHeading = (): void => {"):]
+        gate = gate[:gate.index("\n  };\n")]
         self.assertIn("const h = pendingHeading; pendingHeading = null;", gate, "spent once, on that paint")
         self.assertIn("if (!wrap.isConnected || scrollToFragment(body, h)) return;", gate)
         self.assertIn("noteBar('No section named", gate, "the notice is the same frame's other branch")
+        # a frame over a body with no box (the pane hidden at the paint) parks the target again for the show's repaint, which
+        # spends it through landTarget (the review's round 5: a hidden paint had spent it over the zero layout, no notice)
+        self.assertIn("if (wrap.isConnected && unmeasurable()) { pendingHeading = h; return; }", gate,
+                      "a frame over a boxless body parks it again for the show (round 5)")
         # the seam test that pins the wait itself, so the two records cannot drift apart unnoticed
         seam = _read("ui", "webview", "file-view-seam.test.ts")
         self.assertIn('assert.equal(frames.length, 0, "no landing queued from a Raw paint");', seam)

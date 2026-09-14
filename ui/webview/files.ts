@@ -32,13 +32,13 @@
 // Close returns to the empty state, never to a hidden pane: closeFileView and closeFileBrowse only remove
 // their element, and the placeholder repaints when neither is up (a body childList observer — the event
 // itself, no polling), which also covers the browser's "‹ Files" back path and the conflict Reload's replace.
-import { initFileView, openFileView, setFileViewIdentity, hostStub, readAt, type FileViewIdentity, type At } from "./file-view";
+import { initFileView, openFileView, setFileViewIdentity, hostStub, readAt, placeKey, type FileViewIdentity, type At } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { delegate } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { hostNameNodes } from "./host-prefix";
-import { asIdentity, parseRecent, rememberRecent, placeRecent, RECENT_KEY, type RecentFile } from "./files-recent";
+import { asIdentity, parseRecent, rememberRecent, placeRecent, latestPlace, RECENT_KEY, type RecentFile } from "./files-recent";
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -60,18 +60,23 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
  *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
  *  `at` is the place the link named after its path (a todo's `docs/report.md#results` or `:12`, a `:line` or
  *  `#section` link inside a shown file), validated by the viewer's readAt where it crossed a frame (the relay).
- *  The reader's place the file's Recent row stored (files-recent.ts RecentPlace, the viewer's RememberedPlace by
- *  structure) is read from the row HERE and handed back through openFileView's `place` on every open of the path
- *  with that session, whatever opened it: the shell's relay (a chat click), a link inside a shown file, a pick from
- *  the listing or the row's click. So the note returns to where it was read after a page reload as it does before
- *  one, when the viewer's own in-page memory covers the path (the viewer seats the later of the two records); with
- *  the row's click alone handing the record back, a chat click after a reload opened the note at its top and its
- *  leave wrote that top over the row (the Slice 6 review, round 1). An `at` lands where it points and the viewer
- *  ignores the place then. `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries
- *  it; the recent list does not: a re-open is no longer that todo). */
+ *  The reader's place the file's Recent rows store (files-recent.ts RecentPlace, the viewer's RememberedPlace by
+ *  structure) is read from the rows HERE and handed back through openFileView's `place` on every open of the file,
+ *  whatever opened it: the shell's relay (a chat click), a link inside a shown file, a pick from the listing or a
+ *  row's click. The rows are per path + session; the record read is the latest among the rows that name the same
+ *  FILE by the viewer's own rule (placeKey: an absolute or ~ path is one file for every session, a relative one is
+ *  per session), the file's last leave, which is what the viewer's in-page memory holds for it until a page reload.
+ *  So the note returns to where it was read after a reload as it does before one (the viewer seats the later of the
+ *  two records): with the row's click alone handing the record back, a chat click after a reload opened the note at
+ *  its top and its leave wrote that top over the row (the Slice 6 review, round 1); with the open's own row alone
+ *  read, two sessions' rows for one absolute path landed at the file's latest place before a reload and each at its
+ *  own older place after it (round 5). An `at` lands where it points and the viewer ignores the place then. `todoId`
+ *  is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent list does not: a
+ *  re-open is no longer that todo). */
 function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null): void {
   if (sid && identity) identities.set(sid, identity);
-  const place = recent.find((r) => r.path === path && r.sid === sid)?.place ?? null;   // the row's record, read before the open: a replace-open's leave may rewrite the row, and the viewer takes the later record
+  const key = placeKey(path, sid);                                                // the viewer's rule for one file (file-view.ts placeKey): an absolute or ~ path is one file for every session, a relative one is per session
+  const place = latestPlace(recent, (r) => placeKey(r.path, r.sid) === key);      // the rows' latest record for the file, read before the open: a replace-open's leave may rewrite a row, and the viewer takes the later record
   if (!openFileView(path, sid, { todoId, at, place })) return;
   const known = identity ?? (sid ? identities.get(sid) ?? null : null);
   recent = rememberRecent(recent, { path, sid, identity: known, t: Date.now(), place: null });   // the row keeps a place the viewer stored for it (files-recent.ts rememberRecent)
@@ -135,8 +140,9 @@ initFileView((m) => vscodeApi?.postMessage(m), (m) => {
   // `:line` or `#section` rides as the open's target, and with none the row's place seats it, as on every open here)
   openFile: (p, sid, at) => openHere(p, sid, null, null, at),
   // the reader's place when a file is left (a close, a replace-open, the page hidden), written on the file's Recent
-  // row so the next open of the file here returns to it (openHere reads the row); the pane opened the file, so the
-  // row is there (openHere wrote it), and a file it did not open gets nothing (Slice 6 of plans/markdown-viewer.md, item 3)
+  // row for that session so the next open of the file here returns to it (openHere reads the rows for the file); the
+  // pane opened the file, so the row is there (openHere wrote it), and a file it did not open gets nothing (Slice 6 of
+  // plans/markdown-viewer.md, item 3)
   onLeave: (p, sid, rec) => { recent = placeRecent(recent, p, sid, rec); writeStore(); },
 });
 initFileBrowse((m) => vscodeApi?.postMessage(m), {

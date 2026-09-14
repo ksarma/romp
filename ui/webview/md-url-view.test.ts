@@ -464,5 +464,6 @@ test("local file mode: a sibling link's #fragment lands after the first RENDERED
   // the fragment is the open's `{ heading }` since Slice 6 of plans/markdown-viewer.md (pendingHeading; the former frag option), landed the same way and, when the note has no such section, said so in the notice bar (file-view-seam.test.ts)
   assert.match(OPEN_FN, /let pendingHeading: string \| null = at !== null && "heading" in at && at\.heading \? at\.heading : null;/);
   // …spent after the first Rendered paint of a note, or the first text paint of a file that is not markdown, which has no Rendered toggle to wait for (review round 2)
-  assert.match(OPEN_FN, /if \(\(rendered \|\| !isMd\) && pendingHeading !== null\) \{[^\n]*\n\s*const h = pendingHeading; pendingHeading = null;\s*\n\s*requestAnimationFrame\(\(\) => \{\s*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/);
+  assert.match(OPEN_FN, /if \(\(rendered \|\| !isMd\) && pendingHeading !== null\) spendHeading\(\);/);
+  assert.match(OPEN_FN, /const spendHeading = \(\): void => \{\n\s*const h = pendingHeading; pendingHeading = null;\n\s*if \(h === null\) return;\n\s*requestAnimationFrame\(\(\) => \{\n\s*if \(wrap\.isConnected && unmeasurable\(\)\) \{ pendingHeading = h; return; \}[^\n]*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/, "landed a frame after the paint; a frame over a boxless body parks it again for the show (the review's round 5)");
 });

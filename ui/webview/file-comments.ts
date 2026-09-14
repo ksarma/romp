@@ -4666,7 +4666,12 @@ class Panel {
     });
     window.addEventListener("resize", this.onWindowResize);
     if (typeof ResizeObserver !== "undefined") {
-      this.sizer = new ResizeObserver(() => this.scheduleLayout());
+      // the body's box changing with no scroll and no paint of the panel's (a notice row inserted above the body row or removed
+      // from it: the viewer's changed-on-disk bar, Slice 6 of plans/markdown-viewer.md, item 5) moves the passage under a
+      // standing Comment offer, the third mover after the body's scroll and a figure's load; the layout's own report is the
+      // event and the subject's rect the test, as for those two (hideFloatOnScroll; the review's round 5: the button stood
+      // 119 px above the passage, over another line, until a scroll)
+      this.sizer = new ResizeObserver(() => { this.hideFloatOnScroll(); this.scheduleLayout(); });
       this.sizer.observe(body); this.sizer.observe(row); this.sizer.observe(track);
       this.cardSizer = new ResizeObserver(() => this.scheduleLayout());
     }

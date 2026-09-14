@@ -1591,6 +1591,10 @@ a.fileview-gh-note { border-style: dashed; }
 /* the way out of a refusal: when the file exists but cannot render (413/415), the kernel's words are
    followed by the Download the view could not be — same button treatment as the title bar's */
 .fileview-err-dl { display: block; margin-top: 10px; }
+/* an action on the words' own line: the changed-on-disk bar's Reload (plans/markdown-viewer.md Slice 6, item 5), two words
+   and a button in one row of the card, where the refusal pane's Download stands under a paragraph of the kernel's words
+   (the review's round 5: dressed as that Download, the bar was two rows and 89 px tall at every width) */
+.fileview-err-act { display: inline-block; margin-left: 10px; vertical-align: middle; }
 /* a button inside the dress (the viewer's Download and Reload file, the comments panel's Reload and ✕) is
    .fileview-btn's 0.82em OF THE VIEWER, not of the 0.86em row it sits in: em nesting compounds (ui/CLAUDE.md,
    font sizes), and 0.86 × 0.82 rendered them at 0.705em, smaller than every button beside them. Dividing the

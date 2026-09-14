@@ -7,9 +7,9 @@
 // the viewer hands its host when the file is left (file-view.ts RememberedPlace, through initFileView's
 // `onLeave`): the top block's source span and pixel offset, the view, the file's mtime, the numeric
 // scrollTop and, for a Rendered read, the open folds by ordinal, never a word of the file. The pane hands it back
-// on every open of the path with that session here,
-// the row's click or any other (files.ts openHere, openFileView's `place`), so the note returns to where it was
-// read. The place is used, never shown: the row looks as it did.
+// on every open of the FILE here, the row's click or any other (files.ts openHere, openFileView's `place`), so the note
+// returns to where it was read: the rows are per path + session, the file a row names is the viewer's rule (latestPlace,
+// below), and of the rows for one file the later record seats. The place is used, never shown: the row looks as it did.
 export interface RecentIdentity { name: string; color: { bg: string; fg: string } | null }
 /** The viewer's RememberedPlace (file-view.ts), spelled here so the pane's pure half imports nothing of the viewer:
  *  the same eight fields, by structure. `start`/`end`: the top block's source span; `top`: its top edge's offset from
@@ -88,4 +88,17 @@ export function rememberRecent(list: RecentFile[], entry: RecentFile, max = RECE
  *  is (a place is stored for a file the pane opened, which always has a row; nothing is invented for one it did not). */
 export function placeRecent(list: RecentFile[], path: string, sid: string | null, place: RecentPlace | null): RecentFile[] {
   return list.map((r) => (r.path === path && r.sid === sid ? { ...r, place } : r));
+}
+
+/** The record to seat at an open: the LATEST (by `t`) among the rows `sameFile` admits, null when none of them holds one.
+ *  The rows are per path + session while the viewer's in-page memory is per FILE (file-view.ts placeKey: an absolute or `~`
+ *  path is one file for every session that names it, a relative path one per session, since the kernel resolves it against
+ *  the session's cwd), so files.ts admits the rows whose placeKey is the open's. Two sessions' rows for one absolute path then
+ *  seat the same record, the later, as the in-page memory seats the file's last leave before a page reload; with the open's
+ *  own row alone read, the same row landed at the file's latest place before a reload and at its session's older place after
+ *  one (the Slice 6 review, round 5). A tie keeps the first row admitted, the most recent. */
+export function latestPlace(list: RecentFile[], sameFile: (r: RecentFile) => boolean): RecentPlace | null {
+  let best: RecentPlace | null = null;
+  for (const r of list) if (r.place && sameFile(r) && (!best || r.place.t > best.t)) best = r.place;
+  return best;
 }

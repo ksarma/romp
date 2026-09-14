@@ -6,8 +6,8 @@
 // pre-close value within a pixel (the plan's acceptance). Then the note rewritten below the block (the span is still a
 // block of the text: the same seat), rewritten above it (the span is no block of the new text: the numeric scrollTop,
 // clamped), a page reload (localStorage survives, and the shell's relay as the FIRST open after it returns to the block
-// and keeps the row's record: the pane reads the row's record for every open, not for the row's click alone; the Slice 6
-// review, round 1), a second note opened OVER the first (the replace path writes the first's place; both rows hold
+// and keeps the row's record: the pane reads the rows' latest record for the file on every open, not for the row's click
+// alone; the Slice 6 review, rounds 1 and 5), a second note opened OVER the first (the replace path writes the first's place; both rows hold
 // theirs), and a relay re-open with no row (the viewer's own in-page memory). Leg 3 holds a note's pictures in flight
 // (the route answers an .svg when the test says so) for the seat written again at each picture's load, and for the events
 // that retire it: the reader's own scroll, and the next text paint (the review's rounds 3 and 4). The
@@ -243,6 +243,11 @@ test("in a browser: a second note opened OVER the first writes the first's place
 // by the close (review round 4: the two the page can show, a second figure released after the reader scrolled on and after a
 // Rendered/Raw round trip, each leaving the block at the top where it was and the record's number written back nowhere; the
 // close discards the body with the listener, so nothing of it can show).
+// The round 4 scenes are a behavioural pin, not a fails-before: the retires are round 3's code (file-view.ts at 7fbced030
+// carries armReseat's `stands` guard and renderBody's dropReseat call), so this case is green over a `git archive` of
+// 7fbced030 and red over the two mutants round 4 measured (the `stands` guard made never to fail; renderBody's dropReseat
+// call removed); the round 3 assertion stays red over the 27c56fbf7 archive. Named here so the plan's fails-before ledger
+// can say so (the review's round 5).
 test("in a browser (review round 3): a note with two figures above the passage, changed above the passage and reopened from Recent after a page reload with the figures still in flight: the numeric seat lands over the short layout, and the first figure's load seats the record's scrollTop again, so the body ends at the record's number with the block that sits there in the full layout (before: a figure's height past the record, the short layout's block carried along by scroll anchoring); (review round 4) the reader then scrolls on, and the second figure's load moves nothing: the reader's block stays at the top and the record's number is not written back; after a second reload the figures held again, a Rendered/Raw round trip before their loads ends the re-seat: the paint's own seat stands and the record's number is not written back", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (h) => {
     const FIG = ROOT + "/docs/figure.svg", FIG2 = ROOT + "/docs/figure2.svg";
