@@ -4452,6 +4452,15 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md .fv-gate { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; min-width: 14em; min-height: 3.2em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--dim); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; cursor: pointer; }
 .fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible { border-color: var(--accent); color: var(--fg); }
 .fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) { display: none; }
+/* the label the viewer puts after a figure that failed (Slice 7 of plans/markdown-viewer.md, item 2): file-view.ts hears the
+   img's error event on the body and inserts `span.fv-figerr` as the img's next sibling, its text naming the authored src and
+   the alt. The gate's dress (a dashed box on the wash at the ladder's 0.86em, centred, capped at the box's width) in the
+   error dress's ink, var(--warn), without the gate's min size and cursor: nothing in it is clicked, and no button stands in
+   it, so the sizes test's compensation for a button in the dress is not involved. A side margin keeps it off the alt text
+   or the prose beside it, and overflow-wrap lets a long src wrap inside the cap. The print block prints it black with no
+   wash, beside the gate's line (the block's .fileview-md ink is outranked by this rule). Byte-equal in both sheets
+   (fileview-parity.test.ts). */
+.fileview-md .fv-figerr { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; margin: 0 0.3em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--warn); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));
@@ -5135,6 +5144,7 @@ body.dense-chrome .bg-task.bg-failed > .bg-head > .bg-status { display: none; }
   .fileview-md code.md-math-src { text-decoration-color: black; }
   .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }
   .fileview-md .fv-gate { background: none; }
+  .fileview-md .fv-figerr { color: black; border-color: black; background: none; }
   .fileview-md .md-callout { --callout: black; }
   .fileview-md mark.md-mark { background: color-mix(in srgb, black 15%, transparent); }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }
