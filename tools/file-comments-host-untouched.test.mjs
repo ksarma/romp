@@ -397,7 +397,7 @@ test('every decision verb checks after its stage and before the log append or th
   ascending('doSave', body('doSave'), [
     'loadedComments = commentsApartFromAnchorAt(store.comments);',
     'store.suggestions = fit.records;',
-    'staged = stageSidecar(root, paths.storePath, store, a.content);',
+    'staged = stageSidecar(root, paths.storePath, store, content);',
     "requireCommentsUntouched(ctx, store, loadedComments, 'save');",
     'discardSidecar(staged);',
     'commitSidecar(staged, paths.storePath);',

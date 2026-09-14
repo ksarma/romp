@@ -847,7 +847,12 @@ function openRegular(ctx) {
 // stamp over text the caller never saw. `isText` says whether the bytes ARE UTF-8 text (no NUL
 // byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
 // when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
-// the file refuse (`not-text`) rather than write that decode back over the bytes. `bytes` is the
+// the file refuse (`not-text`) rather than write that decode back over the bytes. A leading U+FEFF
+// stays in `text` (decodeTextOrNull's ignoreBOM: true), as the CLIs keep it, while the fetch strips it
+// from the text the viewer shows, so on such a file this script's offsets run one ahead of the
+// view's: the status's `bom` bit reconciles them for the panel, and a save from the view puts the
+// BOM back ahead of its content and moves its records one on (doSave), so the bytes on disk, the
+// sidecar's fingerprint and the CLIs' text keep agreeing. `bytes` is the
 // size on disk, the "before" half of the edit entry a save logs. `cannot` is set by the verbs
 // that WRITE the file (reject, reject-all, save; their clause, "cannot save" / "cannot write"):
 // the same fstat that takes the mtime then refuses `too-large` past the text cap BEFORE the bytes
@@ -3833,6 +3838,19 @@ export function editDiff(oldText, newText, name) {
 // and the reply says `logged: false`; so does a save of a file under a root that has neither a
 // sidecar, a log, nor a tracked flag (the request a browser sends when its status predates a peer's
 // toggle-off; the host does not take its word for the route).
+// A BOM file (plans/markdown-viewer.md, Slice 7, item 4; the build's contract C4): the fetch strips the
+// leading U+FEFF from the text the viewer shows, so the editor's `content` and the records its field
+// holds are in the view's coordinates, one short of this script's text on such a file. When this
+// script's text begins with U+FEFF and `content` does not, the text this save works with is the
+// content with the BOM put back and every submitted record's `from` is moved one on, before anything
+// reads them (browserHint's rule, applied to a whole save), so fitRecords, editDiff, bytesAfter,
+// editShift, checkReplyFits, prepareFileWrite and stageSidecar see one coordinate system, the file
+// keeps its first three bytes, the edit entry shows no first-line change, and the reply's `bom` is
+// true with its hunks one ahead of the view, as status's are. Keyed on the bytes this save read,
+// never on the client's word; a content that already begins with U+FEFF is written as it is and
+// nothing is shifted; a file without a BOM is untouched by the rule. Before it, a save from the view
+// dropped the file's BOM, wrote the records over the BOM-less text and logged a phantom first-line
+// change (the editor's Save was the one door that lost the byte; reject writes over this script's own text).
 function doSave(ctx) {
   const a = ctx.args;
   if (typeof a.content !== 'string') throw new BadRequest('save needs content: the whole new text as a string');
@@ -3869,9 +3887,17 @@ function doSave(ctx) {
     }
     checkDiskSize(ctx, file, 'cannot save');
     checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
-    checkContentText(ctx.shown, a.content);
-    checkTooLarge(ctx.shown, a.content);
-    const fit = fitRecords(a.content, a.suggestions);
+    // The BOM rule (the header): the content with the BOM put back and the records one on, when this
+    // script's text begins with U+FEFF and the content does not; a record whose `from` is not an
+    // integer passes untouched for fitRecords to name. Every read below uses `content` and `suggestions`.
+    const bomBack = file.text.charCodeAt(0) === 0xFEFF && a.content.charCodeAt(0) !== 0xFEFF;
+    const content = bomBack ? `\uFEFF${a.content}` : a.content;
+    const suggestions = bomBack
+      ? a.suggestions.map((s) => (s && typeof s === 'object' && !Array.isArray(s) && Number.isInteger(s.from) ? { ...s, from: s.from + 1 } : s))
+      : a.suggestions;
+    checkContentText(ctx.shown, content);
+    checkTooLarge(ctx.shown, content);
+    const fit = fitRecords(content, suggestions);
     if (fit.misfit) {
       throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
     }
@@ -3906,7 +3932,7 @@ function doSave(ctx) {
       // roots has no author on record to compare, and the texts and ts are the client's (the header's
       // rule on records). Named in the caller's order.
       const misnamed = [];
-      for (const s of a.suggestions) {
+      for (const s of suggestions) {
         const rootRec = sidecarRootOf(store, String(s.id));
         if (!rootRec) continue;
         const got = authorOf(s);
@@ -3923,12 +3949,12 @@ function doSave(ctx) {
       && (!!store || exists(paths.logPath) || isTrackedFile(root, ctx.abs));
     const entries = [];
     if (logs) {
-      const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
+      const { diff, truncated } = editDiff(file.text, content, path.basename(ctx.abs));
       entries.push(logEntry('edit', {
         mtimeBeforeNs: file.fileMtimeNs,
         mtimeAfterNs: file.fileMtimeNs, // a stand-in of the same width; the write's own mtime replaces it below
         bytesBefore: file.bytes,
-        bytesAfter: Buffer.byteLength(a.content, 'utf8'),
+        bytesAfter: Buffer.byteLength(content, 'utf8'),
         diff,
         truncated,
       }));
@@ -3945,10 +3971,10 @@ function doSave(ctx) {
       // the person's edit moved what follows it, and the changes the editor accepted stand in the text
       // while their records leave the sidecar in this write: the refresh follows a tied passage through
       // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
-      const applied = editShift(file.text, a.content);
+      const applied = editShift(file.text, content);
       store[WRITE_SHIFTS] = { settled: settledBySave(loaded, accepted, applied), applied };
     }
-    checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
+    checkReplyFits(ctx, { root, paths, store, text: content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
       'the change records and the decisions taken in the editor');
     // The writes, in reject's order (doReject): the file's new bytes staged beside it, the sidecar
     // staged against the new text, checked (requireCommentsUntouched: the decisions this save carries
@@ -3959,14 +3985,14 @@ function doSave(ctx) {
     // file's own: a rename keeps the inode's mtime, so the value is the one the landed file shows.
     let prepared;
     try {
-      prepared = prepareFileWrite(ctx.abs, a.content);
+      prepared = prepareFileWrite(ctx.abs, content);
     } catch (e) {
       throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
     }
     if (store) {
       let staged;
       try {
-        staged = stageSidecar(root, paths.storePath, store, a.content);
+        staged = stageSidecar(root, paths.storePath, store, content);
       } catch (e) {
         discardFileWrite(prepared);
         throw cannotWriteSidecar(ctx, paths, e);
@@ -4008,8 +4034,8 @@ function doSave(ctx) {
       throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, logs ? { logged: true } : null);
     }
     const landed = landedState('saved');
-    const after = store ? settleLanded(ctx, paths, store, a.content, landed) : null;
-    return [{ root, paths, store: after, text: a.content, fileMtimeNs }, { logged: logs }, { landed }];
+    const after = store ? settleLanded(ctx, paths, store, content, landed) : null;
+    return [{ root, paths, store: after, text: content, fileMtimeNs }, { logged: logs }, { landed }];
   });
 }
 
