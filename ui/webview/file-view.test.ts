@@ -654,10 +654,14 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
 // C, executed: wrap mode's numbering. A flat gutter misaligns the moment one logical line wraps onto
 // several visual lines, so wrap mode restructures — each logical line is a .fv-cl row numbered by a CSS
 // counter — instead of shipping a drifting column. hljs spans can cross newlines, so each row must
-// re-open what the previous row left unclosed (render.ts's wrapCodeLines balance walk).
-test("wrap mode: per-line rows, spans rebalanced across newlines, no phantom trailing row", () => {
+// re-open what the previous row left unclosed (render.ts's wrapCodeLines balance walk). Since Slice 7 of
+// plans/markdown-viewer.md (item 7) a line ends at a CRLF, a lone CR or an LF (RAW_ROW_SPLIT, tried in that
+// order so a CRLF is one ending), so a CR-only file gives one row per line where it gave ONE row (the HTML
+// parser turned its CRs into breaks inside it) and no row's text carries a "\r".
+test("wrap mode: per-line rows split on CRLF, a lone CR and LF, spans rebalanced across any of them, no phantom trailing row", () => {
+  const RAW_ROW_SPLIT = /\r\n|\r|\n/;
   const wrapNumberedHtml = (html: string): string => {
-    const lines = html.split("\n");
+    const lines = html.split(RAW_ROW_SPLIT);
     if (lines.length && lines[lines.length - 1] === "") lines.pop();
     let open: string[] = [];
     return lines.map((ln) => {
@@ -683,8 +687,44 @@ test("wrap mode: per-line rows, spans rebalanced across newlines, no phantom tra
   assert.match(rows[1], /^<span class="fv-ct"><span class="hljs-string">b"<\/span>/);
   assert.equal((wrapNumberedHtml("a\n").match(/fv-cl/g) || []).length, 1,
                "a trailing newline is not a phantom row — same rule as the gutter");
+  // the three endings (Slice 7, item 7): one row per line, whichever ending the file has, and no CR left in a row
+  const texts = (html: string): string[] => wrapNumberedHtml(html).split('<span class="fv-cl">').filter(Boolean).map((r) => r.replace(/<[^>]*>/g, ""));
+  assert.deepEqual(texts("a\rb\rc\r"), ["a", "b", "c"], "a CR-only file: three rows (before: one row holding the three CRs)");
+  assert.deepEqual(texts("a\r\nb\r\nc\r\n"), ["a", "b", "c"], "a CRLF file: three rows, a CRLF one ending, no phantom trailing row (before: three rows each ending in a CR)");
+  assert.deepEqual(texts("one\rtwo\r\nthree\nfour"), ["one", "two", "three", "four"], "a mixed file: one row per line, the last line without an ending kept");
+  assert.deepEqual(texts("\r\r"), ["", ""], "two empty CR-ended lines: two rows, the trailing ending popped once");
+  for (const html of ["a\rb\rc\r", "a\r\nb\r\nc\r\n", "one\rtwo\r\nthree\nfour"]) assert.doesNotMatch(wrapNumberedHtml(html), /[\r\n]/, "no row's markup carries a CR or an LF: " + JSON.stringify(html));
+  // a string token spanning a lone CR: closed at the end of row 1, re-opened at the start of row 2, as across an LF
+  const cr = wrapNumberedHtml('<span class="hljs-string">"a\rb"</span>\rplain').split('<span class="fv-cl">').filter(Boolean);
+  assert.equal(cr.length, 3, "three logical lines, three rows");
+  for (const row of cr) {
+    const opens = (row.match(/<span[^>]*>/g) || []).length;
+    const closes = (row.match(/<\/span>/g) || []).length;
+    assert.equal(opens + 1, closes, "a row must close every span it opens across a CR: " + row);
+  }
+  assert.match(cr[0], /<span class="hljs-string">"a<\/span>/);
+  assert.match(cr[1], /^<span class="fv-ct"><span class="hljs-string">b"<\/span>/);
+  assert.match(cr[2], /^<span class="fv-ct">plain<\/span>/);
   // replica ↔ source
   assert.match(VIEW, /return `<span class="fv-cl"><span class="fv-ct">\$\{prefix\}\$\{ln\}\$\{suffix\}<\/span><\/span>`;/);
+  assert.match(VIEW, /\nconst RAW_ROW_SPLIT = \/\\r\\n\|\\r\|\\n\/;\n/, "one module-level regex, CRLF first, then a lone CR, then LF (contract C6)");
+  assert.match(VIEW, /function wrapNumberedHtml\(html: string\): string \{\n  const lines = html\.split\(RAW_ROW_SPLIT\);\n  if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/, "the rows split on it, the trailing empty piece popped as before");
+  assert.match(VIEW, /const wrap = el\("div", "fileview-code"\);\n  const lines = text\.split\(RAW_ROW_SPLIT\);\n  if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/, "the gutter branch's count splits the same way, so the two stay in step");
+  const rawView = VIEW.slice(VIEW.indexOf("\nconst RAW_ROW_SPLIT ="), VIEW.indexOf("\n// Land an in-document fragment on its target."));
+  assert.ok(rawView.includes("function wrapNumberedHtml(") && rawView.includes("function codeBlock("), "the slice holds both functions");
+  assert.doesNotMatch(rawView, /split\("\\n"\)/, "no LF-only split left in the Raw view's builders");
+});
+
+// C: the seam's scrollToOffset reads the row through the anchor map's verified row map (Slice 7 of plans/markdown-viewer.md,
+// item 7; contract C6), so it follows the split above whatever the file's endings; the LF-only counter it kept is gone.
+test("source: scrollToOffset finds the row through rawRowForOffset and, when the map refuses, counts the row over the source with the viewer's own split; the LF counter is gone", () => {
+  const closure = VIEW.split("    scrollToOffset: (n) => {")[1].split("\n    },")[0];
+  assert.match(closure, /^\n      const src = viewText\(\);\n      const code = body\.querySelector\("code\.hljs"\);\n      if \(src === null \|\| !code\) return;\n      const rows = code\.querySelectorAll\("\.fv-cl"\);\n      if \(!rows\.length\) return;\n/, "the guards as before");
+  assert.match(closure, /\n      const row = rawRowForOffset\(code, src, n\);\n      const target = row \?\? rows\[Math\.min\(src\.slice\(0, Math\.max\(0, n\)\)\.split\(RAW_ROW_SPLIT\)\.length - 1, rows\.length - 1\)\];\n      \(target as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);$/, "the map first; the count over the source with the same split, clamped to the last row, when it refuses");
+  assert.doesNotMatch(closure, /match\(\/\\n\/g\)/, "the second line counter is gone (before: LF alone, so every offset in a CR-only file landed on row 0)");
+  assert.doesNotMatch(VIEW, /match\(\/\\n\/g\) \|\| \[\]\)\.length;\s*\/\/ one \.fv-cl per logical line/, "nowhere else either");
+  assert.match(VIEW, /^import \{ rawRowForOffset \} from "\.\/anchor-map";/m, "imported on a line of its own (the existing anchor-map import line keeps its pin)");
+  assert.equal((VIEW.match(/rawRowForOffset\(/g) || []).length, 1, "one call, the seam's");
 });
 
 // C: the toggle and the CSS that carries the honest gutter answer

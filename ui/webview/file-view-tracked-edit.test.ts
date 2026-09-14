@@ -289,6 +289,7 @@ const ROOT = "/repo/notes-api";
 const REPORT = ROOT + "/docs/report.md";
 const DOC = "# Report\n\n## Findings\nThe api session cut p95 latency by 40%.\n\nWe recommend shipping the cache in v1.2.\n";
 const CRLF_DOC = DOC.replace(/\n/g, "\r\n");
+const CR_DOC = DOC.replace(/\n/g, "\r");                   // a CR-only file (Slice 7 of plans/markdown-viewer.md, item 7)
 const MT = "1757145600000000001";
 const NS = (n: number) => "17571456000000000" + String(n).padStart(2, "0");   // a later mtime, in the fixture's own clock
 const T0 = 1757145600000;
@@ -305,7 +306,9 @@ function status(hunks: Hunk[], over: Partial<Status> = {}): Status {
 }
 // the host's words for an append that failed on a save that landed (tools/file-comments-host.mjs, the save verb's `landed`)
 const WARN = "saved, but the edit was not written to the comments log (the log file is not writable) — the Log will not show this edit";
-const CRLF_WORDS = /^The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes\. /;
+// the refusal's sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md (item 7): CodeMirror's document model
+// rewrites a lone CR to LF as it loads the text, as norm rewrites a CRLF, so the same refusal covers both (CR_REFUSAL)
+const CR_WORDS = /^The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes\. /;
 
 // ── the probe: an action whose only job is to keep the ctx the viewer hands it ──────────────────────
 let seam: FileViewActionCtx | null = null;
@@ -407,7 +410,7 @@ test("CRLF: pending changes that land during the consent read are refused at the
   assert.equal(ed.mounted, 0, "no mount: the record's offsets are into the CRLF disk text, the buffer would be LF");
   assert.equal(ctx.editing(), false, "edit mode was never entered");
   assert.equal(b.save.hidden, true); assert.equal(b.edit.hidden, false);
-  assert.match(errBar(body)!.textContent, CRLF_WORDS, "the consequence, stated as the click states it");
+  assert.match(errBar(body)!.textContent, CR_WORDS, "the consequence, stated as the click states it");
   assert.match(errBar(body)!.textContent, /1 change is pending in this file, so Edit is off here/, "…with the panel's refusal");
   assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
   assert.ok(body.childNodes.length > 0 && aboveRow(body), "above the body row; the read view stands");
@@ -469,7 +472,50 @@ test("the click's guard still comes first: a CRLF file whose pending change is k
   assert.equal(versionReads(), 0, "no consent popup for an Edit that cannot happen");
   assert.equal(ed.mounted, 0);
   assert.equal(ctx.editing(), false);
-  assert.match(errBar(body)!.textContent, CRLF_WORDS);
+  assert.match(errBar(body)!.textContent, CR_WORDS);
+});
+
+test("a lone CR (Slice 7 of plans/markdown-viewer.md, item 7): pending changes known at the click are refused in the widened words, before the consent read; the editor's document model rewrites a lone CR to LF as it loads the text, so the records would sit over rewritten endings (before Slice 7: the refusal keyed on CRLF alone and the editor mounted)", async (t) => {
+  const o = await open(t, CR_DOC);
+  const { ctx, body, b, fv } = o;
+  await answerStatus(status([hunk("h1")]));
+  b.edit.click();
+  await settle();
+  assert.equal(versionReads(), 0, "no consent popup for an Edit that cannot happen");
+  assert.equal(ed.mounted, 0, "no mount over a buffer whose every ending the editor would rewrite");
+  assert.equal(ctx.editing(), false);
+  assert.match(errBar(body)!.textContent, CR_WORDS, "the widened sentence");
+  assert.ok(errBar(body)!.textContent.startsWith(fv.CR_REFUSAL + " 1 change is pending in this file, so Edit is off here"), "the exported constant, a space, the panel's refusal (contract C5)");
+  assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
+  assert.ok(aboveRow(body), "above the body row; the read view stands");
+  assert.equal(b.save.hidden, true); assert.equal(b.edit.hidden, false);
+});
+
+test("a lone CR: pending changes that land during the consent read are refused at the mount, in the same words", async (t) => {
+  const o = await open(t, CR_DOC);
+  const { ctx, body, b } = o;
+  const hold = holdVersion();
+  b.edit.click();
+  await settle();
+  assert.equal(errBar(body), null, "nothing refused at the click: nothing was pending");
+  assert.equal(versionReads(), 1, "the consent read is out");
+  await answerStatus(status([hunk("h1")]));            // one change lands inside the round-trip
+  hold.release();
+  await settle();
+  assert.equal(ed.mounted, 0, "no mount");
+  assert.equal(ctx.editing(), false);
+  assert.match(errBar(body)!.textContent, CR_WORDS);
+  assert.match(errBar(body)!.textContent, /1 change is pending in this file, so Edit is off here/);
+});
+
+test("a lone CR without pending changes: Edit mounts as before (the refusal is about the records, not the endings), and the viewer hands the chunk the text with its CRs (norm rewrites CRLF alone; the rewrite of a lone CR is the editor's own document model's, so a save writes LF where the file had CR: a pre-existing edge, recorded, not fixed)", async (t) => {
+  const o = await open(t, CR_DOC);
+  await answerStatus(status([]));
+  await enterEdit(o);
+  assert.equal(ed.mounted, 1, "the editor mounted");
+  assert.equal(o.ctx.editing(), true);
+  assert.equal(ed.buf, CR_DOC, "the text as the viewer hands it: the CRs intact (the stub is not CodeMirror; the real chunk splits the string on CRLF, CR or LF and joins its lines with LF)");
+  assert.equal(ed.trackOpts, null, "nothing pending: no track option");
 });
 
 // ── 2. the host's logWarning reaches the viewer's note bar ──────────────────────────────────────────
@@ -532,8 +578,12 @@ test("a tracked save whose reply carries an empty or non-string logWarning raise
 
 const VIEW = fs.readFileSync(nodePath.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
 
-test("source: trackedRefusal guards the click and the mount over each call's own begin(), before edit mode is entered", () => {
-  assert.match(VIEW, /const trackedRefusal = \(pending: \{ refusal: string \} \| null\): string \| null => \{\n\s*if \(!pending\) return null;\n\s*if \(chunkTracks === false\) return pending\.refusal;\n\s*if \(text !== null && \/\\r\\n\/\.test\(text\)\) return CRLF_REFUSAL \+ pending\.refusal;/);
+test("source: trackedRefusal guards the click and the mount over each call's own begin(), before edit mode is entered; it refuses over ANY CR in the text with the exported CR_REFUSAL (Slice 7 of plans/markdown-viewer.md, item 7; contract C5)", () => {
+  assert.match(VIEW, /const trackedRefusal = \(pending: \{ refusal: string \} \| null\): string \| null => \{\n\s*if \(!pending\) return null;\n\s*if \(chunkTracks === false\) return pending\.refusal;\n\s*if \(text !== null && \/\\r\/\.test\(text\)\) return CR_REFUSAL \+ " " \+ pending\.refusal;\n\s*return null;\n\s*\};/,
+    "any CR, not CRLF alone (before: /\\r\\n/ and a closure const with a trailing space)");
+  assert.match(VIEW, /^export const CR_REFUSAL = "The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes\.";$/m, "the sentence, exported at module scope so the guide's pin can hold it, without a trailing space");
+  assert.doesNotMatch(VIEW, /CRLF_REFUSAL/, "the closure const is gone");
+  assert.equal((VIEW.match(/CR_REFUSAL/g) || []).length, 4, "the export, its doc comment's expression, the refusal comment's mention and the one use in trackedRefusal");
   const click = VIEW.split('editBtn.addEventListener("click", () => {')[1].split("ensureEditingAllowed")[0];
   assert.match(click, /const refused = trackedRefusal\(trackedEdit \? trackedEdit\.begin\(\) : null\);\n\s*if \(refused\) \{ noteBar\(refused\); return; \}/, "the click: a refusal needs no consent popup");
   const enter = VIEW.split("const enterEdit = () => {")[1].split("editorChunk().then(")[0];

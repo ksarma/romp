@@ -965,19 +965,52 @@ test("a first open whose fetch fails paints the pane and fires the hooks like a 
   assert.equal(ctx.mediaElement(), null); assert.deepEqual(ctx.renderedImages(), []);
 });
 
-test("scrollToOffset maps a source offset to its Raw row: one .fv-cl per logical line", async (t) => {
+test("scrollToOffset maps a source offset to its Raw row through the anchor map's verified row map: one .fv-cl per logical line, whichever ending the file has (Slice 7 of plans/markdown-viewer.md, item 7); past the end lands on the last row", async (t) => {
   const o = await open(REPORT, t);
   o.b.raw.click();
-  const code = o.body.querySelector("code.hljs")!;
   // the stand-in does not parse innerHTML; lay the rows codeBlock's markup would produce
-  const lines = DOC.split("\n"); lines.pop();
-  code.replaceChildren(...lines.map((ln) => { const cl = new El("span"); cl.className = "fv-cl"; cl.appendChild(new Txt(ln)); return cl; }));
-  const rows = code.querySelectorAll(".fv-cl");
+  let rows = layRows(o.body.querySelector("code.hljs")!, DOC);
   o.ctx.scrollToOffset(DOC.indexOf("The api session"));
-  assert.equal(rows[3].scrolled, 1, "offset → the third newline → row 3");
-  assert.equal(rows.map((r) => r.scrolled).reduce((a, b) => a + b, 0), 1, "one row scrolled");
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 1, 0, 0], "an LF file: the offset's line is the fourth, row 3, one row scrolled");
+  assert.deepEqual(rows[3].scrolledWith, { block: "center" }, "centred");
   o.ctx.scrollToOffset(DOC.length + 50);
-  assert.equal(rows[rows.length - 1].scrolled, 1, "past the end clamps to the last row");
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 1, 0, 1], "past the end lands on the last row (the map's last row whose start is at or before the offset)");
+  // a CR-only file (a classic Mac text, say): the same six lines with a CR after each; before item 7 the seam counted
+  // LF alone, so every offset landed on row 0 (and the viewer painted ONE row for the whole file)
+  const CR_DOC = DOC.replace(/\n/g, "\r");
+  disk[REPORT] = { bytes: CR_DOC, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000002" };
+  o.ctx.reload(); await settle();
+  assert.equal(o.ctx.text(), CR_DOC, "the CR text landed"); assert.equal(o.ctx.mode(), "raw", "still the Raw view");
+  rows = layRows(o.body.querySelector("code.hljs")!, CR_DOC);
+  assert.equal(rows.length, 6, "six rows for six CR-ended lines");
+  o.ctx.scrollToOffset(CR_DOC.indexOf("The api session"));
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 1, 0, 0], "a CR-only file: the offset's row, row 3 (before item 7: row 0, the LF count)");
+  o.ctx.scrollToOffset(CR_DOC.indexOf("We recommend"));
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 1, 0, 1], "the sixth line's offset: row 5");
+  o.ctx.scrollToOffset(CR_DOC.length + 50);
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 1, 0, 2], "past the end: the last row, as for LF");
+  // a CRLF file: a CRLF is one ending, so the rows and the offsets are the file's
+  const CRLF_DOC = DOC.replace(/\n/g, "\r\n");
+  disk[REPORT] = { bytes: CRLF_DOC, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000003" };
+  o.ctx.reload(); await settle();
+  rows = layRows(o.body.querySelector("code.hljs")!, CRLF_DOC);
+  assert.equal(rows.length, 6);
+  o.ctx.scrollToOffset(CRLF_DOC.indexOf("We recommend"));
+  assert.deepEqual(scrolls(rows), [0, 0, 0, 0, 0, 1], "a CRLF file: the sixth line's offset lands on row 5");
+  // the map refuses (rows that do not match the source: a bug's shape, laid here by hand): the row is counted over the
+  // source with the viewer's own split, exact by construction, never a silent last row and never the LF count
+  disk[REPORT] = { bytes: CR_DOC, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000004" };
+  o.ctx.reload(); await settle();
+  const code = o.body.querySelector("code.hljs")!;
+  const wrong = layRows(code, "w\nx\ny\nz\nq\nv\n");
+  assert.equal(wrong.length, 6);
+  o.ctx.scrollToOffset(CR_DOC.indexOf("The api session"));
+  assert.deepEqual(scrolls(wrong), [0, 0, 0, 1, 0, 0], "the map refused (the rows' text is not the source's), the count over the source with the CR split gives row 3 (before item 7: row 0)");
+  o.ctx.scrollToOffset(CR_DOC.length + 50);
+  assert.deepEqual(scrolls(wrong), [0, 0, 0, 1, 0, 1], "past the end, clamped to the last row");
+  const three = layRows(code, "w\nx\ny\n");
+  o.ctx.scrollToOffset(CR_DOC.indexOf("We recommend"));
+  assert.deepEqual(scrolls(three), [0, 0, 1], "the count beyond the rows laid: clamped to the last of them");
 });
 
 // ── what the DOM run above would not catch on its own, pinned at source ────────────────────────────
@@ -1328,8 +1361,9 @@ test("the chunk failing to load over pending changes: no fallback textarea (it c
   b.edit.click();
   await settle();
   assert.equal(ed.mounted, mounted, "no mount");
-  assert.match(errBar(body)!.textContent, /^The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes\. 1 change is pending/,
-    "the consequence stated literally, as docs/guide.md states it: this is copy the person acts on");
+  assert.match(errBar(body)!.textContent, /^The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes\. 1 change is pending/,
+    "the consequence stated literally, as docs/guide.md states it: this is copy the person acts on (the sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md, item 7)");
+  assert.ok(errBar(body)!.textContent.startsWith(o.fv.CR_REFUSAL + " 1 change is pending"), "the exported constant (contract C5), a space, then the panel's own refusal");
   assert.doesNotMatch(errBar(body)!.textContent, /\bride/, "no metaphor in the refusal");
   assert.equal(b.save.hidden, true);
 });
@@ -1563,9 +1597,10 @@ const layRendered = (md: El): El[] => {
   md.replaceChildren(...els);
   return els;
 };
-/** The Raw rows codeBlock paints for `src`: one .fv-cl per logical line, under the code.hljs element. */
+/** The Raw rows codeBlock paints for `src`: one .fv-cl per logical line, under the code.hljs element, split as the viewer
+ *  splits since Slice 7 of plans/markdown-viewer.md (item 7): a CRLF, a lone CR or an LF each end a row. */
 const layRows = (code: El, src: string): El[] => {
-  const lines = src.split("\n"); if (lines[lines.length - 1] === "") lines.pop();
+  const lines = src.split(/\r\n|\r|\n/); if (lines[lines.length - 1] === "") lines.pop();
   const rows = lines.map((ln) => { const cl = new El("span"); cl.className = "fv-cl"; cl.appendChild(new Txt(ln)); return cl; });
   code.replaceChildren(...rows);
   return rows;

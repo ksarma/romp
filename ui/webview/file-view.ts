@@ -31,6 +31,7 @@ import { fileCommentsAction, panelMark } from "./file-comments";
 import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
+import { rawRowForOffset } from "./anchor-map";   // the verified Raw row map, for scrollToOffset (Slice 7 of plans/markdown-viewer.md, item 7): the row whose source span holds an offset, following whatever split the rows were built on
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -405,6 +406,17 @@ function emptyFileLine(): HTMLElement {
  *  answer wears the "0" (notUtf8): before landTarget, so an open's own target notice takes the row under the one-bar rule, and
  *  again after a reload's landing has dropped the changed-on-disk bar. Shown alone in the bar (contract C5). */
 export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.";
+/** The refusal Edit gives over pending changes on a file whose text holds a CR anywhere (plans/markdown-viewer.md Slice 7, item
+ *  7; trackedRefusal): the editor rewrites the file's line endings as it loads the text. A CRLF is rewritten by norm before the
+ *  mount; a lone CR by the editor's own document model (CodeMirror's EditorState.create, in its state package: a string document
+ *  is split on CRLF, a lone CR or LF alike and its lines are joined back with LF), so both come back LF. Under pending changes
+ *  that is a save no record survives: a CRLF loses a character per ending, so every offset after it moves; a lone CR keeps its
+ *  offset but becomes another character, so a record whose text crosses one no longer matches, and the save writes LF where
+ *  the file had CR under records anchored to the disk bytes. Before this slice the refusal named CRLF alone and keyed on CRLF
+ *  alone, so a CR-only file's pending changes went into an editor that rewrote every ending under them. Shown with the panel's
+ *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the guide carries the words. Without pending
+ *  changes the editor mounts as before and a save writes LF where the file had a lone CR (a pre-existing edge, recorded). */
+export const CR_REFUSAL = "The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes.";
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1512,20 +1524,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The button stays a real button rather than a disabled one so the reason reaches touch and keyboard users too.
   let editBlocked: string | null = null;
   // Pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry them
-  // (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves every
-  // offset the records hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
-  // CRLF refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
+  // (chunkTracks false), or the file's line endings would: a CRLF or a lone CR anywhere in the text (Slice 7 of
+  // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF to LF before the mount and CodeMirror's
+  // document model rewrites a lone CR to LF as it loads the string), which moves or mismatches the offsets the records
+  // hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
+  // CR refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
   // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
   // consent popup first) and again at the MOUNT over the begin() whose records the editor takes (enterEdit): the consent
   // read between the two is a kernel round-trip, and a status landing inside it (the poll's tick, the panel's mount-time
   // ask answered, a session's write) turns a click-time "nothing pending" into records. Guarded at the click alone,
   // those records mounted over the LF buffer with their CRLF-disk offsets: marks on the wrong text, a reject rewriting
   // the wrong span, and a save that fit a deletion at a shifted offset (the review's CRLF-at-mount finding).
-  const CRLF_REFUSAL = "The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes. ";
   const trackedRefusal = (pending: { refusal: string } | null): string | null => {
     if (!pending) return null;
     if (chunkTracks === false) return pending.refusal;
-    if (text !== null && /\r\n/.test(text)) return CRLF_REFUSAL + pending.refusal;
+    if (text !== null && /\r/.test(text)) return CR_REFUSAL + " " + pending.refusal;
     return null;
   };
   editBtn.addEventListener("click", () => {
@@ -1752,8 +1765,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (src === null || !code) return;
       const rows = code.querySelectorAll(".fv-cl");
       if (!rows.length) return;
-      const line = (src.slice(0, Math.max(0, n)).match(/\n/g) || []).length;   // one .fv-cl per logical line
-      (rows[Math.min(line, rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+      // The row through the anchor map's verified row map (rawRowForOffset: the last row whose source span starts at or
+      // before the offset, so an offset past the end lands on the last row), which follows whatever split the rows were
+      // built on: CRLF, a lone CR or LF (RAW_ROW_SPLIT; Slice 7 of plans/markdown-viewer.md, item 7). Before, a second
+      // counter here counted LF alone, so every offset in a CR-only file landed on row 0. When the map refuses (rows that
+      // do not match the source, which only a bug produces) the row is counted over the source with the viewer's own
+      // split, exact by construction and clamped to the last row: never a guess, never a silent last row.
+      const row = rawRowForOffset(code, src, n);
+      const target = row ?? rows[Math.min(src.slice(0, Math.max(0, n)).split(RAW_ROW_SPLIT).length - 1, rows.length - 1)];
+      (target as HTMLElement).scrollIntoView({ block: "center" });
     },
     reload: () => { if (!editing) fetchFile(); },
     editing: () => editing,
@@ -3698,16 +3718,25 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// The Raw view's line split (plans/markdown-viewer.md Slice 7, item 7): a CRLF (one ending, tried first), a lone CR or an
+// LF each end a row, in wrapNumberedHtml over the highlighted HTML and in codeBlock's gutter count, so the two stay in
+// step and no row's text carries a "\r"; the anchor map's rawIndex consumes whichever ending stands between two rows
+// (anchor-map.ts) and verifies every row against the source, and scrollToOffset counts a row over the source with the
+// same split when the map refuses. Before, both split on "\n" alone: a CR-only file was ONE row (the HTML parser turned
+// its CRs into breaks inside it), and a CRLF file's rows ended in a "\r" the parser rewrote.
+const RAW_ROW_SPLIT = /\r\n|\r|\n/;
+
 // Wrap mode's numbering. The flat sibling gutter cannot survive soft-wrapping — one logical line becomes
 // several visual lines and every number below it drifts — so wrap mode RESTRUCTURES instead of shipping a
 // misaligned column: each logical line is its own row (.fv-cl) whose number is a CSS counter in ::before
 // (the chat's .cl/.ct treatment, styles.css), so the numbers stay glued to their lines however tall a
 // wrapped line grows, and being ::before content they still never copy with the code. hljs spans can
 // cross newlines, so each row re-opens the spans the previous row left unclosed and closes its own —
-// render.ts's wrapCodeLines balance walk.
+// render.ts's wrapCodeLines balance walk. A CR is such a newline too (RAW_ROW_SPLIT): hljs escapes markup
+// characters alone, so a CR passes through its output and a span across one is re-opened on the next row.
 function wrapNumberedHtml(html: string): string {
-  const lines = html.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing newline is not a line
+  const lines = html.split(RAW_ROW_SPLIT);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing line ending is not a line
   let open: string[] = [];
   return lines.map((ln) => {
     const prefix = open.join("");
@@ -3724,8 +3753,8 @@ function wrapNumberedHtml(html: string): string {
 // wrap view keeps that copy-safety a different way (see wrapNumberedHtml above).
 function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {
   const wrap = el("div", "fileview-code");
-  const lines = text.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing newline is not a line
+  const lines = text.split(RAW_ROW_SPLIT);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing line ending is not a line
   const lang = langFor(path);
   let hl: string | null = null;
   if (lang) {
