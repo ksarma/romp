@@ -314,3 +314,82 @@ test("in a browser, the pane at 900 px (review closing pass): in the Raw view Ch
     }
   });
 });
+
+// ── the PR review's round 1: a media landing through the box guard, and the pane toggled off and on ──────────────────────
+const activeName = (page: any): Promise<string> => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? a.tagName + "." + String(a.className).split(/\s+/).filter(Boolean).join(".") : "none"; });
+const noticeOf = (page: any): Promise<string | null> => page.evaluate(() => { const n = document.getElementById("fileview-save-err"); return n ? n.textContent : null; });
+
+test("in a browser, the pane at 900 px (PR review round 1): a picture opened at a line or an offset names the target in the notice bar, the kind of file with it (before the fix: dropped in silence, the media paint judging the heading alone), and a picture whose first paint happens while the viewer has no box names it at the show, the body then holding the keyboard (before: the media landing spent the one keyboard take on a boxless body and nothing re-took it at the show); the visible control lands the same", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const FIG = "/repo/notes-api/figs/a.svg";
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect width="200" height="120" fill="#336699"/></svg>';
+    for (const hidden of [false, true]) for (const at of [{ line: 12 }, { offset: 1200 }] as Array<Record<string, number>>) {
+      const kind = "line" in at ? "line" : "offset";
+      const what = kind + (hidden ? ", hidden at the paint" : ", visible throughout");
+      const words = kind === "line" ? "No line 12 in this file: it is a picture." : "No offset 1200 in this file: it is a picture.";
+      const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG } });
+      await install(page);
+      await page.evaluate(() => { (window as any).FV.closeFileView(); });
+      await gate(page);
+      await page.evaluate(([p, sid, o]: [string, string, Record<string, number>]) => { (window as any).FV.openFileView(p, sid, { at: o }); }, [FIG, SID, at]);
+      await frames(page, 2);
+      if (hidden) { await hide(page, true); await frames(page, 2); }
+      await release(page);
+      await page.waitForFunction(() => !!document.querySelector(".fileview-body img"), null, { timeout: 10000 });
+      await frames(page, 3);
+      if (hidden) {
+        const under = await page.evaluate(() => ({ rects: (document.querySelector(".fileview-body") as HTMLElement).getClientRects().length, notice: document.getElementById("fileview-save-err") ? (document.getElementById("fileview-save-err") as HTMLElement).textContent : null }));
+        assert.deepEqual(under, { rects: 0, notice: null }, what + ": no box under the hide, the target held for the show (" + JSON.stringify(under) + ")");
+        await hide(page, false);
+        await frames(page, 3);
+      }
+      assert.equal(await noticeOf(page), words, what + ": the notice names the target and the kind of file (before the fix: none)");
+      assert.equal(await page.evaluate(() => (document.getElementById("fileview-save-err") as HTMLElement).getAttribute("role")), "status", what + ": a polite live region");
+      assert.equal(await activeName(page), BODY_EL, what + ": the body holds the keyboard (before the fix, hidden: the document's body)");
+      assert.deepEqual(errors, [], what + ": no page errors");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the pane at 900 px (PR review round 1): the pane toggled off and on after the landing: the hide's focus fixup drops the body's keyboard to the document's body, and the show's repaint takes it back, so PageDown scrolls with no click (before the fix: the document's body held it until a click, keyboardOnLanding being spent at the first landing); a box the reader had moved to before the hide keeps the keyboard through the toggle; the same for a picture", { timeout: 240000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG } });
+    await install(page);
+    assert.equal(await activeName(page), BODY_EL, "the scene: the landing gave the body the keyboard");
+    let p0 = await paints(page);
+    await hide(page, true); await paintsReach(page, p0 + 1); await frames(page, 3);   // the hide's report reaches the hooks as a reflow
+    const under = await page.evaluate(() => ({ rects: (document.querySelector(".fileview-body") as HTMLElement).getClientRects().length, active: document.activeElement === document.body }));
+    assert.deepEqual(under, { rects: 0, active: true }, "no box under the hide, and the browser's fixup dropped the keyboard to the document's body");
+    let p1 = await paints(page);
+    await hide(page, false); await paintsReach(page, p1 + 1); await frames(page, 3);   // the show's report: the repaint
+    assert.equal(await activeName(page), BODY_EL, "the show's repaint took the keyboard back (before the fix: the document's body)");
+    assert.equal(await pageDownMoves(page, 0), true, "PageDown scrolls the note with no click");
+    // the control: a box the reader moved to before the hide keeps the keyboard through the toggle (the body's blur while it had a box is the reader's move)
+    await page.evaluate(() => { const ta = document.createElement("textarea"); ta.id = "peer-box"; document.body.appendChild(ta); ta.focus(); });
+    assert.equal(await activeName(page), "TEXTAREA.", "the box holds the keyboard");
+    p0 = await paints(page);
+    await hide(page, true); await paintsReach(page, p0 + 1); await frames(page, 2);
+    p1 = await paints(page);
+    await hide(page, false); await paintsReach(page, p1 + 1); await frames(page, 3);
+    assert.equal(await activeName(page), "TEXTAREA.", "the box keeps the keyboard: the body had lost it to the reader's move, not to the hide");
+    await page.evaluate(() => { (document.getElementById("peer-box") as HTMLElement).remove(); });
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
+    // a picture: the same re-take at the show (landMedia's repaint arm)
+    const FIG = "/repo/notes-api/figs/a.svg";
+    const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120"><rect width="200" height="120" fill="#336699"/></svg>';
+    const pic = await openViewer(browser, "pane", 900, 520, { docs: { [REPORT]: LONG, [FIG]: SVG } });
+    await install(pic.page);
+    await pic.page.evaluate(([p, sid]: [string, string]) => { (window as any).FV.openFileView(p, sid, null); }, [FIG, SID]);
+    await pic.page.waitForFunction(() => !!document.querySelector(".fileview-body img"), null, { timeout: 10000 });
+    await frames(pic.page, 3);
+    assert.equal(await activeName(pic.page), BODY_EL, "the picture's landing gave the body the keyboard");
+    await hide(pic.page, true); await frames(pic.page, 3);
+    assert.equal(await pic.page.evaluate(() => document.activeElement === document.body), true, "the fixup dropped it under the hide");
+    await hide(pic.page, false); await frames(pic.page, 3);
+    assert.equal(await activeName(pic.page), BODY_EL, "the show's repaint over the picture took the keyboard back (before the fix: the document's body)");
+    assert.deepEqual(pic.errors, [], "no page errors (the picture)");
+    await pic.page.close();
+  });
+});

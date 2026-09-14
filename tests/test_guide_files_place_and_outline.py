@@ -14,7 +14,8 @@ says so, when the Rendered button is clicked (item 4: the walks' targetSuffix op
 notice, and renderBody's gate, which spends a heading only on a Rendered paint or on a file that is not markdown;
 the review's round 3, where the guide said the notice came at the open whatever the choice); and a change on disk
 while the Comments panel is closed raises a line above the text with a Reload that keeps the place (item 5: the
-probe's two events, the bar's words, the button through fetchFile). Each clause is
+probe's two events, the bar's words, read off the HEAD's verdict since the PR review's round 1 so that a deleted file's
+line says so in its own words, the button through fetchFile). Each clause is
 pinned flattened, so a rewrap survives, and cross-checked against the source that keeps it; the clauses other guide
 pins read in the same paragraphs and sections (the chip sentence of tests/test_guide_todo_file_chip.py, the
 hard-wrapped opening lines of tests/test_files_pane.py) are re-read here unchanged, so an edit that moves one fails
@@ -244,7 +245,11 @@ class TheViewerDoesIt(unittest.TestCase):
 
     def test_the_disk_bar_is_raised_on_the_readers_return_and_its_reload_keeps_the_place(self):
         self.assertIn('export const CHANGED_ON_DISK = "Changed on disk.";', self.viewer)
-        self.assertIn("const bar2 = noteBar(CHANGED_ON_DISK);", self.viewer)
+        # a 404 is a deletion, not a change (the PR review's round 1): the probe reads the words off the HEAD's verdict and
+        # raises the bar with them, so the guide's "a line above the text says so" holds for a deleted file in its own words
+        self.assertIn('export const DELETED_ON_DISK = "Deleted on disk.";', self.viewer)
+        self.assertIn("const words = moved === ABSENT ? DELETED_ON_DISK : CHANGED_ON_DISK;", self.viewer)
+        self.assertIn("const bar2 = noteBar(words);", self.viewer)
         self.assertIn('re.type = "button"; re.textContent = "Reload";', self.viewer)
         # the two events, the person's return to the dashboard: the window's focus and the document coming back to view
         self.assertIn('window.addEventListener("focus", onWindowFocus);', self.viewer)

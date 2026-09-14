@@ -538,6 +538,7 @@ test("changed on disk: a window focus sends one HEAD of the file's URL and the s
   assert.equal(b.text, CHANGED, "the bar's words");
   assert.equal(b.button, "Reload", "and its one button");
   assert.equal(b.disabled, false);
+  assert.equal(barOf(wrap)!.getAttribute("role"), "status", "a polite live region: the bar is raised with no gesture of the reader's, so assistive technology hears it (the PR review's round 1)");
   assert.deepEqual(b.rows, ["fileview-bar", "fileview-err", "fileview-main"], "a row of the card between the title bar and the body row (noteBar's place)");
   assert.equal(ctx.text(), PY, "the body shows the text the reader has: the probe fetched no bytes");
   assert.equal(ctx.mtimeNs(), MT); assert.equal(gets(), 1, "the open's GET alone"); assert.equal(paints, 1, "no repaint");
@@ -680,6 +681,34 @@ test("changed on disk: a picture probes too (a regenerated figure is a change on
   fetches.length = 0;
   focusWindow(); visibility(false); await settle();
   assert.equal(heads(), 0, "no mtime to compare against: no HEAD");
+});
+
+test("changed on disk (PR review round 1): a HEAD answering 404 (the file deleted) raises the bar with the deletion's words, Deleted on disk., not the change's (before the fix: a deletion read as a move and the bar said Changed on disk.); its Reload paints the 404 pane in the body with the bar standing and its button re-armed, under the one-bar rule as before; the file back on disk, Reload lands it and its own ask clears the bar", async (t) => {
+  const { wrap, ctx, body } = await open(APP, t);
+  delete disk[APP];                                            // a session removed the file
+  focusWindow(); await settle();
+  assert.equal(heads(), 1, "one HEAD for the focus");
+  let b = readBar(wrap);
+  assert.equal(b.text, "Deleted on disk.", "the deletion's words (before the fix: " + CHANGED + ")");
+  assert.equal(b.button, "Reload", "and its one button"); assert.equal(b.disabled, false);
+  assert.equal(barOf(wrap)!.getAttribute("role"), "status");
+  assert.equal(ctx.text(), PY, "the body shows the text the reader has: the probe fetched no bytes"); assert.equal(gets(), 1);
+  focusWindow(); await settle();
+  assert.equal(heads(), 2); assert.deepEqual(readBar(wrap), b, "one bar: a second answer while it stands replaces nothing");
+  // Reload: the GET meets the 404, the pane is the body, the bar stands with its button armed again (the failed own ask's re-arm)
+  reloadButton(wrap).click();
+  assert.equal(gets(), 2, "the GET is out"); await settle();
+  const pane = body.querySelector(".fileview-err");
+  assert.ok(pane, "the 404 pane is in the body");
+  assert.match(pane!.textContent, /no such file/, "the kernel's words for a missing file");
+  assert.equal(body.querySelectorAll("button").length, 0, "no Download offer: the file is not there");
+  b = readBar(wrap);
+  assert.equal(b.text, "Deleted on disk.", "the bar stands over the pane"); assert.equal(b.button, "Reload"); assert.equal(b.disabled, false, "its button re-armed: the bar is no dead end");
+  // the file back on disk (a session wrote it again): the bar's own Reload lands it and clears the bar
+  disk[APP] = { bytes: PY2, type: TEXT, mtimeNs: MT2 };
+  reloadButton(wrap).click(); await settle();
+  assert.equal(barOf(wrap), null, "the own ask's landing clears the bar"); assert.equal(ctx.text(), PY2); assert.equal(ctx.mtimeNs(), MT2);
+  assert.equal(body.querySelector(".fileview-err"), null, "the pane went with the landing");
 });
 
 test("changed on disk: the bar's own Reload clears it whatever mtime lands (a HEAD answered after a newer landing had already put the moved file in the body raised it over the file that shows); a Reload that fails leaves the failure pane in the body, the bar standing and its button armed again", async (t) => {

@@ -57,6 +57,8 @@ async function clickRow(page: any, i: number): Promise<void> {
   await frames(page, 2);
 }
 const BODY = "DIV.fileview-body";
+const OUTLINE_BTN = /^BUTTON\.fileview-btn\.fileview-outline-btn(\.romp-acted)?$/;   // the closed button's classes (the `on` dress leaves with the popover; the press pulse's romp-acted may still be on it)
+const currentRow = (page: any): Promise<number> => page.evaluate(() => Array.from(document.querySelectorAll(".fileview-outline-row")).findIndex((r) => r.classList.contains("current")));
 const assertAtTop = (l: Landing, what: string): void => {
   assert.ok(Math.abs((l.top - l.edge) - l.margin) <= 1, what + ": the heading's top sits at the body's edge less its scroll margin (" + l.margin + "px): read " + (l.top - l.edge).toFixed(1));
   assert.ok(l.scrollTop > 0, what + ": the body scrolled");
@@ -111,6 +113,9 @@ test("in a browser, on the Files pane at 900 and 380 px: the Outline button rend
       const shut = await page.evaluate(() => (document.getElementById("md-inside-the-fold") as HTMLElement).closest("details")!.hasAttribute("open"));
       assert.equal(shut, false, what + ": the fold is shut before the pick");
       await page.click(BTN); await frames(page, 1);
+      // the current row at the open is the section under the reader's eye: the 40th heading, just landed at the top (its top sits its
+      // scroll margin under the edge, the gap a landing leaves, which the reading allows; the PR review's round 1: the first row before)
+      assert.equal(await currentRow(page), 39, what + ": the current row at the open is the 40th heading, the section under the reader's eye (before the fix: the first row)");
       await clickRow(page, 13);
       const fold = await page.evaluate(readLanding, "md-inside-the-fold");
       assert.equal(fold.open, true, what + ": the pick opened the fold above the heading");
@@ -121,8 +126,9 @@ test("in a browser, on the Files pane at 900 and 380 px: the Outline button rend
       await page.keyboard.press("Escape");
       await frames(page, 2);
       const esc = await page.evaluate(readLanding, "md-report");
-      assert.equal(esc.popover, false, what + ": Escape closed the popover"); assert.equal(esc.viewer, true, what + ": …and the viewer stands"); assert.equal(esc.active, BODY, what + ": …with the keyboard on the body");
-      // the keyboard: ArrowDown twice, Enter: the third heading
+      assert.equal(esc.popover, false, what + ": Escape closed the popover"); assert.equal(esc.viewer, true, what + ": …and the viewer stands"); assert.match(esc.active, OUTLINE_BTN, what + ": …with the keyboard back on the Outline button, the menu-button pattern (the PR review's round 1; before: the body)");
+      // the keyboard: ArrowDown twice, Enter: the third heading (from the note's top, where the first row is current)
+      await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).scrollTop = 0; }); await frames(page, 1);
       await page.click(BTN); await frames(page, 1);
       await page.keyboard.press("ArrowDown"); await page.keyboard.press("ArrowDown");
       const cur = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-outline-row")).findIndex((r) => r.classList.contains("current")));
@@ -192,7 +198,7 @@ test("in a browser, in the chat modal under render.ts's own key handlers: ArrowD
     await page.keyboard.press("Escape");
     await frames(page, 2);
     const esc = await page.evaluate(readLanding, "md-report");
-    assert.equal(esc.popover, false, "Escape closed the popover"); assert.equal(esc.viewer, true, "…and the viewer stands (the document's onKey never saw the key)"); assert.equal(esc.active, BODY);
+    assert.equal(esc.popover, false, "Escape closed the popover"); assert.equal(esc.viewer, true, "…and the viewer stands (the document's onKey never saw the key)"); assert.match(esc.active, OUTLINE_BTN, "the keyboard back on the Outline button (the PR review's round 1)");
     const composer = await page.evaluate(() => (document.getElementById("composer-input") as HTMLTextAreaElement).value);
     assert.equal(composer, "", "no key reached the composer");
     assert.deepEqual(errors, [], "no page errors");
@@ -312,5 +318,37 @@ test("in a browser (review round 1): a note with a heading wider than the room l
     assert.equal(overPane.active, "fileview-body", "the body took the keyboard the popover held (the paint closer's rule)");
     assert.deepEqual(img.errors, [], "no page errors (the image heading and the failure pane)");
     await img.page.close();
+  });
+});
+
+// ── the PR review's round 1: a press on a row under a landing (the click-safe rule, ui/CLAUDE.md), in the hold pattern of
+// file-view-copy-held-browser.test.ts ────────────────────────────────────────────────────────────────────────────────────
+test("in a browser (PR review round 1): a landing while the pointer is pressed on a row waits for the release: the popover stands, nothing paints, the release's click picks the 40th heading and lands it at the top with the keyboard on the body, and only then do the new bytes paint, the heading still at the top (before the fix: the landing's hold was on the body alone, so the panel's reload painted at once under the press, closeOutline removed the pressed row before the mouseup, and the pick was lost)", { timeout: 180000 }, async (t) => {
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { docs: { [REPORT]: OUTLINE_NOTE } });
+    await page.click(BTN); await frames(page, 1);
+    const pt = await page.evaluate(() => { const pop = document.querySelector(".fileview-outline") as HTMLElement; const r = pop.querySelectorAll(".fileview-outline-row")[39] as HTMLElement; pop.scrollTop = Math.max(0, r.offsetTop - 20); const b = r.getBoundingClientRect(); return { x: b.left + Math.min(40, b.width / 2), y: b.top + b.height / 2 }; });
+    await page.mouse.move(pt.x, pt.y); await frames(page, 1);
+    await page.mouse.down(); await frames(page, 1);
+    const pressed: { paints: number; fetches: number } = await page.evaluate(() => ({ paints: (window as any).__paints, fetches: (window as any).__fetches }));
+    // the panel's poll saw the file move: the reload's fetch answers in microtasks, so two frames on the landing has run or parked
+    await page.evaluate((m: string) => { const w = window as any; w.__mtime = m; w.__seam.reload(); }, MT2);
+    await page.waitForFunction((n: number) => (window as any).__fetches > n, pressed.fetches, { timeout: 10000 });
+    await frames(page, 2);
+    const under = await page.evaluate(() => ({ popover: !!document.querySelector(".fileview-outline"), rows: document.querySelectorAll(".fileview-outline-row").length, paints: (window as any).__paints, mt: (window as any).__seam.mtimeNs() }));
+    assert.equal(under.popover, true, "the popover stands under the press (before the fix: the landing's paint closed it)");
+    assert.equal(under.rows, 42, "with its rows");
+    assert.equal(under.paints, pressed.paints, "nothing painted under the press");
+    assert.equal(under.mt, MT, "the body shows the file the reader has");
+    await page.mouse.up(); await frames(page, 2);
+    assertAtTop(await page.evaluate(readLanding, "md-detail-91"), "the release's pick (the 40th heading)");
+    await paintsReach(page, pressed.paints + 1); await frames(page, 2);
+    const after = await page.evaluate(readLanding, "md-detail-91");
+    assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, "then the landing painted the new bytes");
+    assert.ok(Math.abs((after.top - after.edge) - after.margin) <= 1, "the heading the pick landed is still at the top: the reload kept the place (read " + (after.top - after.edge).toFixed(1) + ")");
+    assert.equal(after.active, BODY, "and the body holds the keyboard");
+    assert.equal(await page.evaluate(() => (window as any).__paints), pressed.paints + 1, "one paint for the one landing");
+    assert.deepEqual(errors, [], "no page errors");
+    await page.close();
   });
 });

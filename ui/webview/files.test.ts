@@ -7,6 +7,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { asIdentity, asPlace, parseRecent, rememberRecent, placeRecent, latestPlace, RECENT_MAX, type RecentFile, type RecentPlace } from "./files-recent";
+import { hostOf } from "./host-prefix";   // the viewer's placeKey reads a remote session's host through it (the lifted rule below is bound to the real one)
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -427,9 +428,12 @@ test("openHere, executed: every open of a file with a row hands the rows' latest
   const sig = src.slice(0, src.indexOf("{") + 1);
   const js = "function openHere(" + sig.replace(/: [A-Za-z]+(?: \| null)?/g, "") + src.slice(src.indexOf("{") + 1) + "\n}";   // the source's own parameters, their types stripped
   const keySrc = VIEW.split("export function placeKey(")[1].split("\n}")[0];   // the viewer's rule for one file, as file-view.ts spells it
-  const placeKey = new Function("path", "sid", keySrc.slice(keySrc.indexOf("{") + 1)) as (p: string, sid: string | null) => string;
-  assert.equal(placeKey("/repo/notes-api/docs/report.md", SID2), "/repo/notes-api/docs/report.md", "the lifted rule: an absolute path is one file for every session");
+  const lifted = new Function("path", "sid", "hostOf", keySrc.slice(keySrc.indexOf("{") + 1)) as (p: string, sid: string | null, h: typeof hostOf) => string;
+  const placeKey = (p: string, sid: string | null): string => lifted(p, sid, hostOf);   // the rule reads the sid's host through host-prefix.ts (PR review round 1)
+  assert.equal(placeKey("/repo/notes-api/docs/report.md", SID2), "/repo/notes-api/docs/report.md", "the lifted rule: an absolute path is one file for every session of this kernel");
   assert.notEqual(placeKey("docs/report.md", SID), placeKey("docs/report.md", SID2), "…a relative path one per session");
+  const REMOTE = "TESTHOST:" + SID2;                                             // a session attached from another kernel, as federation prefixes its sid
+  assert.equal(placeKey("/repo/notes-api/docs/report.md", REMOTE), "TESTHOST\u0000/repo/notes-api/docs/report.md", "…and a remote session's absolute path carries its host: that kernel's disk is another file (PR review round 1)");
   const opens: unknown[][] = []; const writes: number[] = []; const paints: number[] = [];
   const last = () => opens[opens.length - 1];
   const handed = () => (last()[2] as { place: unknown }).place;
@@ -495,6 +499,17 @@ test("openHere, executed: every open of a file with a row hands the rows' latest
   veto = true;
   world.openHere(NOTES, SID2, null);
   assert.equal(opens.length, n + 1); assert.equal(writes.length, w); assert.equal(paints.length, k); assert.equal(world.recent, before, "the list is untouched");
+  veto = false;
+  // a session attached from another kernel naming the same absolute path reads that kernel's disk, another file: the local rows'
+  // record is not handed to it (PR review round 1: before, the shared key handed the file's latest record across the kernels)
+  world.openHere(REPORT, REMOTE, { name: "TESTHOST:api", color: { bg: "#654321", fg: "#ffffff" } });
+  assert.deepEqual(last(), [REPORT, REMOTE, { todoId: null, at: null, place: null }], "the remote session's open of the same absolute path: no record, the local rows naming another file");
+  assert.deepEqual(world.recent[0].sid, REMOTE, "…and a row of its own");
+  world.recent = placeRecent(world.recent, REPORT, REMOTE, { ...PLACE, start: 900, scrollTop: 2500, t: 20 });
+  world.openHere(REPORT, SID, identity);
+  assert.deepEqual(handed(), fresh, "the local session's open ignores the remote row's newer record");
+  world.openHere(REPORT, REMOTE, null);
+  assert.deepEqual(handed(), { ...PLACE, start: 900, scrollTop: 2500, t: 20 }, "the remote session's open hands its own row's record");
   // the shape that makes this so: five parameters and no `place`, the rows' record read inside, so no caller can pass a stale one or forget it
   assert.equal(sig, "path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, at: At | null = null): void {");
 });

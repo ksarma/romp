@@ -1633,10 +1633,13 @@ a.fileview-gh-note { border-style: dashed; }
    past the card's bottom) and the re-anchor at the card's left margin. Rows are one line each, an ellipsis at the box's
    width, indented by their depth under the note's shallowest heading (--fv-ol-depth, set per row); the current row (the
    keyboard's) and the hovered one wear the one menu wash; the popover holds the focus and shows no ring of its own, the
-   current row being the cue. The button wears the pressed toggle's dress while the popover is up (aria-expanded), keyed
-   on its own class and never on the bar button's: the Comments panel's Show more and Reject all are .fileview-btn too
-   and carry aria-expanded (file-comments.ts clipRow, renderChangesFoot), and a bare .fileview-btn rule dressed them as
-   pressed toggles (Slice 6 review round 1). Mirrored in styles.css; fileview-parity.test.ts holds every head byte-equal. */
+   current row being the cue. The button has no rule of its own here: while the popover is up it wears the bar's selected
+   dress, .fileview-btn.on above (file-view.ts toggles the class beside aria-expanded), so an open Outline computes as the
+   pressed Rendered toggle does, the 600 weight and the hover inversion included. The build gave it a rule of its own on
+   [aria-expanded="true"], a near-twin of that dress without the weight and the hover; its first form, on the bare
+   .fileview-btn, dressed the Comments panel's Show more and Reject all, which carry aria-expanded too (file-comments.ts
+   clipRow, renderChangesFoot), and the PR review's round 1 dropped the twin for the shared dress. Mirrored in styles.css;
+   fileview-parity.test.ts holds every head byte-equal. */
 .fileview-outline { position: absolute; z-index: 5; box-sizing: border-box; min-width: 12em; overflow: auto; padding: 4px;
   background: var(--menu-bg); color: var(--menu-fg); border: 1px solid var(--menu-border); border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu); font-size: 12px; line-height: 1.4; }
@@ -1644,7 +1647,6 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-outline-row { padding: 4px 10px 4px calc(10px + var(--fv-ol-depth, 0) * 1.1em); border-radius: 4px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fileview-outline-row:hover, .fileview-outline-row.current { background: var(--menu-hover); }
-.fileview-outline-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-wash); }
 
 /* Wrap mode (the Wrap toggle, persisted per browser): long lines soft-wrap instead of scrolling
    sideways. The flat sibling gutter cannot survive that — one logical line becomes several visual lines

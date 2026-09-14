@@ -20,7 +20,7 @@ import { marked } from "marked";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
-import type { FileViewActionCtx } from "./file-view";
+import type { FileViewActionCtx, At } from "./file-view";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -44,8 +44,11 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string; ctrlKey: boolean; metaKey: boolean; detail: number;
-  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; detail?: number } = {}) {
+  button: number;                                // a pointer event's, 0 the primary (pressHold reads it; the card's hold parks a landing under a press on a row)
+  relatedTarget: El | null;                      // a focus event's other side (the popover's focusout closer reads it); an object edge, hidden by hideEdges
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean; detail?: number; button?: number; relatedTarget?: El | null } = {}) {
     this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; this.detail = init.detail ?? 0;
+    this.button = init.button ?? 0; this.relatedTarget = init.relatedTarget ?? null;
     hideEdges(this);
   }
   preventDefault(): void { this.defaultPrevented = true; }
@@ -421,14 +424,15 @@ async function mod(): Promise<typeof import("./file-view")> {
 }
 const settle = async () => { for (let i = 0; i < 8; i++) await new Promise<void>((r) => setImmediate(r)); };
 type Open = { fv: typeof import("./file-view"); ctx: FileViewActionCtx; wrap: El; card: El; body: El; acts: El };
-/** Serve `text` at `p` and open it with the REAL openFileView; `raw`: the stored preference says Raw for a markdown file. */
-async function open(p: string, text: string, t: TestContext, raw = false): Promise<Open> {
+/** Serve `text` at `p` and open it with the REAL openFileView; `raw`: the stored preference says Raw for a markdown file; `at`: the
+ *  open's target (a heading, for the hidden-section case). */
+async function open(p: string, text: string, t: TestContext, raw = false, at: At | null = null): Promise<Open> {
   const fv = await mod();
   disk[p] = { bytes: text, type: "text/plain; charset=utf-8", mtimeNs: MT };
   store.delete("romp:fileviewFmt");
   if (raw) store.set("romp:fileviewFmt", JSON.stringify({ md: "raw" }));
   seam = null; paints = 0;
-  assert.equal(fv.openFileView(p, SID), true, "the open happened");
+  assert.equal(fv.openFileView(p, SID, at ? { at } : undefined), true, "the open happened");
   t.after(() => { fv.closeFileView(); doc.activeElement = null; });
   await settle();
   const wrap = doc.getElementById("romp-fileview")!;
@@ -444,6 +448,16 @@ const headings = (o: Open): El[] => o.body.querySelector(".fileview-md")!.queryS
 /** Click the button and hand back the popover it opened. */
 const openOutline = (o: Open): El => { outlineBtn(o).click(); const pop = popover(o); assert.ok(pop, "the popover opened under the button"); return pop!; };
 const key = (target: El, k: string): Ev => { const ev = new Ev("keydown", { key: k }); target.dispatchEvent(ev); return ev; };
+/** The pointer's release, on the window as pressHold hears it: a press dispatched on a card child holds the landing until this. */
+const release = (): void => { win.dispatchEvent(new Event("pointerup")); };
+/** requestAnimationFrame as a queue for a case that lands a heading target (the seam suite's idiom): installed for the case, flushed by hand. */
+const frames: Array<() => void> = [];
+const withFrames = (t: TestContext): void => {
+  (globalThis as any).requestAnimationFrame = (cb: () => void) => { frames.push(cb); return frames.length; };
+  t.after(() => { delete (globalThis as any).requestAnimationFrame; frames.length = 0; });
+};
+const flushFrames = (): void => { const run = frames.splice(0); for (const cb of run) cb(); };
+const noticeOf = (o: Open): string | null => { const n = o.card.querySelector("#fileview-save-err"); return n ? n.textContent : null; };
 
 test("the Outline button: in the actions row right after the Rendered/Raw toggle over a markdown file's Rendered view that has a heading, with the menu's aria; hidden in Raw and back on Rendered; hidden while the editor holds the body and, since Edit took the Raw view, until Rendered is chosen again; hidden over a note with no heading; absent for a non-markdown file", async (t) => {
   const o = await open(REPORT, OUTLINE_NOTE, t);
@@ -494,6 +508,7 @@ test("the list: one click opens a menu-role popover in the card with one menuite
   assert.equal(pop.getAttribute("role"), "menu"); assert.equal(pop.tabIndex, -1, "focusable by script, not a Tab stop");
   assert.ok(pop.parentNode === o.card, "a child of the viewer's card (positioned from the button's box as offsets from its offsetParent, the overlay: the card is not its containing block)");
   assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "true");
+  assert.ok(outlineBtn(o).classes.includes("on"), "the button wears the bar's selected dress, .fileview-btn.on, while the popover is up (the PR review's round 1: the build gave it a near-twin rule of its own on aria-expanded, without the weight and the hover)");
   assert.ok(doc.activeElement === pop, "the popover holds the keyboard");
   for (const k of ["top", "right", "maxWidth", "maxHeight"]) assert.match(String(pop.style[k]), /^-?\d+(\.\d+)?px$/, "the popover's " + k + " is set inline from the boxes at the open");
   const rows = rowsOf(pop);
@@ -515,6 +530,7 @@ test("the list: one click opens a menu-role popover in the card with one menuite
   outlineBtn(o).click();
   assert.equal(popover(o), null, "the button toggles the popover closed");
   assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false");
+  assert.ok(!outlineBtn(o).classes.includes("on"), "…and the dress comes off with it");
   // a note whose shallowest heading is an h2 indents nothing for its h2s
   o.fv.closeFileView();
   const deep = await open(PLAIN, "## Second\n\nText.\n\n### Third\n\nMore.\n\n## Another second\n", t);
@@ -546,7 +562,7 @@ test("the pick: a click on the 40th row closes the popover, lands the 40th headi
   assert.equal(popover(o), null);
 });
 
-test("the keyboard on the popover: ArrowDown twice then Enter picks the third heading; End and Home jump; Space picks; Escape closes the popover, stops the event before the document's handler (the viewer stays up) and gives the body the keyboard; ArrowUp above the first row and ArrowDown below the last stay put", async (t) => {
+test("the keyboard on the popover: ArrowDown twice then Enter picks the third heading; End and Home jump; Space picks; Escape closes the popover, stops the event before the document's handler (the viewer stays up) and puts the keyboard back on the Outline button, as a menu button's Escape does; ArrowUp above the first row and ArrowDown below the last stay put", async (t) => {
   const o = await open(REPORT, OUTLINE_NOTE, t);
   const heads = headings(o);
   let pop = openOutline(o);
@@ -579,7 +595,8 @@ test("the keyboard on the popover: ArrowDown twice then Enter picks the third he
   assert.ok(esc.defaultPrevented && esc.stopped, "Escape is taken and stopped on the popover, so the document's onKey never sees it");
   assert.equal(popover(o), null, "the popover closed");
   assert.ok(doc.getElementById("romp-fileview") === o.wrap, "…and the viewer is still up");
-  assert.ok(doc.activeElement === o.body, "the keyboard went to the body");
+  assert.ok(doc.activeElement === outlineBtn(o), "the keyboard went back on the Outline button, the menu-button pattern its aria-haspopup announces (the PR review's round 1; before: the body)");
+  assert.ok(!outlineBtn(o).classes.includes("on") && outlineBtn(o).getAttribute("aria-expanded") === "false", "…which reads collapsed and wears no dress");
   // a key the popover does not take passes through untouched
   pop = openOutline(o);
   const other = key(pop, "x");
@@ -599,11 +616,14 @@ test("closers: a press outside the popover closes it and a press on the button d
   o.body.dispatchEvent(new Ev("pointerdown"));
   assert.equal(popover(o), null, "a press on the body (outside) closed it");
   assert.equal(downs(), 0, "…and dropped the listener");
+  release();   // every press below is released before the reload: the card's hold parks a landing under a press (the PR review's round 1)
   pop = openOutline(o);
   outlineBtn(o).dispatchEvent(new Ev("pointerdown"));
   assert.ok(popover(o) === pop, "a press on the button is not outside: the popover stays for the button's click to toggle it");
+  release();
   pop.querySelector(".fileview-outline-row")!.dispatchEvent(new Ev("pointerdown"));
   assert.ok(popover(o) === pop, "a press inside the popover keeps it");
+  release();
   // a paint: the reload's landing closes the popover (its rows were read off the DOM the paint replaced) and keeps the button
   const painted = paints;
   o.ctx.reload(); await settle();
@@ -654,7 +674,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /const syncOutline = \(\): void => \{ outlineBtn\.hidden = editing \|\| ctx\.mode\(\) !== "rendered" \|\| headingsOf\(\)\.length === 0; \};/);
   assert.match(openFn, /const openOutline = \(\): void => \{\n\s*const heads = headingsOf\(\);/, "the list is read when the popover opens");
   assert.match(openFn, /const pick = \(i: number\): void => \{\n\s*const id = rows\[i\] \? rows\[i\]\.dataset\.id : undefined;\n\s*closeOutline\(\);\n\s*if \(id\) scrollToFragment\(body, id\);\n\s*takeKeyboard\(\);\n\s*\};/, "close, land, keyboard");
-  assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutline\(\); takeKeyboard\(\); \}/);
+  assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutlineKeeping\(false\); outlineBtn\.focus\(\{ preventScroll: true \}\); \}/, "Escape: the Tab branch's shape, the keyboard back on the button (the PR review's round 1)");
   assert.match(openFn, /const take = \(\): void => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \};/, "a key the popover takes never reaches the document's onKey or the chat's window handlers");
   assert.match(openFn, /document\.addEventListener\("pointerdown", onDown, true\);\n\s*window\.addEventListener\("resize", closeOutline\);/);
   assert.match(openFn, /pop\.focus\(\{ preventScroll: true \}\);\n\s*\};/, "the popover takes the focus at the open, without moving the body");
@@ -665,7 +685,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
   assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
   // the sheets: the rules in the tokens, the same bytes in both, and no dark literal outside a var() fallback (menu-theme-tokens.test.ts's rule)
-  const block = (css: string): string => { const a = css.indexOf("\n.fileview-outline {"), b = css.indexOf('.fileview-outline-btn[aria-expanded="true"] {', a); return css.slice(a, css.indexOf("}", b) + 1); };
+  const block = (css: string): string => { const a = css.indexOf("\n.fileview-outline {"), b = css.indexOf(".fileview-outline-row:hover, .fileview-outline-row.current {", a); return css.slice(a, css.indexOf("}", b) + 1); };
   const chat = block(CHAT), feed = block(FEED);
   assert.ok(chat.length > 200, "the Outline's rules are in styles.css");
   assert.equal(chat, feed, "…and byte-equal in feed.css");
@@ -687,18 +707,23 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(chat, /\.fileview-outline-row \{ padding: 4px 10px 4px calc\(10px \+ var\(--fv-ol-depth, 0\) \* 1\.1em\);/, "the depth indent from the row's variable");
   assert.match(chat, /white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/, "one line per row");
   assert.match(chat, /\.fileview-outline-row:hover, \.fileview-outline-row\.current \{ background: var\(--menu-hover\); \}/);
-  assert.match(chat, /\.fileview-outline-btn\[aria-expanded="true"\] \{ color: var\(--accent\); border-color: var\(--accent\); background: var\(--accent-wash\); \}/, "the open state wears the pressed toggle's dress, keyed on the button's own class");
+  assert.doesNotMatch(chat, /aria-expanded|fileview-outline-btn/, "no rule of the button's own: while the popover is up it wears the bar's selected dress, .fileview-btn.on, which file-view.ts toggles beside aria-expanded (the PR review's round 1: the build's own rule was a near-twin without the weight and the hover)");
+  assert.match(openFn, /outlineBtn\.setAttribute\("aria-expanded", "true"\); outlineBtn\.classList\.add\("on"\);/, "the open puts the dress on");
+  assert.match(openFn, /outlineBtn\.setAttribute\("aria-expanded", "false"\); outlineBtn\.classList\.remove\("on"\);/, "the close takes it off");
   const bare = chat.replace(/var\((--[\w-]+)\s*,\s*(?:[^()]|\([^()]*\))*\)/g, "var($1)");
   for (const re of [/#[0-9a-fA-F]{3,8}\b/, /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/i, /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.35\s*\)/]) assert.doesNotMatch(bare, re, "no literal colour in the popover's rules: the tokens carry the theme");
 });
 
-// ── the dress's reach: the open state dresses the Outline button and nothing else that wears .fileview-btn ─────────────
+// ── the dress's reach: the open state is the bar's selected dress, on the Outline button alone ────────────────────────
 // Review round 1: the build's rule was `.fileview-btn[aria-expanded="true"]`, and the Comments panel builds its buttons with
 // the same class by default (file-comments.ts btn) and sets aria-expanded on two of them, the card foot's Show more (true
 // while the body is open, so "Show less") and Reject all (true while its confirm row is armed); both turned accent, as a
-// pressed toggle, in both sheets. The rule keys on the button's own class now. Red over a git archive of d91f0c19d
-// (the bare head matched the panel's stand-ins); the panel's own source is pinned so the hazard stays named.
-test("the open state's dress reaches the Outline button alone: every aria-expanded rule in both sheets matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too", () => {
+// pressed toggle, in both sheets. The rule then keyed on the button's own class; the PR review's round 1 dropped that rule, a
+// near-twin of the bar's selected dress without its 600 weight and its hover inversion, and the open button wears `.on`, the
+// class the pressed Rendered toggle wears, which file-view.ts toggles beside aria-expanded (fileview-parity.test.ts holds the
+// twin gone from both sheets). Red over a git archive of 3e433ceee: the twin's head in both sheets, and no `on` class at the
+// open; the panel's own source is pinned so the hazard stays named.
+test("the open state's dress is the bar's selected dress and reaches the Outline button alone: no rule in either sheet names aria-expanded or the button's class, `.fileview-btn.on` matches the open Outline button and neither the panel's Show less nor its armed Reject all, which are .fileview-btn with aria-expanded too and never `on`", () => {
   const FC = web("file-comments.ts");
   assert.match(FC, /function btn\(label: string, act: string, cls = "fileview-btn"\)/, "the panel's buttons take the bar button's class by default");
   assert.match(FC, /const b = btn\(open \? "Show less" : "Show more", "fcclip"\);[\s\S]{0,300}?b\.setAttribute\("aria-expanded", open \? "true" : "false"\);/, "the card foot's Show more/Show less carries aria-expanded");
@@ -713,18 +738,152 @@ test("the open state's dress reaches the Outline button alone: every aria-expand
   const showLess = clipRow.appendChild(new El("button")); showLess.className = "fileview-btn"; showLess.setAttribute("aria-expanded", "true");
   const rejectAll = aside.appendChild(new El("button")); rejectAll.className = "fileview-btn"; rejectAll.setAttribute("aria-expanded", "true");
   const showMore = clipRow.appendChild(new El("button")); showMore.className = "fileview-btn"; showMore.setAttribute("aria-expanded", "false");
-  // every rule head naming the attribute, read at a line start as fileview-parity.test.ts reads heads
-  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*aria-expanded[^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
+  outline.classList.add("on");                                             // what file-view.ts adds at the open, beside aria-expanded
+  // every rule head, read at a line start as fileview-parity.test.ts reads heads: none names the attribute or the button's class
+  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
   for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
     const hs = heads(css);
-    assert.ok(hs.length >= 1, sheet + ": the open state has a rule");
-    assert.ok(hs.some((h) => outline.matches(h)), sheet + ": one of them dresses the open Outline button: " + inspect(hs));
-    for (const h of hs) {
+    assert.deepEqual(hs.filter((h) => /aria-expanded|fileview-outline-btn/.test(h)), [], sheet + ": a rule of the button's own (the twin; the PR review's round 1 dropped it for the shared dress)");
+    const dress = hs.filter((h) => h === ".fileview-btn.on" || h === ".fileview-btn.on:hover");
+    assert.deepEqual(dress, [".fileview-btn.on", ".fileview-btn.on:hover"], sheet + ": the bar's selected dress and its hover are there for it to wear: " + inspect(dress));
+    assert.ok(outline.matches(".fileview-btn.on"), sheet + ": the open Outline button wears it");
+    for (const h of dress) {
       assert.ok(!showLess.matches(h), sheet + ": `" + h + "` reaches the panel's Show less");
       assert.ok(!rejectAll.matches(h), sheet + ": `" + h + "` reaches the panel's armed Reject all");
       assert.ok(!showMore.matches(h), sheet + ": `" + h + "` reaches the panel's Show more");
     }
   }
+});
+
+// ── the PR review's round 1: the current row at the open, the focusout closer's three branches, a press on a row under a
+// landing, a heading target under a plain hidden wrapper ──────────────────────────────────────────────────────────────────
+test("the current row at the open is the section under the reader's eye (PR review round 1): the last heading with a box whose top sits at or above the body's top edge, named by aria-activedescendant too; a heading a pixel under the edge is not yet the section; a heading inside the shut fold has no box and is passed over; at the top of the note the first row (before the fix: the first row whatever the reader was reading)", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const heads = headings(o);
+  const current = (pop: El): number => rowsOf(pop).findIndex((r) => r.classes.includes("current"));
+  const boxed = (h: El): boolean => { const r = h.getBoundingClientRect(); return !(r.height === 0 && r.width === 0); };
+  // the reader forty sections in: the heading whose block the body's edge sits on
+  const target = heads[30];
+  assert.ok(boxed(target), "the scene's heading has a box (a direct child of the rendered box)");
+  o.body.scrollTop += target.getBoundingClientRect().top - EDGE;   // its top at the edge
+  assert.equal(target.getBoundingClientRect().top, EDGE, "the scene: heading 31's top at the body's edge");
+  let pop = openOutline(o);
+  assert.equal(current(pop), 30, "the row of the heading at the edge is current (before the fix: row 0)");
+  assert.equal(pop.getAttribute("aria-activedescendant"), rowsOf(pop)[30].id, "…and named for assistive technology");
+  outlineBtn(o).click();
+  // a pixel under the edge: the previous heading with a box is the section under the eye (the stand-in's margin is 0; a browser
+  // allows the heading's scroll margin, the gap a landing leaves above it: file-view-outline-browser.test.ts)
+  o.body.scrollTop -= 1;
+  pop = openOutline(o);
+  const prev = heads.slice(0, 30).map((h, i) => [h, i] as const).filter(([h]) => boxed(h)).pop()![1];
+  assert.equal(current(pop), prev, "a heading a pixel under the edge is not yet the section: the previous one with a box is");
+  outlineBtn(o).click();
+  // the fold's heading (row 13, inside the shut details) has no box: with the edge on the fold's own block, the last heading with a
+  // box before it is current (the quoted heading, row 12, has no box of its own in the stand-in either: it is inside the blockquote)
+  const fold = heads[13];
+  assert.equal(boxed(fold), false, "the fold's heading has no box (the details is shut)");
+  const details = fold.closest("details")!;
+  assert.ok(boxed(details), "the fold itself is a block of the note");
+  o.body.scrollTop += details.getBoundingClientRect().top - EDGE;   // the fold's top at the edge
+  const lastBoxed = heads.slice(0, 13).map((h, i) => [h, i] as const).filter(([h]) => boxed(h)).pop()![1];
+  assert.ok(lastBoxed < 13 && lastBoxed >= 10, "the scene: a heading with a box stands a few rows before the fold (" + lastBoxed + ")");
+  pop = openOutline(o);
+  assert.equal(current(pop), lastBoxed, "the shut fold's heading is passed over for the last heading with a box at or above the edge");
+  outlineBtn(o).click();
+  // at the note's top: the first row, as before
+  o.body.scrollTop = 0;
+  pop = openOutline(o);
+  assert.equal(current(pop), 0, "at the top the first row is current");
+  assert.equal(pop.getAttribute("aria-activedescendant"), rowsOf(pop)[0].id);
+});
+
+test("the popover's focusout closer, one executed case per branch (PR review round 1): a move inside the popover or onto the Outline button leaves it standing; a move to another element of this document closes it and that element keeps the keyboard, the body taking nothing; a null relatedTarget while the popover holds the keyboard (the window losing the focus) closes it and hands the keyboard to the body", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  let pop = openOutline(o);
+  const rows = rowsOf(pop);
+  assert.ok(doc.activeElement === pop, "the popover holds the keyboard at the open");
+  // (1) inside the popover, and onto the button: the closer stands aside
+  pop.dispatchEvent(new Ev("focusout", { relatedTarget: rows[3] }));
+  assert.ok(popover(o) === pop, "a move inside the popover leaves it standing");
+  pop.dispatchEvent(new Ev("focusout", { relatedTarget: outlineBtn(o) }));
+  assert.ok(popover(o) === pop, "a move onto the button leaves it standing (the button's click is the toggle)");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "true");
+  // (2) to another element of this document (a Tab out, a press on a bar button): closed, the element keeps the keyboard
+  const dl = button(o, "Download")!;
+  const focusedBefore = o.body.focused;
+  doc.activeElement = doc.body;                                  // the browser's order: the old holder is unfocused when focusout fires
+  pop.dispatchEvent(new Ev("focusout", { relatedTarget: dl }));
+  dl.focus();                                                    // …and the new holder takes it after
+  assert.equal(popover(o), null, "a move to another element closed the popover");
+  assert.ok(doc.activeElement === dl, "that element keeps the keyboard");
+  assert.equal(o.body.focused, focusedBefore, "the body took nothing");
+  assert.equal(outlineBtn(o).getAttribute("aria-expanded"), "false");
+  // (3) a null relatedTarget while the popover holds the keyboard: the window lost the focus; closed, the body takes it for the return
+  pop = openOutline(o);
+  assert.ok(doc.activeElement === pop);
+  const f2 = o.body.focused;
+  pop.dispatchEvent(new Ev("focusout", { relatedTarget: null }));
+  assert.equal(popover(o), null, "a null relatedTarget closed the popover");
+  assert.ok(doc.activeElement === o.body, "the body holds the keyboard (the popover's removal left it on the document's body; takeKeyboard took it)");
+  assert.equal(o.body.focused, f2 + 1, "one focus call");
+});
+
+test("a landing under a press on a row waits for the release (PR review round 1): with the pointer down on the 40th row the panel's reload lands, the popover stands and nothing paints; the release's click picks the 40th heading, and the landing paints after it (before the fix: the hold was on the body alone, the landing painted at once, closeOutline removed the pressed row before the mouseup, and the pick was lost)", async (t) => {
+  const o = await open(REPORT, OUTLINE_NOTE, t);
+  const heads = headings(o);
+  const pop = openOutline(o);
+  const row = rowsOf(pop)[39];
+  row.dispatchEvent(new Ev("pointerdown", { button: 0 }));       // the press, in the capture phase up to the card's hold
+  const painted = paints;
+  o.ctx.reload(); await settle();                                 // the panel's poll saw the file move: the landing
+  assert.ok(popover(o) === pop, "the popover stands under the press: the landing waits (before the fix: the paint closed it and removed the pressed row)");
+  assert.ok(row.parentNode === pop, "the pressed row is still in the popover");
+  assert.equal(paints, painted, "nothing painted under the press");
+  release();                                                      // the release: the click follows, then the parked landing on the hold's zero timer
+  row.click();
+  assert.equal(popover(o), null, "the click picked: the popover closed");
+  assert.equal(heads[39].scrolled, 1, "…and the 40th heading landed");
+  assert.deepEqual(heads[39].scrolledWith, { block: "start" });
+  assert.ok(doc.activeElement === o.body, "the keyboard is on the body");
+  await new Promise<void>((r) => setTimeout(r, 2)); await settle();
+  assert.equal(paints, painted + 1, "then the landing painted, once");
+  assert.equal(o.ctx.text(), OUTLINE_NOTE, "the reload's text is on screen");
+  // a right press holds nothing (pressHold's rule), so a landing under it paints at once
+  const pop2 = openOutline(o);
+  rowsOf(pop2)[5].dispatchEvent(new Ev("pointerdown", { button: 2 }));
+  const p2 = paints;
+  o.ctx.reload(); await settle();
+  assert.equal(paints, p2 + 1, "a right press on a row parks nothing: the landing painted");
+  assert.equal(popover(o), null, "…and its paint closed the popover, as every paint does");
+  release();
+});
+
+test("a heading target under a plain hidden wrapper (PR review round 1): the open lands at the top and the notice bar says so in the ruled words, nothing scrolled (before the fix: scrollToFragment found the boxless heading, moved nothing and counted the landing as done, no notice); a shown heading beside it lands with no notice; the notice is a polite live region", async (t) => {
+  withFrames(t);
+  const NOTE = "# Title\n\nText.\n\n<div hidden>\n\n## Stashed\n\nStashed text.\n\n</div>\n\n## Shown\n\nMore.\n";
+  const fv = await mod();
+  const o = await open(PLAIN, NOTE, t, false, { heading: "stashed" });
+  const stashed = headings(o).find((h) => h.textContent === "Stashed")!;
+  assert.ok(stashed && stashed.parentNode!.getAttribute("hidden") === "", "the scene: the heading is under a plain hidden wrapper");
+  assert.equal(frames.length, 1, "the Rendered paint queued the landing's frame");
+  flushFrames();
+  assert.equal(noticeOf(o), "That section is hidden in the rendered view; opened at the top.", "the ruled words (before the fix: no notice)");
+  assert.equal(noticeOf(o), fv.HIDDEN_SECTION, "…the module's export");
+  assert.equal(o.card.querySelector("#fileview-save-err")!.getAttribute("role"), "status", "the notice announces itself");
+  assert.equal(stashed.scrolled, 0, "nothing scrolled: there is no box to land on");
+  assert.equal(o.body.scrollTop, 0, "the note stands at its top");
+  o.fv.closeFileView();
+  // the control: the shown heading lands as before, with no notice
+  const c = await open(PLAIN, NOTE, t, false, { heading: "shown" });
+  flushFrames();
+  assert.equal(noticeOf(c), null, "a shown heading: no notice");
+  const shown = headings(c).find((h) => h.textContent === "Shown")!;
+  assert.equal(shown.scrolled, 1, "…and it landed"); assert.deepEqual(shown.scrolledWith, { block: "start" });
+  c.fv.closeFileView();
+  // a section the note lacks: the missing section's words, as before
+  const m = await open(PLAIN, NOTE, t, false, { heading: "absent" });
+  flushFrames();
+  assert.equal(noticeOf(m), 'No section named "absent" in this file.', "a heading the note lacks keeps its own words");
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────

@@ -15,7 +15,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { LONG, MT } from "./real-viewer-leg";
+import { LONG, LONG2, MT } from "./real-viewer-leg";
 
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
 const requireCjs = createRequire(path.join(EXT, "package.json"));
@@ -26,6 +26,8 @@ const WEB = { name: "web", color: { bg: "#224466", fg: "#ffffff" } };   // what 
 const API = { name: "api", color: { bg: "#664422", fg: "#ffffff" } };
 const REPORT = "/repo/notes-api/docs/report.md";
 const REL = "docs/report.md";                                     // the same spelling in two sessions: two files (the kernel resolves it per session)
+const REMOTE = "TESTHOST:" + SID_B;                               // a session attached from another kernel, as federation prefixes its sid and its name
+const REMOTE_API = { name: "TESTHOST:api", color: { bg: "#664422", fg: "#ffffff" } };
 
 const BUILD = { bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
   nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent" };
@@ -74,6 +76,7 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
   catch (e) { t.skip("no playwright browser on this box, and the browser leg needs one (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
   const errors: string[] = [];
   const docs: Record<string, string> = { [REPORT]: LONG, [REL]: LONG };
+  const remoteDocs: Record<string, string> = { [REPORT]: LONG2 };   // the other kernel's disk, read through /remote/TESTHOST/file (preview.ts fileUrl): another file under the same spelling
   try {
     const filesJs = filesBundle();
     const ctx = await browser.newContext({ viewport: { width: 900, height: 520 } });
@@ -83,9 +86,9 @@ async function inBrowser(t: any, body: (h: H) => Promise<void>): Promise<void> {
       const u = new URL(route.request().url());
       if (u.pathname === "/files") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: PAGE });
       if (u.pathname === "/dist/files.js") return route.fulfill({ status: 200, contentType: "application/javascript", body: filesJs });
-      if (u.pathname === "/file") {
+      if (u.pathname === "/file" || u.pathname === "/remote/TESTHOST/file") {
         const p = u.searchParams.get("path") || "";
-        const text = docs[p];
+        const text = (u.pathname === "/file" ? docs : remoteDocs)[p];
         if (text === undefined) return route.fulfill({ status: 404, contentType: "text/plain", body: "no such file: " + p });
         if (route.request().method() === "HEAD") return route.fulfill({ status: 200, headers: { "X-Romp-Mtime-Ns": MT, "Last-Modified": "Sat, 06 Sep 2025 08:00:00 GMT" }, body: "" });
         return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": MT, "X-Romp-Text-Utf8": "1" }, body: text });
@@ -223,5 +226,52 @@ test("in a browser (review round 5): two sessions read one absolute path; after 
     assert.equal(now!.scrollTop, 0, "B's relative row after the reload: B's own place, the top, not A's Paragraph 30: " + JSON.stringify(now));
     await h.close();
     assert.equal((await h.rows()).length, 4, "four rows: two files' worth for the relative spelling, one file's two rows for the absolute one");
+  });
+});
+
+// ── the PR review's round 1: a session attached from another kernel names the same absolute path ─────────────────────────
+// The review's round 6 measured two files under one key here: the remote session's read goes to that kernel's disk (fileUrl's
+// /remote/<host>/file), so a reopen of either file seated the other's later record and either leave overwrote the key for both.
+// The viewer's placeKey folds the host into a remote session's key now, and the pane reads the rows by that key.
+test("in a browser (PR review round 1): a session attached from another kernel reads the same absolute path from that kernel's disk, another file: its open lands at the top, not at the local file's place (before the fix: the local place, by the shared key), each file's leave writes its own row and leaves the other's landing alone, in the same page and after a page reload; the rows are told apart by the remote's host prefix", { timeout: 300000 }, async (t) => {
+  await inBrowser(t, async (h) => {
+    // the local session reads the report to Paragraph 20 and closes
+    await h.open(REPORT, SID_A, WEB);
+    await h.putAtTop("Paragraph 20"); const a20 = (await h.top())!; assert.equal(a20.text, "Paragraph 20:");
+    await h.close();
+    // the remote session's chat click opens the same absolute path: the other kernel's file (its text begins with the inserted paragraphs)
+    await h.open(REPORT, REMOTE, REMOTE_API);
+    let now = await h.top();
+    assert.equal(now!.scrollTop, 0, "the remote session's file opens at its top, not at the local file's Paragraph 20 (before the fix: " + a20.scrollTop + ", the shared key): " + JSON.stringify(now));
+    assert.equal(head(now), "Report", "…its title block at the top");
+    await h.putAtTop("Inserted 1"); assert.equal(head(await h.top()), "Inserted 1: n", "…and it is the other kernel's text: the inserted paragraphs under the title (a block the local file has no word of)");
+    await h.putAtTop("Paragraph 60"); const r60 = (await h.top())!; assert.equal(r60.text, "Paragraph 60:");
+    await h.close();
+    let rows = await h.rows();
+    assert.deepEqual(rows.map((r) => [r.path, r.sid, r.chip]), [[REPORT, REMOTE, "TESTHOST:api"], [REPORT, SID_A, "web"]], "one row per path + session, the remote's sid and chip prefixed by its host");
+    assert.ok(near(rows[0].scrollTop!, r60.scrollTop) && near(rows[1].scrollTop!, a20.scrollTop), "each row holds its own file's record: " + JSON.stringify(rows));
+    assert.deepEqual((await h.shown()).map((r) => r.chip), ["TESTHOST:api", "web"], "the Recent rows show the remote's host prefix");
+    // the same page: the local row lands at the local place (the remote's later leave did not overwrite it)
+    await h.clickRow(REPORT, SID_A);
+    now = await h.top();
+    assert.equal(head(now), "Paragraph 20:", "the local row lands at the local file's place (before the fix: the remote's later record, which the shared key handed it): " + JSON.stringify(now));
+    assert.ok(near(now!.scrollTop, a20.scrollTop));
+    await h.close();
+    await h.clickRow(REPORT, REMOTE);
+    now = await h.top();
+    assert.equal(head(now), "Paragraph 60:", "the remote row lands at the remote file's place: " + JSON.stringify(now));
+    await h.close();
+    // after a page reload: the in-page memory is empty and the rows stand; the pane reads each file's rows by the viewer's key
+    await h.reload();
+    await h.clickRow(REPORT, SID_A);
+    now = await h.top();
+    assert.equal(head(now), "Paragraph 20:", "after the reload the local row still lands at the local place: " + JSON.stringify(now));
+    await h.close();
+    await h.clickRow(REPORT, REMOTE);
+    now = await h.top();
+    assert.equal(head(now), "Paragraph 60:", "…and the remote row at the remote place: " + JSON.stringify(now));
+    assert.ok(near(now!.scrollTop, r60.scrollTop));
+    await h.close();
+    assert.doesNotMatch(await h.store(), /Paragraph|Inserted|lorem|ipsum/, "no word of either note in the store");
   });
 });

@@ -347,6 +347,46 @@ test("targetSuffix: a line after the path rides in the link as lineSuffix reads 
   assert.deepEqual(r.links.map((l) => [l.path, l.line, l.frag]), [["/repo/notes-api/docs/a.md", "3", undefined]]);
 });
 
+// A file:// URI carrying both a line and a section (`file:///repo/notes-api/docs/a.md:12#results`): the URI arm swallows
+// both, and the two cuts that hand a swallowed tail back to the suffix walk each anchor at the token's END, so the
+// section, which ends the token, must be cut before the line. The PR's review, round 1 (2026-09-14): the line cut ran
+// first, found nothing at a token ending in a section, and the path kept `:12`, so the link opened `a.md:12` (the
+// kernel's 404) with the section as data-frag, where a bare `docs/a.md:12#results` on the same line linked the file
+// at line 12 and left `#results` to the prose all along. The URI is held to that bare form.
+test("targetSuffix: a file URI carrying both a line and a section links the path at the line and leaves the section to the prose, as a bare token does", async () => {
+  const opts = { targetSuffix: true };
+  const bare = await walk("see docs/a.md:12#results now", opts);
+  assert.deepEqual(bare.links.map((l) => [l.text, l.path, l.line, l.frag]), [["docs/a.md:12", "docs/a.md", "12", undefined]],
+    "the bare form the URI is held to: the line arm reads `:12`, the walk reads one suffix, and `#results` stays prose");
+  assert.deepEqual(bare.texts, ["see ", "#results now"]);
+  let r = await walk("see file:///repo/notes-api/docs/a.md:12#results now", opts);
+  assert.deepEqual(r.links, [{ text: "file:///repo/notes-api/docs/a.md:12", path: "/repo/notes-api/docs/a.md", line: "12", frag: undefined, title: "Open /repo/notes-api/docs/a.md:12" }],
+    "the path is the file's with no `:12` in it, and the line rides as data-line");
+  assert.deepEqual(r.texts, ["see ", "#results now"], "the section is the prose's, as after the bare token");
+  r = await walk("see file:///repo/notes-api/docs/a.md:12#L3 now", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.line, l.frag]), [["file:///repo/notes-api/docs/a.md:12", "/repo/notes-api/docs/a.md", "12", undefined]],
+    "a line anchor after a line: the first is the line and the anchor stays prose, as after `docs/a.md:12#L3`");
+  assert.deepEqual(r.texts, ["see ", "#L3 now"]);
+  r = await walk("see file:///repo/notes-api/docs/a.md:12:4#results now", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.line, l.frag]), [["file:///repo/notes-api/docs/a.md:12:4", "/repo/notes-api/docs/a.md", "12", undefined]],
+    "a column rides in the text and is dropped from the line, as lineSuffix has it");
+  assert.deepEqual(r.texts, ["see ", "#results now"]);
+  r = await walk("see file:///repo/notes-api/docs/a.md:12#results.", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.line, l.frag]), [["file:///repo/notes-api/docs/a.md:12", "/repo/notes-api/docs/a.md", "12", undefined]]);
+  assert.deepEqual(r.texts, ["see ", "#results."], "the sentence's period stays the prose's");
+  // the one-tail URIs read as before: a section alone, a line alone, a line anchor alone
+  r = await walk("see file:///repo/notes-api/docs/a.md#results and file:///repo/notes-api/docs/b.md:12 and file:///repo/notes-api/docs/c.md#L3 now", opts);
+  assert.deepEqual(r.links.map((l) => [l.text, l.path, l.line, l.frag]), [
+    ["file:///repo/notes-api/docs/a.md#results", "/repo/notes-api/docs/a.md", undefined, "results"],
+    ["file:///repo/notes-api/docs/b.md:12", "/repo/notes-api/docs/b.md", "12", undefined],
+    ["file:///repo/notes-api/docs/c.md#L3", "/repo/notes-api/docs/c.md", "3", undefined],
+  ]);
+  assert.deepEqual(r.texts, ["see ", " and ", " and ", " now"]);
+  // the order at source: the section's tail is cut before the line's, both anchored at the token's end
+  assert.match(LINKS, /if \(isUri && sections\) \{ const tail = URI_FRAG_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}\n\s*if \(isUri && lines\) \{ const tail = URI_LINE_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}/,
+    "the section tail is cut first: a URI carrying both ends in the section, so a line cut tried first finds nothing");
+});
+
 test("controls: the chat's default walk and the viewer's lineSuffix walk leave a `#section` as prose, exactly as before", async () => {
   for (const opts of [undefined, { lineSuffix: true }]) {
     const r = await walk("see docs/a.md#results and docs/b.md:12 next", opts);
@@ -357,6 +397,13 @@ test("controls: the chat's default walk and the viewer's lineSuffix walk leave a
     const u = await walk("see file:///repo/notes-api/docs/a.md#results now", opts);
     assert.deepEqual(u.links.map((l) => [l.text, l.path, l.frag]), [["file:///repo/notes-api/docs/a.md#results", "/repo/notes-api/docs/a.md#results", undefined]],
       "the URI arm keeps its swallowed `#results` in the path, as it did: only targetSuffix cuts it");
+    // a URI carrying both a line and a section: the same on these two walks, before and after the targetSuffix walk
+    // learned to cut the section first (only targetSuffix cuts a section; the line cut alone finds no line at a token
+    // ending in a section, the viewer's walk's recorded follow-up)
+    const b = await walk("see file:///repo/notes-api/docs/a.md:12#results now", opts);
+    assert.deepEqual(b.links.map((l) => [l.text, l.path, l.line, l.frag]), [["file:///repo/notes-api/docs/a.md:12#results", "/repo/notes-api/docs/a.md:12#results", undefined, undefined]],
+      "opts " + JSON.stringify(opts) + ": both tails stay in the path, as they did");
+    assert.deepEqual(b.texts, ["see ", " now"]);
   }
 });
 

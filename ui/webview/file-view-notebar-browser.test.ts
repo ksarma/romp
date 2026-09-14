@@ -108,7 +108,7 @@ test("in a browser, the real module: the Edit refusal is a notice above the body
   });
 });
 
-type Disk = { present: boolean; text: string; button: string | null; disabled: boolean; parent: string; before: string | null; inCard: boolean; aboveRow: boolean; inViewport: boolean; bodyScrollTop: number; heads: number; bars: number };
+type Disk = { present: boolean; text: string; button: string | null; disabled: boolean; role: string | null; parent: string; before: string | null; inCard: boolean; aboveRow: boolean; inViewport: boolean; bodyScrollTop: number; heads: number; bars: number };
 /** The changed-on-disk bar as laid out: its own words (the bar's text nodes; the button's label is a child), its one button
  *  and that button's state, its place in the card (readBar's geometry), the body's scrollTop, the HEAD count. */
 function readDisk(): Disk {
@@ -116,12 +116,12 @@ function readDisk(): Disk {
   const bar = document.getElementById("fileview-save-err");
   const body = document.querySelector(".fileview-body") as HTMLElement;
   const bars = document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length;
-  if (!bar) return { present: false, text: "", button: null, disabled: false, parent: "", before: null, inCard: false, aboveRow: false, inViewport: false, bodyScrollTop: body.scrollTop, heads: w.__heads, bars };
+  if (!bar) return { present: false, text: "", button: null, disabled: false, role: null, parent: "", before: null, inCard: false, aboveRow: false, inViewport: false, bodyScrollTop: body.scrollTop, heads: w.__heads, bars };
   const btn = bar.querySelector("button");
   const r = bar.getBoundingClientRect(), card = document.querySelector(".fileview")!.getBoundingClientRect(), main = document.querySelector(".fileview-main")!.getBoundingClientRect();
   return {
     present: true, text: Array.from(bar.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent || "").join(""),
-    button: btn ? btn.textContent : null, disabled: !!(btn && btn.disabled),
+    button: btn ? btn.textContent : null, disabled: !!(btn && btn.disabled), role: bar.getAttribute("role"),
     parent: (bar.parentElement as HTMLElement).className, before: bar.nextElementSibling ? (bar.nextElementSibling as HTMLElement).className : null,
     inCard: r.top >= card.top - 0.5 && r.bottom <= card.bottom + 0.5 && r.left >= card.left - 0.5 && r.right <= card.right + 0.5,
     aboveRow: r.bottom <= main.top + 0.5 && r.height > 0,
@@ -157,6 +157,7 @@ test("in a browser, the real module: a window focus runs one HEAD and the same m
       assert.equal(d.heads, 2, cell + ": one more HEAD, no second while it was out");
       assert.equal(d.text, "Changed on disk.", cell + ": the bar's words");
       assert.equal(d.button, "Reload", cell + ": and its button"); assert.equal(d.disabled, false, cell + ": armed");
+      assert.equal(d.role, "status", cell + ": a polite live region, since the bar is raised with no gesture of the reader's (the PR review's round 1: no role, and assistive technology announced nothing)");
       assert.equal(d.bars, 1, cell + ": exactly one bar in the card");
       assert.equal(d.parent, "fileview", cell + ": a child of the card, not of the body");
       assert.equal(d.before, "fileview-main", cell + ": right above the body row");

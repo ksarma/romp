@@ -683,13 +683,17 @@ test("the window's pagehide writes the record with the viewer still up, and the 
 });
 
 // ── the key: a relative path is one file per session ───────────────────────────────────────────────
-test("the memory's key (review round 2): a RELATIVE path carries the session, since the kernel resolves it against the session's cwd and two sessions' docs/report.md are two files (before: session B's file, never read here, opened at session A's place); an absolute or ~ path is one file for every session and its key stays the path; placeKey says so", async (t) => {
+test("the memory's key (review round 2): a RELATIVE path carries the session, since the kernel resolves it against the session's cwd and two sessions' docs/report.md are two files (before: session B's file, never read here, opened at session A's place); an absolute or ~ path is one file for every session of this kernel and its key stays the path; a session attached from another kernel (a host-prefixed sid) reads that kernel's disk under the same spelling, so its key carries the host (PR review round 1: before, two kernels' files shared one key and a reopen of either seated the other's later record); placeKey says so", async (t) => {
   const fv = await mod();
   const SID_B = "22222222-3333-4444-5555-666666666666";
+  const REMOTE = "TESTHOST:" + SID_B;                         // a session attached from another kernel, as federation prefixes it
   assert.equal(fv.placeKey("/repo/notes-api/docs/report.md", SID), "/repo/notes-api/docs/report.md", "an absolute path: the path alone");
   assert.equal(fv.placeKey("~/notes/report.md", SID), "~/notes/report.md", "a ~ path: the kernel expands it for every session alike");
   assert.equal(fv.placeKey("docs/report.md", SID), "docs/report.md\u0000" + SID, "a relative path: the session folded in");
   assert.equal(fv.placeKey("docs/report.md", null), "docs/report.md\u0000", "…with no session, an empty one (still apart from the absolute spelling)");
+  assert.equal(fv.placeKey("/repo/notes-api/docs/report.md", REMOTE), "TESTHOST\u0000/repo/notes-api/docs/report.md", "a remote session's absolute path: the host folded in, another file (PR review round 1)");
+  assert.equal(fv.placeKey("~/notes/report.md", REMOTE), "TESTHOST\u0000~/notes/report.md", "…and its ~ path");
+  assert.equal(fv.placeKey("docs/report.md", REMOTE), "docs/report.md\u0000" + REMOTE, "a relative path's key carries the prefixed sid, which already tells the kernels apart");
   // session A reads the relative path to block 12 and closes; session B's open of the same relative path is another file: the top
   const REL = "docs/report-rel.md";
   const a = await open(REL, NOTE, t);
@@ -718,6 +722,71 @@ test("the memory's key (review round 2): a RELATIVE path carries the session, si
   assert.equal(fv.openFileView(ABS, SID_B), true); await settle();
   assert.equal(current(fv).body.scrollTop, 330, "the absolute path's place is shared across sessions (the same bytes are the same file)");
   fv.closeFileView();
+  // a session attached from another kernel names the same absolute path: that kernel's disk, another file, its own key (the stand-in
+  // serves the remote route the same bytes, so a shared key would have seated the local place by span)
+  assert.equal(fv.openFileView(ABS, REMOTE), true); await settle();
+  assert.equal(current(fv).body.scrollTop, 0, "the remote session's file opens at its top, not at the local file's place (before the fix: 330, the shared key)");
+  current(fv).body.scrollTop = 250;
+  fv.closeFileView();
+  assert.equal(leaves[leaves.length - 1].sid, REMOTE, "the host hears the leave with the prefixed sid, as before");
+  const s2 = await reopen(fv, ABS);
+  assert.equal(s2.body.scrollTop, 330, "the local file's place stands (before the fix: the remote leave's 250 overwrote the one key)");
+  fv.closeFileView();
+  assert.equal(fv.openFileView(ABS, REMOTE), true); await settle();
+  assert.equal(current(fv).body.scrollTop, 250, "the remote file's own place");
+  fv.closeFileView();
+});
+
+// ── a target on a picture or a PDF (PR review round 1) ────────────────────────────────────────────────────────────────────
+test("a target on a picture or a PDF (PR review round 1): a { line } or an { offset } on a picture names the target in the notice bar in the heading target's one-line shape, the kind of file with it, and nothing scrolls (before the fix: dropped in silence, renderBody's media branch spending the heading alone); a { heading } as before; a PDF the same; an open with no target says nothing; the body takes the keyboard at the landing", async (t) => {
+  const fv = await mod();
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  const notice = (o: Open): El | null => o.wrap.querySelector("#fileview-save-err");
+  const pic = await open(PLOT, PNG, t, { at: { line: 12 } });
+  assert.ok(pic.body.querySelector("img"), "the picture painted");
+  assert.equal(notice(pic)?.textContent, "No line 12 in this file: it is a picture.", "the line named (before the fix: no notice)");
+  assert.equal(notice(pic)?.getAttribute("role"), "status", "…a polite live region");
+  assert.ok(doc.activeElement === pic.body, "the body holds the keyboard after the landing");
+  pic.fv.closeFileView();
+  const off = await open(PLOT, PNG, t, { at: { offset: 1200 } });
+  assert.equal(notice(off)?.textContent, "No offset 1200 in this file: it is a picture.", "the offset named");
+  off.fv.closeFileView();
+  const head = await open(PLOT, PNG, t, { at: { heading: "layer1" } });
+  assert.equal(notice(head)?.textContent, 'No section named "layer1" in this file.', "the heading's notice as before (the review's round 3)");
+  head.fv.closeFileView();
+  const none = await open(PLOT, PNG, t);
+  assert.equal(notice(none), null, "an open with no target says nothing");
+  none.fv.closeFileView();
+  // a PDF frame: the same words, the kind named
+  const PDF = ROOT + "/docs/paper.pdf";
+  disk[PDF] = { bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]), type: "application/pdf", mtimeNs: MT };
+  assert.equal(fv.openFileView(PDF, SID, { at: { line: 3 } }), true, "the open happened"); await settle();
+  const pdf = current(fv);
+  assert.ok(pdf.body.querySelector("iframe"), "the PDF frame painted");
+  assert.equal(notice(pdf)?.textContent, "No line 3 in this file: it is a PDF.", "the line named for a PDF");
+  fv.closeFileView();
+  assert.equal(fv.openFileView(PDF, SID, { at: { offset: 40 } }), true); await settle();
+  assert.equal(notice(current(fv))?.textContent, "No offset 40 in this file: it is a PDF.");
+  fv.closeFileView();
+});
+
+// ── the URL viewer's replace path (PR review round 1): the leave, executed ────────────────────────────────────────────────
+test("the URL viewer's replace path, executed (PR review round 1): opening a URL over a scrolled note writes the note's record before the card goes, and the next open of the path returns to it (the source pin below reads runLeave in openUrlView; this runs it)", async (t) => {
+  const P = notePath("url-replace");
+  const o = await open(P, NOTE, t);
+  o.body.scrollTop = 490;
+  const n0 = leaves.length;
+  o.fv.openUrlView("http://notes-api.test/figs/run-1/evidence.md");
+  assert.equal(leaves.length, n0 + 1, "the URL viewer's replace wrote the note's record");
+  assert.equal(leaves[n0].path, P); assert.equal(leaves[n0].sid, SID); assert.equal(leaves[n0].rec.scrollTop, 490);
+  assert.deepEqual({ ...leaves[n0].rec, t: 0 }, { start: NOTE_SPANS[12].start, end: NOTE_SPANS[12].end, top: -10, atTop: false, view: "rendered", mtimeNs: MT, scrollTop: 490, t: 0 }, "block 12, ten pixels in");
+  assert.ok(doc.getElementById("romp-fileview") && !doc.getElementById("romp-fileview")!.contains(o.body), "the URL viewer is up in the note's place");
+  await settle();
+  o.fv.closeFileView();
+  assert.equal(leaves.length, n0 + 1, "the URL viewer's own close writes nothing: it keeps no place");
+  const back = await reopen(o.fv, P);
+  assert.equal(back.body.scrollTop, 490, "the reopen returns to the record the replace wrote");
+  assert.equal(topOf(blocks(back)[12]), -10);
 });
 
 // ── the source: where the write and the seat sit ─────────────────────────────────────────────────

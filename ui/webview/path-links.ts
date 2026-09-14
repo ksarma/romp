@@ -285,7 +285,8 @@ const LINE_SUFFIX_AT_RE = new RegExp(LINE_SUFFIX_RE.source.replace(/^\^/, ""), "
 // only at a linked token's end.
 export const FRAG_SUFFIX_RE = /^#(?!L\d)([^\s#]+)/;
 const FRAG_SUFFIX_AT_RE = new RegExp(FRAG_SUFFIX_RE.source.replace(/^\^/, ""), "y");
-// The same section at the END of a file:// URI token (the URI arm swallows `#results` as it swallows `:12`).
+// The same section at the END of a file:// URI token (the URI arm swallows `#results` as it swallows `:12`); cut
+// before the line's tail, since a URI carrying both ends in the section (the walk says why).
 const URI_FRAG_TAIL_RE = /#[^\s#]+$/;
 /** A section read off a suffix match: percent-decoded (a malformed escape keeps the spelling as written), the trailing
  *  sentence punctuation left to the prose as a token's is (`see docs/a.md#results.` names `results`), or null when
@@ -402,14 +403,18 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       const lines = !!(opts && (opts.lineSuffix || opts.targetSuffix));   // the surface reads a line after a token…
       const sections = !!(opts && opts.targetSuffix);                     // …and, on a todo's surfaces, a section too
       // a line reference a URI token swallowed (`file:///a.md:12`) is the suffix, not the path, where the surface reads lines;
-      // a section it swallowed (`file:///a.md#results`) likewise where it reads sections. Where the surface reads lines
+      // a section it swallowed (`file:///a.md#results`) likewise where it reads sections. The section is cut first: both
+      // cuts anchor at the token's end, and a URI carrying both (`file:///a.md:12#results`) ends in the section, so a
+      // line cut tried first finds nothing and the token keeps `:12` in its path (the PR's review, round 1, 2026-09-14).
+      // With the section gone the line cut ends the token at the path, and the suffix walk below reads `:12` as the line
+      // and leaves `#results` to the prose, as it does after a bare `docs/a.md:12#results`. Where the surface reads lines
       // alone (the viewer's own walk over a shown file's text, file-view-links.ts linkifyFileText) the swallowed section
       // stays in the path, so the link opens `/a.md#results` and the kernel answers 404, where a bare `docs/a.md#results`
       // on the same line links the file and leaves `#results` as prose. Pre-existing (the same on the base Slice 6 was
       // built on) and outside the slice's items: recorded in plans/markdown-viewer.md's Slice 6 section and routed to a
       // follow-up (the 2026-09-13 review, round 2), not changed here.
-      if (isUri && lines) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
       if (isUri && sections) { const tail = URI_FRAG_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
+      if (isUri && lines) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
       const span = spanHolding(u, start, start + tok.length);
       if (!span) continue;                          // across a node's edge, or inside a link: as it is
       if (!isUri && !looksLikeFilePath(tok) && !(span.inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc.: leave as prose

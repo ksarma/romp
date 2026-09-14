@@ -37,9 +37,13 @@ const RULES = [
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
   "a.fileview-gh-note {", ".fileview-body {",
   ".fileview-body:focus {", ".fileview-body:focus-visible {",   // the body holds the keyboard (Slice 6 of plans/markdown-viewer.md, item 1): no ring for a paint's focus, the accent ring for a Tab's
-  // the Outline's dropdown in the menu tokens and its button's open state (Slice 6, item 2): placed from its offsetParent, the overlay #romp-fileview,
-  // on both pages (the card is not its containing block: container-type gives it no layout containment); the open state keys on the button's own class (the Comments panel's Show more and Reject all are .fileview-btn with aria-expanded too; review round 1)
-  ".fileview-outline {", ".fileview-outline:focus {", ".fileview-outline-row {", ".fileview-outline-row:hover, .fileview-outline-row.current {", '.fileview-outline-btn[aria-expanded="true"] {',
+  // the bar's one selected dress: the Rendered/Raw and Wrap toggles, and the Outline button while its popover is up (Slice 6 of
+  // plans/markdown-viewer.md, item 2: file-view.ts toggles the class beside aria-expanded; the PR review's round 1 dropped the button's own
+  // [aria-expanded="true"] twin, which lacked the weight and the hover, for this dress; the test below holds the twin gone)
+  ".fileview-btn.on {", ".fileview-btn.on:hover {",
+  // the Outline's dropdown in the menu tokens (Slice 6, item 2): placed from its offsetParent, the overlay #romp-fileview,
+  // on both pages (the card is not its containing block: container-type gives it no layout containment)
+  ".fileview-outline {", ".fileview-outline:focus {", ".fileview-outline-row {", ".fileview-outline-row:hover, .fileview-outline-row.current {",
   "@property --fv-body-w {", ".fileview-md {",
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   ".fileview-err-act {",   // the changed-on-disk bar's Reload on the words' line (Slice 6, item 5; the review's round 5)
@@ -141,6 +145,21 @@ test("the rule reader anchors a head at a line start and reads every rule declar
 test("the viewer's shared chrome and the document's type scale exist in BOTH sheets, byte-equal, every occurrence of every head", () => {
   for (const head of RULES) {
     assert.deepEqual(rulesOf(CHAT, head), rulesOf(FEED, head), head + " mirrors exactly");
+  }
+});
+
+// The Outline button's open state (Slice 6 of plans/markdown-viewer.md, item 2) is the bar's selected dress, .fileview-btn.on,
+// which file-view.ts toggles beside aria-expanded, and no rule of the button's own: the build's
+// `.fileview-outline-btn[aria-expanded="true"]` rule was a near-twin of that dress without its 600 weight and its hover
+// inversion, so an open Outline computed unlike the pressed Rendered toggle beside it (the PR review's round 1). Heads are
+// read at a line start, as rulesOf reads them. Red over a git archive of 3e433ceee: one such head in each sheet.
+test("the Outline button wears the bar's selected dress and has no rule of its own: no head in either sheet names .fileview-outline-btn or aria-expanded", () => {
+  const heads = (css: string): string[] => css.split("\n").filter((l) => /^[.#:@a-zA-Z[][^{]*\{/.test(l)).map((l) => l.slice(0, l.indexOf("{")).trim());
+  for (const [sheet, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
+    assert.deepEqual(heads(css).filter((h) => h.includes(".fileview-outline-btn") || h.includes("aria-expanded")), [], sheet + ": a rule of the button's own");
+    // the dress it wears instead, present (rulesOf fails on an absent head) and carrying what the twin lacked
+    assert.match(rulesOf(css, ".fileview-btn.on {")[0], /font-weight: 600;/, sheet + ": the selected dress carries the weight");
+    assert.match(rulesOf(css, ".fileview-btn.on:hover {")[0], /background: var\(--accent\); color: var\(--accent-fg\);/, sheet + ": ...and the hover inversion");
   }
 });
 

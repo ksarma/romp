@@ -92,13 +92,13 @@ export function placeRecent(list: RecentFile[], path: string, sid: string | null
 
 /** The record to seat at an open: the LATEST (by `t`) among the rows `sameFile` admits, null when none of them holds one.
  *  The rows are per path + session while the viewer's in-page memory is per FILE (file-view.ts placeKey: an absolute or `~`
- *  path is one file for every session of this kernel that names it, a session attached from another kernel reading that
- *  kernel's disk under the same key, recorded in the plan's Slice 6 note, item 6; a relative path one per session, since
- *  the kernel resolves it against the session's cwd), so files.ts admits the rows whose placeKey is the open's. Two
- *  sessions' rows for one absolute path then seat the same record, the later, as the in-page memory seats the file's last
- *  leave before a page reload; with the open's own row alone read, the same row landed at the file's latest place before a
- *  reload and at its session's older place after one (the Slice 6 review, round 5). A tie keeps the first row admitted, the
- *  most recent. */
+ *  path is one file for every session of this kernel that names it, a session attached from another kernel, whose sid
+ *  carries its host, reads that kernel's disk, so its key carries the host too and the two kernels' files are two files (the
+ *  PR review's round 1); a relative path one per session, since the kernel resolves it against the session's cwd), so
+ *  files.ts admits the rows whose placeKey is the open's. Two sessions' rows for one absolute path then seat the same
+ *  record, the later, as the in-page memory seats the file's last leave before a page reload; with the open's own row alone
+ *  read, the same row landed at the file's latest place before a reload and at its session's older place after one (the
+ *  Slice 6 review, round 5). A tie keeps the first row admitted, the most recent. */
 export function latestPlace(list: RecentFile[], sameFile: (r: RecentFile) => boolean): RecentPlace | null {
   let best: RecentPlace | null = null;
   for (const r of list) if (r.place && sameFile(r) && (!best || r.place.t > best.t)) best = r.place;
