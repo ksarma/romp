@@ -766,8 +766,19 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
   act(row3, "fcreload")!.click(); await flush();
   assert.equal(w3.reloads, 2); assert.equal(countOf(w3, "fileComments", "status"), asks3 + 1);
   assert.ok(a3.querySelector('.fc-load[data-slot="bytes"]'), "the slot wears the loader for the re-read");
-  w3.landReload!(); answer(w3, after); await flush(); await flush();
+  // the browser's order (the Slice 7 consolidation pass's scene in file-view-failures-browser.test.ts): the status ask the row's
+  // Reload sent is answered before the fetch it sent lands, over the standing pane, so the pass arms the wait again and ends it at
+  // once in the pane's words (the row is filed again, no loader); THEN the fetch lands: the landing paint shows the status's text,
+  // and the row, which said the bytes could not be read, goes with the wait (bytesLanded). Before that pass the row stood over the
+  // new text until dismissed or the next wait (this scene landed the fetch first and never saw it).
+  answer(w3, after); await flush(); await flush();
+  assert.equal(w3.reloads, 2, "the same mtime: the status asks no third fetch");
+  assert.equal(a3.querySelectorAll(".fc-load").length, 0, "no loader over the standing pane");
+  assert.ok(a3.querySelector('.fc-cards .fc-err[data-slot="bytes"]'), "the row is filed again over the pane, in the failure's words");
+  assert.ok(w3.landReload, "the fetch is still out");
+  w3.landReload!(); await flush(); await flush();
   assert.equal(w3.viewError, null, "a content paint clears error()");
+  assert.equal(a3.querySelectorAll('.fc-err[data-slot="bytes"]').length, 0, "the landing answers the row: the bytes it said could not be read are showing (before the consolidation pass: the row stood over the new text)");
   assert.equal(a3.querySelectorAll(".fc-load").length, 0);
   assert.equal(marksOf(w3, "h5").length, 1, "the marks are back over the new text");
   assert.deepEqual(w3.hookErrors, []);

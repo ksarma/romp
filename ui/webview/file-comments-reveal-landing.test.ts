@@ -556,11 +556,16 @@ test("pins: paintAll clears the landing before it paints; both Reveal branches c
   assert.match(land, /if \(this\.ownMarks\(act, id\)\.length\) return;/, "a marked subject gets no row cue");
   assert.match(land, /const code = this\.ctx\.body\(\)\.querySelector\("code\.hljs"\);/, "the Raw root, as scrollToOffset finds it");
   assert.match(land, /rows\[Math\.min\(rawOffsetToLine\(src, offset\), rows\.length - 1\)\]/, "the row by line ends before the offset, clamped");
-  // the viewer's rule the cue mirrors — should scrollToOffset choose its row another way, the cue must follow
+  // the viewer's rule the cue mirrors (should scrollToOffset choose its row another way, the cue must follow): since Slice 7 of
+  // plans/markdown-viewer.md (item 7, contract C6) the row is the verified row map's (anchor-map.ts rawRowForOffset, which follows
+  // the rows' three-ending split), and when the map refuses, the count over the source with the same split (RAW_ROW_SPLIT), clamped
+  // to the last row; the cue's rawOffsetToLine counts the same three endings, so the two agree row for row (anchor-map.test.ts)
   const sto = FV.slice(FV.indexOf("    scrollToOffset: (n) => {"), FV.indexOf("    reload: () =>"));
   assert.match(sto, /const rows = code\.querySelectorAll\("\.fv-cl"\);/);
-  assert.match(sto, /const line = \(src\.slice\(0, Math\.max\(0, n\)\)\.match\(\/\\n\/g\) \|\| \[\]\)\.length;/);
-  assert.match(sto, /rows\[Math\.min\(line, rows\.length - 1\)\]/);
+  assert.match(sto, /const row = rawRowForOffset\(code, src, n\);/, "the verified row map's row");
+  assert.match(sto, /src\.slice\(0, Math\.max\(0, n\)\)\.split\(RAW_ROW_SPLIT\)\.length - 1/, "the fallback counts the same three endings");
+  assert.match(sto, /rows\.length - 1\)\]/, "clamped to the last row");
+  assert.doesNotMatch(sto, /match\(\/\\n\/g\)/, "no LF-only count is left");
 });
 
 test("the stand-in's nodes inspect as their projection: no enumerable edge, so a failing assertion's dump cannot walk the tree", () => {

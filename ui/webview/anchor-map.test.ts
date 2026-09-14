@@ -23,7 +23,7 @@ import {
   mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered,
   rawOffsetToLine, rawRowForOffset, type SelLike, type MapResult, type SourceRange,
   paintRawPoint, paintChangesRaw, paintChangesRendered, unpaintChanges, deletionLabel, DEL_LABEL_MAX, PILCROW, type ChangePaint,
-  sourceBlockSpans, renderedBlockIndex, rawRows, rawRowSpan,
+  sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowSpan,
 } from "./anchor-map";
 // @ts-ignore -- untyped CommonJS module (see anchor-map.ts)
 import engine from "../../vendor/track-changents/engine.js";
@@ -145,9 +145,11 @@ function parseHTML(doc: FakeDocument, html: string): FakeNode[] {
 const LANG: Record<string, string> = { py: "python", html: "xml", htm: "xml", xml: "xml", svg: "xml", css: "css", md: "markdown" };
 const langFor = (p: string): string | null => LANG[p.slice(p.lastIndexOf(".") + 1).toLowerCase()] || null;
 const escapeHtml = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-// replica of file-view.ts wrapNumberedHtml (pinned below)
-function wrapNumberedHtml(html: string): string {
-  const lines = html.split("\n");
+// replica of file-view.ts wrapNumberedHtml (pinned below): since Slice 7 of plans/markdown-viewer.md (item 7, contract C6) the
+// rows split on CRLF, a lone CR and LF alike, the viewer's RAW_ROW_SPLIT, so no row's text carries a "\r". `split` is the
+// one line the two builders below differ in.
+function wrapNumbered(html: string, split: RegExp | string): string {
+  const lines = html.split(split);
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
   let open: string[] = [];
   return lines.map((ln) => {
@@ -159,6 +161,14 @@ function wrapNumberedHtml(html: string): string {
     return `<span class="fv-cl"><span class="fv-ct">${prefix}${ln}${suffix}</span></span>`;
   }).join("");
 }
+const wrapNumberedHtml = (html: string): string => wrapNumbered(html, /\r\n|\r|\n/);
+// The Raw grid as the viewer built it BEFORE Slice 7: an LF-only split, so a CRLF source's rows each carried a "\r" (which
+// parseHTML normalises as the browser does) and a lone CR stayed inside its row. The cases built on `buildRaw` were written
+// over that grid (their offsets, row counts and quotes assume it), and the map takes whatever rows it is given, verifying them
+// against the source character by character, so they keep it as the map's input; the viewer's rows since Slice 7 are the
+// replica's above (buildRawSplit and the three-ending cases). Re-aiming the replica alone turned nine of them red, so the
+// consolidation pass of Slice 7 kept the older grid here by name rather than re-derive them (recorded in the plan note).
+const wrapNumberedHtmlLf = (html: string): string => wrapNumbered(html, "\n");
 type RawDom = { body: FakeElement; before: FakeElement; after: FakeElement; wrap: FakeElement; code: FakeElement };
 /** `.fileview-body > div.fileview-code > pre > code.hljs > rows`, with a sibling before and after. */
 function buildRaw(text: string, filePath: string): RawDom {
@@ -171,7 +181,7 @@ function buildRaw(text: string, filePath: string): RawDom {
   const wrap = doc.createElement("div"); wrap.setAttribute("class", "fileview-code");
   const pre = doc.createElement("pre"); pre.setAttribute("class", "fileview-pre fileview-wrap");
   const code = doc.createElement("code"); code.setAttribute("class", "hljs");
-  for (const n of parseHTML(doc, wrapNumberedHtml(hl !== null ? hl : escapeHtml(text)))) code.appendChild(n);
+  for (const n of parseHTML(doc, wrapNumberedHtmlLf(hl !== null ? hl : escapeHtml(text)))) code.appendChild(n);   // the pre-Slice 7 grid these cases were written over (wrapNumberedHtmlLf)
   pre.appendChild(code); wrap.appendChild(pre);
   const after = doc.createElement("div"); after.setAttribute("class", "fileview-footer"); after.appendChild(doc.createTextNode("footer text"));
   body.appendChild(before); body.appendChild(wrap); body.appendChild(after);
@@ -257,7 +267,10 @@ function rawDomIndexOf(source: string): (srcOff: number) => number | null {
 // ── source pins: the DOM shapes this test rebuilds are the viewer's ──────────────────────────────
 test("pins: the viewer's Raw rows, marked configuration, and lexer identity", () => {
   assert.match(VIEW, /return `<span class="fv-cl"><span class="fv-ct">\$\{prefix\}\$\{ln\}\$\{suffix\}<\/span><\/span>`;/);
-  assert.match(VIEW, /const lines = html\.split\("\\n"\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/);
+  assert.match(VIEW, /^const RAW_ROW_SPLIT = \/\\r\\n\|\\r\|\\n\/;$/m,
+    "one module-level regex: a CRLF as one ending, then a lone CR, then LF (Slice 7 of plans/markdown-viewer.md, item 7; contract C6)");
+  assert.match(VIEW, /const lines = html\.split\(RAW_ROW_SPLIT\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/,
+    "the rows split on it, the one trailing empty piece popped (the replica above follows)");
   // the viewer's configuration is the one every bundle applies (md-config.ts, Slice 4 of plans/markdown-viewer.md): the
   // viewer calls it at load, as this suite does, and holds no options of its own
   const CONFIG = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-config.ts"), "utf8");
@@ -585,19 +598,14 @@ test("rawOffsetToLine counts the Raw view's rows", () => {
 });
 
 // ── Raw: the rows split on CR, CRLF and LF (Slice 7 of plans/markdown-viewer.md, item 7) ───────────────────────
-/** The row split file-view.ts takes in Slice 7 (contract C6): a CRLF as one ending, then a lone CR, then LF, the one trailing
- *  empty piece popped; `wrapNumberedHtml` above stays the pinned replica of the viewer's text until that pin moves. */
+/** The row split the viewer takes since Slice 7 (contract C6; the replica `wrapNumberedHtml` above follows it): a CRLF as one
+ *  ending, then a lone CR, then LF, the one trailing empty piece popped. */
 const ROW_SPLIT = /\r\n|\r|\n/;
-function rowsSplitOnEndings(html: string): string {
-  const lines = html.split(ROW_SPLIT);
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return lines.map((ln) => `<span class="fv-cl"><span class="fv-ct">${ln}</span></span>`).join("");
-}
-/** `code.hljs` holding `text`'s rows on that split (no highlighter: the endings are what these cases read). */
+/** `code.hljs` holding `text`'s rows on that split, through the replica (no highlighter: the endings are what these cases read). */
 function buildRawSplit(text: string): FakeElement {
   const doc = new FakeDocument();
   const code = doc.createElement("code"); code.setAttribute("class", "hljs");
-  for (const n of parseHTML(doc, rowsSplitOnEndings(escapeHtml(text)))) code.appendChild(n);
+  for (const n of parseHTML(doc, wrapNumberedHtml(escapeHtml(text)))) code.appendChild(n);
   return code;
 }
 /** The row that holds `offset` by the split alone: the endings whose last character lies before the offset. */
@@ -1126,6 +1134,61 @@ test("Rendered: a failed figure's label (span.fv-figerr, the img's next sibling)
   const m2 = paintRendered(El(box2), src2, { start: s2, end: s2 + "After the figure.".length }, "fc-hl") as unknown as FakeElement[] | null;
   assert.ok(m2 && m2.length, "the comment after a failed top-level figure paints");
   assert.equal(m2!.map((m) => m.textContent).join(""), "After the figure.");
+});
+
+test("Rendered: a failed figure's label at the box's TOP level (an html block whose img is a top-level node) is no block's node: the img's block owns its img alone, or the Comments panel's wrap around it, never the label after it; a heading and a paragraph nested in the html block's own unclosed <div> map with the label standing between the img and the div, the panel open or closed (the Slice 7 consolidation pass; before: the block owned the img and the label, and with the panel open the heading in the div was refused as not matching the file)", () => {
+  // the browser leg's reading of a block's elements (anchor-map-wrappers-browser.test.ts): the layer's wrap stands for its img
+  const tags = (els: Element[]): string[] => els.map((e) => ((e as unknown as FakeElement).getAttribute("class") || "").split(" ").includes("fc-imgwrap") ? "IMG" : e.tagName);
+  /** The regions layer's wrap around `img` while the Comments panel is open (file-comments-regions.ts), in the img's place. */
+  const wrapImg = (img: FakeElement): FakeElement => {
+    const doc = img.ownerDocument, parent = img.parentNode as FakeElement;
+    const wrap = doc.createElement("span"); wrap.setAttribute("class", "fc-imgwrap");
+    parent.insertBefore(wrap, img); parent.removeChild(img); wrap.appendChild(img);
+    return wrap;
+  };
+  const whole = (e: FakeElement): SelLike => { const t = allText(e, null); return sel({ node: t[0], offset: 0 }, { node: t[t.length - 1], offset: t[t.length - 1].data.length }); };
+  // a bare <img> html block, the label its top-level next sibling
+  const src = "# Report\n\n<img src=\"figs/missing.png\" alt=\"fig\">\n\nAfter the figure.\n";
+  const { box } = buildRendered(src);
+  const img = firstEl(box, "IMG");
+  assert.equal(img.parentNode, box, "the html block's img is a top-level node");
+  const spans = sourceBlockSpans(src);
+  assert.equal(src.slice(spans[1].start, spans[1].end), "<img src=\"figs/missing.png\" alt=\"fig\">", "block 1 is the img's html block");
+  assert.deepEqual(tags(renderedBlockElements(El(box), src, 1)), ["IMG"], "before any label: the block owns its img");
+  const label = failedFigureLabel(img, "Image failed to load: figs/missing.png (fig)");
+  assert.equal(label.parentNode, box, "the label is a top-level node too");
+  assert.deepEqual(tags(renderedBlockElements(El(box), src, 1)), ["IMG"], "with the label: the block owns its img alone (before the consolidation pass: the img and the label)");
+  assert.equal(renderedBlockIndex(El(box), src, El(label)), -1, "the label is no block's node");
+  assert.equal(renderedBlockIndex(El(box), src, El(firstEl(box, "P"))), 2, "the paragraph after pairs");
+  const wrap = wrapImg(img);
+  assert.equal(box.childNodes.indexOf(label), box.childNodes.indexOf(wrap) + 1, "the label follows the wrap (contract C2's addendum)");
+  assert.deepEqual(tags(renderedBlockElements(El(box), src, 1)), ["IMG"], "with the panel's wrap around the img: the block owns the wrap alone");
+  assert.equal(renderedBlockIndex(El(box), src, El(firstEl(box, "P"))), 2, "the paragraph after still pairs");
+  // the README shape: the img and an unclosed <div align="center"> in one html block, the heading and the paragraph the
+  // markdown after it renders nested inside the div (the parse nests as the browser does), the label between the img and the div
+  const src2 = "<img src=\"logo.png\" alt=\"l\">\n<div align=\"center\">\n\n# Head 003\n\nPara 004 echo foxtrot.\n\n</div>\n\nAfter 005 hotel india.\n";
+  const passages = ["Head 003", "Para 004 echo foxtrot.", "After 005 hotel india."];
+  for (const panel of [false, true]) {
+    const what = panel ? "panel open (the wrap around the img)" : "panel closed";
+    const { box: box2 } = buildRendered(src2);
+    const img2 = firstEl(box2, "IMG");
+    assert.equal(img2.parentNode, box2, what + ": the img is a top-level node");
+    const div = firstEl(box2, "DIV", 1);   // the box itself is the first DIV
+    const h1 = firstEl(div, "H1");
+    assert.equal(h1.textContent, "Head 003", what + ": the heading renders inside the open div");
+    const label2 = failedFigureLabel(img2, "Image failed to load: logo.png (l)");
+    if (panel) wrapImg(img2);
+    const between = box2.childNodes.slice(box2.childNodes.indexOf(label2) + 1, box2.childNodes.indexOf(div));
+    assert.ok(box2.childNodes.indexOf(div) > box2.childNodes.indexOf(label2) && between.every((n) => n.nodeType === 3 && n.textContent.trim() === ""), what + ": the label stands between the img and the div (the html block's own line feed the only text between)");
+    assert.deepEqual(tags(renderedBlockElements(El(box2), src2, 0)), ["IMG", "DIV"], what + ": the html block owns the img and the div, never the label (before: [IMG, SPAN])");
+    for (const p of passages) {
+      const el = p.startsWith("Head") ? h1 : p.startsWith("Para") ? firstEl(div, "P") : firstEl(box2, "P", 1);
+      assert.equal(el.textContent, p, what + ": the element of " + JSON.stringify(p));
+      const r = ok(mapRenderedSelection(whole(el), El(box2), src2), what + ": " + JSON.stringify(p) + " maps (before the consolidation pass, with the panel open: refused as not matching the file)");
+      assert.deepEqual(r.range, { start: src2.indexOf(p), end: src2.indexOf(p) + p.length }, what + ": " + JSON.stringify(p) + " to its own offsets");
+      assert.equal(r.quote, p);
+    }
+  }
 });
 
 // ── change marks (Slice 2, contract D4) ────────────────────────────────────────────────────────────

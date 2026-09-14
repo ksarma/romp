@@ -2722,15 +2722,20 @@ class Panel {
     this.bytesWait = setTimeout(() => this.bytesLate(), STATUS_DEADLINE_MS);
     this.render();
   }
-  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the wait is over. */
+  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the bytes are here, so a wait for them is
+   *  over, and so is a "bytes" row that said they had not arrived (bytesLate) or could not be read (bytesFailed): the row was
+   *  about a reload that had not landed, and this landing is the event that answers it. The order that needs this (the Slice 7
+   *  consolidation pass's browser scene, file-view-failures-browser.test.ts): the row's own Reload sends the status ask and the
+   *  fetch together; the status lands first, over the standing pane, and the pass files the failure row again (bytesFailed);
+   *  then the fetch lands, and before this line the row stood over the new text until dismissed or the next wait. No render of
+   *  its own: paintAll renders at its end. */
   private bytesLanded(): void {
-    if (!this.bytesWait) return;
-    clearTimeout(this.bytesWait); this.bytesWait = null;
-    this.busy.delete("bytes");
+    if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; this.busy.delete("bytes"); }
+    this.errors.delete("bytes");
   }
   /** The deadline: the fetch neither landed nor told the seam it failed (a kernel from before this feature; a current one
    *  answers every fetch, and the seam reports a failure through error(), bytesFailed). The loader yields to a row, and its
-   *  Reload re-fetches the bytes and re-asks status (fcreload) — the loader never traps the person (ui/CLAUDE.md). */
+   *  Reload re-fetches the bytes and re-asks status (fcreload): the loader never traps the person (ui/CLAUDE.md). */
   private bytesLate(): void {
     this.bytesWait = null;
     if (!this.busy.has("bytes")) return;

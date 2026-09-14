@@ -899,7 +899,13 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // reload re-runs the fetch pipeline, never in edit mode; setMode is markdown-only
   assert.match(VIEW, /reload: \(\) => \{ if \(!editing\) fetchFile\(\); \},/);
   assert.match(VIEW, /setMode: \(mode\) => \{ if \(!isMd \|\| editing\) return; fmt\.md = mode; saveFmt\(fmt\); renderBody\(\); \},/);
-  assert.match(VIEW, /const line = \(src\.slice\(0, Math\.max\(0, n\)\)\.match\(\/\\n\/g\) \|\| \[\]\)\.length;/, "one .fv-cl per logical line");
+  // one .fv-cl per logical line, whatever its ending: since Slice 7 of plans/markdown-viewer.md (item 7, contract C6) the row is the
+  // verified row map's (anchor-map.ts rawRowForOffset, which follows the rows' three-ending split), and when the map refuses, the
+  // count over the source with the viewer's own split (RAW_ROW_SPLIT), clamped to the last row; the LF-only counter is gone
+  const sto = VIEW.slice(VIEW.indexOf("    scrollToOffset: (n) => {"), VIEW.indexOf("    reload: () =>"));
+  assert.match(sto, /const row = rawRowForOffset\(code, src, n\);/, "the verified row map's row");
+  assert.match(sto, /rows\[Math\.min\(src\.slice\(0, Math\.max\(0, n\)\)\.split\(RAW_ROW_SPLIT\)\.length - 1, rows\.length - 1\)\]/, "the fallback counts the same three endings, clamped");
+  assert.doesNotMatch(sto, /match\(\/\\n\/g\)/, "no LF-only count is left");
 });
 
 test("the sheets: the panel block is byte-equal in styles.css and feed.css, tokens only, sizes from the ladder", () => {

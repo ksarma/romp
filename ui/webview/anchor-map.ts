@@ -167,6 +167,9 @@ const CONTROL_CLASSES = [
   "fv-figerr",              // a failed figure's label (file-view.ts, Slice 7): the img's next sibling, naming the source that failed
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
+/** The failed figure's label alone (CONTROL_CLASSES' last entry): the one control that stands at the top level BESIDE a block's
+ *  node without being it or holding it, so the Rendered pairing leaves it out of the top-level nodes (analyzeRendered). */
+const isFigureLabel = (n: DNode): boolean => hasClass(n, "fv-figerr");
 /** The span the regions layer wraps a picture in while the Comments panel is open (file-comments-regions.ts: the <img> and its
  *  drawing overlay inside it). Where a tag test reads a node's element, this span stands for its IMG: an html block whose
  *  top-level tag is <img> renders that span with the panel open and the bare <img> without it, and the pairing must find the
@@ -2186,7 +2189,16 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     const blank = (m: DNode): boolean => isText(m) ? stripWs(m.data) === "" : Array.from(m.childNodes).every(blank);
     return blank(n);
   };
-  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) : isText(n) && stripWs(n.data) !== "";
+  // The label the viewer parks after a figure that failed to load (`span.fv-figerr`, file-view.ts, Slice 7 of
+  // plans/markdown-viewer.md, item 2) is no block's node either: it is the img's next sibling, so when the img is a top-level
+  // node of an html block (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the
+  // label is top-level too, and it renders no source text (a control, isControl). Counted as a node it misaligned the html
+  // block's run: the block owned [IMG, SPAN], and with the Comments panel open the wrap and the label ahead of the div
+  // refused the heading nested in the div as "rendered text does not match" (anchor-map-wrappers-browser.test.ts; the
+  // Slice 7 consolidation pass). The label ALONE is left out, not every control: a display formula the fill could not render
+  // (`.katex-error`, `code.md-math-src`) at the top level IS its mathBlock's node, and a gated figure's placeholder (`.fv-gate`)
+  // holds the block's img (anchor-map-obsidian.test.ts, md-config-figure-gate-place.test.ts).
+  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) && !isFigureLabel(n) : isText(n) && stripWs(n.data) !== "";
   let content = topNodes.filter(holdsContent);
   const nodeText = new Map<DNode, string>();
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));

@@ -7,10 +7,14 @@
 // fires the hooks AFTER the pane's swap (window.__paints grows by one) with the seam's error() answering the pane's words,
 // while text() and mtimeNs() keep the last landing's and mode() its view. The file back under a new mtime, the landing
 // paints again and error() is null. The wait is for the paint count (paintsReach), the event the panel keys on, never a
-// timer. The panel scene (openPanel, a status whose mtime moved, the loader yielding to the "bytes" row within two frames
-// of the pane's paint) joins this leg once the panel reads error() at its paint (unit C's commit of the slice); until then
-// the leg holds the seam-side assertions alone. Skips LOUDLY without a playwright browser (CI installs none), as the other
-// legs do. Before Slice 7: __seam.error was not a function (red over a git archive of the base at the leg's first read
+// timer. The panel scene (the last test): the Comments panel open over a seeded comment, a status whose mtime moved (the
+// page's __mtime, the file gone from __docs; the panel's reopen asks it) has the panel ask the reload and hold its loader;
+// the reload fails, and at the pane's paint the panel reads error() (contract C3) and the loader yields to the "bytes" row
+// in the seam's words with Reload, within two frames of the pane and never the 15 s deadline; nothing is marked over the
+// pane; the row's Reload over the file put back lands the bytes, and the pass paints the comment's highlight again (the
+// hook ran to its end: the real fireRendered swallows a hook's throw, so the pass's own output is what says none was).
+// Before contract C3's panel half: the loader stood until the deadline (red over a git archive of the branch with the
+// panel's read of error() removed). Skips LOUDLY without a playwright browser (CI installs none), as the other legs do. Before Slice 7: __seam.error was not a function (red over a git archive of the base at the leg's first read
 // of the seam, before the reload) and __paints did not move after a failed reload. Item 5's scene: a file the kernel
 // decoded as Latin-1 (its text answer wearing X-Romp-Text-Utf8 "0") says why Edit is off in the note bar, LATIN1_NOTICE read
 // off the source, the card's child above the body row (the notebar leg's reading: in the card, above the row, on screen at
@@ -31,7 +35,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { inBrowser, openViewer, frames, paintsReach, LONG, LONG2, REPORT, MT, MT2, ORIGIN, UI } from "./real-viewer-leg";
+import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, LONG, LONG2, REPORT, MT, MT2, ORIGIN, UI } from "./real-viewer-leg";
 
 /** The Latin-1 line's exported sentence, read off the viewer's source (contract C5), so the leg follows the constant. */
 const LATIN1_NOTICE = (/^export const LATIN1_NOTICE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
@@ -247,5 +251,71 @@ test("in a browser: an empty file says so (Slice 7, item 6): opened over a zero-
     assert.equal(e.line, EMPTY_FILE); assert.deepEqual(e.kids, ["fileview-err", "fileview-code"], "URL: above the empty rows' root"); assert.equal(e.rows, 0);
     assert.deepEqual(u.errors, [], "URL: no uncaught page error");
     await u.page.close();
+  });
+});
+
+/** The panel's row for a reload that failed: its exported lead (contract C3) and the fixed tail, both read off file-comments.ts. */
+const FC_SRC = fs.readFileSync(path.join(UI, "file-comments.ts"), "utf8");
+const BYTES_FAILED = (/^export const BYTES_FAILED = "([^"]+)";$/m.exec(FC_SRC) || [])[1];
+const BYTES_FAILED_TAIL = (/^const BYTES_FAILED_TAIL = "([^"]+)";$/m.exec(FC_SRC) || [])[1];
+const T0 = 1757145600000;
+/** One comment on the seventh paragraph (its quote occurs once in LONG and once in LONG2), so the pass has a highlight to paint
+ *  over the note and none to paint over the pane. Synthetic: the demo report's own words. */
+const COMMENTS = [{ id: T0 + "-1", author: "you", ts: T0, body: "A note on the seventh paragraph.", anchor: { quote: "Paragraph 7: lorem ipsum dolor", prefix: "", suffix: " sit amet" }, replies: [], resolved: false }];
+
+type Panel = { aside: boolean; loaders: number; row: string | null; rowButtons: string[]; marks: number; paints: number; error: string | null; pane: boolean; mt: string };
+/** The Comments panel as laid out: whether the aside stands, the loaders at the head of its cards (the "bytes" slot's among them),
+ *  the "bytes" error row's words and its buttons' labels when one stands, the highlights painted over the body; with the seam's
+ *  paint count, error() and mtimeNs(), and whether a pane stands in the body in place of the file. */
+const panelSeen = (page: any): Promise<Panel> => page.evaluate(() => {
+  const w = window as any;
+  const aside = document.querySelector(".fileview-aside");
+  const row = aside ? aside.querySelector('.fc-err[data-slot="bytes"]') : null;
+  return {
+    aside: !!aside, loaders: aside ? aside.querySelectorAll(".fc-load").length : 0,
+    row: row ? (row.firstChild ? row.firstChild.textContent : "") : null,
+    rowButtons: row ? (Array.from(row.querySelectorAll("button")) as HTMLElement[]).map((b) => b.textContent || "") : [],
+    marks: document.querySelectorAll(".fileview-body mark.fc-hl").length,
+    paints: w.__paints, error: w.__seam.error(), pane: !!document.querySelector(".fileview-body > .fileview-err"), mt: w.__seam.mtimeNs(),
+  };
+});
+
+test("in a browser: the Comments panel's wait for a reload that fails ends at the pane's paint (Slice 7, item 3; contract C3): the panel open over a seeded comment, a status whose file mtime moved has it ask the reload and hold its loader; the reload fails, and within two frames of the pane's paint the loader is gone and the \"bytes\" row reads BYTES_FAILED with the seam's words and Reload, nothing marked over the pane, error() the pane's words and mtimeNs() the last landing's; the row's Reload over the file put back lands the bytes, the row and the loader go and the comment's highlight is painted again", { timeout: 180000 }, async (t) => {
+  assert.ok(BYTES_FAILED && BYTES_FAILED_TAIL, "the row's words are read off the source");
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700);
+    await page.evaluate((cs: unknown[]) => { const s = (window as any).__status; s.store.comments = cs; s.unsent.comments = (cs as Array<{ id: string }>).map((c) => c.id); }, COMMENTS);
+    await openPanel(page);
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body mark.fc-hl").length > 0, null, { timeout: 10000 });
+    await frames(page, 2);
+    const p0 = await panelSeen(page);
+    assert.ok(p0.aside, "the panel is open"); assert.equal(p0.loaders, 0, "no loader: the view shows the status's text"); assert.equal(p0.row, null, "no bytes row");
+    assert.equal(p0.marks, 1, "the comment's highlight is painted over the note"); assert.equal(p0.error, null); assert.equal(p0.pane, false); assert.equal(p0.mt, MT);
+    // a session removed the file, and the kernel's status names a newer mtime than the view's: the panel's next status (its
+    // reopen's own ask, answered from the page's table) has it ask the viewer to re-fetch (syncBytes) and hold the loader
+    // (awaitBytes); the fetch fails, the catch paints the pane and fires the hooks, and the panel reads error() at that paint
+    await page.evaluate(([p, m]: [string, string]) => { const w = window as any; delete w.__docs[p]; w.__mtime = m; }, [REPORT, MT2]);
+    await closePanel(page);
+    await openPanel(page);
+    await page.waitForFunction((words: string) => { const n = document.querySelector(".fileview-body > .fileview-err"); return !!n && n.textContent === words; }, "no such file: " + REPORT, { timeout: 10000 });   // the pane's paint, the event
+    await frames(page, 2);
+    const failed = await panelSeen(page);
+    assert.equal(failed.loaders, 0, "the loader went at the pane's paint, within two frames (before contract C3's panel half: it stood until the 15 s deadline)");
+    assert.equal(failed.row, BYTES_FAILED + " (no such file: " + REPORT + ")" + BYTES_FAILED_TAIL, "the bytes row says what happened in the seam's own words, the fixed shape");
+    assert.deepEqual(failed.rowButtons, ["Reload", "\u2715"], "with Reload and the dismiss");
+    assert.equal(failed.marks, 0, "nothing is marked over the pane (the pass stands down over a body with neither root)");
+    assert.ok(failed.pane, "the pane stands in place of the file"); assert.equal(failed.error, "no such file: " + REPORT, "error() is the pane's words"); assert.equal(failed.mt, MT, "mtimeNs() keeps the last landing's");
+    // the file back (a session wrote it again): the row's Reload re-fetches the bytes and re-asks status; the landing's paint clears
+    // error(), the row and the loader go, and the pass paints the comment's highlight over the new text (the hook ran to its end)
+    await page.evaluate(([p, tx]: [string, string]) => { const w = window as any; w.__docs[p] = tx; }, [REPORT, LONG2]);
+    await page.locator('.fileview-aside .fc-err[data-slot="bytes"] button', { hasText: /^Reload$/ }).click();
+    await page.waitForFunction(() => { const a = document.querySelector(".fileview-aside"); return !!a && !a.querySelector('.fc-err[data-slot="bytes"]') && !a.querySelector(".fc-load") && !document.querySelector(".fileview-body > .fileview-err") && document.querySelectorAll(".fileview-body mark.fc-hl").length > 0; }, null, { timeout: 10000 });
+    await frames(page, 2);
+    const back = await panelSeen(page);
+    assert.equal(back.row, null, "the row went with the landing"); assert.equal(back.loaders, 0, "and no loader stands");
+    assert.equal(back.marks, 1, "the comment's highlight is painted over the new text"); assert.equal(back.error, null, "error() null: the content shows");
+    assert.equal(back.pane, false); assert.equal(back.mt, MT2, "the landing took the new mtime");
+    assert.deepEqual(errors, [], "no uncaught page error");
+    await page.close();
   });
 });

@@ -464,8 +464,13 @@ test("in a browser, the real viewer and panel on the Files pane over a table who
     await page.waitForFunction(() => document.querySelectorAll(".fileview-md table .katex .katex-html").length === 1 && !document.querySelector(".fileview-md .md-math-inline"), null, { timeout: 10000 });
     await frames(page, 2);
     await openPanel(page);
-    const cells = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md td")).map((c) => [(c.textContent || "").trim(), c.querySelectorAll("img").length, c.querySelectorAll(".katex").length]));
-    assert.deepEqual(cells, [["pl-a", 0, 0], ["", 1, 0], ["fl-a", 0, 0], ["n", 0, 1]], "the two tables' body cells: a positioned cell, then a picture alone; a positioned cell, then a formula alone");
+    // the cell's own text, the label the viewer parks after a picture that failed to load aside (the leg serves no picture, so
+    // x.png fails and wears `span.fv-figerr[data-fv-figerr]`, a control the map skips; Slice 7 of plans/markdown-viewer.md, item 2)
+    const cells = await page.evaluate(() => Array.from(document.querySelectorAll(".fileview-md td")).map((c) => {
+      const own = c.cloneNode(true) as HTMLElement; own.querySelectorAll("[data-fv-figerr]").forEach((l) => l.remove());
+      return [(own.textContent || "").trim(), c.querySelectorAll("img").length, c.querySelectorAll(".katex").length, c.querySelectorAll("[data-fv-figerr]").length];
+    }));
+    assert.deepEqual(cells, [["pl-a", 0, 0, 0], ["", 1, 0, 1], ["fl-a", 0, 0, 0], ["n", 0, 1, 0]], "the two tables' body cells: a positioned cell, then a picture alone wearing its failed-load label; a positioned cell, then a formula alone");
     for (const [label, start, end, span] of [["the picture-last table", "pl-a", "After the picture-last table.", "pl-a | ![p](x.png)"], ["the formula-last table", "fl-a", "After the formula-last table.", "fl-a | $n$"]] as const) {
       const selected = await dragRendered(page, start, end);
       assert.ok(selected.startsWith(start) && selected.endsWith(end), label + ": the drag selected the cell and the paragraph after: " + JSON.stringify(selected));
