@@ -321,7 +321,7 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
 });
 
 test("local file mode: a relative link becomes a path link on the anchor itself (file-view-links.ts linkMarkdownAnchors), read by the ONE click listener on the body; its own #fragment rides as data-frag and lands after the open", () => {
-  assert.match(MD_FN, /if \(doc && doc\.kind === "file"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(rendered\) linkMarkdownAnchors\(box, doc\.path\);/,
+  assert.match(MD_FN, /if \(doc && doc\.kind === "file"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*linkMarkdownAnchors\(box, doc\.path\);/,
     "the file kind's anchors are sorted by the module: a path link with the joined path, a section link, a dead link that says why (file-view-links.test.ts)");
   assert.doesNotMatch(MD_FN, /"fv-open"|joinDocPath\(/, "no second marker and no second join for a sibling link: the path link's act is the chat's (openpath), its path the module's (resolveViewerPath)");
   const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
@@ -404,8 +404,10 @@ test("the opened URL's own #fragment lands after the FIRST rendered paint — on
     "the landing is one-shot, but only SPENT by a rendered paint (a Raw view waits for the toggle)");
   assert.match(URL_FN, /if \(!hash\) \{ landed = true; return; \}\s*\n\s*if \(fmt\.md !== "rendered"\) return;[^\n]*\n\s*landed = true;/);
   assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{/);
+  assert.match(URL_FN, /try \{ hash = new URL\(href\)\.hash; \} catch \{[^\n]*\n\s*if \(renderFell !== null\) return;[^\n]*\n\s*if \(!hash\) \{ landed = true; return; \}/,
+    "over the rows a failed render fell back to (Slice 7 of plans/markdown-viewer.md, item 1) the fragment is not spent: `landed` stays false and the healed Rendered paint lands it (the Slice 7 review's round 1; before, the fragment was spent against the rows and the healed paint rendered from the top)");
   assert.match(URL_FN, /landed = true;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, hash\); \}\);/);
-  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint, the folds' restore, the tables' width stamp and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
+  assert.match(URL_FN, /codeBlock\(text, parts\.base, true\)\);\n\s*renderFell = fell;\n\s*\}\n\s*if \(text === ""\) body\.prepend\(bytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*if \(fmt\.md === "rendered"\) stampBodyWidth\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);[^\n]*\n\s*landFragment\(\);/, "after the paint (the try's catch closes over the fallback rows and the record that follows their swap since Slice 7 of plans/markdown-viewer.md, item 1 and its review's round 2; an empty document's line is prepended above the root next, item 6), the folds' restore, the tables' width stamp and the reader's seat (reader-place.ts, through the viewer's held-place seat), inside renderBody, so a later Rendered toggle lands too");
   assert.doesNotMatch(URL_FN, /renderBody\(\);\s*\n\s*landFragment\(\);/, "no second, mode-blind landing after the bytes");
 });
 
@@ -450,8 +452,9 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);
   assert.doesNotMatch(chatMd, /ALLOW_DATA_ATTR/, "no per-call override of the shared profile's data-* verdict");
   assert.match(SANITIZE, /export const MD_PURIFY: Config = \{[\s\S]*?ALLOW_DATA_ATTR: false,[\s\S]*?\};/, "the shared sanitizer's profile forbids data-*");
-  assert.equal((SANITIZE.match(/DOMPurify\.sanitize\(/g) || []).length, 1, "the module holds the one DOMPurify.sanitize call");
-  assert.match(SANITIZE, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.equal((SANITIZE.match(/\.sanitize\(/g) || []).length, 1, "the module holds the one call into DOMPurify's sanitize, through purifier() (setMdSanitizer's seam: the module-global instance unless a node test installed a stand-in; Slice 7 of plans/markdown-viewer.md)");
+  assert.match(SANITIZE, /purifier\(\)\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.match(SANITIZE, /const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/, "…which falls back to the module-global instance");
   assert.doesNotMatch(VIEW + RENDER, /ALLOW_DATA_ATTR|DOMPurify\.sanitize\(/, "neither caller spells a profile of its own");
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
   assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box"));
@@ -465,5 +468,5 @@ test("local file mode: a sibling link's #fragment lands after the first RENDERED
   assert.match(OPEN_FN, /let pendingHeading: string \| null = at !== null && "heading" in at && at\.heading \? at\.heading : null;/);
   // …spent after the first Rendered paint of a note, or the first text paint of a file that is not markdown, which has no Rendered toggle to wait for (review round 2)
   assert.match(OPEN_FN, /if \(\(rendered \|\| !isMd\) && pendingHeading !== null\) spendHeading\(\);/);
-  assert.match(OPEN_FN, /const spendHeading = \(\): void => \{\n\s*const h = pendingHeading; pendingHeading = null;\n\s*if \(h === null\) return;\n\s*requestAnimationFrame\(\(\) => \{\n\s*if \(wrap\.isConnected && unmeasurable\(\)\) \{ pendingHeading = h; return; \}[^\n]*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/, "landed a frame after the paint; a frame over a boxless body parks it again for the show (the review's round 5)");
+  assert.match(OPEN_FN, /const spendHeading = \(\): void => \{\n\s*if \(renderFell !== null\) return;[^\n]*\n\s*const h = pendingHeading; pendingHeading = null;\n\s*if \(h === null\) return;\n\s*requestAnimationFrame\(\(\) => \{\n\s*if \(wrap\.isConnected && unmeasurable\(\)\) \{ pendingHeading = h; return; \}[^\n]*\n\s*if \(!wrap\.isConnected \|\| scrollToFragment\(body, h\)\) return;/, "landed a frame after the paint; a frame over a boxless body parks it again for the show (the review's round 5); not spent over the rows a failed render fell back to, where it waits for the Rendered retry (Slice 7 of plans/markdown-viewer.md, item 1, the review's round 1)");
 });

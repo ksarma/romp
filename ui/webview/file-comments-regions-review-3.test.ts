@@ -374,7 +374,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     body: () => body as unknown as HTMLElement,
     mode: () => (kind === "rendered" ? "rendered" : "media"),
     text: () => (kind === "rendered" && src !== undefined ? src : null),
-    mtimeNs: () => "1757145600000000001",
+    mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => (kind === "media" ? "image" : kind === "pdf" ? "pdf" : null),
     pdfPages: () => [],                              // the Slice 4 seam member: these harnesses mount no PDF pages
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
@@ -736,7 +736,7 @@ test("a reload whose bytes fail to decode: the viewer's failure pane fires onRen
   // the poll saw the file move and reloaded; the new bytes would not decode: imgFailed's pane takes the body and, being a
   // paint of the body, fires the seam's onRendered (file-view.ts) — before that line the hook fired only for a picture that
   // decoded, and the panel kept this layer, armed, over a body with no picture until some later paint
-  const pane = mk("div", "fileview-err"); pane.textContent = "this image failed to decode — it may be mid-write or truncated";
+  const pane = mk("div", "fileview-err"); pane.textContent = "this image failed to decode: it may be mid-write or truncated";
   h.body.replaceChildren(pane); media = null;
   for (const cb of h.rendered) cb();
   assert.equal(h.qa(".fc-imgwrap").length, 0, "the old picture's layer is gone with the picture");

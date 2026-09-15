@@ -1,0 +1,63 @@
+{
+  "about": "The two save doors' shared cases, read by tools/file-comments-host-save.test.mjs (the host's save verb) and tests/test_savefile.py (the kernel's saveFile), so both are held to one recorded answer. editDiffLineEndings: the edit-log diff over texts whose lines end in something other than LF; each case's diff is what the kernel's _edit_log_diff (Python's difflib over str.splitlines) writes, and the host's editDiff must write the same hunks and @@ numbers. bomCapEdge: a BOM file whose content sits within a few bytes of the text cap; the three bytes the door puts back count against it. Synthetic text (the notes-api demo world).",
+  "editDiffLineEndings": {
+    "name": "notes.md",
+    "set": [
+      "CRLF as one ending",
+      "CR",
+      "LF",
+      "VT U+000B",
+      "FF U+000C",
+      "FS U+001C",
+      "GS U+001D",
+      "RS U+001E",
+      "NEL U+0085",
+      "LS U+2028",
+      "PS U+2029"
+    ],
+    "cases": [
+      {
+        "name": "cr",
+        "old": "# Latency report\rThe api session cut p95 latency by 40%.\rShip it.\r",
+        "new": "# Latency report\rThe api session cut p95 latency by 45%.\rShip it.\r",
+        "diff": "--- a/notes.md\n+++ b/notes.md\n@@ -2 +2 @@\n-The api session cut p95 latency by 40%.\r\n+The api session cut p95 latency by 45%.\r\n",
+        "hunks": [
+          "@@ -2 +2 @@"
+        ]
+      },
+      {
+        "name": "crlf",
+        "old": "# Latency report\r\n\r\nfirst\r\n",
+        "new": "# Latency report\r\n\r\nfirst\r\nsecond\r\n",
+        "diff": "--- a/notes.md\n+++ b/notes.md\n@@ -3,0 +4 @@\n+second\r\n",
+        "hunks": [
+          "@@ -3,0 +4 @@"
+        ]
+      },
+      {
+        "name": "ff",
+        "old": "page one\fpage two\fpage three\f",
+        "new": "page one\fpage 2\fpage three\f",
+        "diff": "--- a/notes.md\n+++ b/notes.md\n@@ -2 +2 @@\n-page two\f\n+page 2\f\n",
+        "hunks": [
+          "@@ -2 +2 @@"
+        ]
+      },
+      {
+        "name": "rest-of-the-set",
+        "old": "alpha\u000bbravo\u001ccharlie\u001ddelta\u001eecho\u0085foxtrot\u2028golf\u2029hotel",
+        "new": "alpha\u000bbravo\u001ccharlie\u001dDELTA\u001eecho\u0085foxtrot\u2028golf\u2029hotel",
+        "diff": "--- a/notes.md\n+++ b/notes.md\n@@ -4 +4 @@\n-delta\u001e\n+DELTA\u001e\n",
+        "hunks": [
+          "@@ -4 +4 @@"
+        ]
+      }
+    ]
+  },
+  "bomCapEdge": {
+    "file": "\ufeff# Notes\n\nfirst\n",
+    "fill": "x",
+    "refusedUnderCapBy": 2,
+    "writtenUnderCapBy": 3
+  }
+}

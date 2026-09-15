@@ -299,7 +299,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };   // the viewer's renderBody + fireRendered
   w.ctx = {
     path: over.path ?? ABS, sid: over.sid === undefined ? SID : over.sid, todoId: over.todoId ?? null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -781,7 +781,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");
   assert.match(SRC, /if \(!c \|\| c\.kind !== "comment" \|\| !c\.range \|\| c\.text !== src\) return \[\];/, "the presel paints only over the text its range indexes (and paints nothing, no marks returned, otherwise: repaintPresel reads the marks' line boxes, since the Slice 4 review's round 15)");
-  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else this\.paintAll\(\); \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-measures the marks' collapsed blanks (trimBlanks, anchor-map.ts trimCollapsedMarks) and re-places the cards, a paint runs the pass");
+  assert.match(SRC, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); this\.retargetComposer\(\); if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintAll\(\); \} \}\);/, "a repaint retires the float and what it was about (hideFloat: the picture and the place it was offered at); a reflow re-measures the marks' collapsed blanks (trimBlanks, anchor-map.ts trimCollapsedMarks) and re-places the cards, a paint ends the record of a re-fetch the panel asked (reloadOut, the Slice 7 review's round 4) and runs the pass");
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
 });
@@ -836,7 +836,8 @@ test("the paint pass stands down while the editor is up (Slice 5): a repaint mar
   assert.ok(w.body.querySelector(".fc-hl"), "…and the marks with it");
   // ...recording the selection as the editor's take of the body left it first (afterPaint), so the offer's record holds no node of
   // the read view the editor replaced (the Slice 5 review, round 1)
-  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.render\(\); return; \}/, "the first line of the pass");
+  // (since the round 2 review of Slice 7 the branch also reads a standing failure row against the editor's entry, syncFailedRow, after the record and before the render)
+  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.afterPaint\(\); this\.syncFailedRow\(this\.ctx\.error\(\)\); this\.render\(\); return; \}/, "the first line of the pass");
 });
 
 // The stand-in's nodes inspect as their own projection, never as the tree: every edge (parentNode, childNodes, the

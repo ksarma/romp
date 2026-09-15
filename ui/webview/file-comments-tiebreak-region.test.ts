@@ -374,7 +374,7 @@ async function harness(over: { mode: "rendered" | "raw"; src: string; html?: str
     body: () => body as unknown as HTMLElement,
     mode: () => over.mode,
     text: () => over.src,
-    mtimeNs: () => "1757145600000000001",
+    mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => null, pdfPages: () => [], mediaElement: () => null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },

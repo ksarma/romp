@@ -45,6 +45,7 @@ const RULES = [
   // on both pages (the card is not its containing block: container-type gives it no layout containment)
   ".fileview-outline {", ".fileview-outline:focus {", ".fileview-outline-row {", ".fileview-outline-row:hover, .fileview-outline-row.current {",
   "@property --fv-body-w {", ".fileview-md {",
+  ".fileview-err {",   // the failure dress itself, since it carries overflow-wrap: anywhere (Slice 7 of plans/markdown-viewer.md, item 1, the review's round 4: a render failure's message with a long unbroken token widened the body at phone width)
   ".fileview > .fileview-err {",   // the notice bar above the body row (Slice 2 of plans/markdown-viewer.md)
   ".fileview-err-act {",   // the changed-on-disk bar's Reload on the words' line (Slice 6, item 5; the review's round 5)
   // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
@@ -82,6 +83,7 @@ const RULES = [
   // hide rule on the placeholder's data-act, the mark an author cannot write
   ".md mark.md-mark, .fileview-md mark.md-mark {", ".md .fv-wikilink, .fileview-md .fv-wikilink {", ".fileview-md a.fv-embed {",
   ".fileview-md .fv-gate {", ".fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible {", '.fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) {',
+  ".fileview-md .fv-figerr {",   // the label after a figure that failed (Slice 7 of plans/markdown-viewer.md, item 2): the gate's dress in the error dress's ink; its print line is in the block pinned whole below
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

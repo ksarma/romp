@@ -65,12 +65,17 @@ export const STATUS = {
 
 let viewerBundle: string | null = null;
 /** The viewer module as the webview build bundles it, in memory, as window.FV (openUrlView included, for the URL viewer's own swap;
- *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls). */
+ *  anchor-map's TRIM_STATS too, the trim's own pass counter, which the retrim-events leg reads to count the panel's trim calls;
+ *  and preview.ts's heal for markdown-inline pictures, installMdImgHeal with the two retry drivers render.ts calls on a kernel
+ *  message and on romp:wsup, so a leg can put the chat page's own retry of a failed figure under the viewer, as the figure
+ *  label's leg does; nothing installs it unless a leg calls it; and anchor-map's rawRows and rawRowForOffset, the verified Raw row
+ *  map the seam's scrollToOffset reads since Slice 7 of plans/markdown-viewer.md, item 7, so the raw-rows leg can ask the map
+ *  itself whether the rows it sees match the file's text). */
 export function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS } from "./anchor-map";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, openUrlView, closeFileView, registerFileViewAction } from "./file-view"; export { TRIM_STATS, rawRows, rawRowForOffset } from "./anchor-map"; export { installMdImgHeal, retryFailedPreviews, refreshSettledPreviews } from "./preview";', resolveDir: UI, loader: "ts", sourcefile: "real-viewer-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -85,7 +90,10 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
 
 /** The page: the surface's sheet (and the kernel's inlined THEME_CSS after it when `theme` carries it), the bundle, the file
  *  table and fetch stub, the status-answering poster, the probe action.
- *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
+ *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a text answer's
+ *  `X-Romp-Text-Utf8` is `window.__utf8[path]` when a test set one ("0": the kernel's Latin-1 fallback; Slice 7, item 5) and
+ *  "1" otherwise, and its `Content-Length` the body's UTF-8 byte count as the kernel's `_send` writes it (a text of one U+FEFF
+ *  answers 3 and reads as "" through the Response's decode: the BOM-only line, Slice 7, item 6); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
  *  is on. `window.__fetches` counts every request the stub answers and `window.__heads` the `HEAD`s among them (the Comments
@@ -104,7 +112,7 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT, t
   const head = theme ? `<style>${sheet}</style><style>${theme}${own}</style>` : `<style>${sheet}${own}</style>`;
   return `<!DOCTYPE html><html><head><meta charset=utf-8>${head}</head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
+window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__utf8 = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__reason = "missing"; window.__fetches = 0; window.__heads = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url, init) {
   url = String(url); window.__fetches++;
   var head = !!(init && init.method === "HEAD"); if (head) window.__heads++;   // the kernel's HEAD /file: the headers alone
@@ -115,7 +123,7 @@ window.fetch = async function (url, init) {
   var text = window.__docs[p];
   if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404, headers: window.__reason ? { "X-Romp-Reason": window.__reason } : {} });   // the kernel's one-word cause on a 404 (the header above)
   if (/\.svg$/i.test(p)) return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
-  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": "1" } });
+  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Content-Length": String(new TextEncoder().encode(text).length), "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": window.__utf8[p] !== undefined ? window.__utf8[p] : "1" } });   // the kernel's decode verdict per path: "0" for a Latin-1 fallback (window.__utf8), "1" otherwise; Content-Length the body's byte count, as the kernel's _send writes it (the viewer reads it for a BOM-only file, whose one U+FEFF the Response's decode strips; Slice 7, item 6)
 };
 window.__paints = 0; window.__reflows = 0; window.__seam = null; window.__autoReply = true;
 FV.initFileView(function (m) {
@@ -158,25 +166,44 @@ export async function inBrowser(t: any, body: (browser: any) => Promise<void>): 
 }
 
 export type Opened = { page: any; errors: string[] };
+/** What `serve` answers a request of the page's origin with, in place of the page: the status, the Content-Type and the body. */
+export type Served = { status: number; type?: string; body?: string };
 /** A page of the surface at the viewport size, the report open in it (Rendered, or Raw when `raw`: the preference is written
  *  first, as a person's earlier choice would stand), the first paint awaited. `docs` replaces the file table; `openOpts` is
  *  openFileView's third argument (a `line`, say); `url` opens the URL viewer on ORIGIN + url instead, answered from `urls`;
- *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). */
+ *  `theme` is CSS inlined after the sheet as the kernel inlines THEME_CSS (pageHtml). `serve` answers the requests the page's
+ *  own fetch stub never sees, the ones the browser makes from the DOM (a figure's `<img src>` at the kernel's /file route,
+ *  rewriteFigureSrcs's URL): a Served answer for a URL of the origin is fulfilled as given (a 404 for a missing figure, a
+ *  text/plain body the decoder refuses, an image/svg+xml that loads), null falls through to the page, as every request of the
+ *  origin did before. `before` runs in node with the page after it is loaded and before the open, for a page global that must
+ *  stand before the first paint (the chat page's heal, installMdImgHeal, registers a failed picture at its error event).
+ *  `utf8` fills `window.__utf8` before the open: the `X-Romp-Text-Utf8` the stub puts on each named path's text answer ("0"
+ *  for a file the kernel decoded as Latin-1; every other path keeps "1"). `waitFor` is the selector the first paint is awaited
+ *  on in place of the default (`.fileview-md > p`, or a `.fv-cl` row under `raw`), for a scene whose first paint holds neither:
+ *  an empty document's `.fileview-body > .fileview-err` line (Slice 7, item 6), or a pane in place of the file. */
 export async function openViewer(browser: any, mode: Mode, width: number, height: number,
-  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string } = {}): Promise<Opened> {
+  opts: { docs?: Record<string, string>; mtime?: string; raw?: boolean; openOpts?: Record<string, unknown> | null; url?: string; urls?: Record<string, string>; theme?: string;
+    serve?: (u: URL) => Served | null; before?: (page: any) => Promise<void>; utf8?: Record<string, "0" | "1">; waitFor?: string } = {}): Promise<Opened> {
   const page = await browser.newPage({ viewport: { width, height } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   const html = pageHtml(mode, opts.docs || { [REPORT]: LONG }, opts.mtime || MT, opts.theme || "");
-  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+  await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => {
+    const a = opts.serve ? opts.serve(new URL(route.request().url())) : null;
+    if (a) return route.fulfill({ status: a.status, contentType: a.type, body: a.body ?? "" });
+    return route.fulfill({ status: 200, contentType: "text/html", body: html });
+  });
   await page.goto(ORIGIN + "/");
+  if (opts.before) await opts.before(page);
+  if (opts.utf8) await page.evaluate((u: Record<string, string>) => { Object.assign((window as any).__utf8, u); }, opts.utf8);
   if (opts.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   if (opts.url) {
     await page.evaluate(([urls, u]: [Record<string, string>, string]) => { Object.assign((window as any).__urls, urls); (window as any).FV.openUrlView(u); }, [opts.urls || {}, ORIGIN + opts.url]);
   } else {
     await page.evaluate(([p, sid, o]: [string, string, Record<string, unknown> | null]) => { (window as any).FV.openFileView(p, sid, o); }, [REPORT, SID, opts.openOpts || null]);
   }
-  await page.waitForFunction((raw: boolean) => !!document.querySelector(raw ? ".fileview-body .fv-cl" : ".fileview-md > p"), !!opts.raw, { timeout: 10000 });
+  const first = opts.waitFor || (opts.raw ? ".fileview-body .fv-cl" : ".fileview-md > p");   // the first paint's own element, the event awaited (never a timer)
+  await page.waitForFunction((sel: string) => !!document.querySelector(sel), first, { timeout: 10000 });
   await frames(page, 2);
   return { page, errors };
 }

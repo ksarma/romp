@@ -641,7 +641,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
   const body = new El("div") as unknown as HTMLElement;
   return {
     path: ABS, sid: SID, todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
     post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop, aside: noop, setMode: noop,
@@ -856,7 +856,9 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
     "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',
     "scrollToOffset(n: number): void;", "reload(): void;",
     // Slice 5: the viewer says whether its editor is up, and the panel registers its half of editing over pending changes
-    "editing(): boolean;", "setTrackedEdit(t: TrackedEdit | null): void;"]) {
+    "editing(): boolean;", "setTrackedEdit(t: TrackedEdit | null): void;",
+    // Slice 7 of plans/markdown-viewer.md (item 3, contract C1): the words of the pane the body shows in place of the file, null over content
+    "error(): string | null;"]) {
     assert.ok(VIEW.includes(m), "FileViewActionCtx has " + m);
   }
   for (const m of ["begin(): { records: unknown[]; authorColor: (author: string) => string | null; refusal: string } | null;",
@@ -876,9 +878,15 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
   // (the folds' restore stands between the swap and the hooks since the Slice 4 review: the hooks measure the folds as the person left them;
-  // the tables' width stamp follows it, before the hooks, and reads no geometry)
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);/,
-    "every text paint fires it, after the folds' restore, the fresh tables' width stamp and the Outline button's visibility (the bar's layout settles before the hooks measure; Slice 6 of plans/markdown-viewer.md) (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
+  // the tables' width stamp follows it, before the hooks, and reads no geometry; since Slice 7 of plans/markdown-viewer.md the build and
+  // the swap sit in one try whose catch paints the RENDER_FELL line over Raw rows and then records renderFell (after the fallback swap
+  // since the review's round 2, so a fallback throw leaves the record matching the standing body), which mode() reads as "raw"
+  // (contract C7), and the empty-file line, or the BOM-only file's since the manager's review round 1, may be prepended between the try and
+  // the folds' restore (item 6); the hooks fire once either way)
+  assert.match(VIEW, /try \{\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;[^\n]*\n\s*\} catch \(err\) \{\n\s*const fell = fellMessage\(err\);[^\n]*\n\s*body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = fell;[^\n]*\n\s*\}(?:\n\s*if \(text === ""\) body\.prepend\(textBytes !== null && textBytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);[^\n]*)?\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it once, after the folds' restore, the fresh tables' width stamp and the Outline button's visibility (the bar's layout settles before the hooks measure; Slice 6 of plans/markdown-viewer.md), whether the swap or the render catch's fallback painted (Slice 7, item 1) (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts; the stamp: file-view-body-width-browser.test.ts)");
+  assert.match(VIEW, /mode: \(\) => \(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\) \? "media" : isMd && fmt\.md === "rendered" && renderFell === null \? "rendered" : "raw",/,
+    "mode() answers raw over the render catch's rows, so the panel's contentRoot, the pairing and the reveal offers follow what was painted (Slice 7, item 1)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
     "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");
@@ -892,8 +900,14 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   assert.match(VIEW, /editBtn\.title = reason \|\| "Edit this file in place";/);
   // reload re-runs the fetch pipeline, never in edit mode; setMode is markdown-only
   assert.match(VIEW, /reload: \(\) => \{ if \(!editing\) fetchFile\(\); \},/);
-  assert.match(VIEW, /setMode: \(mode\) => \{ if \(!isMd \|\| editing\) return; fmt\.md = mode; saveFmt\(fmt\); renderBody\(\); \},/);
-  assert.match(VIEW, /const line = \(src\.slice\(0, Math\.max\(0, n\)\)\.match\(\/\\n\/g\) \|\| \[\]\)\.length;/, "one .fv-cl per logical line");
+  assert.match(VIEW, /setMode: \(mode\) => \{ if \(!isMd \|\| editing\) return; pickFormat\(mode\); \},/);   // the format pick the bar's buttons use too (the Slice 7 review's round 3: over a failure pane it raises a Latin-1 file's line again)
+  // one .fv-cl per logical line, whatever its ending: since Slice 7 of plans/markdown-viewer.md (item 7, contract C6) the row is the
+  // verified row map's (anchor-map.ts rawRowForOffset, which follows the rows' three-ending split), and when the map refuses, the
+  // count over the source with the viewer's own split (RAW_ROW_SPLIT), clamped to the last row; the LF-only counter is gone
+  const sto = VIEW.slice(VIEW.indexOf("    scrollToOffset: (n) => {"), VIEW.indexOf("    reload: () =>"));
+  assert.match(sto, /const row = rawRowForOffset\(code, src, n\);/, "the verified row map's row");
+  assert.match(sto, /rows\[Math\.min\(src\.slice\(0, Math\.max\(0, n\)\)\.split\(RAW_ROW_SPLIT\)\.length - 1, rows\.length - 1\)\]/, "the fallback counts the same three endings, clamped");
+  assert.doesNotMatch(sto, /match\(\/\\n\/g\)/, "no LF-only count is left");
 });
 
 test("the sheets: the panel block is byte-equal in styles.css and feed.css, tokens only, sizes from the ladder", () => {

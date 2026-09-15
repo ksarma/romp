@@ -2,11 +2,13 @@
 // a button in the viewer's actions row over a markdown file's Rendered view, a dropdown listing the note's headings by depth
 // in the menu vocabulary, and a pick that lands the heading at the top of the body through the fragment landing's own steps.
 // The REAL openFileView runs over the place suite's DOM stand-in (file-view-place-memory.test.ts: ancestry, attributes,
-// events with capture and bubbling, a tolerant selector engine, a layout for the body and its blocks), with three things
-// this suite adds: the `.fileview-md` box mints the heading ids the sanitizer's own pass would (mintHeadingIds: md- plus the
-// GitHub slug, unique in order, through the same two functions of md-links.ts), since under node DOMPurify has no document
-// and mdBlock falls back to the bare text, which the box renders through marked; a node's `style` takes setProperty (the
-// rows' depth variable); and scrollIntoView records its argument (the landing's block: "start"). The fixture is the shared
+// events with capture and bubbling, a tolerant selector engine, a layout for the body and its blocks, and the sanitizer's
+// stand-in of Slice 7, md-sanitize.ts setMdSanitizer, which hands mdBlock a body holding marked's markup parsed by the
+// suite's parser, so the real mintHeadingIds mints the heading ids and the math fill runs over the formula heading; until
+// Slice 7 the box's textContent setter parsed the source and minted the ids itself, since under node DOMPurify has no
+// document and mdBlock's catch wrote the bare text), with three things this suite adds: a node's `style` takes setProperty (the
+// rows' depth variable); scrollIntoView records its argument (the landing's block: "start"); and what KaTeX's fill needs to
+// render the formula heading for real, a document in standards mode (compatMode) and an element's replaceWith. The fixture is the shared
 // forty-two-heading report (file-view-outline-fixture.ts). What the browser alone can show, the box measured inside the
 // card, the heading's top at the body's edge, the tokens' colours under both themes, is file-view-outline-browser.test.ts's.
 // Before item 2: no Outline button in the actions row (red at the first assertion over a git archive of the base).
@@ -16,11 +18,11 @@ import * as assert from "node:assert/strict";
 import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { marked } from "marked";
 import { assertHiddenEvent, hideEdges, staysEnumerable } from "../test-dom-shim";
 import { headingSlug, uniqueSlugs } from "./md-links";
 import { OUTLINE_NOTE, OUTLINE_HEADINGS, FOLD_HEADING, MATH_HEADING, CODE_HEADING, QUOTED_HEADING } from "./file-view-outline-fixture";
 import type { FileViewActionCtx, At } from "./file-view";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -156,21 +158,11 @@ class El {
     deleteProperty: (_, k) => { this.attrs.delete("data-" + kebab(String(k))); return true; },
   });
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
-  /** The browser's parser stands in here for the one text write that is a paint: mdBlock's fallback writes the note's source
-   *  into the `.fileview-md` box when the sanitizer could not hand it a tree (the header), and the box renders it through
-   *  marked as the sanitizer would have, then mints the heading ids the sanitizer's own pass mints (mintHeadingIds: md- plus
-   *  the GitHub slug, unique in order); every other element takes the text as one node. */
+  /** One text node, as the browser's setter writes it (the `.fileview-md` box no longer parses the note or mints its ids
+   *  here: the sanitizer's stand-in hands mdBlock the parsed markup and the real mintHeadingIds runs, the header). */
   set textContent(v: string) {
     this.clear();
-    if (v === "") return;
-    if (this.classes.includes("fileview-md")) {
-      for (const n of parseHTML(marked.parse(v) as string)) this.appendChild(n);
-      const heads = this.querySelectorAll("h1, h2, h3, h4, h5, h6");
-      const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent)));
-      heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
-      return;
-    }
-    this.appendChild(new Txt(v));
+    if (v !== "") this.appendChild(new Txt(v));
   }
   get innerHTML(): string { return this._html; }
   set innerHTML(v: string) { this._html = v; this.clear(); for (const n of parseHTML(v)) this.appendChild(n); }
@@ -193,6 +185,14 @@ class El {
   }
   removeChild<T extends El | Txt>(n: T): T { this.dropFocusIn(n); this.detach(n); return n; }
   replaceChildren(...c: Array<El | Txt>): void { this.clear(); for (const x of c) this.appendChild(x); }
+  /** The DOM's replaceWith: `ns` take this node's place among its parent's children (the math fill unwraps KaTeX's output
+   *  with `el.replaceWith(...el.childNodes)`, and its source fallback puts a code element in the placeholder's place). */
+  replaceWith(...ns: Array<El | Txt>): void {
+    const p = this.parentNode; if (!p) return;
+    let at = p.childNodes.indexOf(this);
+    this.detach(this);
+    for (const n of ns) { this.detach(n); p.childNodes.splice(at++, 0, n); n.parentNode = p; }
+  }
   append(...c: Array<El | Txt | string>): void { for (const x of c) this.appendChild(typeof x === "string" ? new Txt(x) : x); }
   remove(): void { this.dropFocusIn(this); this.detach(this); }
   normalize(): void {
@@ -316,6 +316,13 @@ function walkNodes(root: El, what: number): Array<El | Txt> {
   walk(root);
   return out;
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint went through mdBlock's catch, and this
+// suite's box parsed the note through marked in its textContent setter (file-view-seam.test.ts's record pin states the
+// constraint). The stand-in hands mdBlock a body holding marked's markup parsed by this suite's parser, unsanitized (the
+// fixtures are plain markdown), and the real mintHeadingIds and the registered passes run over it.
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { const body = new El("body"); for (const n of parseHTML(dirty)) body.appendChild(n); return body; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const doc = {
   listeners: [] as Reg[],
   body: null as unknown as El,
@@ -325,6 +332,7 @@ const doc = {
   createElement: (tag: string) => new El(tag),
   createTextNode: (s: string) => new Txt(s),
   createDocumentFragment: () => new El("#fragment"),
+  compatMode: "CSS1Compat",                          // standards mode: KaTeX refuses to render into a quirks-mode document
   createTreeWalker: (root: El, what = 4) => { const nodes = walkNodes(root, what); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
   getElementById: (id: string): El | null => doc.body.querySelector("#" + id),
   querySelectorAll: (sel: string): El[] => doc.body.querySelectorAll(sel),
@@ -523,7 +531,8 @@ test("the list: one click opens a menu-role popover in the card with one menuite
   assert.ok(headings(o)[13].closest("details") && !headings(o)[13].closest("details")!.hasAttribute("open"), "…and its fold is shut");
   assert.equal(rows[12].textContent, QUOTED_HEADING, "the heading inside the blockquote is listed");
   assert.equal(rows[9].textContent, CODE_HEADING.replace(/`/g, ""), "inline code reads as its text");
-  assert.equal(rows[10].textContent, MATH_HEADING.replace(/\$/g, ""), "the formula heading reads as its text (the placeholder's TeX here; KaTeX's glyphs once filled)");
+  assert.equal(rows[10].textContent, MATH_HEADING.replace(/\$/g, ""), "the formula heading reads as KaTeX's html reads (the fill runs over the seam's stand-in body here too, since Slice 7)");
+  assert.ok(headings(o)[10].querySelector(".katex"), "…and the fill ran: KaTeX's markup stands in the heading, the ids minted before it from the TeX as written");
   assert.ok(!rows.some((r) => /Front matter|title:|tags:/.test(r.textContent)), "no row for the front-matter block");
   assert.deepEqual(rows.map((r) => r.classes.includes("current")), rows.map((_, i) => i === 0), "the first row is current");
   // a second click on the button closes it (the toggle)
@@ -656,7 +665,8 @@ test("closers (review round 2): the fetch pipeline's failure pane closes an open
   const painted = paints;
   delete disk[REPORT];                                     // gone by the time the poll's reload asks
   o.ctx.reload(); await settle();
-  assert.equal(paints, painted, "a failure paints no text");
+  assert.equal(paints, painted + 1, "a failure paints no text, and the pane's paint fires the hooks once (Slice 7 of plans/markdown-viewer.md, item 3; before Slice 7: no paint)");
+  assert.equal(o.ctx.error(), "no such file: " + REPORT, "the seam's error() is the pane's words");
   assert.ok(o.body.querySelector(".fileview-err"), "the failure pane is in the body");
   assert.equal(popover(o), null, "the pane's paint closed the popover (before the fix: it stood over the pane with its stale rows)");
   assert.equal(pop.parentNode, null, "\u2026and the popover left the card");
@@ -685,7 +695,7 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   // the one paint that opens it again (the PR review's round 2): a text landing the card's hold PARKED under a press, run after the
   // release's click on the Outline button had opened the popover; read before the paint, opened after the landing's target, and never for a landing
   // that ran at once, so a plain reload still closes it as the pin above says
-  assert.match(openFn, /const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*landTarget\(\);[^\n]*\n\s*if \(reopenOutline\) openOutline\(\);/, "a landing the hold parked and a popover open at its run: opened again after the paint, on the landed body");
+  assert.match(openFn, /const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);[^\n]*\n\s*if \(reopenOutline\) openOutline\(\);/, "a landing the hold parked and a popover open at its run: opened again after the paint and the target, on the landed body (the Latin-1 line's raise stands between the paint and the target; Slice 7 of plans/markdown-viewer.md, item 5)");
   assert.equal((openFn.match(/openOutline\(\);/g) || []).length, 2, "openOutline is called from the button's toggle and the parked landing's re-open alone");
   assert.match(openFn, /closeHooks\.push\(dropPdf\);[^\n]*\n\s*closeHooks\.push\(closeOutline\);/, "both exits close the popover with the viewer");
   assert.equal((VIEW.match(/import \{ delegate, flash, pressHold \} from "\.\/actions";/g) || []).length, 1);
@@ -892,12 +902,15 @@ test("a heading target under a plain hidden wrapper (PR review round 1): the ope
 });
 
 // ── the stand-in's projection (ui/test-dom-shim.ts): a node inspects as its primitives, never as the tree ─────────────
-test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes; the md box mints the heading ids the sanitizer's pass would", () => {
+test("a stand-in node enumerates its primitives alone, so a failing assertion's dump shows neither parentNode nor childNodes; the md box takes text as one node (no parse and no minting in the setter since Slice 7: the sanitizer's stand-in hands mdBlock the parsed markup and the real mintHeadingIds mints the ids, which the list case pins)", () => {
   const body = new El("div"); body.className = "fileview-body";
   const md = body.appendChild(new El("div")); md.className = "fileview-md";
   md.textContent = "# A\n\n## B\n\n## B\n";
+  const only = md.childNodes[0];
+  assert.ok(md.childNodes.length === 1 && only instanceof Txt && md.textContent === "# A\n\n## B\n\n## B\n", "one text node, as the browser's setter writes it");
+  md.replaceChildren(...parseHTML("<h1>A</h1>\n<h2>B</h2>\n<h2>B</h2>\n"));
   const heads = md.querySelectorAll("h1, h2, h3, h4, h5, h6");
-  assert.deepEqual(heads.map((h) => h.id), ["md-a", "md-b", "md-b-1"], "md- plus the slug, unique in order");
+  assert.equal(heads.length, 3, "the parser the stand-in hands mdBlock's body through");
   for (const n of [body, md, heads[0], heads[0].childNodes[0]] as Array<El | Txt>) {
     for (const k of Object.keys(n)) assert.ok(staysEnumerable((n as any)[k]), k + " is enumerable and holds a " + typeof (n as any)[k]);
     const dump = inspect(n, { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true });

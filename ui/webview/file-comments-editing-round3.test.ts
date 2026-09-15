@@ -329,7 +329,7 @@ function world(): World {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "raw",
     text: () => (w.editing && w.buffer !== null ? w.buffer : text),   // the viewer's seam: the buffer while editing (file-view.ts)
-    mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -610,7 +610,9 @@ test("source: the unread row is raised where every status lands and Save refuses
   assert.match(paint, /if \(this\.changesUnreadUnderEdit\) \{ this\.changesUnreadUnderEdit = false; if \(this\.errors\.get\("edit"\)\?\.text === CHANGES_UNREAD_UNDER_EDIT\) this\.errors\.delete\("edit"\); \}/, "the edit's end retires the row and the latch");
   assert.match(paint, /this\.editText = null;/, "…and the indexed text");
   const view = SRC.split("changeView(): {")[1].split("\n  }\n")[0];
-  assert.match(view, /changeGroups\(cards, this\.ctx\.mode\(\) === "media" \? null : this\.indexedText\(\)\)/, "the groups read the indexed text");
+  // the indexed text, with the U+FEFF the host keeps put back ahead of it on a BOM file (the cards' offsets are the host's; Slice 7 of
+  // plans/markdown-viewer.md, item 4, the review's round 1)
+  assert.match(view, /const text = this\.ctx\.mode\(\) === "media" \? null : this\.indexedText\(\);\n\s*const groups = changeGroups\(cards, text !== null && s && s\.bom \? "\\uFEFF" \+ text : text\);/, "the groups read the indexed text, the host's BOM ahead of it");
   assert.doesNotMatch(view, /this\.ctx\.text\(\)/);
   assert.equal(SRC.split("c.text !== this.indexedText()").length - 1, 2, "both passage-changed tags read it");
   assert.equal(SRC.split("c.text !== this.ctx.text()").length - 1, 0, "…and neither reads the buffer");

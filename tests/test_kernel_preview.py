@@ -378,6 +378,46 @@ class FilePreviewEndpoint(unittest.TestCase):
         code, _, _ = self._req("/file?path=" + urllib.parse.quote(self.bin), method="HEAD")
         self.assertEqual(code, 415, "HEAD carries the same exists-but-unviewable verdict as GET")
 
+    def test_record_pin_a_latin1_text_file_is_served_re_encoded_with_the_utf8_marker_zero_and_its_head_carries_no_marker(self):
+        # A record pin (plans/markdown-viewer.md, Slice 7, item 5): the viewer's line saying why Edit is off on such
+        # a file rests on two header facts the route already had. A file that is not UTF-8 on disk is served through
+        # _decode_text's latin-1 fallback, so the body is the text RE-ENCODED as UTF-8 (the byte E9 becomes C3 A9) with
+        # X-Romp-Text-Utf8 "0", the value the viewer's verdict keys on; its HEAD carries no X-Romp-Text-Utf8 at all
+        # (the header rides the text branch's GET alone), and its Content-Length is the size on disk, not the body's.
+        lp = os.path.join(self.tmp.name, "legacy.log")
+        with open(lp, "wb") as f:
+            f.write(b"caf\xe9 line\n")
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(lp))
+        self.assertEqual(code, 200)
+        self.assertTrue(hdrs.get("Content-Type", "").startswith("text/plain"), hdrs.get("Content-Type"))
+        self.assertEqual(body, "café line\n".encode("utf-8"), "the latin-1 decode, re-encoded as UTF-8 on the wire")
+        self.assertEqual(body, b"caf\xc3\xa9 line\n")
+        self.assertEqual(hdrs.get("X-Romp-Text-Utf8"), "0", "the decode branch travels with the text")
+        self.assertEqual(hdrs.get("Content-Length"), str(len(body)))
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(lp), method="HEAD")
+        self.assertEqual(code, 200)
+        self.assertEqual(body, b"")
+        self.assertIsNone(hdrs.get("X-Romp-Text-Utf8"), "a HEAD decodes nothing, so it carries no marker")
+        self.assertEqual(hdrs.get("Content-Length"), str(len(b"caf\xe9 line\n")), "the size on disk, one byte short of the GET's body")
+        self.assertIsNotNone(hdrs.get("X-Romp-Mtime-Ns"))
+
+    def test_record_pin_a_zero_byte_text_file_is_served_200_with_an_empty_body_and_the_utf8_marker(self):
+        # A record pin (plans/markdown-viewer.md, Slice 7, item 6): the viewer's line saying a file is empty rests on
+        # the route serving such a file as text, never as a refusal. A zero-byte .md answers 200 with an empty body,
+        # X-Romp-Text-Utf8 "1" (b"" decodes as UTF-8) and Content-Length 0; its HEAD answers 200 with length 0.
+        ep = os.path.join(self.tmp.name, "empty.md")
+        with open(ep, "wb"):
+            pass
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(ep))
+        self.assertEqual(code, 200)
+        self.assertEqual(body, b"")
+        self.assertTrue(hdrs.get("Content-Type", "").startswith("text/plain"), hdrs.get("Content-Type"))
+        self.assertEqual(hdrs.get("X-Romp-Text-Utf8"), "1")
+        self.assertEqual(hdrs.get("Content-Length"), "0")
+        self.assertIsNotNone(hdrs.get("X-Romp-Mtime-Ns"), "an empty file is a text landing like any other: Edit arms on it")
+        code, hdrs, body = self._req("/file?path=" + urllib.parse.quote(ep), method="HEAD")
+        self.assertEqual((code, hdrs.get("Content-Length"), body), (200, "0", b""))
+
 
 class FileDownloadEndpoint(unittest.TestCase):
     """/file?download=1 (the user 2026-08-09): anything on disk is downloadable — the view allowlists

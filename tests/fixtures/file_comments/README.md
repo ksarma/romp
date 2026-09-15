@@ -22,3 +22,12 @@ these files in any session that has the tooling installed.
   compare the host's hashes against. Not a fixture file itself; imported by the node tests.
 - `sidecar-v4.json`: a sidecar from a newer format version; every verb refuses it unchanged.
 - `sidecar-corrupt.txt`: a truncated sidecar; every verb refuses it unchanged.
+- `save-doors.json`: the two save doors' shared cases, read by
+  `tools/file-comments-host-save.test.mjs` (the host's `save` verb) and `tests/test_savefile.py`
+  (the kernel's `saveFile`), so both are held to one recorded answer. `editDiffLineEndings`: an
+  edit on a CR-only, a CRLF, a form-feed-separated text and one carrying the rest of Python's
+  `str.splitlines` set (VT, FS, GS, RS, NEL, LS, PS), each with the diff the kernel's
+  `_edit_log_diff` writes, which the host's `editDiff` must match hunk for hunk; the file is
+  plain ASCII, the endings as JSON escapes. `bomCapEdge`: a BOM file and a content within two
+  bytes of the text cap (refused: the three bytes the door puts back count) and within three
+  (written at exactly the cap).

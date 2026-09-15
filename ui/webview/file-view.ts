@@ -28,8 +28,10 @@ import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // th
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
+import { pictureDest } from "./file-comments";       // the authored source a failed figure's label names (armFigureLabels): the panel's own rule, not a second reading of data-fv-src
 import { readPlace, seatPlaceOutcome, followPlace, blockHolding, blockIndexAt, type Place } from "./reader-place";   // the reader's place across a paint (Slice 2 of plans/markdown-viewer.md); blockHolding: the block an open's `{ offset }` names, blockIndexAt: the block a remembered place's span starts, followPlace: the last measured place into the text a reload landed under a boxless body (Slice 6)
 import { sourceBlockSpans, renderedBlockElements } from "./anchor-map";   // the block table and its elements, for an open's `{ offset }` in the Rendered view (Slice 6 of plans/markdown-viewer.md)
+import { rawRowForOffset } from "./anchor-map";   // the verified Raw row map, for scrollToOffset (Slice 7 of plans/markdown-viewer.md, item 7): the row whose source span holds an offset, following whatever split the rows were built on
 import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
@@ -359,6 +361,114 @@ export const HIDDEN_SECTION = "That section is hidden in the rendered view; open
  *  depth and lands the picked one at the top of the body. The plan's word, a document viewer's usual one; the guide says
  *  "the file's headings" beside it so the sessions pane's outline is never confused with it (the brief's open question 2). */
 export const OUTLINE_LABEL = "Outline";
+/** The line a failed render stands under (plans/markdown-viewer.md Slice 7, item 1): when marked, the sanitizer or a DOM pass
+ *  of mdBlock throws, or the swap itself does, renderBody paints this sentence and the error's message in the `.fileview-err`
+ *  dress as the body's first child (its second, under EMPTY_FILE's line, over an empty file whose render still threw:
+ *  renderFellLine), and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
+ *  and says why, where the old catch wrote the source into the Rendered box as one unannounced paragraph. No hint row (the
+ *  title bar names the path) and no Download (the text is showing). Without a terminal period so the guide can carry the words;
+ *  the line's text is this constant, the message in parentheses, then the period (renderFellLine). */
+export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";
+/** The `.fileview-err` line for a render that fell (RENDER_FELL, above), naming what threw: the body's first child above the
+ *  Raw rows in both viewers, with one exception, an empty file whose render still threw (a sanitizer or DOM-pass fault over
+ *  ""), where item 6's EMPTY_FILE line stands above this one, since its prepend runs after the catch; both sentences true,
+ *  the order recorded in the plan's Slice 7 note (item 6, the review's round 6) and not changed. Outside `code.hljs`, so the
+ *  anchor map's rawIndex never reads it as a row, and outside `.fileview-md`, which that body does not hold. */
+function renderFellLine(msg: string): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = RENDER_FELL + " (" + msg + ").";
+  return why;
+}
+/** The sentence marked appends to every message it rethrows (marked 12's `#onError`, wrapping its lexer, the per-call
+ *  walkTokens and its parser): a request to report the failure to marked's own tracker, with that URL. A throw at that
+ *  stage, one of item 1's four sources, put the sentence and the URL inside romp's own failure line, telling the person to
+ *  report a romp file's render failure to marked (the Slice 7 review's round 2). Keyed on the sentence's text alone. */
+const MARKED_REPORT_TAIL = /\n?Please report this to https:\/\/github\.com\/markedjs\/marked\.?\s*$/;
+/** The message a render catch records (renderFell) and the RENDER_FELL line prints: an Error's message with marked's
+ *  appended sentence cut (MARKED_REPORT_TAIL), its name when nothing else is left (`new Error("")`: "Error", as String(err)
+ *  answers for one), any other thrown value by its string. A message that carries something else after a newline is kept
+ *  whole: the cut is the one sentence, never the first line. */
+function fellMessage(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  return err.message.replace(MARKED_REPORT_TAIL, "") || err.name || "Error";
+}
+/** The label a figure that failed to load wears beside itself (plans/markdown-viewer.md Slice 7, item 2; armFigureLabels): the
+ *  fact, then the authored source and the alt in parentheses when there is one, in one line (`Image failed to load: figs/p95.png
+ *  (p95 by day)`), where the browser drew a wordless broken-image glyph or nothing. The img's `error` event carries no status, so
+ *  the label names the fact and the source, never a reason, and the viewer makes no second request to learn one (the Comments
+ *  panel's poll already HEADs the figure and its card says absent). Without a terminal period so the guide can carry the words. */
+export const FIGURE_FAILED = "Image failed to load:";
+/** The line an empty file shows in place of its text (plans/markdown-viewer.md Slice 7, item 6). A zero-byte file painted zero
+ *  Raw rows or an empty Rendered box and nothing else, a blank pane with Edit shown, so nothing told the reader an empty file from
+ *  a paint that had not happened. Now both viewers' text paints put this sentence, in the `.fileview-err` dress, ABOVE the block
+ *  the view would paint (the empty `div.fileview-code` or the empty `.fileview-md`): a sibling of that root, never inside
+ *  `code.hljs` and never classed `fv-cl`, so the anchor map's rawIndex still sees zero rows over "" and accepts them, and the
+ *  Rendered pairing sees no block. `text` stays "" (never null: null means not landed, to the seam and the panel), Edit stays
+ *  shown (an empty file is editable; the editor mounts over ""), the Outline button hides (no heading), error() is null (the
+ *  content, all none of it, shows) and mode() follows the buttons; a reload that lands bytes repaints without the line. Keyed on
+ *  the text the landing applied, never on a byte count or a timer. The one constant of the slice with its own terminal period:
+ *  the line shows it alone (contract C5), and the guide carries the words. */
+export const EMPTY_FILE = "This file is empty.";
+/** The `.fileview-err` line for an empty file (EMPTY_FILE, above): prepended to the body right after the text paint's swap in
+ *  both viewers, so it stands above the empty root and outside it. */
+function emptyFileLine(): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = EMPTY_FILE;
+  return why;
+}
+/** The line for a file whose only bytes are a UTF-8 byte order mark (plans/markdown-viewer.md Slice 7, item 6; the Slice 7
+ *  review's round 1). The kernel serves such a file as one U+FEFF and the browser's UTF-8 decode strips that one character
+ *  (Chromium 151, the round 4 record: fetch().text(), the Response constructor and TextDecoder agree), so the view's text is ""
+ *  exactly as an empty file's is, while the file is not empty: EMPTY_FILE would be untrue of its bytes. The two are told apart
+ *  by the answer's byte count, the served body's Content-Length (the kernel's own field; tests/test_kernel_preview.py pins it as
+ *  the body's length, 0 for an empty file), since UTF-8 bytes that decode to nothing and number more than zero are exactly the
+ *  three of a BOM; the URL viewer's streamed read counts its bytes itself (readTextCapped). The line takes EMPTY_FILE's shape
+ *  and place (bomOnlyLine, below); `text` stays "" and Edit stays shown (a save writes the bytes back through the doors' BOM
+ *  rule, item 4). An answer with no Content-Length (a kernel from before the header, a proxy that dropped it) gets the empty
+ *  file's words, as before. */
+export const BOM_ONLY_FILE = "This file holds only a byte order mark.";
+/** The `.fileview-err` line for a BOM-only file (BOM_ONLY_FILE, above): the empty file's shape and place. */
+function bomOnlyLine(): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = BOM_ONLY_FILE;
+  return why;
+}
+/** The pane's sentence over a picture whose bytes would not decode (imgFailed; plans/markdown-viewer.md Slice 7, item 3): the
+ *  seam's error() answers it while the pane shows, and the guide's pin reads it here (hoisted from the pane's builder in the
+ *  Slice 7 review's round 1). The pane shows it with the path as the hint and the Download offer under it; error() is the
+ *  sentence alone. */
+export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";
+/** The note bar's line over a file the kernel decoded as Latin-1 (plans/markdown-viewer.md Slice 7, item 5): the kernel serves
+ *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
+ *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
+ *  answer wears the "0" (notUtf8): before landTarget, so an open's own target notice takes the row under the one-bar rule, and
+ *  again after a reload's landing has dropped the changed-on-disk bar; and raised again by a format pick whose paint puts the text
+ *  back over a failure pane (pickFormat: the pane's paint drops the line, and the pick's repaint is no landing). Shown alone in
+ *  the bar (contract C5). */
+export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.";
+/** The refusal Edit gives over pending changes on a file whose text holds a CR anywhere (plans/markdown-viewer.md Slice 7, item
+ *  7; trackedRefusal): the editor rewrites the file's line endings as it loads the text. A CRLF and a lone CR are both rewritten
+ *  by norm before the mount, as the editor's own document model would rewrite them (CodeMirror's EditorState.create, in its
+ *  state package: a string document is split on CRLF, a lone CR or LF alike and its lines are joined back with LF), so both
+ *  come back LF. Under pending changes
+ *  that is a save no record survives: a CRLF loses a character per ending, so every offset after it moves; a lone CR keeps its
+ *  offset but becomes another character, so a record whose text crosses one no longer matches, and the save writes LF where
+ *  the file had CR under records anchored to the disk bytes. Before this slice the refusal named CRLF alone and keyed on CRLF
+ *  alone, so a CR-only file's pending changes went into an editor that rewrote every ending under them. Shown with the panel's
+ *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the guide carries the words. Without pending
+ *  changes the editor mounts as before, over the LF view of the text (norm), and the save door writes the lone CRs back where
+ *  the buffer has LF (eolCR, the CRLF restore's shape), so a CR-only file keeps its endings through an edit (the Slice 7
+ *  review's round 1; before, a save wrote LF where the file had CR, a data change the reader did not make). */
+export const CR_REFUSAL = "The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes.";
+
+// The Raw view's line split (plans/markdown-viewer.md Slice 7, item 7): a CRLF (one ending, tried first), a lone CR or an
+// LF each end a row, in wrapNumberedHtml over the highlighted HTML and in codeBlock's gutter count, so the two stay in
+// step and no row's text carries a "\r"; the anchor map's rawIndex consumes whichever ending stands between two rows
+// (anchor-map.ts) and verifies every row against the source, and scrollToOffset counts a row over the source with the
+// same split when the map refuses. Before, both split on "\n" alone: a CR-only file was ONE row (the HTML parser turned
+// its CRs into breaks inside it), and a CRLF file's rows ended in a "\r" the parser rewrote. Declared here, above the
+// openFileView closure whose scrollToOffset reads it, and not beside the two builders below it (the Slice 7 review's round 1).
+const RAW_ROW_SPLIT = /\r\n|\r|\n/;
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -618,10 +728,20 @@ export interface FileViewActionCtx {
   body(): HTMLElement;
   /** which view the body shows now; "media" for an image/PDF body (the SVG Source view counts as raw) */
   mode(): "raw" | "rendered" | "media";
-  /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media */
+  /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media.
+   *  After a failed reload it still answers the last landing's text, and error() tells the pane the body shows in its place.
+   *  An empty file answers "" (never null: the body shows the EMPTY_FILE line above its empty root, and that is the content) */
   text(): string | null;
   /** the file's mtime at load, nanoseconds AS A STRING (the save fence's own value) */
   mtimeNs(): string;
+  /** the words of the pane the body shows IN PLACE of the file: a fetch refused or failed (the kernel's 404, 413 or 415 body, a
+   *  network failure's message: the `msg` the catch paints), or a picture that failed to decode (that pane's own sentence,
+   *  without its hint and its Download button); null while a text or media view shows, the loader included, and null over the
+   *  Raw rows a failed render falls back to (mode() answers "raw" for that paint: the rows are the content). Closure state
+   *  (`viewError`) set at the two pane paints and cleared at every content paint (the text paint once its swap stands, so a
+   *  fallback swap that throws leaves a standing pane's words; the media arm before whenShown, the SVG Source view, the
+   *  editor's entry), never read from the body; text() and mtimeNs() keep answering the last landing's */
+  error(): string | null;
   /** the kernel's media verdict off the Content-Type: an SVG is shown as an image but is TEXT to the kernel's allowlist */
   media(): "image" | "pdf" | "svg" | null;
   /** the media element the body shows now: the `<img>` for an image (an SVG shown as an image included), the frame
@@ -646,6 +766,9 @@ export interface FileViewActionCtx {
    *  after every later page it could not draw (the chunk removes that page's canvas and puts its notice in the shell; the
    *  overlay leaves with the canvas on this paint, and the card says the page did not render). A Rendered body's figures
    *  are in the DOM by then with their own loads still pending. The panel re-runs its paint pass.
+   *  A failure pane is a paint too (plans/markdown-viewer.md Slice 7, item 3): the fetch chain's catch (a refused or failed
+   *  fetch, a reload's or a first open's, text() null then) and a picture's decode failure (imgFailed) fire the hooks after
+   *  their swap, with error() the pane's words, so a hook waiting on a reload hears it fail at the paint and never at a deadline.
    *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
@@ -1069,10 +1192,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // here, same as Copy path below.
   const fmt = loadFmt();
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
+  let renderFell: string | null = null;       // the message of the throw the last text paint fell on (renderBody's catch: the RENDER_FELL line over Raw rows); null once a paint stands, so mode() answers "raw" over those rows and "rendered" again after the Rendered click's retry
+  let viewError: string | null = null;        // the seam's error(): the words of the pane the body shows in place of the file, set where the two panes paint (the fetch chain's catch, imgFailed) and cleared where content paints (the text paint once its swap stands, the media arm, the editor's entry); never read off the body (plans/markdown-viewer.md Slice 7, item 3)
   let mtimeNs = "";                           // the file's mtime at load, NANOSECONDS AS A STRING —
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
   let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
+  let textBytes: number | null = null;        // the last landing's body byte count, the answer's Content-Length (null when absent): read by the text paint for one question the decoded text cannot answer, whether a text that reads "" was a BOM alone (BOM_ONLY_FILE; plans/markdown-viewer.md Slice 7, item 6)
+  let notUtf8 = false;                        // text/plain whose X-Romp-Text-Utf8 is exactly "0": the kernel decoded the bytes as Latin-1, so the text landing raises LATIN1_NOTICE (plans/markdown-viewer.md Slice 7, item 5). Its own flag, never !isText: an image or a PDF carries no header at all, and an old kernel that sends none leaves isText true (Edit off through !mtimeNs)
   // ── the media verdicts: a .png used to open as line-numbered mojibake — the fetch pipeline called
   // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
   // re-test (the authoritative-source rule; the kernel derives the mime locally and the relay
@@ -1127,6 +1254,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let dirty = false;
   let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
   //   CRLF→LF on assignment, so an untouched CRLF file would otherwise save with every ending rewritten
+  let eolCR = false;                          // a CR-only file (a lone CR at every ending, no LF anywhere): the editor's document model and the
+  //   textarea alike read a lone CR as a line break and give it back as LF, so the save door writes the CR back where the buffer has
+  //   LF, as it does a CRLF (Slice 7 of plans/markdown-viewer.md, item 7; the review's round 1: before, an edited CR-only file saved
+  //   with every ending rewritten, a data change the reader did not make). Exact by construction: with no LF in the file, every LF
+  //   the editor gives back came from a CR or a typed line break. A file mixing CR and LF has no one ending to restore.
   let ta: HTMLTextAreaElement | null = null;   // the FALLBACK surface (and the buffer pre-CodeMirror)
   // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5):
   // the records as the field holds them now and the decisions taken since the mount (editor-chunk.ts TrackHandle)
@@ -1192,6 +1324,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // so the text comparison alone would call the buffer clean), or one a save carried that an undo took back (undoneLanded)
   const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0 || anyUndoneLanded(undoneLanded()); };
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
+  // The format pick, from the bar's Rendered and Raw buttons and from the seam's setMode alike (the Comments panel switches to
+  // Raw through it for a refused comment and for a Reveal): the saved choice, the paint, and one repair the paint does not make
+  // itself. Over a failure pane (a reload refused after a deletion or a growth past the cap; error() the pane's words) the paint
+  // puts the last landing's text back in the body, the pre-existing repaint (plans/markdown-viewer.md Slice 7, item 3), and on a
+  // file the kernel decoded as Latin-1 (notUtf8) that text stood with Edit off and, since the pane's paint drops the line that
+  // says why (dropLatin1Line, the review's round 2), nothing saying so until the next "0" landing (the review's round 3). So a
+  // pick whose paint replaced a pane raises the line again, when no other notice took the row meanwhile (a re-armed
+  // changed-on-disk bar, say, whose Reload answers the person's own click and stands). Keyed on the pane the paint replaced and
+  // the landing's header, never on the body's text or a timer; a pick over content raises nothing (the line stands from the
+  // landing, or another notice does), and a landing raises its own line below. The URL viewer has no such pick: no header.
+  const pickFormat = (mode: "rendered" | "raw"): void => {
+    const overPane = viewError !== null;      // read before the paint: the paint clears the record once its swap stands
+    fmt.md = mode; saveFmt(fmt); renderBody();
+    if (overPane && notUtf8 && viewError === null && note === null) noteBar(LATIN1_NOTICE);
+  };
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   if (isMd) {
     for (const mode of ["rendered", "raw"] as const) {
@@ -1199,7 +1346,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.type = "button";
       b.textContent = mode === "rendered" ? "Rendered" : "Raw";
       b.title = mode === "rendered" ? "The prose the markdown means" : "The file's actual bytes";
-      b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); takeKeyboard(); });   // the paint, then the keyboard (takeKeyboard: the button holds it)
+      b.addEventListener("click", () => { pickFormat(mode); takeKeyboard(); });   // the paint (pickFormat), then the keyboard (takeKeyboard: the button holds it)
       segBtns.push([mode, b]);
       acts.appendChild(b);
     }
@@ -1450,20 +1597,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // The button stays a real button rather than a disabled one so the reason reaches touch and keyboard users too.
   let editBlocked: string | null = null;
   // Pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry them
-  // (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves every
-  // offset the records hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
-  // CRLF refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
+  // (chunkTracks false), or the file's line endings would: a CRLF or a lone CR anywhere in the text (Slice 7 of
+  // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF or a lone CR to LF before the mount, as
+  // CodeMirror's document model would as it loads the string), which moves or mismatches the offsets the records
+  // hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
+  // CR refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
   // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
   // consent popup first) and again at the MOUNT over the begin() whose records the editor takes (enterEdit): the consent
   // read between the two is a kernel round-trip, and a status landing inside it (the poll's tick, the panel's mount-time
   // ask answered, a session's write) turns a click-time "nothing pending" into records. Guarded at the click alone,
   // those records mounted over the LF buffer with their CRLF-disk offsets: marks on the wrong text, a reject rewriting
   // the wrong span, and a save that fit a deletion at a shifted offset (the review's CRLF-at-mount finding).
-  const CRLF_REFUSAL = "The editor rewrites this file's CRLF line endings as it loads the text, and that would move the pending changes. ";
   const trackedRefusal = (pending: { refusal: string } | null): string | null => {
     if (!pending) return null;
     if (chunkTracks === false) return pending.refusal;
-    if (text !== null && /\r\n/.test(text)) return CRLF_REFUSAL + pending.refusal;
+    if (text !== null && /\r/.test(text)) return CR_REFUSAL + " " + pending.refusal;
     return null;
   };
   editBtn.addEventListener("click", () => {
@@ -1648,9 +1796,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
-    mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" ? "rendered" : "raw",
+    mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" && renderFell === null ? "rendered" : "raw",
     text: () => (editing && bufValue() !== null ? bufValue() : viewText()),   // in edit mode the buffer is the text (Slice 5)
     mtimeNs: () => mtimeNs,
+    error: () => viewError,
     media: () => (isPdf ? "pdf" : isSvgImage ? "svg" : isImage ? "image" : null),
     // both read the LIVE body under the mode gate rather than a handle kept at paint time: a reload swaps the
     // <img>, imgFailed's pane removes it, and a rendered README may itself carry an <img class="fileview-img">
@@ -1682,15 +1831,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       asideOpen = !!node;
       if (isPdf && objUrl !== null && asideOpen !== was) renderBody();
     },
-    setMode: (mode) => { if (!isMd || editing) return; fmt.md = mode; saveFmt(fmt); renderBody(); },
+    setMode: (mode) => { if (!isMd || editing) return; pickFormat(mode); },
     scrollToOffset: (n) => {
       const src = viewText();
       const code = body.querySelector("code.hljs");
       if (src === null || !code) return;
       const rows = code.querySelectorAll(".fv-cl");
       if (!rows.length) return;
-      const line = (src.slice(0, Math.max(0, n)).match(/\n/g) || []).length;   // one .fv-cl per logical line
-      (rows[Math.min(line, rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+      // The row through the anchor map's verified row map (rawRowForOffset: the last row whose source span starts at or
+      // before the offset, so an offset past the end lands on the last row), which follows whatever split the rows were
+      // built on: CRLF, a lone CR or LF (RAW_ROW_SPLIT; Slice 7 of plans/markdown-viewer.md, item 7). Before, a second
+      // counter here counted LF alone, so every offset in a CR-only file landed on row 0. When the map refuses (rows that
+      // do not match the source, which only a bug produces) the row is counted over the source with the viewer's own
+      // split, exact by construction and clamped to the last row: never a guess, never a silent last row.
+      const row = rawRowForOffset(code, src, n);
+      const target = row ?? rows[Math.min(src.slice(0, Math.max(0, n)).split(RAW_ROW_SPLIT).length - 1, rows.length - 1)];
+      (target as HTMLElement).scrollIntoView({ block: "center" });
     },
     reload: () => { if (!editing) fetchFile(); },
     editing: () => editing,
@@ -1925,6 +2081,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     dropReseat = retire;
   };
   ctx.onClose(() => { if (dropReseat) dropReseat(); });
+  // A figure of the Rendered box that fails to load says so beside itself (armFigureLabels, module level): the body's `error`
+  // and `load` capture listeners, armed once per open like the re-seat's above and never per paint, dropped with the viewer.
+  ctx.onClose(armFigureLabels(body));
   // The write, at the moments the reader leaves the file (runLeave: closeFileView and both replace paths; the window's
   // pagehide listener in initFileView runs it too): the place as the body stands, read once here and never per frame (the Slice 5 review's cost
   // lesson), at this file's mtime and scrollTop, with the Rendered view's open folds by ordinal, into the module's map and the
@@ -2131,6 +2290,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     note = bar2;
     return bar2;
   };
+  // The Latin-1 line (the raise at the text landing, item 5 of Slice 7) says why Edit is off; a landing whose header says the
+  // file is UTF-8 now (a session re-saved it) brings Edit back through the gate, so that landing drops the line when it is the
+  // notice standing, the settleDiskBar shape (the review's round 1: the line stood over a shown Edit button until the next
+  // notice). The failure pane's paint (the fetch chain's catch: a 404 after a deletion, a 413 after a growth past the cap, a
+  // network failure) drops it too: the line says the file can be read here and the pane says it could not be, and nothing else
+  // removed the line over the pane until some other notice replaced it (the review's round 2); a later landing whose header
+  // says "0" raises it again, and so does a format pick whose paint puts the text back over the pane (pickFormat; the
+  // review's round 3). Known by its words, the one notice shown alone with them; a notice standing in its place (a
+  // target's, a warning's, the changed-on-disk bar with its button) is not touched.
+  const dropLatin1Line = (): void => {
+    if (note !== null && note.textContent === LATIN1_NOTICE) { note.remove(); note = null; }
+  };
+  /** The line is the notice standing (the same words): a landing that would raise it again leaves the element as it is. */
+  const latin1LineStands = (): boolean => note !== null && note.textContent === LATIN1_NOTICE;
 
   // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
   // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
@@ -2142,7 +2315,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const imgFailed = () => {
     if (!wrap.isConnected) return;              // settled after a close/replace — paint nothing
     const why = el("div", "fileview-err");
-    why.textContent = "this image failed to decode — it may be mid-write or truncated";
+    why.textContent = DECODE_FAILED;            // the exported sentence (the guide's pin reads it there)
+    const words = why.textContent;              // the sentence alone, taken before the hint and the button join the pane: error()'s answer, never read back off the body
     const hint = el("div", "fileview-err-hint");
     hint.textContent = path;
     why.appendChild(hint);
@@ -2152,6 +2326,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
     body.replaceChildren(why);
+    viewError = words;                          // the pane's paint: the seam's error() answers its sentence until a content paint clears it (Slice 7, item 3)
     // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
     // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
     // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
@@ -2196,6 +2371,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
+      viewError = null;                       // a media view paints below (the SVG Source view, the chunk's pages, the frame or the picture before whenShown; a kept frame stands): no pane shows once it does (Slice 7, item 3)
       // a target on a picture or a PDF (a heading, a line, an offset) is judged by the landing, not here: landMedia, over a body
       // with a box, names it in the notice bar (the PR review's round 1; the review's round 3 had the heading judged here)
       if (svgSource && svgText !== null) {
@@ -2225,10 +2401,36 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // then takes the body itself, so this is the one read between the person's last click and the loader (foldKeeper)
     folds.note();
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
+    // The pass below builds the block and swaps it in one try (plans/markdown-viewer.md Slice 7, item 1): a marked bug must never
+    // cost the content, and this is where the content is kept now that mdBlock carries no catch of its own. A throw from marked,
+    // from the sanitizer, from any DOM pass of mdBlock or from replaceChildren itself takes the one road: the body gets the
+    // RENDER_FELL line first and the text as Raw rows under it, the line saying what happened where the person is looking
+    // (fellMessage: the error's message, marked's appended report-this sentence cut), instead of the source written into the
+    // Rendered box as one unannounced paragraph, and the message is recorded once that fallback stands (renderFell, which mode()
+    // reads as "raw" for this paint). The fallback runs in the catch, and a throw from THAT propagates (into the fetch chain's
+    // own catch at a landing): a second failure is a bug, not a file; the previous paint stands and its record with it, so
+    // mode() still answers what the body shows (the review's round 2: recorded before the swap, a fallback throw from a click
+    // left mode() saying "raw" over a standing Rendered box) and so does error(), cleared after the swap for the same reason
+    // (the review's round 3: cleared before the pass, a fallback throw over a standing failure pane left error() null while
+    // the pane stood, and the Comments panel's next pass would have said the view still showed the earlier text). The rest of
+    // the pass runs as for any text paint, so the
+    // hooks fire once and read the rows through mode(); the Rendered button stays pressed (fmt.md is the person's saved choice;
+    // the line says why rows show), the Raw click paints rows without the line, the Rendered click tries again. The editor's
+    // entry sets fmt.md to raw before its own paint and returns above, so its exit repaints Raw and clears the record as any
+    // paint that stands does.
     perfTimed("paint", () => {                // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed)
       if (text === null) return;              // never taken (the guard above returned): TypeScript drops a reassignable variable's narrowing inside a closure
       const kept = keptPlace();               // the reader's place under the view about to go (null: the loader, or the editor, held the body)
-      body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+      try {
+        body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        renderFell = null;
+      } catch (err) {
+        const fell = fellMessage(err);
+        body.replaceChildren(renderFellLine(fell), codeBlock(text, path, true));
+        renderFell = fell;                    // recorded once the fallback stands (the header): a throw from the fallback leaves the previous paint and its record
+      }
+      if (text === "") body.prepend(textBytes !== null && textBytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it; over a render that fell it stands above the RENDER_FELL line and the rows, the stacked order item 6 records (the review's round 6); a file whose bytes were a BOM alone (more than zero bytes decoding to "") says that instead, in the same place (BOM_ONLY_FILE; the review's round 1)
+      viewError = null;                       // the paint stands (the Rendered box, the rows, or the line over the rows a failed render fell back to, whose word is mode() "raw"): no pane shows (Slice 7, item 3). After the swap, as renderFell is recorded: a throw from the fallback's own swap propagates past this line and leaves the previous paint, a failure pane's included, with its record, so error() keeps answering the pane the body still shows (the review's round 3)
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
       syncOutline();                          // the Outline button over this paint (shown over a Rendered paint that holds a heading): the bar's layout settles before the hooks measure and the seat writes
@@ -2240,12 +2442,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if ((rendered || !isMd) && pendingHeading !== null) spendHeading();   // a file that is not markdown has no sections and no Rendered toggle to wait for: its first text paint judges the target (the review's round 2)
   };
   // Item 4's heading, spent at a paint that can land it (a note's Rendered paint, any text paint of a file that is not markdown)
-  // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Landed over a body
+  // and landed one frame later through scrollToFragment, or named in the notice bar as no section of the file. Never spent over
+  // the rows a failed render fell back to (renderFell; Slice 7 of plans/markdown-viewer.md, item 1, the review's round 1): the
+  // rows hold no section to look for, so the target waits for the Rendered retry as it waits under the Raw preference; before,
+  // the frame judged the rows and raised "No section named" under the failure line, of a section the file has. Landed over a body
   // with a box alone: under a hidden pane scrollIntoView moves nothing and the landing would count as done, so the frame parks the
   // target again for the width hook's repaint at the show, which spends it through landTarget (the review's round 5, with the
   // line, the offset and the keyboard). Spent once per call: a second call before the frame (the landing's, after renderBody's own)
   // finds nothing pending and queues no frame.
   const spendHeading = (): void => {
+    if (renderFell !== null) return;          // the paint fell to the Raw rows: the target stays pending for the Rendered retry (the header)
     const h = pendingHeading; pendingHeading = null;
     if (h === null) return;
     requestAnimationFrame(() => {
@@ -2432,7 +2638,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       "The editor stays open: " + path.slice(cut + 1) + " has unsaved changes. Save or undo them, then try again.");
   // the editor's ask, then the actions' (ctx.guardClose): each names what it would drop, and the ask is put here
   closeGuard = () => confirmDiscard() && closeAsks.every((ask) => { const q = ask(); return q === null || askDiscard(q.question, q.kept); });
-  const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
+  const norm = (s: string): string => s.replace(/\r\n?/g, "\n");   // the editor's own view of any text: CodeMirror's document model and the textarea alike read a CRLF or a lone CR as a line break and give it back as LF (Slice 7 of plans/markdown-viewer.md, item 7)
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
   // contract is the window global the chunk registers). The URL derives from the page's own running
@@ -2676,6 +2882,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
     editing = true; dirty = false;
     eolCRLF = /\r\n/.test(text);
+    eolCR = /\r/.test(text) && !/\n/.test(text);   // every ending a lone CR (eolCR's comment): the save door writes them back
     renderBody();
     // The panel's edit-mode render. Its cards read editing() at render time (the caption that says to decide in the
     // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
@@ -2685,6 +2892,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
     // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
     // repaint hands the read-mode state back.
+    viewError = null;                           // the editor takes the body: no pane shows (a failed reload's pane over the text, say; the exit repaints the earlier text, or re-reads when a fetch landed under the editor, and the panel's row says what happened)
     fireRendered();
     // a notice over the read view (a refusal since lifted, a line past the end) goes as the editor takes the body: the
     // swap below took it while the bar sat inside the body, and the bar now sits above the row (noteBar), THIS card's
@@ -2767,7 +2975,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (anyUndoneLanded(undone)) { noteBar(undoneLandedNote(undone, false)); return; }
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
     // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
-    const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : buf;
+    // (and a CR-only file's lone CRs the same way, eolCR: the editor gave every one back as LF)
+    const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : eolCR ? buf.replace(/\n/g, "\r") : buf;
     // the decisions this save carries (the tracked path below fills it): marked applied when the save lands, so a later
     // Save from the same editor sends only what came after
     let sent: EditDecisions | null = null;
@@ -3106,8 +3315,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // notice dress: a silent landing on the wrong row reads as the file's truth (CLAUDE.md, fail loudly).
   const scrollToLine = (n: number) => {
     const rows = body.querySelectorAll("code.hljs .fv-cl");
+    // Over an empty file (zero rows under the EMPTY_FILE line, item 6) the notice still says the line is not in the file, in the
+    // same one-line shape an offset open uses, and stops short of "showing the last line", since there is none (the Slice 7
+    // review's round 1: a line open of an empty file said nothing while an offset open raised its notice).
+    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + (rows.length ? "; showing the last line." : "."));
     if (!rows.length) return;
-    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
     (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
   let pendingLine: number | null = at !== null && "line" in at && at.line > 0 ? Math.floor(at.line) : null;
@@ -3122,7 +3334,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const scrollToSourceOffset = (n: number) => {
     const src = viewText();
     if (src === null) return;
-    const rendered = isMd && fmt.md === "rendered";
+    // The view as the paint left it, mode()'s word, not the pressed button: over the rows a failed render fell back to (renderFell;
+    // Slice 7 of plans/markdown-viewer.md, item 1) fmt.md still says "rendered" while the body holds code.hljs rows, and a read of
+    // the button took the Rendered branch, found no .fileview-md and returned with nothing scrolled and a notice naming a block
+    // (the review's round 1: the person's own click landed at the top in silence).
+    const rendered = ctx.mode() === "rendered";
     if (n > src.length) noteBar("Offset " + n + " is past the end of this file, which has " + src.length + (src.length === 1 ? " character" : " characters") + "; showing the last " + (rendered ? "block." : "line."));
     const at = Math.min(n, src.length);
     if (!rendered) { ctx.scrollToOffset(at); return; }
@@ -3181,15 +3397,20 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     keyboardOnLanding();
   };
   // The landing runs through the hold's defer, whose promise settles with the run (actions.ts pressHold): a run the hold
-  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (renderBody's DOM passes,
-  // after the landing has taken the new mtime) reached nobody in round 1: an uncaught page error, the old text standing
-  // under the new mtime with no error row, while the same throw from an immediate landing reached the `.catch` below.
-  // The promise rejects with the parked run's throw into that same `.catch` now (review round 2, 2026-09-08;
-  // file-view-landing-throw-browser.test.ts); a parked run a later landing replaced resolves with nothing painted, which
-  // is what the hold's header says of an overtaken landing.
+  // parks goes on a zero timer at the release, outside the fetch's chain, and a throw from it (after the landing has taken
+  // the new mtime) reached nobody in round 1: an uncaught page error, the old text standing under the new mtime with no
+  // error row, while the same throw from an immediate landing reached the `.catch` below. The promise rejects with the
+  // parked run's throw into that same `.catch` now (review round 2, 2026-09-08), a parked run a later landing replaced
+  // resolves with nothing painted, which is what the hold's header says of an overtaken landing. Since Slice 7 of
+  // plans/markdown-viewer.md (item 1) the common throw never gets that far: a throw from the block's build or the swap is
+  // caught inside renderBody's own try, parked or immediate, which paints the RENDER_FELL line over the text's Raw rows
+  // (file-view-landing-throw-browser.test.ts drives both landings). What still rejects into the `.catch` below is a throw
+  // from the fallback itself or from the passes after the try that can throw through (the folds' restore, the width stamp,
+  // the Outline's sync, the seat): a bug, not a file. Never a hook's own throw: fireRendered runs each hook in its own
+  // try and swallows it (the review's round 2 corrected this list, which named the hooks).
   const fetchFile = () => {
     const my = ++fetchSeq;
-    type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
+    type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean; bytes: number | null };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
     // Whether this fetch's answer STANDS to land: its viewer is up (wrap.isConnected: a close removes the wrap, and a
@@ -3226,7 +3447,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
       // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
       // kernel that sends neither simply gets no Edit button).
-      v = { isText: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false };
+      v = { isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false, bytes: null };
       v.isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
         && r.headers.get("X-Romp-Text-Utf8") !== "0";
       v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
@@ -3237,6 +3458,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       v.isImage = ct.startsWith("image/");
       v.isPdf = ct.startsWith("application/pdf");
       v.isSvgImage = ct === "image/svg+xml";
+      // The Latin-1 verdict keys on the header's VALUE with the text type, never on !isText: an image or a PDF carries no
+      // X-Romp-Text-Utf8 at all (tests/test_kernel_preview.py pins that absence), and an old kernel that sends none leaves
+      // isText true with Edit off through !mtimeNs. The text landing below says so in the note bar (LATIN1_NOTICE;
+      // plans/markdown-viewer.md Slice 7, item 5).
+      v.notUtf8 = ct.startsWith("text/plain") && r.headers.get("X-Romp-Text-Utf8") === "0";
+      // The served body's byte count, the kernel's Content-Length (tests/test_kernel_preview.py pins it as the body's length, 0 for
+      // an empty file), read for the one question the decoded text cannot answer: whether a text that reads "" was a BOM alone
+      // (BOM_ONLY_FILE; the browser's decode strips the one U+FEFF the kernel serves). Null when the header is absent or not a
+      // number: the empty file's words then, as before.
+      const len = r.headers.get("Content-Length");
+      v.bytes = len !== null && /^\d+$/.test(len) ? Number(len) : null;
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
@@ -3244,8 +3476,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
-      isText = got.isText; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
+      isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage; textBytes = got.bytes;
       settleDiskBar(my);                                        // the changed-on-disk bar goes with the landing that brings the moved file (or its own ask's)
+      if (!notUtf8) dropLatin1Line();                           // a UTF-8 answer (or a media one) drops a Latin-1 line a previous landing raised: Edit is back, or the file is no text at all (Slice 7, item 5)
       if (t instanceof Blob) {
         // Minted only now, after the guards above (stands: the wrap connected, this fetch the newest): a viewer closed or
         // REPLACED mid-flight creates nothing to leak, and never clobbers the new open's mediaUrlLive registration.
@@ -3280,6 +3513,19 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // the open's target: a line takes the Raw view for this open (unsaved: the preference stays), then the row; an offset the next frame
       if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
+      // A file the kernel decoded as Latin-1 says why Edit is off (plans/markdown-viewer.md Slice 7, item 5; open question 13):
+      // one noteBar line, raised at every text landing that wears the "0" and BEFORE landTarget, so an open's own target notice
+      // (the past-the-end line, raised inside landTarget; the offset and missing-section notices a frame later) takes the row
+      // under the one-bar rule, being the answer to the person's own click. A reload's landing has no target and raises the
+      // line again, after settleDiskBar above has dropped the changed-on-disk bar, so a Reload brings it back. Keyed on the
+      // answer's header, never on the body or a timer; the one other raise is a format pick's, when its paint puts this text
+      // back over a failure pane whose paint dropped the line (pickFormat; the review's round 3). A landing that finds the line
+      // already standing with the same words (the Comments panel's poll-driven reload of the same file, the seam's reload)
+      // leaves that element as it is (latin1LineStands): the bar is a role=status live region, so a fresh element with the
+      // same words would be announced again by assistive technology at every reload (the review's round 1); the words are
+      // unchanged, so nothing is said again. The disk bar's Reload drops its bar first (settleDiskBar), so that landing raises
+      // afresh: the line's return is new information.
+      if (notUtf8 && !latin1LineStands()) noteBar(LATIN1_NOTICE);
       landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
       if (reopenOutline) openOutline();
     })).catch((err) => land(() => {
@@ -3306,8 +3552,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         why.appendChild(offer);
       }
       closeOutline();                                           // the popover's rows were read off the DOM the pane replaces (the paint closer's rule; the review's round 2: a popover open at a failed reload stood over the pane, the hidden button reading expanded)
+      dropLatin1Line();                                         // a Latin-1 line a previous landing raised says the file can be read here; the pane says it could not be, so the line goes with the pane's paint, and a later "0" landing raises it again (the Slice 7 review's round 2), as does a format pick that puts the text back over the pane (pickFormat; round 3)
       body.replaceChildren(why);
       syncOutline();                                            // the pane holds no heading: the Outline button goes with the text it listed (the review's round 1: it stayed, and a click opened nothing)
+      viewError = msg;                                          // the seam's error(): the pane's words, until the next content paint clears them (plans/markdown-viewer.md Slice 7, item 3; contract C1)
+      fireRendered();                                           // the pane is a paint of the body like imgFailed's: fired AFTER the swap (a hook reading the body finds the pane) and before the re-arm (the re-arm reads the keyboard after the hooks), on every failure path, a first open's included, so a hook waiting on a reload hears it fail at the paint (before: no hook fired, and the Comments panel's loader stood until its 15 s deadline)
       rearmDiskBar(my);                                         // the changed-on-disk bar's own Reload failed: its button is armed again above the pane, AFTER the pane's paint: a keyboard the reader put on the old body's content during the flight (a link, a fold's summary), which that paint removed, then reads as nothing holding it and goes back on the button (the review's round 3: read before the paint, the link held it, the re-arm stood down, and the removal left the keyboard on the document's body)
     }));
   };
@@ -3377,6 +3626,8 @@ export function openUrlView(href: string): void {
 
   const fmt = loadFmt();
   let text: string | null = null;
+  let bytes = 0;                                       // the streamed read's byte count (readTextCapped): a text reading "" from more than zero bytes was a BOM alone (BOM_ONLY_FILE; Slice 7, item 6)
+  let renderFell: string | null = null;                // the message of the throw the last text paint fell on (renderBody's catch, as the local viewer's); null once a paint stands
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   for (const mode of ["rendered", "raw"] as const) {
     const b = el("button", "fileview-btn") as HTMLButtonElement;
@@ -3434,6 +3685,7 @@ export function openUrlView(href: string): void {
     [GATE_ACT]: (g, ev) => { ev.preventDefault(); loadGate(g); },   // a gated figure's placeholder (figure-gate.ts): the same click as the local viewer's
   });
   gateKeys(body);                                      // and the same Enter and Space: the delegate reads clicks alone, and the placeholder is a role=button span
+  closeHooks.push(armFigureLabels(body));              // a figure that fails to load says so beside itself, as in the local viewer (Slice 7, item 2)
   body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
@@ -3442,12 +3694,15 @@ export function openUrlView(href: string): void {
 
   // The URL's own #fragment (`evidence.md#results`) lands after the FIRST RENDERED paint — once. A
   // Raw view has no heading ids, so a saved Raw preference does not SPEND the landing: it waits for
-  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check).
+  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check). A
+  // render that fell to the Raw rows (renderFell; Slice 7 of plans/markdown-viewer.md, item 1) does
+  // not spend it either: the healed Rendered paint lands it (the Slice 7 review's round 1).
   let landed = false;
   const landFragment = () => {
     if (landed) return;
     let hash = "";
     try { hash = new URL(href).hash; } catch { /* not a URL — nothing to land on */ }
+    if (renderFell !== null) return;                   // the paint fell to the Raw rows (Slice 7, item 1): no section to land on; the healed Rendered paint tries again, the fragment kept
     if (!hash) { landed = true; return; }
     if (fmt.md !== "rendered") return;                 // nothing to land on yet; the next rendered paint tries again
     landed = true;
@@ -3484,9 +3739,20 @@ export function openUrlView(href: string): void {
     if (text === null) return;                         // the loader holds the body until the bytes land
     folds.note();                                      // the folds under the view about to go
     const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
-    body.replaceChildren(fmt.md === "rendered"
-      ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
-      : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    // The build and the swap in one try, the local viewer's shape (plans/markdown-viewer.md Slice 7, item 1): a render that
+    // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
+    // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
+    try {
+      body.replaceChildren(fmt.md === "rendered"
+        ? mdBlock(text, { kind: "url", href: loc })    // relative refs resolve against where it LIVES
+        : codeBlock(text, parts.base, true));          // basename → langFor → markdown highlighting
+      renderFell = null;
+    } catch (err) {
+      const fell = fellMessage(err);
+      body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
+      renderFell = fell;
+    }
+    if (text === "") body.prepend(bytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment); one whose bytes were a BOM alone (the read counted them) says that instead (BOM_ONLY_FILE)
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
@@ -3551,7 +3817,7 @@ export function openUrlView(href: string): void {
     const got = await readTextCapped(r.body!, URL_TEXT_MAX_BYTES, ctrl.signal);   // read verdict: the body is there
     if (!wrap.isConnected) { ctrl.abort(); return; }
     if ("tooLarge" in got) { ctrl.abort(); fail(overCapWords(null, URL_TEXT_MAX_BYTES)); return; }
-    text = got.text;
+    text = got.text; bytes = got.bytes;
     renderBody();                                      // paints, and lands the fragment if this paint is rendered
   }).catch((err) => {
     // Only the TEARDOWN's abort is silent (the modal is gone, or a refusal already painted its words);
@@ -3590,10 +3856,11 @@ function escapeHtml(s: string): string {
 // (the chat's .cl/.ct treatment, styles.css), so the numbers stay glued to their lines however tall a
 // wrapped line grows, and being ::before content they still never copy with the code. hljs spans can
 // cross newlines, so each row re-opens the spans the previous row left unclosed and closes its own —
-// render.ts's wrapCodeLines balance walk.
+// render.ts's wrapCodeLines balance walk. A CR is such a newline too (RAW_ROW_SPLIT): hljs escapes markup
+// characters alone, so a CR passes through its output and a span across one is re-opened on the next row.
 function wrapNumberedHtml(html: string): string {
-  const lines = html.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing newline is not a line
+  const lines = html.split(RAW_ROW_SPLIT);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing line ending is not a line
   let open: string[] = [];
   return lines.map((ln) => {
     const prefix = open.join("");
@@ -3610,8 +3877,8 @@ function wrapNumberedHtml(html: string): string {
 // wrap view keeps that copy-safety a different way (see wrapNumberedHtml above).
 function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {
   const wrap = el("div", "fileview-code");
-  const lines = text.split("\n");
-  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing newline is not a line
+  const lines = text.split(RAW_ROW_SPLIT);
+  if (lines.length && lines[lines.length - 1] === "") lines.pop();   // a trailing line ending is not a line
   const lang = langFor(path);
   let hl: string | null = null;
   if (lang) {
@@ -3664,6 +3931,7 @@ function headingWords(n: Node): string {
   if (n.nodeType === 3) return (n as Text).data;
   const e = n as Element;
   if (e.localName === "img") return " " + (e.getAttribute("alt") || "") + " ";
+  if (e.hasAttribute(FIGERR_MARK)) return "";   // a failed figure's label (armFigureLabels) is the viewer's text, not the heading's: the row reads the alt alone
   return Array.from(n.childNodes).map(headingWords).join("");
 }
 let outlineOpens = 0;   // openOutline's count across the module, for the rows' ids
@@ -3829,43 +4097,42 @@ type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; si
 // chat's md() in render.ts, the output goes through the shared sanitizer (sanitizeMd, md-sanitize.ts)
 // before it ever reaches the DOM: an <img onerror> or a javascript: href in a README must never run in
 // the dashboard, and a README's <style>, form or fixed-positioned div must never reach the viewer's chrome.
+// No catch here (plans/markdown-viewer.md Slice 7, item 1): a throw from marked, from the sanitizer or from any DOM pass
+// below propagates to the caller, each viewer's renderBody, whose try around the build and the swap keeps the content as
+// Raw rows under a line that says what happened (RENDER_FELL); the catch that lived here wrote the source into the box as
+// one unannounced paragraph, and the link passes at the end ran on a render that stood and skipped the fallback, so both
+// run on every render now.
 function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
-  let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   const fences: Fence[] = [];                          // marked's code tokens in document order, for the fence pass's Copy (fence-source.ts)
-  try {
-    // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
-    // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
-    // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
-    // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
-    // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
-    // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
-    // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
-    // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
-    const base = marked.defaults.walkTokens;
-    const dirty = marked.parse(text, { walkTokens: (t) => {
-      if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
-      if (doc && doc.kind === "file") viewerWalkTokens(t);
-      if (base) void base.call(marked, t);
-    } }) as string;
-    // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
-    // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
-    // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
-    // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
-    // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
-    // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
-    // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
-    // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
-    // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
-    // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
-    // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
-    // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
-    // slug and the id the note's own links spell.
-    box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
-  } catch {
-    box.textContent = text;                            // a marked bug must never cost the content
-    rendered = false;
-  }
+  // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
+  // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
+  // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
+  // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
+  // the defaults runs as well: per-call options replace, not compose. The link hook is the file kind's alone: a URL
+  // document has no directory for `notes.md:7` to sit in, and its links resolve against the URL below. Every kind
+  // collects the code tokens: the lexer expanded the note's leading tabs to spaces before it cut them, and the fence
+  // pass below reads each fence's text back out of the note for its Copy button (fence-source.ts).
+  const base = marked.defaults.walkTokens;
+  const dirty = marked.parse(text, { walkTokens: (t) => {
+    if (t.type === "code") { const c = t as Tokens.Code; fences.push({ text: c.text, indented: c.codeBlockStyle === "indented" }); }
+    if (doc && doc.kind === "file") viewerWalkTokens(t);
+    if (base) void base.call(marked, t);
+  } }) as string;
+  // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
+  // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
+  // and interrupt the active session; review find on #958, 2026-09-07), and rules modelled on GitHub's for a
+  // note's own HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to
+  // its colours, no background attribute (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children
+  // are adopted as they are, no re-parse. The viewer's own stamps (the file kind's path and section links, the
+  // URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section
+  // link finds an author's id or name under the prefix (file-view-links.ts fragmentTarget). The heading ids are
+  // the one stamp set INSIDE the call, as sanitizeMd's own pass (mintHeadingIds, below): after DOMPurify, so they
+  // are never prefixed either, and ahead of the registered passes, since the math fill replaces a formula's
+  // placeholder with KaTeX's glyphs and a slug read after it slugged those (`# Ratio $\frac{a}{b}$` minted
+  // md-ratio-ba); read before it, the heading's text is the text as written, the TeX included, which is GitHub's
+  // slug and the id the note's own links spell.
+  box.replaceChildren(...Array.from(sanitizeMd(dirty, mintHeadingIds).childNodes));
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
@@ -3946,7 +4213,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why. The module
     // walks every `a`, the SVG anchor included (its xlink:href is a plain href by now, above), and writes each
     // attribute as one, so an SVG link is stamped like an HTML one.
-    if (rendered) linkMarkdownAnchors(box, doc.path);
+    linkMarkdownAnchors(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
     // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
@@ -3994,8 +4261,7 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
-  // The fallback's bare text is left bare: it is the content and nothing else, which is that branch's promise.
-  if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);
+  if (doc && doc.kind === "file") linkifyFileText(box, doc.path);
   return box;
 }
 
@@ -4019,6 +4285,9 @@ function mintHeadingIds(root: ParentNode): void {
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
 }
 
+/** The authored candidates of a srcset rewriteFigureSrcs rewrote, kept on the element beside the rewrite (the label of a figure
+ *  that failed names the candidate the browser asked for by them, failedSource). */
+const FV_SRCSET = "data-fv-srcset";
 /** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
  *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
  *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
@@ -4029,7 +4298,8 @@ function mintHeadingIds(root: ParentNode): void {
  *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
  *  — so the picture shown is the file the poll watches and the host hashes (review round 2: the viewer alone left
- *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw).
+ *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw; since
+ *  Slice 7 a figure that fails to load wears a label naming its source beside the img, armFigureLabels below).
  *  A `~/…` src is a relative one whose first segment is `~`: markdown has no home anchor, so every markdown reader
  *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
  *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
@@ -4055,8 +4325,11 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   // reaches this walk in the product). Before this the rewrite read `img[src]` alone, so `<video src="clip.mp4">` and `<audio src="a.mp3">` in a
   // file were fetched from the PAGE's origin and 404'd, exactly as `![](plot.png)` once did. A srcset is rewritten
   // candidate by candidate, its descriptors kept (`1x`, `100w`); the authored spelling stays in `data-fv-src` for the
-  // img's src alone, the one attribute the comments panel pairs an embed by. An svg image's xlink:href is moved to the
-  // plain `href` as the anchors' is in mdBlock, so the element carries one attribute every reader agrees on.
+  // img's src alone, the one attribute the comments panel pairs an embed by, and in `data-fv-srcset` (FV_SRCSET) for a
+  // rewritten srcset, the img's or a `<source>`'s, so a failed figure's label can name the candidate the browser asked for
+  // as the author wrote it (failedSource; Slice 7 of plans/markdown-viewer.md, item 2, the review's round 1). An svg
+  // image's xlink:href is moved to the plain `href` as the anchors' is in mdBlock, so the element carries one attribute
+  // every reader agrees on.
   const path = (src: string): string | null => {
     if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) return null;   // a web address, a data: URL, an empty src: as written
     let rel = src;
@@ -4069,7 +4342,8 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
       const cands = parseSrcset(ref.value);
       let changed = false;
       for (const c of cands) { const p = path(c.url); if (p !== null) { c.url = p; changed = true; } }
-      if (changed) el.setAttribute("srcset", serializeSrcset(cands));
+      if (changed) { el.setAttribute(FV_SRCSET, ref.value); el.setAttribute("srcset", serializeSrcset(cands)); }   // the authored candidates beside the rewritten ones, in the same order (parseSrcset reads both back candidate for candidate)
+      else el.removeAttribute(FV_SRCSET);                // the attribute means this viewer rewrote this srcset, as data-fv-src does for a src
       continue;
     }
     const p = path(ref.value);
@@ -4087,6 +4361,159 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     if (p === null) continue;
     el.setAttribute(ref.attr, p);
   }
+}
+
+// ── a figure that failed to load says so beside itself (plans/markdown-viewer.md Slice 7, item 2) ─────────
+// A picture the browser could not fetch or decode drew a wordless broken-image glyph, or nothing at all: the kernel's
+// answers for a figure that fails (a 404 for a missing file or a path outside its roots, a 415, a 413, a text file named
+// as a figure that a 200 hands the decoder) all fire the img's `error` event with no status on it, and nothing in the
+// Rendered box listened (the media view's imgBlock arms its own img; a figure inside a note had no listener), so the
+// person saw a glyph with no word of what happened or which file. Now ONE capture-phase `error` listener on the body per
+// open hears every figure of the box (an img's error does not bubble, so the body hears it in the capture phase, armReseat's
+// idiom for `load`; the events fire after the swap, since the img's fetch is queued as a task and the swap is synchronous in
+// the paint's own task, the fact the seam's onRendered doc relies on) and parks a label after the img naming the fact and
+// the source (FIGURE_FAILED, the authored src by pictureDest's rule, the alt when there is one). Its twin, a capture-phase
+// `load` listener, removes the label when a retry lands. Installed once per open beside the body's other listeners and
+// dropped with the viewer, never per paint, so the chat page's heal (preview.ts installMdImgHeal, which re-fetches every
+// failed `<img>` per kernel message and on romp:wsup) re-fires into the same listener; the heal skips an img with an
+// `onerror` property, and none is set here: the img is only listened to. The img stays in the DOM as the browser draws it
+// with every attribute untouched: the Comments panel pairs pictures by img order and `data-fv-src` (file-comments.ts
+// embedFor), the regions layer wraps THE img (file-comments-regions.ts) and the reader's place counts `<img` tags in a row,
+// and a label as the img's SIBLING leaves all three alone; it is one per img (a second `error`, the heal's retry failing
+// again, rewrites the one label's text) and found by its data mark, never by its class (figure-gate.ts's rule: an author
+// can type the class, and the sanitizer keeps `class` while its profile forbids every data-* attribute, so a data-* mark
+// is the viewer's own). Both text walks skip it as a control (anchor-map.ts and reader-place.ts CONTROL_CLASSES: its text is the
+// viewer's, not the note's, and a control's text in a block once refused the block's pairing and seated the reader's place
+// fourteen paragraphs off), and headingWords skips it so a heading's Outline row reads the alt alone. The insertion fires
+// no paint hook: the body's nodes stand and the panel's marks are unaffected, and a hook per failed figure would re-run
+// the panel's whole pass. A gated figure (figure-gate.ts) has no src and never errors, and a label inside its placeholder
+// would leave with restore, so an img under one is left alone. Images only, as the media body covers images alone: a
+// `<picture>` is heard through its img, whose error fires when the ONE candidate the browser chose (a matching `<source>`,
+// else the img's own srcset or src) fails, with no fall back to another, and its label goes after the picture element (a span
+// is not a picture's content) when the picture holds that img alone, naming that candidate (failedSource); video, audio and an
+// inline svg's `<image>` are recorded as a follow-up. A link holding the figure alone (`[![alt](src)](url)`) is climbed too, so
+// the label is not a click target that follows the link (the review's round 1).
+/** The mark on the label: the label is found by it (figureLabelAfter) and never by its class. */
+const FIGERR_MARK = "data-fv-figerr";
+/** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
+const FIGERR_CLASS = "fv-figerr";
+/** The element the label follows: the img, or the outermost of the wrappers standing between it and its block that the label
+ *  must not go inside, climbed while one stands: a `<picture>` (a span is not a picture's content), the regions layer's
+ *  `span.fc-imgwrap` (file-comments-regions.ts wraps THE img while the Comments panel is open, before the error fires, and its
+ *  dispose puts the img back in the wrap's place and removes the wrap with everything else in it, so a label inside would
+ *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same), and
+ *  a link holding the figure alone (`[![alt](src)](url)`, a README's linked badge or picture: inside the `<a>` the label wore
+ *  the link's pointer and a click on it, to read it, followed the link; the review's round 1). A link with more in it (text
+ *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. A wrapper is climbed
+ *  only when it holds exactly one img (oneImg): the layer's wrap holds THE img and a `<picture>`'s content model holds one, but
+ *  an author can type two imgs into one `<picture>` or one `<span class="fc-imgwrap">` (the sanitizer keeps the element and
+ *  `class`), and until the review's closing pass the two shared that anchor, so one label after it named the last of them to
+ *  fail and a `load` of either removed it while the other still failed, that figure left to the browser's bare glyph; now such
+ *  a wrapper is not the anchor, each img's label is its own next sibling inside it, and a heal removes its own alone (the
+ *  plan's Slice 7 note, item 2). */
+function figureAnchor(img: Element): Element {
+  let a: Element = img;
+  for (let p = a.parentElement; p && oneImg(p) && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || linkAround(p, a)); p = a.parentElement) a = p;
+  return a;
+}
+/** Whether `p` holds exactly one img: the wrappers above are climbed for the one figure they hold, and one holding two is left
+ *  as the img's parent so that each img's label is its own. */
+function oneImg(p: Element): boolean {
+  return p.querySelectorAll("img").length === 1;
+}
+/** Whether `p` is a link holding `a` alone: an `<a>` whose one element child is `a` and whose text is blank. */
+function linkAround(p: Element, a: Element): boolean {
+  return p.localName === "a" && p.children.length === 1 && p.children[0] === a && (p.textContent || "").trim() === "";
+}
+/** The label standing right after `anchor` (its next sibling carrying the mark), when one does. */
+function figureLabelAfter(anchor: Element): Element | null {
+  const n = anchor.nextSibling;
+  return n && n.nodeType === 1 && (n as Element).hasAttribute(FIGERR_MARK) ? n as Element : null;
+}
+/** `u` resolved against the document, as the browser resolves a figure's candidates for `currentSrc`; as written when it cannot be. */
+function absUrl(u: string): string {
+  try { return new URL(u, document.baseURI).href; } catch { return u; }
+}
+/** The source the browser asked for and could not load, as the author wrote it. The browser picks ONE candidate for an img (the
+ *  first `<source>` of an enclosing `<picture>` whose media and type match, else the img's own srcset by density, else its
+ *  src), fetches that one and fires the img's `error` when it fails, with no fall back to another candidate or to the src; so
+ *  a label naming `src` for a picture or a srcset img named a file the browser never asked for, one that may well be there
+ *  (the review's round 1). `img.currentSrc` is the browser's answer: when it is set and is not the img's own src, the
+ *  candidate it names is matched against the srcset carriers (the picture's sources, then the img) and named by the authored
+ *  spelling rewriteFigureSrcs kept beside the rewritten candidates (FV_SRCSET), or as written when the candidates were left as
+ *  written (a remote host's absolute ones; a URL document's relative candidates are rewritten to absolute URLs by
+ *  resolveFigureRefs with no data-fv-src and no FV_SRCSET stamp, so its label names the resolved URL). The img's own src, or an
+ *  img with no currentSrc to read (the node stand-in), keeps pictureDest's rule: `data-fv-src` when the viewer rewrote the src,
+ *  else `src`; a figure with neither names nothing. */
+function failedSource(img: Element): string | null {
+  const cur = (img as HTMLImageElement).currentSrc || "";
+  if (!cur || cur === absUrl(img.getAttribute("src") || "")) return pictureDest(img);
+  const picture = img.closest("picture");
+  const carriers: Element[] = picture ? [...Array.from(picture.querySelectorAll("source")), img] : [img];
+  for (const c of carriers) {
+    const now = parseSrcset(c.getAttribute("srcset") || "");
+    const was = c.hasAttribute(FV_SRCSET) ? parseSrcset(c.getAttribute(FV_SRCSET) || "") : now;
+    for (let i = 0; i < now.length; i++) if (absUrl(now[i].url) === cur) return (was[i] ?? now[i]).url;
+  }
+  return pictureDest(img);
+}
+/** The source as the label shows it: a `data:` URI is an inline image's whole encoded payload, thousands of characters that
+ *  the sheet's wrap turns into a box the height of the column (the review's round 1: a label 1518 px tall at 380 px, two
+ *  screens of base64 where the note should go on), so it is cut to its head, the scheme and the media type through the
+ *  comma, with an ellipsis; any other source as written. */
+function shownSource(src: string): string {
+  if (!/^data:/i.test(src)) return src;
+  const comma = src.indexOf(",");
+  return (comma >= 0 ? src.slice(0, comma + 1) : src.slice(0, 40)) + "…";
+}
+/** The words in the source's place when the figure names none (the Slice 7 review's round 2): an empty destination
+ *  (`![alt]()`, which marked renders as `<img src="" alt="alt">`, or an authored `<img src="">`) fires the img's `error` with
+ *  no request made (the HTML spec's empty-src rule), figure-gate.ts's figureRefs skips the empty value so nothing rewrote or
+ *  gated it, and failedSource answers the empty string (or null for a figure with no source attribute at all); before, the
+ *  label printed that string, "Image failed to load:  (alt)", a dangling colon before two spaces and nothing named. */
+const FIGURE_NO_SOURCE = "the source is empty";
+/** The label's words (the slice's contract C2, and its round 1 line): FIGURE_FAILED, the source the browser asked for as the
+ *  author wrote it (failedSource: pictureDest's rule, `data-fv-src` when rewriteFigureSrcs rewrote the src, else `src`, or
+ *  the srcset candidate the browser chose; a data: source cut to its head, shownSource) or FIGURE_NO_SOURCE when there is
+ *  none to name, and the alt in parentheses when it is not empty. */
+function figureLabelText(img: Element): string {
+  const alt = img.getAttribute("alt");
+  const src = failedSource(img);
+  return FIGURE_FAILED + " " + (src ? shownSource(src) : FIGURE_NO_SOURCE) + (alt ? " (" + alt + ")" : "");
+}
+/** The figure an `error` or `load` heard on the body is about: an img inside the Rendered box and outside a gate's
+ *  placeholder (`[data-act="fv-load"]`); null for anything else (the media view's own img, a control's, a gated figure). */
+function figureOf(e: Event): Element | null {
+  const t = e.target as Element | null;
+  if (!t || t.nodeType !== 1 || t.localName !== "img") return null;
+  if (!t.closest(".fileview-md")) return null;
+  if (t.closest('[data-act="' + GATE_ACT + '"]')) return null;
+  return t;
+}
+/** Arm the two capture listeners on a viewer's body (the header above); the function returned drops them. */
+function armFigureLabels(body: HTMLElement): () => void {
+  const onError = (e: Event): void => {
+    const img = figureOf(e);
+    if (!img) return;
+    const anchor = figureAnchor(img);
+    const words = figureLabelText(img);
+    const had = figureLabelAfter(anchor);
+    if (had) { had.textContent = words; return; }   // the one label per img: a retry that failed again rewrites its text
+    const label = el("span", FIGERR_CLASS);
+    label.setAttribute(FIGERR_MARK, "");
+    label.textContent = words;
+    const parent = anchor.parentNode;
+    if (parent) parent.insertBefore(label, anchor.nextSibling);
+  };
+  const onLoad = (e: Event): void => {
+    const img = figureOf(e);
+    if (!img) return;
+    const had = figureLabelAfter(figureAnchor(img));
+    if (had) had.remove();                          // a retry landed: the picture shows, the label goes
+  };
+  body.addEventListener("error", onError, true);
+  body.addEventListener("load", onLoad, true);
+  return () => { body.removeEventListener("error", onError, true); body.removeEventListener("load", onLoad, true); };
 }
 
 /** A URL document's figures resolve against where the document LIVES, through every attribute a figure fetches through

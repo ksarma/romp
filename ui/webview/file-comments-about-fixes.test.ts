@@ -317,7 +317,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     path: ABS, sid: SID, todoId: over.todoId ?? null,
     body: () => body as unknown as HTMLElement, mode: () => w.mode,
     text: () => (w.editing && w.buffer !== null ? w.buffer : text),   // the viewer's seam: the buffer while editing (file-view.ts)
-    mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -479,20 +479,30 @@ test("a BOM file: the host's offsets run one ahead of the view's, and Comment on
   const m = await save(w, aside, "Keep reduced.");
   assert.equal(m.args.anchor.quote, "cut"); assert.equal(m.args.hintOffset, at("cut")); assert.deepEqual(m.args.changeIds, ["h1"]);
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...bom } })); await flush();
-  // the row's own text: the painters verify each change's text at its offsets before painting, and over a BOM file's stripped
-  // text the host's offsets do not verify, so no mark splits the row (the changes are card-only, each with Reveal)
+  // the row's own text: since Slice 7 of plans/markdown-viewer.md (item 4) the paint pass maps the hunks one back by the status's
+  // `bom`, so the marks paint on a BOM file: the substitution's point and tint and the insertion's tint split the row (before, the
+  // painters refused the unmapped batch and no mark split it; the changes were card-only, each with Reveal)
   const ct = w.body.querySelectorAll(".fv-ct").find((x) => x.textContent.startsWith("The api session"))!;
-  assert.equal(ct.querySelectorAll("[data-act=\"fcchange\"]").length, 0, "no change mark in the row");
-  // the row's text node holding `needle`, and the needle's index in it (the composer's presel splits the row's text as it opens)
-  const textAt = (needle: string): [Txt, number] => { const tn = ct.childNodes.find((n) => n instanceof Txt && n.data.includes(needle)) as Txt | undefined; assert.ok(tn, needle + " in the row's text"); return [tn!, tn!.data.indexOf(needle)]; };
+  assert.equal(ct.querySelectorAll("[data-act=\"fcchange\"]").length, 3, "the row holds h1's point and tint and h2's tint (before Slice 7: no change mark in the row)");
+  const h1Tint = ct.querySelectorAll('[data-act="fcchange"][data-id="h1"]').find((x) => x.classes.includes("fc-ins"))!;
+  assert.ok(h1Tint, "the substitution's tint (its point stands before it, the same id)");
+  assert.equal(h1Tint.textContent, "cut", "the tint is on the new text, one back from the host's offsets");
+  // the row's text node holding `needle`, under the marks the paint split it into, and the needle's index in it (the composer's presel
+  // splits the row's text further as it opens)
+  const textsUnder = (n: El | Txt, out: Txt[] = []): Txt[] => { if (n instanceof Txt) out.push(n); else for (const k of n.childNodes) textsUnder(k, out); return out; };
+  const textAt = (needle: string): [Txt, number] => { const tn = textsUnder(ct).find((t) => t.data.includes(needle)); assert.ok(tn, needle + " in the row's text"); return [tn!, tn!.data.indexOf(needle)]; };
   const [t1, i] = textAt("cut");
   win.getSelection = () => selectFrom(t1, i, t1, i + 1, [], "c");
   floatOf().click(); await flush();
   let c = composerOf(aside);
   assert.equal(c.quote, "c");
   assert.deepEqual(c.opt, { checked: true, label: "about this change", title: "reduced → cut" }, "the change's first character: inside it once the offsets are shifted (unshifted, the selection would end where the change begins and offer nothing)");
-  const [t2, k] = textAt("10%.");                     // the "." right after the insertion's new text
-  const j = k + 3;
+  // the "." right after the insertion's new text: the text node after h2's tint, which the mark's split left holding the row's tail
+  const insMark = ct.querySelector('[data-act="fcchange"][data-id="h2"]')!;
+  assert.equal(insMark.textContent, " and the p99 by 10%", "the insertion's tint holds its new text");
+  const t2 = textsUnder(ct).find((t) => t.data.startsWith(".") && textsUnder(ct).indexOf(t) > textsUnder(ct).indexOf(textsUnder(insMark)[0]))!;
+  assert.ok(t2, "the row's tail after the insertion");
+  const j = 0;
   win.getSelection = () => selectFrom(t2, j, t2, j + 1, [], ".");
   floatOf().click(); await flush();
   c = composerOf(aside);

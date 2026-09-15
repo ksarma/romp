@@ -319,7 +319,7 @@ function world(): World {
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: ABS, sid: SID, todoId: null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -478,5 +478,5 @@ test("source: the moved-file row latches once per edit before the clocks are rea
   // the siblings check theirs the same way, so the three rows in the head's `edit` slot agree on once per edit
   assert.match(SRC, /if \(!seed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesMovedUnderEdit\) return;/);
   assert.match(SRC, /if \(this\.editSeed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesUnreadUnderEdit\) return;/);
-  assert.match(SRC, /if \(this\.movedUnderEdit\) \{ this\.movedUnderEdit = false; this\.errors\.delete\("edit"\); this\.ctx\.reload\(\); \}/, "the edit's end spends the latch and re-reads");
+  assert.match(SRC, /if \(this\.movedUnderEdit\) \{ this\.movedUnderEdit = false; this\.errors\.delete\("edit"\); this\.reloadView\(\); \}/, "the edit's end spends the latch and re-reads (through the panel's one door for a re-fetch of its asking, reloadView; the Slice 7 review's round 4)");
 });

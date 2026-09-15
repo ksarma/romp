@@ -27,6 +27,10 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = load_source("romp_kernel_savefile", os.path.join(BIN, "romp-kernel"))
+# The two save doors' shared cases, read here and by tools/file-comments-host-save.test.mjs (the host's save
+# verb), so the kernel's saveFile and the host's save are held to one recorded answer.
+with open(os.path.join(HERE, "fixtures", "file_comments", "save-doors.json"), encoding="utf-8") as _f:
+    DOORS = json.load(_f)
 
 
 class _File(unittest.TestCase):
@@ -149,6 +153,158 @@ class SaveFile(_File):
             self.assertEqual(open(self.fp).read(), "print('v2')\n")
         finally:
             km._cwd_of = real
+
+
+class SaveFileKeepsTheBom(_File):
+    """The BOM rule (plans/markdown-viewer.md, Slice 7, item 4; the build's contract C4). The browser's fetch
+    strips a leading U+FEFF from the text the viewer shows, so the content a save carries lacks it while the
+    file on disk begins EF BB BF; a save that wrote the content as sent dropped the file's first three bytes.
+    _save_file puts the BOM back when the bytes it read begin EF BB BF and the content does not begin with
+    U+FEFF: keyed on its own read, never on the client's word, never doubled, and a file without a BOM gains
+    none. `prior` hands the caller the text as written, so the comments log diffs what landed."""
+
+    BOM = b"\xef\xbb\xbf"
+    FILE = DOORS["bomCapEdge"]["file"]      # the shared fixture's BOM file, the host suite's too
+    TEXT = FILE[1:]
+
+    def setUp(self):
+        super().setUp()
+        self.assertEqual(self.FILE.encode("utf-8"), self.BOM + self.TEXT.encode("utf-8"), "the fixture: a BOM, then the text")
+        self.bp = os.path.join(self.tmp, "notes.md")
+        with open(self.bp, "wb") as f:
+            f.write(self.BOM + self.TEXT.encode("utf-8"))
+        self.bns = os.stat(self.bp).st_mtime_ns
+
+    def read(self, p):
+        with open(p, "rb") as f:
+            return f.read()
+
+    def test_a_bom_file_saved_with_content_lacking_the_bom_still_begins_ef_bb_bf(self):
+        mt, err = km._save_file(self.bp, None, "# Notes\n\nsecond\n", self.bns)
+        self.assertIsNone(err)
+        got = self.read(self.bp)
+        self.assertEqual(got[:3], self.BOM, "the file's first three bytes are the BOM's")
+        self.assertEqual(got[3:], "# Notes\n\nsecond\n".encode("utf-8"), "and the rest is the content")
+        self.assertEqual(mt, os.stat(self.bp).st_mtime_ns, "the returned mtime is the written file's")
+
+    def test_content_already_beginning_with_the_bom_is_not_doubled(self):
+        # a control: a content that carries its own U+FEFF is written as it is (green before the rule too)
+        mt, err = km._save_file(self.bp, None, "\ufeff# Notes\n\nsecond\n", self.bns)
+        self.assertIsNone(err)
+        got = self.read(self.bp)
+        self.assertEqual(got, self.BOM + "# Notes\n\nsecond\n".encode("utf-8"), "one BOM, the content's own")
+        self.assertEqual(got[3:6], b"# N", "no second EF BB BF behind the first")
+
+    def test_a_file_without_a_bom_gains_none(self):
+        # a control: the rule is keyed on the bytes read, and these begin with the content's first byte
+        mt, err = km._save_file(self.fp, None, "print('v2')\n", self.ns)
+        self.assertIsNone(err)
+        self.assertEqual(self.read(self.fp), b"print('v2')\n")
+
+    def test_prior_hands_out_the_text_as_written(self):
+        # the comments log's diff runs over what landed: with the BOM put back on a BOM file, the content as
+        # sent on a plain one; the replaced bytes and their mtime as before
+        prior = {}
+        mt, err = km._save_file(self.bp, None, "# Notes\n\nsecond\n", self.bns, prior=prior)
+        self.assertIsNone(err)
+        self.assertEqual(prior, {"bytes": self.BOM + self.TEXT.encode("utf-8"), "ns": self.bns,
+                                 "written": "\ufeff# Notes\n\nsecond\n"})
+        plain = {}
+        mt, err = km._save_file(self.fp, None, "print('v2')\n", self.ns, prior=plain)
+        self.assertIsNone(err)
+        self.assertEqual(plain["written"], "print('v2')\n", "nothing to put back: the content as sent")
+        # and the log's entry is built over it: no phantom first-line change, bytesAfter the bytes on disk
+        seen = {}
+        real = km._file_comments_call
+        km._file_comments_call = lambda p, verb, args, fence=None: (seen.update(args) or ({"logged": True}, None))
+        try:
+            logged, warn = km._edit_log_after({"path": self.bp}, prior, "# Notes\n\nsecond\n", mt)
+        finally:
+            km._file_comments_call = real
+        self.assertTrue(logged)
+        self.assertIsNone(warn)
+        summary = seen["summary"]
+        self.assertEqual(summary["bytesAfter"], os.stat(self.bp).st_size)
+        self.assertEqual(summary["bytesBefore"], 3 + len(self.TEXT.encode("utf-8")))
+        self.assertEqual(summary["diff"], "--- a/notes.md\n+++ b/notes.md\n@@ -3 +3 @@\n-first\n+second\n")
+        self.assertNotIn("\ufeff", summary["diff"], "the first line, BOM and all, is unchanged in the diff")
+
+    def test_the_three_bytes_count_against_the_text_cap(self):
+        # the cap is checked over the content before the read; a content within the cap by two bytes joins
+        # the BOM to pass it, so a second comparison refuses after the read, with the cap's own words. The
+        # edge is the shared fixture's (bomCapEdge), which the host suite drives through its own door.
+        edge = DOORS["bomCapEdge"]
+        self.assertEqual(len(edge["fill"].encode("utf-8")), 1, "the fixture: one byte per character")
+        body = edge["fill"] * (km._TEXT_MAX_BYTES - edge["refusedUnderCapBy"])
+        mt, err = km._save_file(self.bp, None, body, self.bns)
+        self.assertIsNone(mt)
+        self.assertIn("text cap", err)
+        self.assertEqual(self.read(self.bp), self.BOM + self.TEXT.encode("utf-8"), "the refusal wrote nothing")
+        # within the cap by three: written, BOM and all, exactly at the cap
+        mt, err = km._save_file(self.bp, None, edge["fill"] * (km._TEXT_MAX_BYTES - edge["writtenUnderCapBy"]), self.bns)
+        self.assertIsNone(err)
+        self.assertEqual(os.stat(self.bp).st_size, km._TEXT_MAX_BYTES)
+        self.assertEqual(self.read(self.bp)[:3], self.BOM)
+
+    def test_the_frame_puts_the_bom_back_and_acks_the_written_files_mtime(self):
+        sent = []
+        client = {"app": "feed", "alive": True, "send": lambda s: sent.append(json.loads(s))}
+        handler = object.__new__(km.Handler)
+        km.Handler._dispatch_ws(handler, {"type": "saveFile", "path": self.bp, "content": "# Notes\n\nsecond\n",
+                                          "baseMtimeNs": str(self.bns), "reqId": 7}, client)
+        r = sent[-1]
+        self.assertEqual((r["type"], r["reqId"]), ("fileSaved", 7))
+        self.assertEqual(self.read(self.bp), self.BOM + "# Notes\n\nsecond\n".encode("utf-8"))
+        self.assertEqual(r["mtimeNs"], str(os.stat(self.bp).st_mtime_ns))
+
+
+class EditLogDiffLineEndings(_File):
+    """The kernel's _edit_log_diff and the host's editDiff (tools/file-comments-host.mjs) write the same hunks and
+    @@ numbers for the same edit: both split lines as Python's str.splitlines does (a CRLF as one ending, else a
+    lone CR, LF, VT, FF, FS, GS, RS, NEL, LS or PS), the set the host adopted from this door (Slice 7 of
+    plans/markdown-viewer.md, item 7; before, the host split on LF alone, so a CR-only file's edit read as one
+    line's replacement in its entry and as one changed line in the kernel's). The cases are the shared fixture,
+    tests/fixtures/file_comments/save-doors.json, which tools/file-comments-host-save.test.mjs holds the host to;
+    each carries the diff this door's difflib writes, so this side pins the fixture to the kernel and the host
+    suite pins the host to the fixture."""
+
+    def test_each_case_is_this_doors_own_answer(self):
+        spec = DOORS["editDiffLineEndings"]
+        self.assertEqual(spec["name"], "notes.md")
+        self.assertEqual([c["name"] for c in spec["cases"]], ["cr", "crlf", "ff", "rest-of-the-set"])
+        for c in spec["cases"]:
+            with self.subTest(c["name"]):
+                self.assertNotEqual(c["old"].splitlines(True), c["old"].split("\n"), "the fixture: a text an LF-only split reads differently")
+                diff, truncated = km._edit_log_diff(c["old"], c["new"], spec["name"])
+                self.assertEqual(diff, c["diff"])
+                self.assertFalse(truncated)
+                self.assertEqual([ln for ln in diff.split("\n") if ln.startswith("@@")], c["hunks"])
+
+    def test_the_door_end_to_end_over_the_cr_case(self):
+        # a plain save of a CR-only file: the entry _edit_log_after builds for the host's log-edit carries the
+        # fixture's diff, so the panel's Log reads this save as it reads one through the host's save verb
+        cr = next(c for c in DOORS["editDiffLineEndings"]["cases"] if c["name"] == "cr")
+        p = os.path.join(self.tmp, "notes.md")
+        with open(p, "wb") as f:
+            f.write(cr["old"].encode("utf-8"))
+        ns = os.stat(p).st_mtime_ns
+        prior = {}
+        mt, err = km._save_file(p, None, cr["new"], ns, prior=prior)
+        self.assertIsNone(err)
+        with open(p, "rb") as f:
+            self.assertEqual(f.read(), cr["new"].encode("utf-8"), "the CR endings written as sent")
+        seen = {}
+        real = km._file_comments_call
+        km._file_comments_call = lambda path, verb, args, fence=None: (seen.update(args) or ({"logged": True}, None))
+        try:
+            logged, warn = km._edit_log_after({"path": p}, prior, cr["new"], mt)
+        finally:
+            km._file_comments_call = real
+        self.assertTrue(logged)
+        self.assertIsNone(warn)
+        self.assertEqual(seen["summary"]["diff"], cr["diff"])
+        self.assertFalse(seen["summary"]["truncated"])
+        self.assertEqual(seen["summary"]["bytesAfter"], os.stat(p).st_size)
 
 
 class SaveFileWire(_File):

@@ -156,15 +156,20 @@ const isFormula = (n: DNode): boolean => FORMULA_CLASSES.some((cls) => hasClass(
  *  fallback counted the label in its hay (the Slice 3 review). Every walk over a rendered node's text skips it, and since
  *  Slice 4 the other elements whose text is not the note's: a formula in any of the fill's three shapes (FORMULA_CLASSES: the
  *  paragraph maps AROUND the formula and the mathInline / mathBlock tokens are zero-text holes), a footnote's back link, the
- *  front matter's fold label, and a gated figure's placeholder. */
+ *  front matter's fold label, a gated figure's placeholder, and since Slice 7 the label the viewer parks beside a figure
+ *  that failed to load (`span.fv-figerr`, the img's next sibling: its text names the source and is not the note's). */
 const CONTROL_CLASSES = [
   "code-copy",              // the fence's Copy button (code-block.ts)
   ...FORMULA_CLASSES,       // a formula, rendered or shown as its TeX (math.ts renderMathPlaceholders)
   "md-fnback",              // a footnote definition's back link (md-config.ts): its label is the footnote's number
   "md-frontmatter-head",    // the front matter's fold control (md-config.ts): its label is the viewer's
   "fv-gate",                // a gated figure's placeholder (figure-gate.ts): its label names the host, and holds the media
+  "fv-figerr",              // a failed figure's label (file-view.ts, Slice 7): the img's next sibling, naming the source that failed
 ];
 const isControl = (n: DNode): boolean => CONTROL_CLASSES.some((cls) => hasClass(n, cls));
+/** The failed figure's label alone (CONTROL_CLASSES' last entry): the one control that stands at the top level BESIDE a block's
+ *  node without being it or holding it, so the Rendered pairing leaves it out of the top-level nodes (analyzeRendered). */
+const isFigureLabel = (n: DNode): boolean => hasClass(n, "fv-figerr");
 /** The span the regions layer wraps a picture in while the Comments panel is open (file-comments-regions.ts: the <img> and its
  *  drawing overlay inside it). Where a tag test reads a node's element, this span stands for its IMG: an html block whose
  *  top-level tag is <img> renders that span with the panel open and the bare <img> without it, and the pairing must find the
@@ -327,12 +332,13 @@ function refuse(reason: string, extra?: Partial<MapRefusal>): MapRefusal {
 
 // ── Raw view ───────────────────────────────────────────────────────────────────────────────────────
 //
-// The viewer builds one `.fv-cl` row per line by splitting the text on "\n" and setting the rows through
-// innerHTML, so a CRLF file's rows end in a "\r" that the HTML parser turns into "\n", and a lone CR
-// inside a line does the same. The walk below does not assume either split: it verifies every row's
-// text against the source character by character (a DOM "\n" may stand for a source "\r"), then consumes
-// whichever line ending the source has between rows. Within a verified row every DOM character is one
-// source character, so an (row, column) pair is a source offset with no further lookup.
+// The viewer builds one `.fv-cl` row per line and sets the rows through innerHTML. Since Slice 7 of
+// plans/markdown-viewer.md it splits the text on CRLF, a lone CR and LF alike (file-view.ts wrapNumberedHtml),
+// so no row's text carries a "\r"; before, it split on "\n" alone, so a CRLF file's rows ended in a "\r" that
+// the HTML parser turned into "\n", and a lone CR inside a line did the same. The walk below assumes neither
+// split: it verifies every row's text against the source character by character (a DOM "\n" may stand for a
+// source "\r"), then consumes whichever line ending the source has between rows. Within a verified row every
+// DOM character is one source character, so an (row, column) pair is a source offset with no further lookup.
 
 type RawRow = { el: DElement; text: string; srcStart: number };
 type RawIndex = { source: string; shape: Shape; rows: RawRow[]; els: DElement[]; rowOf: Map<DElement, number>; rowStart: number[]; total: number };
@@ -453,11 +459,24 @@ export function mapRawSelection(sel: SelLike, codeRoot: Element, source: string)
   return { ok: true, range: { start, end }, quote: source.slice(start, end) };
 }
 
-/** 0-based line index of a source offset: the Raw view's row (rows split on LF; a lone CR stays in its row). */
+/** 0-based line index of a source offset: the Raw view's row, counted as the viewer splits its rows since Slice 7 of
+ *  plans/markdown-viewer.md (a CRLF, a lone CR and an LF each end a row, a CRLF as one ending; before, LF alone, so a
+ *  CR-only file was one row and every offset in it answered 0). An offset on an ending's own character (the CR or the LF
+ *  of a CRLF, a lone CR, an LF) still lies on the row the ending closes, as the verified row map places it
+ *  (rawRowForOffset: the last row whose start is at or before the offset), so the two agree row for row; the panel's
+ *  landing cue (file-comments.ts landOn) reads this one over the rows it finds. */
 export function rawOffsetToLine(source: string, offset: number): number {
   const upto = Math.max(0, Math.min(offset, source.length));
+  // Two native searches, never a per-character walk (Slice 7's review round 1: a charCodeAt loop over every character
+  // up to the offset took about twenty times the LF-only indexOf loop it replaced at the end of a 2 MB text, and the
+  // panel computes this once per Reveal title on every render). A row closes at an ending's last character, so the
+  // count is every LF before the offset (a CRLF's own LF among them, so a CRLF counts once, at its LF) plus every lone
+  // CR before it (a CR with no LF after it); a CR whose LF lies at or past the offset counts for nothing, the offset
+  // still on the row that CRLF closes.
   let line = 0, i = -1;
   while ((i = source.indexOf("\n", i + 1)) !== -1 && i < upto) line++;
+  i = -1;
+  while ((i = source.indexOf("\r", i + 1)) !== -1 && i < upto) if (source.charCodeAt(i + 1) !== 10) line++;
   return line;
 }
 
@@ -2171,7 +2190,16 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
     const blank = (m: DNode): boolean => isText(m) ? stripWs(m.data) === "" : Array.from(m.childNodes).every(blank);
     return blank(n);
   };
-  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) : isText(n) && stripWs(n.data) !== "";
+  // The label the viewer parks after a figure that failed to load (`span.fv-figerr`, file-view.ts, Slice 7 of
+  // plans/markdown-viewer.md, item 2) is no block's node either: it is the img's next sibling, so when the img is a top-level
+  // node of an html block (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the
+  // label is top-level too, and it renders no source text (a control, isControl). Counted as a node it misaligned the html
+  // block's run: the block owned [IMG, SPAN], and with the Comments panel open the wrap and the label ahead of the div
+  // refused the heading nested in the div as "rendered text does not match" (anchor-map-wrappers-browser.test.ts; the
+  // Slice 7 consolidation pass). The label ALONE is left out, not every control: a display formula the fill could not render
+  // (`.katex-error`, `code.md-math-src`) at the top level IS its mathBlock's node, and a gated figure's placeholder (`.fv-gate`)
+  // holds the block's img (anchor-map-obsidian.test.ts, md-config-figure-gate-place.test.ts).
+  const holdsContent = (n: DNode): boolean => isElement(n) ? !blankMark(n) && !isFigureLabel(n) : isText(n) && stripWs(n.data) !== "";
   let content = topNodes.filter(holdsContent);
   const nodeText = new Map<DNode, string>();
   const textKey = (n: DNode): string => stripWs(isText(n) ? n.data : textOf(n));

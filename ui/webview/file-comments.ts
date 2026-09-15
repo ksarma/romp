@@ -208,6 +208,20 @@ function seedOf(s: Status): EditSeed | null {
   if (!(s.hunks || []).length) return null;
   return { records: pendingRecords(s.store), storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
 }
+/** The seed's records as the editor takes them: in the VIEW's coordinates (Slice 7 of plans/markdown-viewer.md, item 4; contract
+ *  C4). The sidecar's records index the text the host read, which on a BOM file runs one ahead of the view's (the host keeps
+ *  the U+FEFF the fetch strips; the status's `bom` says which, as viewAt reads it), so each record's integer `from` moves by
+ *  `-off` as it rides into the editor, and its marks sit on the right characters; a record of another shape rides in as it is
+ *  (the host names it at Save). The seed itself keeps the host's own records (EditSeed.records): the moved-records compare
+ *  reads them against the status's (sameRecords, noteChangesMovedUnderEdit), both in the host's coordinates. The records a
+ *  Save sends are the editor's as it holds them, view coordinates, with no shift by the panel: the host moves each `from`
+ *  back by one when it puts the BOM back (its save door), so the shift is applied once on each leg. Before Slice 7 the
+ *  records rode in unmapped, one character off on a BOM file. */
+function viewRecords(records: unknown[], off: number): unknown[] {
+  if (!off) return records;
+  return records.map((r) => r && typeof r === "object" && Number.isInteger((r as { from?: unknown }).from)
+    ? { ...(r as Record<string, unknown>), from: (r as { from: number }).from - off } : r);
+}
 /** The host's `logWarning` on a reply — its account of a comments-log append that failed, or a sidecar it could not read
  *  back after writing — as text; "" when the reply carries none. */
 function warningOf(r: unknown): string {
@@ -245,7 +259,18 @@ export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that wer
 // (feed.ts's redistill watch is the same shape, and ui/CLAUDE.md wants every wait to have a backstop).
 // `status` only: a mutating verb that is failed here could have landed on disk, and the kept note would
 // invite a duplicate — those keep waiting for the kernel's own answer.
+// The wait for a reload's bytes (awaitBytes) shares the bound for the same older kernel alone: since Slice 7 of
+// plans/markdown-viewer.md a reload that fails paints a pane the seam reports (error()) and the wait ends on that
+// paint (bytesFailed), so with a current kernel the bytes either land (bytesLanded) or fail (bytesFailed), each an
+// event, and the timer speaks only where no kernel answers the fetch at all.
 const STATUS_DEADLINE_MS = 15000;
+// The head's row when the reload the panel asked for FAILED (the seam's error() on the paint that put the failure pane
+// in place of the file, Slice 7 item 3): the seam's own words in parentheses, then what the person is looking at and
+// the way out, the shape of the deadline row (bytesLate). Exported so the guide's sentence can carry the words.
+export const BYTES_FAILED = "The file could not be read again";
+// The tail both bytes rows share: what the view shows and the way out (the Reload the row offers, fcreload).
+const BYTES_LATE_TAIL = "; the view still shows the earlier text, with no change marked on it. Reload to read the file again.";
+const BYTES_FAILED_TAIL = "; the view shows that failure in place of the file, so no change is marked. Reload to read the file again.";
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
@@ -1462,13 +1487,26 @@ class Panel {
   // the reload the panel asked for (syncBytes: a status whose file mtime is not the view's) is out: the body shows
   // the bytes from before, with no marks over them, until the fetch lands. The wait wears the loader at the head of
   // the cards (the "bytes" busy slot, ui/CLAUDE.md), ending on the paint that shows the status's text (paintAll →
-  // bytesLanded). The seam reports no failed fetch — the viewer shows its own error in the body and fires no
-  // onRendered — so the loader has the same backstop a status ask has: after STATUS_DEADLINE_MS it yields to a row
-  // with Reload (bytesLate). `reloadFor` is the file mtime the last ask was for: one ask per mtime, so a second
+  // bytesLanded) or on the paint that shows a failure pane in place of the file (the seam's error(), read at the head
+  // of the pass, paintAll → bytesFailed: the fetch refused or failed, and the row carries the seam's words with Reload).
+  // Since Slice 7 of plans/markdown-viewer.md the viewer fires onRendered for that pane too; before, it fired nothing
+  // for a failed fetch and the loader stood until the deadline. The deadline stays for a kernel from before this
+  // feature alone (STATUS_DEADLINE_MS: a reload that neither lands nor fails through the seam yields to a row with
+  // Reload, bytesLate). `reloadFor` is the file mtime the last ask was for: one ask per mtime, so a second
   // status carrying the same mtime while that fetch is out (the moved-fence retry: the refresh's status, then the
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
+  // the failure row's ground (bytesFailed): the seam's words it carries and the view's mtime at the paint that filed it, the
+  // last landing's. Every later pass reads the two against what the body shows (syncFailedRow); null while no failure row stands.
+  failedRow: { words: string; mtimeNs: string } | null = null;
+  // a re-fetch of the panel's asking is out (reloadView: the row's Reload, syncBytes's askReload, the re-read after an edit over
+  // moved bytes) and the viewer has not painted since: its answer, the landing or the failure pane, is the paint that ends it (the
+  // onRendered hook, `why` other than "reflow"). Read at the head of paintAll: a failure pane STANDING while such a fetch is out is
+  // the failure before the ask, not the fetch's answer, so the wait keeps its loader and its deadline and the fetch's own paint
+  // settles it (the review of Slice 7, round 4: the row's Reload over a standing pane re-filed the row off that pane as soon as
+  // the status ask landed, the fetch still out, and cleared the deadline with it)
+  reloadOut = false;
   // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
   // comments might move with the window when possible, each trying to stay centered near its place in the text; the
   // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
@@ -1725,7 +1763,11 @@ class Panel {
     // ...and on a reflow the Rendered marks' collapsed blanks are measured again first (trimBlanks: a space that rendered at the
     // old width may be the wrap point at the new one, and its mark would be the sheet's padding around nothing), in the same
     // frame, so the cards are placed over the marks that stay
-    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else this.paintAll(); });
+    // ...and a paint that put a failure pane in place of the file (a reload refused or failed: the seam's error(), Slice 7 of
+    // plans/markdown-viewer.md, item 3) ends the wait for the bytes at once, in the seam's words, at the head of the pass (paintAll → bytesFailed)
+    // ...and every paint other than a reflow is the viewer's answer to whatever the panel asked it to re-fetch (a landing, a failure
+    // pane), so the record of a fetch of the panel's being out (reloadOut, reloadView) ends here, before the pass reads it at its head
+    ctx.onRendered((why) => { this.hideFloat(); this.retargetComposer(); if (why === "reflow") { this.trimBlanks(); this.scheduleLayout(); } else { this.reloadOut = false; this.paintAll(); } });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
@@ -1809,8 +1851,9 @@ class Panel {
         fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
-        // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
-        fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
+        // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh); the fetch is the panel's
+        // own (reloadView), so a status landing first over a standing pane leaves the wait to the fetch's paint (paintAll's head)
+        fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.reloadView(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
         fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         fcarrivals: () => this.goToArrival(),          // the arrivals line (the arrivals follow-on, 2026-09-09): the first arrival's card into view, as the focus
@@ -2114,8 +2157,16 @@ class Panel {
   private askReload(mtimeNs: string | null): void {
     if (mtimeNs !== null && this.reloadFor === mtimeNs) return;
     this.reloadFor = mtimeNs;
-    this.ctx.reload();
+    this.reloadView();
   }
+  /** Every re-fetch this panel asks of the viewer goes through here (askReload; the row's Reload, fcreload; the re-read after an
+   *  edit over moved bytes, paintAll): `reloadOut` records that a fetch of the panel's asking is out, set BEFORE the ask (a stand-in's
+   *  reload lands synchronously, and its paint clears the record inside the call), and the viewer's next paint clears it (the
+   *  onRendered hook, `why` other than "reflow"), whichever fetch's answer that paint is: a newer fetch overtakes an older one, which
+   *  then never paints (file-view.ts fetchFile, `my !== fetchSeq`); a Raw or Rendered click's repaint of the earlier text clears it
+   *  early and loses nothing (the head's clause needs a pane, and only the fetch's own paint can put one up); a reload asked in
+   *  edit mode is a no-op whose record the exit's repaint clears, no wait being armed under the editor (syncBytes). */
+  private reloadView(): void { this.reloadOut = true; this.ctx.reload(); }
   /** Re-ask status. While the ask is out and no status has ever landed, the cards section shows the romp
    *  loader (ui/CLAUDE.md: a wait wears the loader, never a line claiming a read); a refusal leaves the
    *  head's row with Reload, the one way back in — nothing re-asks on its own while status is null.
@@ -2133,7 +2184,13 @@ class Panel {
       this.statusRefusal = e;
       this.errors.set("head", { text: e.error, reload: true });
       return false;
-    } finally { this.busy.delete("status"); if (mark) this.busy.delete(mark); this.render(); }
+    } finally {
+      // the ask's own mark goes with the ask; the "bytes" mark does not while a wait is armed (awaitBytes, from the status this ask
+      // landed): the slot is the wait's then, its loader stands for the fetch, and bytesLanded, bytesFailed or bytesLate ends it.
+      // Before the review's round 4 the ask's end took the mark the wait had re-added, so a fetch that then stalled reached the
+      // deadline with no loader to yield and bytesLate filed nothing
+      this.busy.delete("status"); if (mark && !(mark === "bytes" && this.bytesWait)) this.busy.delete(mark); this.render();
+    }
   }
   /** A write's reply just landed: every status ask still out was issued before it and may have read the disk
    *  before the write (applyStatus). The flag rides the pending record, so a failed or expired ask needs no
@@ -2502,7 +2559,7 @@ class Panel {
         // not refused instead).
         if (!s || !hunks.length) { this.editSeed = null; this.render(); return null; }
         const seed = seedOf(s)!;                       // changes are pending: never null here
-        const records = seed.records;
+        const records = viewRecords(seed.records, s.bom ? 1 : 0);   // the editor's copy, in the view's coordinates (viewRecords)
         this.editSeed = seed;
         this.render();
         return {
@@ -2683,8 +2740,10 @@ class Panel {
 
   // ── the bytes a status describes but the view does not show yet: the wait for the reload ───────
   /** A status whose file mtime is not the view's just applied and the view was asked to re-fetch (syncBytes): hold
-   *  the "bytes" slot busy (the loader at the head of the cards) until a paint shows the status's text, or the
-   *  deadline. Nothing to wait for when the view already shows it (the stand-in's synchronous reload). */
+   *  the "bytes" slot busy (the loader at the head of the cards) until a paint shows the status's text (bytesLanded) or a
+   *  failure pane in its place (bytesFailed), or the deadline (bytesLate). The slot is the wait's while it is armed: a
+   *  Reload's status ask that marked the same slot leaves it at its end (refresh). Nothing to wait for when the view already
+   *  shows it (the stand-in's synchronous reload). */
   private awaitBytes(r: Status): void {
     if (this.textCurrent(r)) return;
     if (this.bytesWait) clearTimeout(this.bytesWait);
@@ -2692,21 +2751,80 @@ class Panel {
     this.bytesWait = setTimeout(() => this.bytesLate(), STATUS_DEADLINE_MS);
     this.render();
   }
-  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the wait is over. */
+  /** The paint that shows the status's text (paintAll, from the seam's onRendered): the bytes are here, so a wait for them is
+   *  over, and so is a "bytes" row that said they had not arrived (bytesLate) or could not be read (bytesFailed): the row was
+   *  about a reload that had not landed, and this landing is the event that answers it. The order that first needed this (the
+   *  Slice 7 consolidation pass's browser scene, file-view-failures-browser.test.ts): the row's own Reload sends the status ask
+   *  and the fetch together; the status landed first, over the standing pane, and the pass filed the failure row again off that
+   *  pane (the head's clause, which since the review's round 4 stands down while the panel's fetch is out, reloadOut); then the
+   *  fetch landed, and before this line the row stood over the new text until dismissed or the next wait. The clearing still
+   *  answers a row filed with no fetch of the panel's out (a later status over the standing pane; the deadline's) when a landing
+   *  the panel did not ask (the disk bar's Reload) shows the status's text. No render of its own: paintAll renders at its end. */
   private bytesLanded(): void {
-    if (!this.bytesWait) return;
-    clearTimeout(this.bytesWait); this.bytesWait = null;
-    this.busy.delete("bytes");
+    if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; this.busy.delete("bytes"); }
+    this.errors.delete("bytes");
   }
-  /** The deadline: the fetch neither landed nor told the seam it failed. The loader yields to a row, and its Reload
-   *  re-fetches the bytes and re-asks status (fcreload) — the loader never traps the person (ui/CLAUDE.md). */
+  /** The deadline: the fetch neither landed nor told the seam it failed (a kernel from before this feature; a current one
+   *  answers every fetch, and the seam reports a failure through error(), bytesFailed). The loader yields to a row, and its
+   *  Reload re-fetches the bytes and re-asks status (fcreload): the loader never traps the person (ui/CLAUDE.md). Two edges,
+   *  pre-existing, recorded in the plan's Slice 7 note and routed, not changed here (the review's rounds 3 and 5): the timer
+   *  is armed afresh by every status that lands while the wait is up (awaitBytes, on each status whose file mtime is
+   *  not the view's), so with the fetch stalled and the poll re-asking status every few seconds (a sidecar a session keeps
+   *  writing) this row files 15 s after the LAST status, not the first; and its tail says the view shows the earlier text,
+   *  which a pane standing under it does not (syncFailedRow leaves this row as it is, so a stall that ends in a failure pane
+   *  after the deadline keeps this tail over that pane's words). */
   private bytesLate(): void {
     this.bytesWait = null;
     if (!this.busy.has("bytes")) return;
     this.busy.delete("bytes");
-    this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000
-      + " s; the view still shows the earlier text, with no change marked on it. Reload to read the file again.", reload: true });
+    this.errors.set("bytes", { text: "The file's new contents have not arrived after " + STATUS_DEADLINE_MS / 1000 + " s" + BYTES_LATE_TAIL, reload: true });
     this.render();
+  }
+  /** The reload the panel asked for failed: the paint that put the failure pane in place of the file fired onRendered with
+   *  the seam's error() set (paintAll reads it at its head; Slice 7 of plans/markdown-viewer.md, item 3). The wait is over
+   *  at that paint, an event and never the timer: the deadline is cleared, the loader goes, and the row where it stood
+   *  says what happened in the seam's own words, with Reload (fcreload re-fetches the bytes and re-asks status). Before
+   *  Slice 7 the viewer fired no hook for a failed fetch and the loader stood the 15 s out. The pass then stands down over
+   *  the pane (no root), so nothing is marked over it. */
+  private bytesFailed(words: string): void {
+    if (this.bytesWait) clearTimeout(this.bytesWait);
+    this.bytesWait = null;
+    this.busy.delete("bytes");
+    this.errors.set("bytes", { text: BYTES_FAILED + " (" + words + ")" + BYTES_FAILED_TAIL, reload: true });
+    this.failedRow = { words, mtimeNs: this.ctx.mtimeNs() };   // what the row was filed over: read against every later paint (syncFailedRow)
+    this.render();
+  }
+  /** The failure row (bytesFailed) against the paint that just ran: paintAll calls this on every pass, the editor's included,
+   *  with the seam's error() at the paint. The row claims the reload failed and says what the body shows, and each clause is
+   *  read off the seam at the paint, never carried over from the paint that filed it (the review of Slice 7, rounds 1 and 2):
+   *  - no failure row stands (its ✕, a wait that took the slot, the deadline row in its place): the record goes with it;
+   *  - the view's mtime is not the one the row was filed under: a landing has read the file since (the row's own Reload, the
+   *    disk bar's, the poll's, a save's), whatever the status says of that text (paintChanges reads that, textCurrent), so the
+   *    row is answered and goes, as bytesLanded takes it when the landing shows the status's text. Before round 2 a landing of
+   *    text NEWER than the status's flipped the row to "the view still shows the earlier text" over the new text, until the
+   *    status at that mtime landed and bytesLanded took it;
+   *  - the same mtime and a pane stands (error() set): the row wears the pane's CURRENT words and the failure tail. A pane that
+   *    came back over the flipped row with no wait armed (the disk bar's Reload, the moved-figure re-fetch: askReload(null) with no
+   *    awaitBytes) kept the text tail before; and a fetch the panel did not ask (the disk bar's Reload) refused for another
+   *    reason (a 404 pane replaced by a 413) left the earlier words under the new pane. Until the review's round 4 the row's own
+   *    Reload reached this too: its status landed first over the standing pane and the head filed the row off that pane
+   *    (bytesFailed); the head stands down while the panel's fetch is out now (reloadOut) and the new pane's paint files the row;
+   *  - the same mtime and no pane (a content paint of the earlier text: a Raw or Rendered click's renderBody, the editor's entry
+   *    and its exit's repaint): the row keeps the seam's words and takes the deadline row's tail, which says what shows now: the
+   *    earlier text, with no change marked on it (paintChanges refuses the status's offsets over it, textCurrent); its Reload stays.
+   *  A deadline row is not this row and is left as it is (bytesLate; its tail over a pane is the pre-existing sibling the plan note
+   *  records). No render of its own: paintAll renders at its end. */
+  private syncFailedRow(failed: string | null): void {
+    const at = this.failedRow;
+    if (!at) return;
+    const row = this.errors.get("bytes");
+    if (!row || !row.text.startsWith(BYTES_FAILED)) { this.failedRow = null; return; }
+    if (this.ctx.mtimeNs() !== at.mtimeNs) { this.errors.delete("bytes"); this.failedRow = null; return; }
+    const words = failed !== null ? failed : at.words;
+    const text = BYTES_FAILED + " (" + words + ")" + (failed !== null ? BYTES_FAILED_TAIL : BYTES_LATE_TAIL);
+    if (text === row.text) return;
+    this.failedRow = { words, mtimeNs: at.mtimeNs };
+    this.errors.set("bytes", { text, reload: true });
   }
 
   // ── Track changes ──────────────────────────────────────────────────────────────────────────────
@@ -3477,11 +3595,19 @@ class Panel {
     }
     return this.cardsMemo;
   }
-  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). */
+  /** The change cards, their paragraph groups over the current text, and the fold (GROUP_LIMIT). A card's offsets are the
+   *  host's (ChangeCard.curFrom: the text the host read), and the groups read them over THAT text: on a BOM file the view's
+   *  text with the U+FEFF the fetch strips put back ahead of it (the status's `bom`, the rule every other reader of the host's
+   *  offsets applies, viewAt; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1), so a change at a line's
+   *  ending groups under the paragraph that line closes and not under the blank line after it (a title of "line N+1", or a
+   *  line past the file's end for a change at its last ending). The first paragraph's title trims the mark with the other
+   *  whitespace, and the line count sees no ending in it. Before, the groups read the host's offsets over the view's text,
+   *  one behind on a BOM file. */
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
     const cards = s ? changeCards(s.store, s.hunks || [], s.log || [], s.decided) : [];
-    const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.indexedText());
+    const text = this.ctx.mode() === "media" ? null : this.indexedText();
+    const groups = changeGroups(cards, text !== null && s && s.bom ? "\uFEFF" + text : text);   // the host's text: the offsets index it
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
   /** The card a comment id opens: its own. Every comment is its own card since the about follow-on (2026-09-10);
@@ -3563,8 +3689,22 @@ class Panel {
    *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
-    if (this.ctx.editing()) { this.afterPaint(); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint)
+    if (this.ctx.editing()) { this.afterPaint(); this.syncFailedRow(this.ctx.error()); this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render; the offer's record goes with the read view's nodes (afterPaint); a failure row is read against the editor's entry, a content paint of the earlier text (syncFailedRow)
     this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
+    // the body shows a failure pane in place of the file (the seam's error(): a reload refused or failed; Slice 7 of
+    // plans/markdown-viewer.md, item 3): a wait for that reload's bytes ends here, at the paint that showed the pane, in the
+    // seam's words (bytesFailed), and so does a wait a later status arms while the pane still stands and no fetch of the panel's
+    // asking is out (awaitBytes, then this pass): the bytes the wait is for cannot land while the view shows the pane and nothing
+    // is out to change it, so the row says so at once, never the timer. While a fetch the panel asked IS out (reloadOut: the row's
+    // Reload sends the status ask and the fetch together and the status lands first over the standing pane; a reply's or the
+    // poll's askReload on a new mtime over a pane), the standing pane is the failure before the ask, not the fetch's answer, so
+    // the wait keeps its loader and its deadline and the fetch's own paint settles it: the landing (bytesLanded), the pane (this
+    // clause, the record cleared by the paint that reached it), or the deadline when nothing answers (bytesLate). Before the
+    // review's round 4 the clause read the standing pane as the answer: the row was filed again off it as soon as the status
+    // landed, the loader gone before the eye saw it, and a fetch that then stalled reached no deadline
+    // (under the editor error() is null, the editor's entry being a content paint, and a reload is a no-op there)
+    const failed = this.ctx.error();
+    if (failed !== null && this.bytesWait && !this.reloadOut) this.bytesFailed(failed);
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
     // refusal has since replaced in the same slot is left alone)
@@ -3573,7 +3713,7 @@ class Panel {
     this.editText = null;                              // the read view is back: the cards group over its text again (indexedText)
     // the edit ended over bytes that moved under it (Cancel — a Save would have refused): re-read them, whether or not
     // the head's row was dismissed with its ✕ meanwhile (movedUnderEdit: the latch, not the row, keys the re-read)
-    if (this.movedUnderEdit) { this.movedUnderEdit = false; this.errors.delete("edit"); this.ctx.reload(); }
+    if (this.movedUnderEdit) { this.movedUnderEdit = false; this.errors.delete("edit"); this.reloadView(); }
     // the row that said the editor's changes left the sidecar is about an editor that is gone: retired with it, and the
     // latch with it (nothing to re-read: the status that set the row is the one showing, and this paint marks its changes)
     if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
@@ -3590,7 +3730,16 @@ class Panel {
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel, .fc-hl-block, .fc-presel-block");   // a status refresh repaints the SAME body: never wrap twice (the block classes: a display formula's stamped box, stripped)
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
+    // the view shows the status's text: a reject's reload has landed, and the row that waited for it is answered (bytesLanded).
+    // Over a CONTENT paint alone (error() null): a picture's landing moves mtimeNs() to the new mtime before its bytes decode, so
+    // the pane imgFailed then paints has the status's mtime under it while the file is not showing, and the row bytesFailed
+    // filed at the head of this pass went in the same pass (the review's round 1; before the consolidation's landing clause,
+    // bytesLanded returned at once with no wait up). Then a standing failure row is read against this paint (syncFailedRow): a
+    // landing of other text than the status's takes it away too; a pane standing over it gives it that pane's words; a content
+    // paint of the EARLIER text (a Raw or Rendered click repaints the last landing's text over the pane, error() null, the mtime
+    // still not the status's) gives it the deadline row's tail, true of what shows now
+    if (failed === null && this.status && this.textCurrent(this.status)) this.bytesLanded();
+    this.syncFailedRow(failed);
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     // the pass's Rendered marks, painted with the trim deferred (`trim: false`) and trimmed ONCE after the pass (trimBlanks):
@@ -3881,16 +4030,22 @@ class Panel {
     if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
-    // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
-    // batch: the hunks index the string the HOST read, and the viewer's text can differ from it — a BOM the fetch
-    // stripped puts every mark one character off. Refused, the changes stay card-only, each with Reveal (D4).
+    // The hunks index the string the HOST read, which on a BOM file runs one ahead of the view's text (the host keeps the
+    // U+FEFF the fetch strips; the status says which, `bom`), so each is handed to the painters at `curFrom - off`,
+    // `curTo - off`, the rule the other readers of the host's offsets apply (viewAt, placedAt, overlapping,
+    // startChangeComment): before Slice 7 of plans/markdown-viewer.md the pass handed them unmapped, and on every BOM file
+    // the painters refused the batch and the changes stayed card-only. newText rides along so the painters still verify
+    // that each change's new text sits at its offsets before painting the batch: a text that differs from the one the
+    // hunks index (the poll's reload before its status, a file that changed between the two reads) is refused whole and
+    // the changes stay card-only, each with Reveal (D4), never marked one character off.
     // `label`: the chip beside a Raw mark reads the session's CURRENT name from the colour map, as the card's chip does
     // (chip) — the sidecar's `author` is the name at write time, and after a rename the mark and the card must name the
     // session alike. An author with no live match keeps the sidecar's label (the painter's own fallback, chipLabel).
+    const off = s.bom ? 1 : 0;
     const changes: ChangePaint[] = (s.hunks || []).map((h) => {
       const aid = authorIdOf(store, h.id);
       const col = aid && this.colors ? this.colors.get(aid) : null;
-      return { id: h.id, kind: h.kind, curFrom: h.curFrom, curTo: h.curTo, oldText: h.oldText, newText: h.newText, author: h.author, label: col ? col.name : undefined };
+      return { id: h.id, kind: h.kind, curFrom: h.curFrom - off, curTo: h.curTo - off, oldText: h.oldText, newText: h.newText, author: h.author, label: col ? col.name : undefined };
     });
     const stylesFor = (c: ChangePaint): Record<string, string> => {
       const aid = authorIdOf(store, c.id);
@@ -4526,9 +4681,14 @@ class Panel {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
+      // the card's offset is the host's, one ahead of the view's on a BOM file (the status's `bom`, the rule viewAt and the paint
+      // pass apply; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1): mapped into the view's text once, for the
+      // scroll and the cue both, so they land on the row the change's mark paints on and not on the next row when the change sits
+      // at a line's ending (the ending's own offset closes its row; one past it opens the next)
+      const from = c.curFrom - (this.status && this.status.bom ? 1 : 0);
       this.revealInRaw(key);
-      this.ctx.scrollToOffset(c.curFrom);
-      this.landOn(c.curFrom, "fcchange", c.id);
+      this.ctx.scrollToOffset(from);
+      this.landOn(from, "fcchange", c.id);
       this.settleRevealed(key);
       return;
     }
@@ -6346,7 +6506,10 @@ class Panel {
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
+          // the line of the change's start in the VIEW's text: the card's offset is the host's, one ahead on a BOM file (the
+          // status's `bom`, viewAt's rule; Slice 7 of plans/markdown-viewer.md, item 4, the review's round 1), and at a line's
+          // ending the unmapped read named the next line while the mark and the Reveal's landing were on this one
+          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom - (s && s.bom ? 1 : 0)) + 1) + ")" : "";
           // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
           // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
           // is what reaches a finger; on, Raw shows every change, a deletion as its point

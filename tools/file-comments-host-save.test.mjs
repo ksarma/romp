@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 
 import { storePathFor, saveStore, fingerprintOf, writeTrackedPaths } from '../vendor/track-changents/store-io.mjs';
 import {
-  statNs, logPathFor, applyEdits, editDiff, fitRecords, BadRequest,
+  statNs, logPathFor, applyEdits, editDiff, splitLinesKernel, fitRecords, BadRequest,
   TEXT_MAX_BYTES, EDIT_DIFF_MAX_LINES, EDIT_DIFF_MAX_BYTES,
 } from './file-comments-host.mjs';
 
@@ -31,6 +31,9 @@ const FIX = path.join(REPO, 'tests', 'fixtures', 'file_comments');
 const engine = createRequire(import.meta.url)(path.join(VENDOR, 'engine.js'));
 
 const SID = '11111111-2222-3333-4444-555555555555';
+// The two save doors' shared cases (tests/fixtures/file_comments/save-doors.json), read here and by
+// tests/test_savefile.py, so the host's save verb and the kernel's saveFile are held to one recorded answer.
+const DOORS = JSON.parse(fs.readFileSync(path.join(FIX, 'save-doors.json'), 'utf8'));
 const NS_RE = /^\d+$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const HUNK_RE = /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@$/;
@@ -174,6 +177,36 @@ test('editDiff writes the shape the kernel logs for a direct edit (difflib, zero
   assert.equal(bulk.truncated, true);
   assert.match(bulk.diff.split('\n')[2], HUNK_RE);
   assert.equal(bulk.diff.split('\n')[2], '@@ -1,3000 +1,3000 @@');
+});
+
+test('editDiff splits lines on the kernel\'s set (Python\'s str.splitlines: a CRLF as one ending, else a lone CR, LF, VT, FF, FS, GS, RS, NEL, LS or PS), so a save through this door logs the same hunks and @@ numbers as the kernel\'s door on a CR, a CRLF or a form-feed file: the shared fixture, then the door end to end over the CR case', () => {
+  // Before, the split was the engine's LF-only splitLinesKeep: a CR-only text was one line here and three to the
+  // kernel, so the same edit read `@@ -1 +1 @@` over the whole text in one door's entry and `@@ -2 +2 @@` in the other's.
+  assert.deepEqual(splitLinesKernel('a\r\nb\rc\nd\ve\ff\x1cg\x1dh\x1ei\x85j\u2028k\u2029l'),
+    ['a\r\n', 'b\r', 'c\n', 'd\v', 'e\f', 'f\x1c', 'g\x1d', 'h\x1e', 'i\x85', 'j\u2028', 'k\u2029', 'l'], 'the eleven endings, a CRLF as one, the tail without one');
+  assert.deepEqual(splitLinesKernel(''), [], 'no lines in an empty text, as splitlines answers');
+  assert.deepEqual(splitLinesKernel('\r\n\r'), ['\r\n', '\r'], 'a CRLF is never a CR and an LF');
+  const spec = DOORS.editDiffLineEndings;
+  assert.equal(spec.name, 'notes.md');
+  assert.deepEqual(spec.cases.map((c) => c.name), ['cr', 'crlf', 'ff', 'rest-of-the-set']);
+  for (const c of spec.cases) {
+    const got = editDiff(c.old, c.new, spec.name);
+    assert.deepEqual(got, { diff: c.diff, truncated: false }, `${c.name}: the kernel's entry, byte for byte`);
+    assert.deepEqual(got.diff.split('\n').filter((l) => l.startsWith('@@')), c.hunks, `${c.name}: the @@ numbers`);
+  }
+  // The door end to end: a tracked CR-only file saved with no records, the log's edit entry carrying the fixture's diff.
+  const cr = spec.cases.find((c) => c.name === 'cr');
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/notes.md']);
+  const file = path.join(w.root, 'docs', 'notes.md');
+  fs.writeFileSync(file, cr.old);
+  const st = status(w, file);
+  const r = save(w, file, st, cr.new, []);
+  assert.equal(fs.readFileSync(file, 'utf8'), cr.new, 'the CR endings written as sent');
+  assert.deepEqual(r.log.map((e) => e.kind), ['edit']);
+  assert.equal(r.log[0].diff, cr.diff);
+  assert.equal(r.log[0].truncated, false);
+  assert.deepEqual(readLogLines(logPathFor(storePathFor(w.root, file))).map((e) => e.diff), [cr.diff], 'the entry on disk');
 });
 
 test('fitRecords keeps a record whose text sits at its offset, rebuilt in recordAgentEdit\'s shape, and names the first that does not fit', () => {
@@ -787,4 +820,153 @@ test('a save whose status predates a toggle-off that left no entry on this file\
   assert.deepEqual(r3.log.map((e) => e.kind), ['edit']);
   assert.deepEqual(readLogLines(logPathFor(storePathFor(w3.root, w3.report))).map((e) => e.kind), ['edit']);
   assert.equal(fs.existsSync(storePathFor(w3.root, w3.report)), false, 'still no sidecar');
+});
+
+
+// ── a BOM file: the save puts the BOM back and shifts the view's records into this script's text ─
+// Slice 7 of plans/markdown-viewer.md, item 4 (contract C4). The fetch strips a leading U+FEFF from
+// the text the viewer shows, so the editor's text and the records its field holds are in the view's
+// coordinates, one short of this script's on a BOM file; before the rule the editor's Save wrote the
+// view's text as sent (the file lost its first three bytes) and the records over it, and the edit
+// entry recorded a phantom first-line change.
+
+test('save over a BOM-prefixed file with records in the view\'s coordinates writes the BOM back, refits the records one on, is not refused desync, and a status after it says bom: true with the hunks one ahead of the view', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/bom.md']);
+  const bom = path.join(w.root, 'docs', 'bom.md');
+  fs.writeFileSync(bom, '\uFEFF' + w.text);
+  const st = edit(w, bom, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
+  assert.equal(st.bom, true, 'the fixture: the CLI kept the BOM, and a status reads the text once a sidecar exists');
+  const hostText = fs.readFileSync(bom, 'utf8');
+  assert.equal(hostText.charCodeAt(0), 0xFEFF);
+  const A = hunkFor(st, 'cut p95 latency by 40%');
+  const rec = recordFor(st, A.id);
+  assert.equal(hostText.slice(rec.from, rec.from + rec.newText.length), rec.newText, 'the sidecar\'s record is in this script\'s coordinates');
+  // The view: the fetch's BOM-stripped text; the panel seeds the editor with the record one back (C4).
+  const view = hostText.slice(1);
+  const seeded = [{ ...rec, from: rec.from - 1 }];
+  assert.equal(view.slice(seeded[0].from, seeded[0].from + rec.newText.length), rec.newText, 'the seed fits the view');
+  // In the editor: type " (draft)" after the Findings heading, below the first line and above the change.
+  const at = view.indexOf('## Findings') + '## Findings'.length;
+  const { content, records } = typed(view, seeded, at, at, ' (draft)');
+  assert.equal(records.length, 1);
+  assert.equal(records[0].from, seeded[0].from + ' (draft)'.length, 'the field remapped the record below the insertion');
+  assert.equal(content.charCodeAt(0), 0x23, 'the editor\'s text starts with the title\'s #: no BOM');
+  const r = save(w, bom, st, content, records, [], []);
+  // The file: the BOM, then the editor's text.
+  const bytes = fs.readFileSync(bom);
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'the saved bytes begin EF BB BF');
+  assert.equal(bytes.toString('utf8'), '\uFEFF' + content);
+  assert.equal(bytes.length, 3 + Buffer.byteLength(content, 'utf8'));
+  assert.equal(r.bom, true, 'the reply says the text keeps a BOM');
+  assert.equal(r.fileMtimeNs, statNs(bom));
+  // The sidecar: the record one on, in this script's coordinates, the fingerprint over the BOM text (the CLIs' text).
+  const disk = readSidecar(st.storePath);
+  assert.equal(disk.suggestions.length, 1);
+  assert.equal(disk.suggestions[0].id, A.id);
+  assert.equal(disk.suggestions[0].from, records[0].from + 1, 'one on: the host\'s shift, never the panel\'s');
+  assert.equal(('\uFEFF' + content).slice(disk.suggestions[0].from, disk.suggestions[0].from + rec.newText.length), rec.newText);
+  assert.deepEqual(disk.suggestions[0].anchor, engine.makeAnchor('\uFEFF' + content, disk.suggestions[0].from, disk.suggestions[0].from + rec.newText.length));
+  assert.deepEqual(disk.fingerprint, fingerprintOf('\uFEFF' + content), 'the fingerprint equals the CLIs\' over the BOM text');
+  // The reply and the next status: hunks one ahead of the view, as every status on a BOM file.
+  assert.equal(r.hunks.length, 1);
+  assert.equal(r.hunks[0].curFrom, records[0].from + 1);
+  assert.equal(content.slice(r.hunks[0].curFrom - 1, r.hunks[0].curTo - 1), r.hunks[0].newText, 'the view maps the hunk back by one');
+  const st2 = status(w, bom);
+  assert.equal(st2.bom, true);
+  assert.deepEqual(st2.hunks.map((h) => [h.id, h.curFrom, h.curTo]), r.hunks.map((h) => [h.id, h.curFrom, h.curTo]));
+  assert.equal(st2.fileMtimeNs, r.fileMtimeNs);
+  // The log's edit entry: one coordinate system, so no phantom first-line change; bytesAfter the file's size.
+  assert.deepEqual(r.log.map((e) => e.kind), ['edit']);
+  const [e] = r.log;
+  assert.equal(e.bytesBefore, Buffer.byteLength(hostText, 'utf8'));
+  assert.equal(e.bytesAfter, bytes.length);
+  assert.equal(e.diff, editDiff(hostText, '\uFEFF' + content, 'bom.md').diff);
+  assert.equal(e.diff, '--- a/bom.md\n+++ b/bom.md\n@@ -3 +3 @@\n-## Findings\n+## Findings (draft)\n');
+  assert.equal(e.diff.includes('\uFEFF'), false, 'the first line, BOM and all, is unchanged');
+  // The session's next track-edit reads the sidecar against the saved file: the record sits where the sidecar says.
+  const st3 = edit(w, bom, 'Cold starts remain slow', 'Cold starts stay slow');
+  assert.equal(st3.hunks.length, 2);
+  const text3 = fs.readFileSync(bom, 'utf8');
+  assert.equal(text3.charCodeAt(0), 0xFEFF, 'the CLI keeps the BOM the save put back');
+  for (const h of st3.hunks) assert.ok(fits(text3, h), `${h.id} fits`);
+  assert.equal(st3.store.detached.length, 0, 'nothing detached: the fingerprint matched, so the records were taken as they are');
+});
+
+test('the reject door writes over this script\'s own text and keeps the BOM (a control for the save door\'s rule: green before it)', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/bom.md']);
+  const bom = path.join(w.root, 'docs', 'bom.md');
+  fs.writeFileSync(bom, '\uFEFF' + w.text);
+  const st = edit(w, bom, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
+  const A = hunkFor(st, 'cut p95 latency by 40%');
+  const r = ok(w, { verb: 'reject', path: bom, args: { ids: [A.id] }, fence: fileFenceFor(st) });
+  const bytes = fs.readFileSync(bom);
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  assert.equal(bytes.toString('utf8'), '\uFEFF' + w.text, 'the old text back, behind the BOM');
+  assert.equal(r.bom, true);
+  assert.deepEqual(r.hunks, []);
+});
+
+test('a content that already begins with U+FEFF is written as it is with its records unshifted, and a save on a file without a BOM is untouched by the rule (controls)', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/bom.md', 'docs/report.md']);
+  const bom = path.join(w.root, 'docs', 'bom.md');
+  fs.writeFileSync(bom, '\uFEFF' + w.text);
+  const st = edit(w, bom, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
+  const A = hunkFor(st, 'cut p95 latency by 40%');
+  const rec = recordFor(st, A.id);
+  const hostText = fs.readFileSync(bom, 'utf8');
+  // A client that kept the BOM sends this script's own text and coordinates: nothing shifted, nothing doubled.
+  const at = hostText.indexOf('## Findings') + '## Findings'.length;
+  const { content, records } = typed(hostText, [rec], at, at, ' (draft)');
+  assert.equal(content.charCodeAt(0), 0xFEFF);
+  const r = save(w, bom, st, content, records, [], []);
+  const bytes = fs.readFileSync(bom);
+  assert.equal(bytes.toString('utf8'), content, 'one BOM: the content\'s own');
+  assert.deepEqual([...bytes.subarray(0, 6)], [0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x4C], 'EF BB BF then "# L": never a second BOM');
+  assert.equal(readSidecar(st.storePath).suggestions[0].from, records[0].from, 'the records as sent');
+  assert.equal(r.hunks[0].curFrom, records[0].from);
+  assert.equal(r.bom, true);
+  assert.equal(r.log[0].diff, '--- a/bom.md\n+++ b/bom.md\n@@ -3 +3 @@\n-## Findings\n+## Findings (draft)\n');
+  // A file without a BOM: the rule never fires, and the save is as it always was.
+  const st2 = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
+  const B = hunkFor(st2, 'cut p95 latency by 40%');
+  const recB = recordFor(st2, B.id);
+  const cur = fs.readFileSync(w.report, 'utf8');
+  const at2 = cur.indexOf('## Findings') + '## Findings'.length;
+  const t2 = typed(cur, [recB], at2, at2, ' (draft)');
+  const r2 = save(w, w.report, st2, t2.content, t2.records, [], []);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), t2.content);
+  assert.equal(fs.readFileSync(w.report)[0], 0x23, 'the first byte is the title\'s #');
+  assert.equal(readSidecar(st2.storePath).suggestions[0].from, t2.records[0].from);
+  assert.equal(r2.bom, false, 'a value, never absent');
+});
+
+test('the three bytes count against the text cap at this door as at the kernel\'s (tests/test_savefile.py, over the same fixture): a BOM file saved with a content two bytes under the cap is refused too-large with nothing written, and one three bytes under lands at exactly the cap, EF BB BF first', () => {
+  // checkTooLarge runs over `content`, the text with the BOM put back, never over the view's text alone: the view's
+  // text within the cap by two bytes joins the three-byte BOM to pass it.
+  const edge = DOORS.bomCapEdge;
+  assert.equal(edge.file.charCodeAt(0), 0xFEFF, 'the fixture: a BOM file');
+  assert.equal(Buffer.byteLength(edge.fill, 'utf8'), 1, 'the fixture: one byte per character, so the count is in bytes');
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/notes.md']);
+  const bom = path.join(w.root, 'docs', 'notes.md');
+  fs.writeFileSync(bom, edge.file);
+  assert.deepEqual([...fs.readFileSync(bom).subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  const st = status(w, bom);
+  const before = snapshot(bom, storePathFor(w.root, bom));
+  const r = refused(w, saveReq(bom, st, edge.fill.repeat(TEXT_MAX_BYTES - edge.refusedUnderCapBy), []), 'too-large');
+  assert.match(r.error, /exceeds the 2 MB text cap/);
+  assert.ok(r.error.includes('~/notes-api/docs/notes.md'), r.error);
+  untouched(w, before);
+  const r2 = save(w, bom, st, edge.fill.repeat(TEXT_MAX_BYTES - edge.writtenUnderCapBy), []);
+  const bytes = fs.readFileSync(bom);
+  assert.equal(bytes.length, TEXT_MAX_BYTES, 'exactly at the cap, the BOM counted');
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'the BOM first');
+  assert.equal(bytes.subarray(3).toString('utf8'), edge.fill.repeat(TEXT_MAX_BYTES - edge.writtenUnderCapBy), 'then the content');
+  assert.equal(r2.bom, true);
+  assert.equal(r2.fileMtimeNs, statNs(bom));
+  assert.deepEqual(r2.log.map((e) => e.kind), ['edit']);
+  assert.equal(r2.log[0].bytesAfter, TEXT_MAX_BYTES, 'the entry counts the bytes on disk');
 });

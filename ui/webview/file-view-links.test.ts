@@ -794,7 +794,7 @@ test("wantsOwnTab reads a Cmd/Ctrl-click or the middle button; openFileTab opens
 });
 
 // ── the viewer's wiring, at source ────────────────────────────────────────────────────────────────
-test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; the fallback is left bare", () => {
+test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; mdBlock has no fallback (the Raw rows a failed render falls back to are codeBlock's, linkified there)", () => {
   assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
   const codeFn = VIEW.split("function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
@@ -803,11 +803,14 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n[^\n]*\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
     "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7` (the walkTokens itself runs for every kind since the Slice 3 review, collecting the code tokens for Copy)");
-  const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, doc.path);");
+  const anchorsAt = mdFn.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
-  const textAt = mdFn.indexOf('if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);');
+  const textAt = mdFn.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
   assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
-  assert.match(mdFn, /box\.textContent = text;[^\n]*\n\s*rendered = false;/, "the fallback's bare text takes no links");
+  // no fallback in mdBlock since Slice 7 of plans/markdown-viewer.md (item 1): a throw propagates to renderBody, whose catch paints
+  // the failure line and the text as Raw rows through codeBlock, which linkifies the rows it built (the wrap branch above)
+  assert.equal(mdFn.indexOf("box.textContent = text;"), -1, "no bare-text fallback in mdBlock");
+  assert.doesNotMatch(mdFn, /\brendered\s*=|if \(rendered/, "no `rendered` flag and no gate on it: both passes run on every render");
   assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
   assert.equal((mdFn.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the two link loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors; both select LINK_SEL, every link element (md-sanitize-viewer-links.test.ts)");
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "no a[href] loop is left: it missed an SVG anchor's xlink:href");
@@ -891,10 +894,14 @@ test("source: a close or a replace-open asks about an unsaved comment the way it
 
 test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the notice bar and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
-  assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
+  // the notice before the zero-rows return since the Slice 7 review's round 1: a line open of an empty file says so too, in the same
+  // one-line shape, with no "showing the last line" tail when there is none
+  assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ \(rows\.length \? "; showing the last line\." : "\."\)\);\n\s*if \(!rows\.length\) return;\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = at !== null && "line" in at && at\.line > 0 \? Math\.floor\(at\.line\) : null;/, "the line is the open's `at` (Slice 6 of plans/markdown-viewer.md; the former opts.line)");
-  // between the text's assignment and the target: the parked landing's Outline re-open flag, read before the paint (the PR review's round 2), and comment lines
-  assert.match(VIEW, /text = t;\n(?:\s*\/\/[^\n]*\n)*\s*const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*landTarget\(\);/);
+  // between the text's assignment and the target: the parked landing's Outline re-open flag, read before the paint (the PR review's round 2), and comment lines;
+  // between the paint and the target: the Latin-1 line's raise (Slice 7 of plans/markdown-viewer.md, item 5)
+  assert.match(VIEW, /text = t;\n(?:\s*\/\/[^\n]*\n)*\s*const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/,
+    "the line is spent at the landing after the paint; the Latin-1 line's raise stands between them (Slice 7 of plans/markdown-viewer.md, item 5; guarded by the standing line since the review's round 1), before the target's notice can take the row");
   assert.match(VIEW, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}/, "the line's row once the text lands over a body with a box, spent once (Slice 6 of plans/markdown-viewer.md, the review's round 5: a landing under a hidden pane had spent it over the zero layout)");
   const landing = VIEW.split("text = t;\n")[1].split(").catch(")[0];   // the landing closes as `})).catch(`: `land` wraps it (hold.defer for an answer that stands; actions.ts pressHold)
   assert.doesNotMatch(landing, /saveFmt/, "the Raw view for this open only: the preference is not written");

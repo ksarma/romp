@@ -1579,8 +1579,13 @@ a.fileview-gh-note { border-style: dashed; }
   white-space: pre; tab-size: 4; }
 .fileview-pre code { background: none; padding: 0; font: inherit; }
 /* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
-   cap; not a text file; not found) over the path it was asked for. Never a blank pane. */
-.fileview-err { padding: 18px 14px; font-size: 0.86em; color: var(--warn); }
+   cap; not a text file; not found) over the path it was asked for. Never a blank pane. The words break
+   inside the box even with no break opportunity (overflow-wrap: anywhere): a render failure's message
+   (plans/markdown-viewer.md Slice 7, item 1) or a 404's path can hold one long unbroken token, which ran
+   past the box at phone width and gave the body a horizontal scrollbar under the words (the Slice 7
+   review's round 4); the hint, the Download and the note bar's Reload inherit it, and none has a word wider
+   than its box. Both sheets carry this rule, byte for byte (fileview-parity.test.ts). */
+.fileview-err { padding: 18px 14px; font-size: 0.86em; color: var(--warn); overflow-wrap: anywhere; }
 /* the edit-mode notice (file-view.ts noteBar) is a row of the card, between the title bar and the body:
    it keeps its height and the body row shrinks under it, so the editor's 100% is the body it can see; in
    this tree the bar carries the viewer's other one-line notices too, so it shows at any scroll position and
@@ -1825,6 +1830,15 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md .fv-gate { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; min-width: 14em; min-height: 3.2em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--dim); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; cursor: pointer; }
 .fileview-md .fv-gate:hover, .fileview-md .fv-gate:focus-visible { border-color: var(--accent); color: var(--fg); }
 .fileview-md .fv-gate[data-act="fv-load"] > :not([data-fv-label]) { display: none; }
+/* the label the viewer puts after a figure that failed (Slice 7 of plans/markdown-viewer.md, item 2): file-view.ts hears the
+   img's error event on the body and inserts `span.fv-figerr` as the img's next sibling, its text naming the authored src and
+   the alt. The gate's dress (a dashed box on the wash at the ladder's 0.86em, centred, capped at the box's width) in the
+   error dress's ink, var(--warn), without the gate's min size and cursor: nothing in it is clicked, and no button stands in
+   it, so the sizes test's compensation for a button in the dress is not involved. A side margin keeps it off the alt text
+   or the prose beside it, and overflow-wrap lets a long src wrap inside the cap. The print block prints it black with no
+   wash, beside the gate's line (the block's .fileview-md ink is outranked by this rule). Byte-equal in both sheets
+   (fileview-parity.test.ts). */
+.fileview-md .fv-figerr { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; max-width: 100%; margin: 0 0.3em; padding: 0.5em 0.8em; border: 1px dashed var(--box-border); border-radius: 6px; background: var(--overlay-05); color: var(--warn); font-size: 0.86em; line-height: 1.3; text-align: center; vertical-align: middle; overflow-wrap: anywhere; }
 .fileview-md :not(pre) > code {
   font-family: var(--mono, ui-monospace, monospace); font-size: 0.92em;
   color: var(--code-fg, #e1c08d); background: var(--code-bg, rgba(217, 119, 87, 0.10));
@@ -2689,6 +2703,7 @@ body.filebrowse-open { overflow: hidden; }
   .fileview-md code.md-math-src { text-decoration-color: black; }
   .fileview-md .md-footnote, .fileview-md details.md-frontmatter, .fileview-md .fv-gate, .fileview-md a.fv-embed { color: black; border-color: black; }
   .fileview-md .fv-gate { background: none; }
+  .fileview-md .fv-figerr { color: black; border-color: black; background: none; }
   .fileview-md .md-callout { --callout: black; }
   .fileview-md mark.md-mark { background: color-mix(in srgb, black 15%, transparent); }
   .fileview-md a, .fileview-md a.file-uri-link { text-decoration: underline; }

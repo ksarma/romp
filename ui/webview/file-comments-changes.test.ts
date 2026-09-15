@@ -316,7 +316,9 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   // the switch goes through revealInRaw since the focus follow-on's merge audit (2026-09-09): in the margin layout it
   // makes the card the focus BEFORE setMode, so the switch's own pass lays the card level with its Raw mark; the shape
   // of that method is file-comments-focus-audit.test.ts's pin, this one holds Reveal's order: Raw, then the change's start
-  assert.match(SRC, /this\.revealInRaw\(key\);\n\s*this\.ctx\.scrollToOffset\(c\.curFrom\);/, "Reveal: Raw (revealInRaw), then the change's start");
+  // the change's start in the view's text since Slice 7 of plans/markdown-viewer.md (item 4, the review's round 1): the host's offset,
+  // one back on a BOM file, computed once for the scroll and the landing cue, ahead of the switch
+  assert.match(SRC, /const from = c\.curFrom - \(this\.status && this\.status\.bom \? 1 : 0\);\n\s*this\.revealInRaw\(key\);\n\s*this\.ctx\.scrollToOffset\(from\);/, "Reveal: the change's start in the view's text, Raw (revealInRaw), then the scroll to it");
   const rir = SRC.split("private revealInRaw(key: string): void {")[1].split("\n  }\n")[0];
   assert.match(rir, /this\.ctx\.setMode\("raw"\);/, "revealInRaw is the switch to Raw");
 });
@@ -572,7 +574,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: ABS, sid: SID, todoId: over.todoId ?? null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },

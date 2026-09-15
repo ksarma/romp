@@ -22,7 +22,10 @@ test("md() sanitizes marked output with DOMPurify before returning HTML", () => 
   assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.doesNotMatch(RENDER, /from "dompurify"|DOMPurify\.sanitize\(/, "render.ts holds no sanitizer of its own");
   assert.match(SANITIZE, /import DOMPurify from "dompurify";/);
-  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{[\s\S]*?DOMPurify\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids); the chat passes none
+  // the call goes through purifier(): the module-global DOMPurify, or the stand-in a node suite installed through setMdSanitizer
+  // (Slice 7 of plans/markdown-viewer.md, item 1's seam for the node suites); the browser runs the real instance
+  assert.match(SANITIZE, /export function sanitizeMd\(dirty: string, own\?: \(body: HTMLElement\) => void\): HTMLElement \{[\s\S]*?purifier\(\)\.sanitize\(dirty, /);   // the optional second parameter is the viewer's own pass (heading ids); the chat passes none
+  assert.match(SANITIZE, /const purifier = \(\): MdSanitizer => installedSanitizer \?\? DOMPurify;/, "purifier() answers the installed stand-in, else DOMPurify");
   // (the signature grew an optional repo parameter for PR links — pr-links.ts — so match it loosely)
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(mdFn, "md() function not found");

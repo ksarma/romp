@@ -312,7 +312,7 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
   const ctx: FileViewActionCtx = {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => (src === undefined ? null : src),
-    mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
+    mtimeNs: () => "1757145600000000001", error: () => null, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
@@ -566,7 +566,7 @@ window.__mount = () => {
   window.__close = () => { for (const cb of closers) cb(); };
   const ctx = {
     path: "/repo/notes-api/docs/report.md", sid: "11111111-2222-3333-4444-555555555555", todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001",
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", error: () => null,
     media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: (cb) => { closers.push(cb); },
     post: (m) => { window.__posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,

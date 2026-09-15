@@ -236,7 +236,7 @@ test('the refresh judges markdown-ness from the file, not the sidecar JSON\'s pa
 
 // ── CRLF and BOM files end to end ───────────────────────────────────
 
-test('a CRLF markdown file: the comment is written with its heading path, and after a raw write that changed the count the one copy under it is confirmed by section; a BOM file keeps its top heading, and the section confirms whether the editor kept the BOM or dropped it', () => {
+test('a CRLF markdown file: the comment is written with its heading path, and after a raw write that changed the count the one copy under it is confirmed by section; a BOM file keeps its top heading, the save verb keeps its BOM and its write stamps the copy under the stored heading path one offset on, and a write from outside the viewer that dropped the BOM is still confirmed, by the stamped ordinal', () => {
   const w = world();
   // CRLF
   const T = crlf(TIED);
@@ -261,14 +261,28 @@ test('a CRLF markdown file: the comment is written with its heading path, and af
   assert.equal(cb.anchorAt, mb.idx + 1, 'the position is into this script\'s text, one past the view\'s');
   assert.deepEqual(copyFields(cb), [2, 3, 'Report > Second pass'], 'the top heading, on the first line behind the BOM, is in the path');
   const fourth = `${OPENING}## Zeroth pass\n\nA line the person added before the copy.\n\n${PARA}\n\n${TIED.slice(OPENING.length)}`;
-  rawWrite(bm, fourth);   // the editor's save dropped the BOM
+  // The editor's Save: the view's text, without the BOM the fetch stripped, through the save verb, which puts the BOM
+  // back (Slice 7 of plans/markdown-viewer.md, item 4): the file keeps EF BB BF, and the write's refresh carries the
+  // comment to the copy under its stored heading path, one offset on into this script's text, so the tie is settled on
+  // disk and neither the reply nor the next status has anything left for the panel to place.
   st = status(w, bm);
-  assert.equal(st.bom, false);
-  assert.deepEqual(st.placed, { [cb.id]: { at: nth(fourth, MARKER, 2), confirmed: true, by: 'section' } }, 'the BOM gone: the stored path still names the copy');
-  rawWrite(bm, `${BOM}${fourth}`);   // or kept it
+  const saved = ok(w, { verb: 'save', path: bm, args: { content: fourth, suggestions: [], accepted: [], rejected: [] }, fence: { ...fenceFor(st), fileMtimeNs: st.fileMtimeNs } }).json;
+  assert.equal(saved.bom, true, 'the save verb kept the BOM');
+  assert.deepEqual([...fs.readFileSync(bm).subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'the saved bytes begin EF BB BF');
+  assert.equal(fs.readFileSync(bm, 'utf8'), `${BOM}${fourth}`, 'the BOM, then the view\'s text as the editor held it');
+  const carried = readSidecar(saved.storePath).comments[0];
+  assert.equal(carried.anchorAt, nth(fourth, MARKER, 2) + 1, 'the write stamped the copy under the stored heading path, one offset on');
+  assert.deepEqual(copyFields(carried), [3, 4, 'Report > Second pass'], 'the third of four copies now, under the same heading');
+  assert.deepEqual(saved.placed, {}, 'settled by the write: nothing left for the panel to place');
   st = status(w, bm);
   assert.equal(st.bom, true);
-  assert.deepEqual(st.placed, { [cb.id]: { at: nth(fourth, MARKER, 2) + 1, confirmed: true, by: 'section' } }, 'the BOM kept: the same copy, one offset on');
+  assert.deepEqual(st.placed, {}, 'the stored position names the copy');
+  // A write from outside the viewer (a tool, a hand edit) that dropped the BOM: every offset moves back by one under the
+  // stored position, the count is unchanged since the stamp, and the stamped ordinal names the copy.
+  rawWrite(bm, fourth);
+  st = status(w, bm);
+  assert.equal(st.bom, false);
+  assert.deepEqual(st.placed, { [cb.id]: { at: nth(fourth, MARKER, 2), confirmed: true, by: 'ordinal' } }, 'the BOM gone: the stamped fields still name the copy');
 });
 
 // ── the engine-placed stamp, and placed on a write's reply ──────────

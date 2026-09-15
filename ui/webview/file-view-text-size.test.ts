@@ -23,6 +23,7 @@ import { inspect } from "node:util";
 import { assertHiddenEvent, hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
 import type { FileViewActionCtx } from "./file-view";
 import { scriptLiteral } from "./real-viewer-leg";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
 
 const requireCjs = createRequire(__filename);
 
@@ -171,6 +172,13 @@ class El {
   }
   querySelector(sel: string): El | null { return this.querySelectorAll(sel)[0] ?? null; }
 }
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so before the seam every Rendered paint here went through mdBlock's catch, which
+// wrote the note's text into the box as one node (file-view-seam.test.ts's record pin states the constraint). This suite
+// reads the box for its size and dispatches on it, never its content, so the stand-in hands mdBlock a body holding marked's
+// markup as one text node; the real mintHeadingIds and the registered passes run over it and find no element.
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: (dirty: string) => { const body = new El("body"); body.replaceChildren(String(dirty)); return body; } } as unknown as Parameters<typeof setMdSanitizer>[0]);
+
 const docBody = new El("body");
 const docKeys: Listener[] = [];                  // the viewer's document keydown handlers, one per open
 const doc = {
@@ -623,7 +631,7 @@ test("a size step fires onRendered once, as a reflow (the panel re-places its ca
   // since the nodes are the same (2026-09-09: the whole paint pass ran here once per frame of a pane drag, unwrapping and
   // re-wrapping every mark, and stalled the dashboard on a big reviewed file; file-view-reflow-browser.test.ts); a paint
   // proper still runs the pass
-  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else this\.paintAll\(\); \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with paintAll");
+  assert.match(PANEL, /ctx\.onRendered\(\(why\) => \{ this\.hideFloat\(\); [^\n]*if \(why === "reflow"\) \{ this\.trimBlanks\(\); this\.scheduleLayout\(\); \} else \{ this\.reloadOut = false; this\.paintAll\(\); \} \}\);/, "file-comments.ts answers a reflow with trimBlanks (the marks' collapsed blanks re-measured at the new size) and scheduleLayout, and a paint with paintAll (after ending the record of a re-fetch the panel asked, reloadOut; the Slice 7 review's round 4)");
   assert.match(VIEW, /onRendered\(cb: \(why\?: FileViewRenderWhy\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged \(`why` "reflow"\): a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:

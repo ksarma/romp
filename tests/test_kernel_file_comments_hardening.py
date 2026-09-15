@@ -546,7 +546,8 @@ class TheSaveReadsNothingItWouldRefuse(_Wire):
         self.assertEqual(d, {})
         mt, err = km._save_file(self.fp, None, EDITED, self.ns, prior=d)
         self.assertIsNone(err)
-        self.assertEqual(d, {"bytes": TEXT.encode(), "ns": self.ns})
+        self.assertEqual(d, {"bytes": TEXT.encode(), "ns": self.ns, "written": EDITED},
+                         "the replaced bytes, their mtime, and the text as written (no BOM to put back here)")
         # the 4-argument call every other caller makes is unchanged
         mt2, err2 = km._save_file(self.fp, None, TEXT, mt)
         self.assertIsNone(err2)

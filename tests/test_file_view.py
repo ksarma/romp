@@ -59,6 +59,15 @@ class DecodeText(unittest.TestCase):
         # …and the sniff only reads the head, so a NUL past it is not what decides
         self.assertIsNotNone(km._decode_text(b"a" * 9000 + b"\x00"))
 
+    def test_record_pin_a_utf8_bom_survives_the_decode_and_an_empty_file_decodes_to_the_empty_string(self):
+        # A record pin (plans/markdown-viewer.md, Slice 7, items 4 and 6): the served text keeps U+FEFF, and the
+        # browser's fetch strips it, so on such a file the view's offsets run one short of the kernel's and the
+        # comments host's, the fact the host's `bom` bit reconciles and the save doors put back (contract C4);
+        # and b"" is text, "" (an empty file is served, never refused).
+        self.assertEqual(km._decode_text(b"\xef\xbb\xbfhi"), "\ufeffhi")
+        self.assertEqual(km._decode_text(b"\xef\xbb\xbfhi")[0], "\ufeff", "the BOM is the first character, not dropped")
+        self.assertEqual(km._decode_text(b""), "")
+
 
 class HumanBytes(unittest.TestCase):
     def test_it_reads_like_a_size(self):
