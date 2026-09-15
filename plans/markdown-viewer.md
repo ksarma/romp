@@ -5465,7 +5465,7 @@ why, and the test that holds it:
    sibling (the panel pairs embeds by img order and `data-fv-src`, the layer wraps THE img, the reader's place counts
    `<img` tags in a row: a sibling leaves all three alone), and the words the fact and the authored src with the alt,
    no reason. The departure from the plan's text: "an inline error naming its src" is a label beside a kept img, never
-   a replacement or a wrapper. file-view-figure-error.test.ts (9, new, the formula pin re-aimed in the review's round
+   a replacement or a wrapper. file-view-figure-error.test.ts (10, new, the formula pin re-aimed in the review's round
    2, seven in the build over the seam suite's stand-in: one label after the img with the mark, the class and the
    text, the authored `data-fv-src` for a rewritten img and the src for a bare one with no parentheses for an empty
    alt; a second error rewriting the one label and a load removing it; the img's attributes, place and onerror
@@ -5478,41 +5478,42 @@ why, and the test that holds it:
    authored spelling, through the regions wrap too, an img's own 1x candidate, an unrewritten remote candidate as
    written, the img's own src, no currentSrc and an unmatched currentSrc keeping pictureDest's rule, a data: source of
    three thousand characters, an inline svg and a malformed URI cut to the head, and the label after a link holding
-   the figure alone, beside its img when the link has text or two figures), file-view-figure-empty-source.test.ts (1,
-   new in the review's round 2: the empty-destination and bare-src figures beside one whose source is written, one
-   label per img with the words and the alt, the positions, no paint hook, a second error rewriting the one label, and
-   the source pins on the formula and the constant), file-view-figure-error-browser.test.ts (3 legs, new: two in the
-   build, the real viewer with real-viewer-leg's new `serve` answering the note's figures, a 404, a text/plain body
-   the decoder refuses and an svg that loads, under styles.css on the pane and in the chat modal and under feed.css:
-   four figures, three labels with their authored src and alt, none on the svg, the img untouched, the label in unit
-   B's dress, the Outline's rows "Report" and "Figure 3 detail", a Raw switch from the failed figure's paragraph
-   seating on its row, and with the Comments panel open every figure taking a layer, each label following its wrap and
-   none inside one, and a comment on the failed figure's paragraph painting its highlight, the slice's first HIGH risk
-   measured; the chat page's heal installed through the leg's new `before`, three errors at the first paint, a
-   dispatched `romp:wsup` re-fetching the three and the same three labels rewritten in place, every wait on the
-   figures' `complete` or the panel's paint and never a timer; and the round 1 scene on the pane: the browser asked
-   for dark.webp and missing-1x.png and never missing-2x.png, plot.png decoding as the plain figure, the labels
-   reading `figs/dark.webp (plot)` and `figs/missing-1x.png (dense)`, a data: figure's label under 60 px tall at 900
-   where it was 666, and a linked figure's label a child of the paragraph with `closest("a")` null and no pointer
-   cursor), fileview-parity.test.ts (4, the `.fileview-md .fv-figerr {` head in RULES, red over the base with no rule
-   in either sheet; the print block already pinned whole), anchor-map.test.ts (43, three new in the build and two in
-   the review's round 1: C1c's, a paragraph holding the label pairing with its block, the caption mapping and
-   painting, a drag from inside the label landing at its edge, the label alone selecting nothing, and a label beside a
-   bare `<img>` html block leaving the block after it paired; item 7's C4c case; the consolidation pass's case, below;
-   the review's two lay the CRLF fixture and four small sources on the viewer's grid (`buildRawViewer`, the replica's
-   three-ending split with the highlighter, and `rawDomIndexOfSplit`) and drive `paintRawPoint`, `paintRaw` and
-   `paintChangesRaw` over them: sixteen rows with no ending in any, the same marks the older grid paints less its
-   ending-only slices, every point on the row `rawRowForOffset` and `rawOffsetToLine` give, the selection walks equal
-   before and after the paint; the nine older cases keep the LF-only grid as a standing input of the map, which
-   assumes neither split, the build's open question decided so; under three painter-local mutations of anchor-map.ts
-   the two are the only reds), anchor-map-fallback-markup.test.ts (25, the mirror list gaining the class, a record
-   change), md-config-figure-gate-place.test.ts (1, two scenes in the readPlace walk: the label inside the block's
-   `<p>` and beside the block's own text, red over the base with no place). The consolidation pass's full npm test
-   found the label at the box's TOP level misaligning the Rendered pairing: when the img is a top-level node of an
-   html block (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the label
-   is top-level too, `analyzeRendered` counted it among the nodes the blocks pair against, the img's block owned the
-   img and the label, and with the Comments panel open (the wrap and the label ahead of the div) the heading nested in
-   the div was refused as not matching the file (anchor-map-wrappers-browser.test.ts, two legs red). anchor-map.ts now
+   the figure alone, beside its img when the link has text or two figures; and one in the closing pass, the two-figure
+   case at this item's end), file-view-figure-empty-source.test.ts (1, new in the review's round 2: the
+   empty-destination and bare-src figures beside one whose source is written, one label per img with the words and the
+   alt, the positions, no paint hook, a second error rewriting the one label, and the source pins on the formula and
+   the constant), file-view-figure-error-browser.test.ts (3 legs, new: two in the build, the real viewer with
+   real-viewer-leg's new `serve` answering the note's figures, a 404, a text/plain body the decoder refuses and an svg
+   that loads, under styles.css on the pane and in the chat modal and under feed.css: four figures, three labels with
+   their authored src and alt, none on the svg, the img untouched, the label in unit B's dress, the Outline's rows
+   "Report" and "Figure 3 detail", a Raw switch from the failed figure's paragraph seating on its row, and with the
+   Comments panel open every figure taking a layer, each label following its wrap and none inside one, and a comment
+   on the failed figure's paragraph painting its highlight, the slice's first HIGH risk measured; the chat page's heal
+   installed through the leg's new `before`, three errors at the first paint, a dispatched `romp:wsup` re-fetching the
+   three and the same three labels rewritten in place, every wait on the figures' `complete` or the panel's paint and
+   never a timer; and the round 1 scene on the pane: the browser asked for dark.webp and missing-1x.png and never
+   missing-2x.png, plot.png decoding as the plain figure, the labels reading `figs/dark.webp (plot)` and
+   `figs/missing-1x.png (dense)`, a data: figure's label under 60 px tall at 900 where it was 666, and a linked
+   figure's label a child of the paragraph with `closest("a")` null and no pointer cursor), fileview-parity.test.ts
+   (4, the `.fileview-md .fv-figerr {` head in RULES, red over the base with no rule in either sheet; the print block
+   already pinned whole), anchor-map.test.ts (43, three new in the build and two in the review's round 1: C1c's, a
+   paragraph holding the label pairing with its block, the caption mapping and painting, a drag from inside the label
+   landing at its edge, the label alone selecting nothing, and a label beside a bare `<img>` html block leaving the
+   block after it paired; item 7's C4c case; the consolidation pass's case, below; the review's two lay the CRLF
+   fixture and four small sources on the viewer's grid (`buildRawViewer`, the replica's three-ending split with the
+   highlighter, and `rawDomIndexOfSplit`) and drive `paintRawPoint`, `paintRaw` and `paintChangesRaw` over them:
+   sixteen rows with no ending in any, the same marks the older grid paints less its ending-only slices, every point
+   on the row `rawRowForOffset` and `rawOffsetToLine` give, the selection walks equal before and after the paint; the
+   nine older cases keep the LF-only grid as a standing input of the map, which assumes neither split, the build's
+   open question decided so; under three painter-local mutations of anchor-map.ts the two are the only reds),
+   anchor-map-fallback-markup.test.ts (25, the mirror list gaining the class, a record change),
+   md-config-figure-gate-place.test.ts (1, two scenes in the readPlace walk: the label inside the block's `<p>` and
+   beside the block's own text, red over the base with no place). The consolidation pass's full npm test found the
+   label at the box's TOP level misaligning the Rendered pairing: when the img is a top-level node of an html block
+   (`<img src="logo.png">` alone, or then `<div align="center">` in one block, a README's shape) the label is
+   top-level too, `analyzeRendered` counted it among the nodes the blocks pair against, the img's block owned the img
+   and the label, and with the Comments panel open (the wrap and the label ahead of the div) the heading nested in the
+   div was refused as not matching the file (anchor-map-wrappers-browser.test.ts, two legs red). anchor-map.ts now
    leaves the label out of the top-level nodes (`isFigureLabel` in `holdsContent`), the label alone and not every
    control: a display formula the fill could not render at the top level is its block's node and a gated figure's
    placeholder holds the block's img, and a first cut that left out every control turned anchor-map-obsidian.test.ts
@@ -5530,21 +5531,29 @@ why, and the test that holds it:
    the wrap of a long src, is asserted by computed display, border and box width in the leg and not by eye; after
    `closeFileView` one of the Comments panel's three capture-phase `load` listeners stays on the detached body (the
    viewer's own is gone), harmless while the body is detached, so the node case asserts the count fell rather than
-   reached zero. Recorded since the review's round 6, not changed, two figures under one anchor: two imgs in one
-   `<picture>` an author types (the sanitizer keeps it, and the anchor climbs a `picture` as it climbs the layer's
-   class, without asking what either holds), or two imgs an author puts in one `<span class="fc-imgwrap">`, share that
-   anchor, so one label after it names the last of them to fail (the second `error` finds the first's label there and
-   rewrites it, the one-label rule reading per anchor) and the `load` of either removes it while the other still
-   fails, leaving that figure the browser's own rendering alone, its alt text or the glyph; measured in headless
-   Chromium at d617bcf67, two such imgs in one span and a bare failing control drew two labels for three failures, the
-   span's naming the second figure, and healing either img of the span removed it with the other still at natural
-   width 0 and no label, and the same two imgs in one `<picture>` at f2c422709 gave the same numbers. It waits as a
-   follow-up reviewed afresh because the edge draws a label (one for the pair, naming the last failure), so it is none
-   of the three cases that reopen the review after its round 6 (a wrong mapping, a comments regression in the Rendered
-   view, a failure case showing a blank or a bare glyph), the layer's own wrap holds one img and main drew no label
-   for such a figure at all, and the fix, the anchor climbing a `picture` or a wrap only when it holds one img alone,
-   or the label keyed to its img rather than found after the anchor, touches how anchor-map.ts reads such a span (one
-   IMG; a label inside it moves where both text walks meet the label).
+   reached zero. Recorded in the review's round 6 and fixed in its closing pass, two figures under one anchor: two
+   imgs in one `<picture>` an author types (the sanitizer keeps it), or two imgs an author puts in one `<span
+   class="fc-imgwrap">`, shared that anchor, since `figureAnchor` climbed a `picture` and the layer's class without
+   asking what either held, so one label after it named the last of them to fail (the second `error` found the first's
+   label there and rewrote it, the one-label rule reading per anchor) and the `load` of either removed it while the
+   other still failed, leaving that figure the browser's own rendering alone, its alt text or the glyph; measured in
+   headless Chromium at d617bcf67, two such imgs in one span and a bare failing control drew two labels for three
+   failures, the span's naming the second figure, and healing either img of the span removed it with the other still
+   at natural width 0 and no label, and the same two imgs in one `<picture>` at f2c422709 gave the same numbers. The
+   closing pass read the healed pair's still-failing figure as a failure case showing a bare glyph, the third of the
+   cases that reopen the review after round 6, and fixed it as the round 6 record proposed: `figureAnchor` climbs a
+   `picture`, the layer's class or a link holding the figure alone only when it holds exactly one img (`oneImg`, a
+   `querySelectorAll("img")` count of one), so a wrapper holding two is left as the img's parent and each img's label
+   is its own next sibling inside it, naming its own source, a second `error` rewriting its own alone and a `load`
+   removing its own alone; the layer's own wrap holds THE img and is climbed as before, inside a two-img `<picture>`
+   included, and a link's `linkAround` already asked for one child, so every one-img figure's label stands where round
+   1 left it. anchor-map.ts is unchanged and reads the label as before (`isFigureLabel` by the class, both
+   CONTROL_CLASSES lists, so a label inside such a span is skipped by both text walks as one beside the img is),
+   checked by its node suite and the wrappers and cells browser legs. file-view-figure-error.test.ts's tenth case
+   holds it (two imgs in one picture and in one authored wrap, a label each after its own img naming its own source, a
+   second error rewriting its own alone, a heal removing its own alone with the other's standing, the layer's wrap
+   inside a two-img picture climbed and the picture not, a link around a two-img picture not reached; red over a git
+   archive of 9553c666c at the first count, one label for the pair) with two source pins on the gate and the count.
 3. *Item 3, `error()` and the hooks.* The fetch chain's `.catch` fires the hooks AFTER its swap, the `imgFailed`
    order: `body.replaceChildren(why)`, `syncOutline()`, then `viewError = msg; fireRendered();`, then
    `rearmDiskBar(my)` as before (the re-arm reads the keyboard after the paint, Slice 6's rule; a hook does not move
@@ -6125,52 +6134,53 @@ why, and the test that holds it:
    the stand-in installed and the stub line), md-url-view (29, re-pinned, one pin added and one re-aimed in the
    review's round 1, one re-aimed in its round 2), md-sanitize (19, one new, the seam pin sweeping the production
    sources since the review's round 1), file-view-landing-throw-browser (2 legs, re-aimed), file-view-failures-browser
-   (5 legs, new: four in the build, one in the review's round 1), file-view-figure-error (9, new: seven in the build,
-   two in the review's round 1; the formula pin re-aimed in its round 2), file-view-figure-empty-source (1, new in the
-   review's round 2), file-view-figure-error-browser (3 legs, new: two in the build, one in the review's round 1),
-   file-view-raw-rows-browser (2 legs, new), file-view-fell-wrap-browser (1 leg, new in the review's round 4),
-   fileview-parity (4, one head; the `.fileview-err {` head added in the review's round 4), anchor-map (43, three new
-   in the build, two in the review's round 1), anchor-map-raw-offset-to-line (2, new in the review's round 1),
-   anchor-map-cells-browser (6 legs, one read re-aimed), render-sanitize (3, one pin re-aimed),
-   anchor-map-fallback-markup (25, the mirror list), md-config-figure-gate-place (1, two scenes), file-comments (35,
-   re-pinned, one pin re-aimed in the review's round 2, two in its round 3), file-comments-changes-review2 (23, one
-   scene in the build, two in the review's round 1, four in its round 2, two in its round 4 with three re-aimed),
-   file-comments-changes (23, one pin re-aimed in the review's round 1), file-comments-editing-round3 (7, one pin
-   re-aimed in the review's round 1), file-comments-changes-review (12, one case flipped), file-comments-about-fixes
-   (8, one case flipped), file-comments-editing-races (14, one new), file-comments-reveal-landing (10, one new in the
-   build, three in the review's round 1, one pin re-aimed in its round 2), file-comments-reveal-title (6, one new in
-   the review's round 1), file-comments-model-line-start (6, new in the review's round 1), file-comments-behavior (22,
-   one pin re-aimed in the review's round 2, one in its round 4), file-comments-editing-moved-latch (4, one pin
-   re-aimed in the review's round 4), styles-fileview-err-sizes (7, one pin widened in the review's round 2), the 118
-   stub files of the sweep with one line each and no count moved (five of them counted above: file-comments-changes,
-   file-comments-editing-round3 and file-comments-reveal-title since the review's round 1, file-comments-behavior
-   since its round 2, file-comments-editing-moved-latch since its round 4), the infrastructure real-viewer-leg.ts
-   (`serve`, `before`, `waitFor`, the per-path header table, the map's exports) and md-sanitize.ts's seam;
-   tools/file-comments-host-save.test.mjs (17, three new), tools/file-comments-host-untouched.test.mjs (9, one
-   re-aimed), tools/file-review-plan-anchors-states.test.mjs (5, one pin re-aimed in the review's round 4);
-   tests/test_savefile.py (24, six new), tests/test_kernel_file_comments_save.py (24, two new),
-   tests/test_kernel_file_comments_hardening.py (31, one re-aimed), tests/test_kernel_preview.py (31, two record
-   pins), tests/test_file_view.py (22, one record pin), tests/test_guide_files_failures.py (13, new, the label's text
-   pin re-aimed in the review's round 1, the catch's and the label's pins in its round 2, the Latin-1 raise count in
-   its round 3 with the pick's gate pinned beside it), tests/test_guide_files_place_and_outline.py (14, unchanged),
-   tests/test_files_pane.py (24, unchanged), tests/test_markdown_viewer_plan_note_counts.py (5, unchanged; it accepts
-   this note), tests/test_markdown_viewer_plan_note_history.py (10, unchanged),
-   tests/test_markdown_viewer_plan_note_slice7.py (5, new in the review's round 3: this note held to four of its own
-   rules; its stage rule reading a round 3 count since its round 4), tests/test_upstream_ledger.py (83, unchanged).
-   Every case that changes behaviour fails over a `git archive` of e6aeb1138 (the head the branch was cut from, with
-   the new exports stubbed where a test imports one, and the readers' files beside ui, vendor, esbuild.js and
-   package.json where a suite reads them) and, from the second commit of a unit on, over a `git archive` of the
-   branch's head before the commit as a control that isolates the commit's own red, and says how and over which tree
-   in its commit; a pin over a shape this slice moved is titled a re-pin and is red by construction over those trees;
-   the record pins say they are records. The guarantees the families re-verify: highlights are measured `<mark
-   class="fc-hl">` elements over the range's text nodes, and the paragraph holding a failed figure paints one under
-   both sheets; the panel's boxes keep the keyboard through every paint, the failure pane's included, since the hooks
-   fire before the disk bar's re-arm; the poll asks one reload per mtime and the save fence compares mtime strings,
-   the BOM rule running on the read that fence guards; the pairing, the change marks and the selection map read the
-   one block table, which item 4 maps by exactly `s.bom ? 1 : 0` at the paint and the seed and never rewrites, and
-   which item 2's label never enters, being a control to both walks; item 7's rows keep every character of the line,
-   the separator alone consumed, so `rawIndex` still verifies character by character and `scrollToOffset`,
-   `rawOffsetToLine` and the rows agree on a CR file; and the composer's quote stays the exact source slice.
+   (5 legs, new: four in the build, one in the review's round 1), file-view-figure-error (10, new: seven in the build,
+   two in the review's round 1, one in the closing pass; the formula pin re-aimed in its round 2),
+   file-view-figure-empty-source (1, new in the review's round 2), file-view-figure-error-browser (3 legs, new: two in
+   the build, one in the review's round 1), file-view-raw-rows-browser (2 legs, new), file-view-fell-wrap-browser (1
+   leg, new in the review's round 4), fileview-parity (4, one head; the `.fileview-err {` head added in the review's
+   round 4), anchor-map (43, three new in the build, two in the review's round 1), anchor-map-raw-offset-to-line (2,
+   new in the review's round 1), anchor-map-cells-browser (6 legs, one read re-aimed), render-sanitize (3, one pin
+   re-aimed), anchor-map-fallback-markup (25, the mirror list), md-config-figure-gate-place (1, two scenes),
+   file-comments (35, re-pinned, one pin re-aimed in the review's round 2, two in its round 3),
+   file-comments-changes-review2 (23, one scene in the build, two in the review's round 1, four in its round 2, two in
+   its round 4 with three re-aimed), file-comments-changes (23, one pin re-aimed in the review's round 1),
+   file-comments-editing-round3 (7, one pin re-aimed in the review's round 1), file-comments-changes-review (12, one
+   case flipped), file-comments-about-fixes (8, one case flipped), file-comments-editing-races (14, one new),
+   file-comments-reveal-landing (10, one new in the build, three in the review's round 1, one pin re-aimed in its
+   round 2), file-comments-reveal-title (6, one new in the review's round 1), file-comments-model-line-start (6, new
+   in the review's round 1), file-comments-behavior (22, one pin re-aimed in the review's round 2, one in its round
+   4), file-comments-editing-moved-latch (4, one pin re-aimed in the review's round 4), styles-fileview-err-sizes (7,
+   one pin widened in the review's round 2), the 118 stub files of the sweep with one line each and no count moved
+   (five of them counted above: file-comments-changes, file-comments-editing-round3 and file-comments-reveal-title
+   since the review's round 1, file-comments-behavior since its round 2, file-comments-editing-moved-latch since its
+   round 4), the infrastructure real-viewer-leg.ts (`serve`, `before`, `waitFor`, the per-path header table, the map's
+   exports) and md-sanitize.ts's seam; tools/file-comments-host-save.test.mjs (17, three new),
+   tools/file-comments-host-untouched.test.mjs (9, one re-aimed), tools/file-review-plan-anchors-states.test.mjs (5,
+   one pin re-aimed in the review's round 4); tests/test_savefile.py (24, six new),
+   tests/test_kernel_file_comments_save.py (24, two new), tests/test_kernel_file_comments_hardening.py (31, one
+   re-aimed), tests/test_kernel_preview.py (31, two record pins), tests/test_file_view.py (22, one record pin),
+   tests/test_guide_files_failures.py (13, new, the label's text pin re-aimed in the review's round 1, the catch's and
+   the label's pins in its round 2, the Latin-1 raise count in its round 3 with the pick's gate pinned beside it),
+   tests/test_guide_files_place_and_outline.py (14, unchanged), tests/test_files_pane.py (24, unchanged),
+   tests/test_markdown_viewer_plan_note_counts.py (5, unchanged; it accepts this note),
+   tests/test_markdown_viewer_plan_note_history.py (10, unchanged), tests/test_markdown_viewer_plan_note_slice7.py (5,
+   new in the review's round 3: this note held to four of its own rules; its stage rule reading a round 3 count since
+   its round 4), tests/test_upstream_ledger.py (83, unchanged). Every case that changes behaviour fails over a `git
+   archive` of e6aeb1138 (the head the branch was cut from, with the new exports stubbed where a test imports one, and
+   the readers' files beside ui, vendor, esbuild.js and package.json where a suite reads them) and, from the second
+   commit of a unit on, over a `git archive` of the branch's head before the commit as a control that isolates the
+   commit's own red, and says how and over which tree in its commit; a pin over a shape this slice moved is titled a
+   re-pin and is red by construction over those trees; the record pins say they are records. The guarantees the
+   families re-verify: highlights are measured `<mark class="fc-hl">` elements over the range's text nodes, and the
+   paragraph holding a failed figure paints one under both sheets; the panel's boxes keep the keyboard through every
+   paint, the failure pane's included, since the hooks fire before the disk bar's re-arm; the poll asks one reload per
+   mtime and the save fence compares mtime strings, the BOM rule running on the read that fence guards; the pairing,
+   the change marks and the selection map read the one block table, which item 4 maps by exactly `s.bom ? 1 : 0` at
+   the paint and the seed and never rewrites, and which item 2's label never enters, being a control to both walks;
+   item 7's rows keep every character of the line, the separator alone consumed, so `rawIndex` still verifies
+   character by character and `scrollToOffset`, `rawOffsetToLine` and the rows agree on a CR file; and the composer's
+   quote stays the exact source slice.
 
 **Review round 1** (2026-09-14). The review of the branch at 103a13f32 over main 462ad3ccf, the first round after the
 rebase, under the owner's efficiency plan: the whole branch read by a reader new to it, every finding checked by one
@@ -6227,7 +6237,7 @@ scene the brief's item 3 names for file-view-reload.test.ts, a test-only additio
 `where:` line's length. Tests, by file, this round (every count the branch's, as this note's head says, so the three
 files round 2 added to read round 2's numbers here too; the additions named are this round's): file-view-seam.test.ts
 (57, three new), file-view.test.ts (59, one new), md-url-view.test.ts (29, one pin added and one re-aimed),
-file-view-figure-error.test.ts (9, two new), file-view-figure-error-browser.test.ts (3 legs, one new),
+file-view-figure-error.test.ts (10, two new), file-view-figure-error-browser.test.ts (3 legs, one new),
 file-view-failures-browser.test.ts (5 legs, one new), file-comments-reveal-landing.test.ts (10, three new),
 file-comments-reveal-title.test.ts (6, one new), file-comments-changes.test.ts (23, one pin re-aimed),
 file-comments-editing-round3.test.ts (7, one pin re-aimed), file-comments-changes-review2.test.ts (23, two new),
@@ -6314,7 +6324,7 @@ adjacency pins, and two to item 5's drop in the fetch chain's catch, the drop's 
 with two pins added beside them, that no catch paints the line from the record and the drop's place in the catch; the
 round's commit message counts three, the consolidation's own, and stands, a rewrite barred; the review's round 3
 corrected this count, which the two mentions had given as three), file-view-figure-empty-source.test.ts (1, new),
-file-view-figure-error.test.ts (9, one pin re-aimed), file-view-place.test.ts (8, two pins re-aimed),
+file-view-figure-error.test.ts (10, one pin re-aimed), file-view-place.test.ts (8, two pins re-aimed),
 file-view-reload.test.ts (23, one new), file-comments.test.ts (35, one pin re-aimed),
 file-comments-changes-review2.test.ts (23, four new), file-comments-behavior.test.ts (22, one pin re-aimed),
 file-comments-reveal-landing.test.ts (10, one pin re-aimed), md-url-view.test.ts (29, one pin re-aimed),
@@ -6592,36 +6602,63 @@ item 6's first and item 1's `RENDER_FELL` line second, since the prepend runs af
 sanitizer or DOM-pass fault throws over "" (marked and DOMPurify accept the empty string), both sentences are true and
 nothing is blank, so the order stays as landed and an order rule waits for a fault that shows itself; the measurements
 are at item 6, the exception is noted at item 1, and the site is named in `renderFellLine`'s and `RENDER_FELL`'s docs
-and both viewers' prepend comments. Recorded, not changed (low): two imgs under one anchor, in one `<picture>` an
-author types or in one `<span class="fc-imgwrap">`, get one label after it naming the last of them to fail and the
-`load` of either removes it while the other still fails, leaving that figure the browser's own rendering alone;
-`figureAnchor` climbs a `picture` and the class without asking what either holds, since the layer's own wrap holds one
-img, so a `<picture>` the sanitizer keeps reaches this with no class (this paragraph and item 2 first said the panel's
-private class alone reached it; corrected after the round, with the `<picture>` scene measured at f2c422709 added to
-item 2), and main drew no label for such a figure at all; the measurements are at item 2 with the follow-up (the
-anchor climbing a `picture` or a wrap only when it holds one img alone, or the label keyed to its img rather than
-found after the anchor), reviewed afresh since anchor-map.ts reads such a span as one IMG; the site is named in
-`figureAnchor`'s doc, which names the span. Corrected at the site: round 5's comment at `bytesLate` pointed the re-arm
-at "the method above", which is `bytesLanded` (the method that ends the wait), not `awaitBytes` (two methods up, the
-one that runs `clearTimeout` then a fresh `setTimeout` on every status whose file mtime is not the view's); the
-comment names `awaitBytes`, a name rather than a position, which a later insertion cannot rot, so the slice's lines
-naming it in file-comments.ts are five at this head, every one a comment, and the round 3 paragraph's clause holds
-unchanged; the round 5 paragraph's count clause above is re-worded to read at its own commit (four such lines at
-d617bcf67, the comment pointing by place), where it had said the comment named no method; `awaitBytes` itself stays
-byte-identical to 462ad3ccf. Closed as recorded, no words added: the deadline armed afresh by every status that lands
-while the wait is up, which round 5's re-check listed as not fixed, the state the rule for a pre-existing edge intends
-(recorded and routed, not fixed): its record, with the measurements, in the round 5 paragraph, its routing in the
-round 3 paragraph, `awaitBytes` byte-identical to 462ad3ccf and the round 5 record checked true of this head. The
-follow-ups routed by this slice's note and its review, on the books after this round: `awaitBytes` armed once per
-reload asked, or re-armed only on a new file mtime; the map's source table caching a lexer failure by text; the
-implied `</p>` of a block-level start tag in inline html (Slice 5's anchor-map follow-ups); the regions layer's wrap
-of a `<picture>`'s img; the Reveal scroll lock; the line N+1 clamp; the phantom Raw row; the double-BOM exact form; a
-seam member for a fetch the panel did not ask; the deadline row's tail over a later pane (the owner's wording); and
-the anchor over two figures in one `<picture>` or one authored wrap (this round). Left open from the earlier rounds:
-`trackedEdit.begin()` reading `seedOf(status)` without `textCurrent`, the `where:` line's length, and the ledger's
-`pr:` line once the PR exists; the ledger's `where:` line names this round's comments. Tests, by file, this round:
-none added, none changed; the typecheck clean after the comments, and the round's full runs (the full npm test, CI's
-tools step, the pytest modules) recorded in the build report outside the repo.
+and both viewers' prepend comments. Recorded (low), and fixed in the closing pass below: two imgs under one anchor, in
+one `<picture>` an author types or in one `<span class="fc-imgwrap">`, got one label after it naming the last of them
+to fail and the `load` of either removed it while the other still failed, leaving that figure the browser's own
+rendering alone; `figureAnchor` climbed a `picture` and the class without asking what either held, since the layer's
+own wrap holds one img, so a `<picture>` the sanitizer keeps reached this with no class (this paragraph and item 2
+first said the panel's private class alone reached it; corrected after the round, with the `<picture>` scene measured
+at f2c422709 added to item 2), and main drew no label for such a figure at all; the measurements are at item 2 with
+the fix (the anchor climbing a `picture` or a wrap only when it holds one img alone), which this round routed as a
+follow-up reviewed afresh since anchor-map.ts reads such a span as one IMG, and which the closing pass took; the site
+is named in `figureAnchor`'s doc, which names the span and, since the closing pass, the picture. Corrected at the
+site: round 5's comment at `bytesLate` pointed the re-arm at "the method above", which is `bytesLanded` (the method
+that ends the wait), not `awaitBytes` (two methods up, the one that runs `clearTimeout` then a fresh `setTimeout` on
+every status whose file mtime is not the view's); the comment names `awaitBytes`, a name rather than a position, which
+a later insertion cannot rot, so the slice's lines naming it in file-comments.ts are five at this head, every one a
+comment, and the round 3 paragraph's clause holds unchanged; the round 5 paragraph's count clause above is re-worded
+to read at its own commit (four such lines at d617bcf67, the comment pointing by place), where it had said the comment
+named no method; `awaitBytes` itself stays byte-identical to 462ad3ccf. Closed as recorded, no words added: the
+deadline armed afresh by every status that lands while the wait is up, which round 5's re-check listed as not fixed,
+the state the rule for a pre-existing edge intends (recorded and routed, not fixed): its record, with the
+measurements, in the round 5 paragraph, its routing in the round 3 paragraph, `awaitBytes` byte-identical to 462ad3ccf
+and the round 5 record checked true of this head. The follow-ups routed by this slice's note and its review, on the
+books after this round: `awaitBytes` armed once per reload asked, or re-armed only on a new file mtime; the map's
+source table caching a lexer failure by text; the implied `</p>` of a block-level start tag in inline html (Slice 5's
+anchor-map follow-ups); the regions layer's wrap of a `<picture>`'s img; the Reveal scroll lock; the line N+1 clamp;
+the phantom Raw row; the double-BOM exact form; a seam member for a fetch the panel did not ask; and the deadline
+row's tail over a later pane (the owner's wording); the anchor over two figures in one `<picture>` or one authored
+wrap, routed here, left the list in the closing pass. Left open from the earlier rounds: `trackedEdit.begin()` reading
+`seedOf(status)` without `textCurrent`, the `where:` line's length, and the ledger's `pr:` line once the PR exists;
+the ledger's `where:` line names this round's comments. Tests, by file, this round: none added, none changed; the
+typecheck clean after the comments, and the round's full runs (the full npm test, CI's tools step, the pytest modules)
+recorded in the build report outside the repo.
+
+**Closing pass** (2026-09-15). The review of the branch at 9553c666c (round 6's fix commit f2c422709 under its records
+correction) over main 462ad3ccf, under the rule round 6 set: after that round only a wrong mapping, a comments
+regression in the Rendered view or a failure case showing a blank or a bare glyph reopens the review, and this pass
+fixes exactly one such case, the one round 6 recorded at item 2 and routed, with a test failing before over a `git
+archive` of 9553c666c. Two failing figures under one anchor, two imgs in one `<picture>` an author types or in one
+`<span class="fc-imgwrap">`, shared one label, and the heal of either removed it while the other still failed, that
+figure showing the browser's bare broken-image glyph with no text; read as the third reopening case and fixed in
+`figureAnchor` alone: a `picture`, the layer's class or a link holding the figure alone is climbed only when it holds
+exactly one img (`oneImg`, a `querySelectorAll("img")` count of one), so a wrapper holding two is left as the img's
+parent and each failing img's label is its own next sibling inside it, naming its own source, a second `error`
+rewriting its own alone and a `load` removing its own alone (item 2 has the mechanism and the measurements); the
+layer's own wrap holds THE img and is climbed as before, inside a two-img `<picture>` included, and a link's
+`linkAround` already asked for one child, so every one-img figure's label stands where round 1 left it. No sheet
+changed (the label's class, mark and dress are as they were), anchor-map.ts is unchanged and reads the label as before
+(`isFigureLabel` by the class, both CONTROL_CLASSES lists), checked by its node suite and the wrappers and cells
+browser legs; `figureAnchor`'s doc names the picture beside the span, and the follow-up left the routed list above.
+Tests, by file, this pass: file-view-figure-error.test.ts (10, one new: two imgs in one picture and in one authored
+wrap, a label each after its own img naming its own source, a second error rewriting its own alone, a heal removing
+its own alone with the other's standing, the layer's wrap inside a two-img picture climbed and the picture not, a link
+around a two-img picture not reached, and two source pins on the gate and the count; red over a git archive of
+9553c666c at the first count, one label for the pair, and at the gate's pin); no other test changed. The typecheck
+clean after the change, and the pass's full runs (the full npm test, CI's tools step, the pytest modules) recorded in
+the build report outside the repo. After this pass the owner's termination rule stands as round 6 set it: only a wrong
+mapping, a comments regression in the Rendered view or a failure case showing a blank or a bare glyph reopens the
+review.
 
 ### Slice 8: a cell and a code line are commentable from Rendered (ruling 2026-09-07, decision 7)
 

@@ -4339,9 +4339,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // would leave with restore, so an img under one is left alone. Images only, as the media body covers images alone: a
 // `<picture>` is heard through its img, whose error fires when the ONE candidate the browser chose (a matching `<source>`,
 // else the img's own srcset or src) fails, with no fall back to another, and its label goes after the picture element (a span
-// is not a picture's content) naming that candidate (failedSource); video, audio and an inline svg's `<image>` are recorded
-// as a follow-up. A link holding the figure alone (`[![alt](src)](url)`) is climbed too, so the label is not a click target
-// that follows the link (the review's round 1).
+// is not a picture's content) when the picture holds that img alone, naming that candidate (failedSource); video, audio and an
+// inline svg's `<image>` are recorded as a follow-up. A link holding the figure alone (`[![alt](src)](url)`) is climbed too, so
+// the label is not a click target that follows the link (the review's round 1).
 /** The mark on the label: the label is found by it (figureLabelAfter) and never by its class. */
 const FIGERR_MARK = "data-fv-figerr";
 /** The label's class, for the sheets alone (`.fileview-md .fv-figerr`: the gate's dress in the error dress's ink). */
@@ -4353,15 +4353,22 @@ const FIGERR_CLASS = "fv-figerr";
  *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same), and
  *  a link holding the figure alone (`[![alt](src)](url)`, a README's linked badge or picture: inside the `<a>` the label wore
  *  the link's pointer and a click on it, to read it, followed the link; the review's round 1). A link with more in it (text
- *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. The class is climbed
- *  without asking what the wrap holds, since the layer's wrap holds THE img: two imgs an author puts in one
- *  `<span class="fc-imgwrap">` (the sanitizer keeps `class`) share the anchor, so one label after the span names the last of
- *  them to fail and a `load` of either removes it while the other still fails; recorded in the plan's Slice 7 note (item 2,
- *  the review's round 6) and routed, not changed here. */
+ *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. A wrapper is climbed
+ *  only when it holds exactly one img (oneImg): the layer's wrap holds THE img and a `<picture>`'s content model holds one, but
+ *  an author can type two imgs into one `<picture>` or one `<span class="fc-imgwrap">` (the sanitizer keeps the element and
+ *  `class`), and until the review's closing pass the two shared that anchor, so one label after it named the last of them to
+ *  fail and a `load` of either removed it while the other still failed, that figure left to the browser's bare glyph; now such
+ *  a wrapper is not the anchor, each img's label is its own next sibling inside it, and a heal removes its own alone (the
+ *  plan's Slice 7 note, item 2). */
 function figureAnchor(img: Element): Element {
   let a: Element = img;
-  for (let p = a.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || linkAround(p, a)); p = a.parentElement) a = p;
+  for (let p = a.parentElement; p && oneImg(p) && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || linkAround(p, a)); p = a.parentElement) a = p;
   return a;
+}
+/** Whether `p` holds exactly one img: the wrappers above are climbed for the one figure they hold, and one holding two is left
+ *  as the img's parent so that each img's label is its own. */
+function oneImg(p: Element): boolean {
+  return p.querySelectorAll("img").length === 1;
 }
 /** Whether `p` is a link holding `a` alone: an `<a>` whose one element child is `a` and whose text is blank. */
 function linkAround(p: Element, a: Element): boolean {

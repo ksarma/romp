@@ -630,6 +630,82 @@ test("a data: source is cut to its head in the label (the Slice 7 review's round
   assert.equal(labelAfter(a3), null);
 });
 
+test("two failing figures under one wrapper (the Slice 7 review's closing pass): two imgs an author puts in one <picture>, or in one span.fc-imgwrap, each get a label of their own right after themselves, inside the wrapper, naming their own source; a second error on either rewrites its own label alone; a heal of one removes its label alone and the other's stands; a wrapper holding one img is climbed as before, the layer's wrap inside a two-img picture included", async (t) => {
+  const { md } = await open(t);
+  const fv = await mod();
+  // an authored <picture> holding two imgs (the sanitizer keeps it; a picture's content model holds one): both fail
+  const source = new El("source"); source.setAttribute("srcset", fileSrc("figs/pair.avif"));
+  const p1 = img({ src: fileSrc("figs/pair-1.png"), "data-fv-src": "figs/pair-1.png", alt: "first" });
+  const p2 = img({ src: fileSrc("figs/pair-2.png"), "data-fv-src": "figs/pair-2.png", alt: "second" });
+  const picture = block("picture", source, p1, p2);
+  const para = block("p", txt("Pair: "), picture, txt(" tail")); md.appendChild(para);
+  fire(p1, "error"); fire(p2, "error");
+  assert.equal(labels(md).length, 2, "one label per img (before the closing pass: one label after the picture for both, naming the last to fail)");
+  assert.equal(labelAfter(picture), null, "nothing after the picture: a wrapper holding two imgs is not the anchor");
+  const l1 = labelAfter(p1), l2 = labelAfter(p2);
+  assert.ok(l1 && l2 && l1 !== l2, "each img's label is its own next sibling, inside the picture");
+  assert.equal(l1!.textContent, fv.FIGURE_FAILED + " figs/pair-1.png (first)", "the first names its own source");
+  assert.equal(l2!.textContent, fv.FIGURE_FAILED + " figs/pair-2.png (second)", "the second names its own");
+  sameNodes(picture.childNodes, [source, p1, l1!, p2, l2!], "source, img, its label, img, its label");
+  sameNodes(para.childNodes, [para.childNodes[0], picture, para.childNodes[2]], "the paragraph around the picture is untouched");
+  // a second error on one (the heal's retry failing again) rewrites its own label alone
+  p2.setAttribute("alt", "second, v2");
+  fire(p2, "error");
+  assert.equal(labels(md).length, 2, "no third label");
+  assert.equal(labelAfter(p2), l2, "the same node stands"); assert.equal(l2!.textContent, fv.FIGURE_FAILED + " figs/pair-2.png (second, v2)", "its text rewritten");
+  assert.equal(l1!.textContent, fv.FIGURE_FAILED + " figs/pair-1.png (first)", "the other's label is untouched");
+  // a heal of one removes its label alone
+  fire(p1, "load");
+  assert.equal(labelAfter(p1), null, "the healed img's label is gone"); assert.equal(l1!.parentNode, null, "…the node left the tree");
+  assert.equal(labelAfter(p2), l2, "the still-failing img keeps its label (before: the shared label left with the first heal, and this figure showed the browser's bare glyph with no text)");
+  assert.equal(labels(md).length, 1);
+  fire(p2, "load");
+  assert.equal(labels(md).length, 0, "both healed: no label anywhere");
+  fire(p1, "error");
+  assert.equal(labelAfter(p1)!.textContent, fv.FIGURE_FAILED + " figs/pair-1.png (first)", "a later failure of one puts its own label back, after itself");
+  assert.equal(labelAfter(p2), null, "…and none for the other");
+  // two imgs an author puts in one span.fc-imgwrap (the sanitizer keeps `class`): the same rule
+  const w1 = img({ src: fileSrc("figs/w1.png"), "data-fv-src": "figs/w1.png", alt: "w1" });
+  const w2 = img({ src: fileSrc("figs/w2.png"), "data-fv-src": "figs/w2.png", alt: "w2" });
+  const wrapSpan = block("span", w1, w2); wrapSpan.className = "fc-imgwrap";
+  const para2 = block("p", txt("Wrapped pair: "), wrapSpan); md.appendChild(para2);
+  fire(w1, "error"); fire(w2, "error");
+  assert.equal(labelAfter(wrapSpan), null, "nothing after a wrap holding two imgs (before: one label there for both)");
+  assert.equal(labelAfter(w1)!.textContent, fv.FIGURE_FAILED + " figs/w1.png (w1)", "the first's own label, inside the span");
+  assert.equal(labelAfter(w2)!.textContent, fv.FIGURE_FAILED + " figs/w2.png (w2)", "the second's own");
+  sameNodes(wrapSpan.childNodes, [w1, labelAfter(w1)!, w2, labelAfter(w2)!], "img, its label, img, its label");
+  fire(w2, "load");
+  assert.equal(labelAfter(w2), null, "the healed img's label is gone");
+  assert.equal(labelAfter(w1)!.textContent, fv.FIGURE_FAILED + " figs/w1.png (w1)", "the other's label stands after its heal (before: gone, the figure a bare glyph)");
+  fire(w1, "error");
+  assert.equal(wrapSpan.querySelectorAll("[data-fv-figerr]").length, 1, "a retry failing again rewrites the standing label, adding none");
+  // the layer's own wrap holds THE img: inside a two-img picture the wrap is climbed (one img) and the picture is not (two)
+  const q1 = img({ src: fileSrc("figs/q1.png"), "data-fv-src": "figs/q1.png", alt: "q1" });
+  const q2 = img({ src: fileSrc("figs/q2.png"), "data-fv-src": "figs/q2.png", alt: "q2" });
+  const layerWrap = block("span", q1, new El("div")); layerWrap.className = "fc-imgwrap";
+  const picture2 = block("picture", layerWrap, q2);
+  md.appendChild(block("p", picture2));
+  fire(q1, "error"); fire(q2, "error");
+  assert.equal(labelAfter(q1), null, "nothing inside the layer's wrap");
+  assert.equal(labelAfter(layerWrap)!.textContent, fv.FIGURE_FAILED + " figs/q1.png (q1)", "the wrapped img's label follows its wrap, inside the picture");
+  assert.equal(labelAfter(q2)!.textContent, fv.FIGURE_FAILED + " figs/q2.png (q2)", "the bare img's label follows the img");
+  assert.equal(labelAfter(picture2), null, "nothing after the two-img picture");
+  fire(q1, "load");
+  assert.equal(labelAfter(layerWrap), null, "the wrapped img's heal removes its label from after the wrap");
+  assert.equal(labelAfter(q2)!.textContent, fv.FIGURE_FAILED + " figs/q2.png (q2)", "the other's stands");
+  // a link holding a two-img picture alone: the picture is not climbed, so the link is not reached; each label beside its img
+  const k1 = img({ src: fileSrc("figs/k1.png"), "data-fv-src": "figs/k1.png", alt: "k1" });
+  const k2 = img({ src: fileSrc("figs/k2.png"), "data-fv-src": "figs/k2.png", alt: "k2" });
+  const picture3 = block("picture", k1, k2);
+  const a = block("a", picture3); a.setAttribute("href", "https://example.com/pair");
+  md.appendChild(block("p", a));
+  fire(k1, "error"); fire(k2, "error");
+  assert.equal(labelAfter(a), null, "nothing after the link"); assert.equal(labelAfter(picture3), null, "nothing after the picture");
+  assert.equal(labelAfter(k1)!.textContent, fv.FIGURE_FAILED + " figs/k1.png (k1)"); assert.equal(labelAfter(k2)!.textContent, fv.FIGURE_FAILED + " figs/k2.png (k2)");
+  fire(k1, "load"); fire(k2, "load");
+  assert.equal(md.querySelectorAll("[data-fv-figerr]").length, 3, "both of the link's labels gone; the three standing labels are the earlier pairs' still-failing imgs' (p1's, w1's and q2's)");
+});
+
 // ── source pins: what the node cases cannot execute here (the browser leg executes the rest) ──────────────────────────
 test("source: armFigureLabels is armed in both viewers and dropped with each (ctx.onClose in the local one, closeHooks in the URL one); it arms exactly two capture listeners, error and load, removes both, and never assigns img.onerror; the label is span.fv-figerr with the mark data-fv-figerr; its text is FIGURE_FAILED, a space, pictureDest's answer and the alt in parentheses (contract C2); FIGURE_FAILED's text is contract C5's; headingWords skips the mark's element after its img line", () => {
   assert.match(VIEW, /\n  ctx\.onClose\(armFigureLabels\(body\)\);\n/, "the local viewer: armed once at the open beside the re-seat's listener and dropped by onClose");
@@ -660,6 +736,8 @@ test("source: armFigureLabels is armed in both viewers and dropped with each (ct
   assert.match(VIEW, /function shownSource\(src: string\): string \{\n\s*if \(!\/\^data:\/i\.test\(src\)\) return src;\n\s*const comma = src\.indexOf\(","\);\n\s*return \(comma >= 0 \? src\.slice\(0, comma \+ 1\) : src\.slice\(0, 40\)\) \+ "\u2026";\n\}/, "a data: source cut to its head with an ellipsis; anything else as written");
   assert.match(VIEW, /function linkAround\(p: Element, a: Element\): boolean \{\n\s*return p\.localName === "a" && p\.children\.length === 1 && p\.children\[0\] === a && \(p\.textContent \|\| ""\)\.trim\(\) === "";\n\}/, "a link holding the figure alone is climbed (figureAnchor), so the label is not a click target that follows the link");
   assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)/, "…beside the picture and the wrap");
+  assert.match(VIEW, /p && oneImg\(p\) && \(p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\) \|\| linkAround\(p, a\)\)/, "a wrapper is climbed only when it holds exactly one img (the review's closing pass): two imgs an author puts in one picture or one wrap each keep a label of their own");
+  assert.match(VIEW, /function oneImg\(p: Element\): boolean \{\n\s*return p\.querySelectorAll\("img"\)\.length === 1;\n\}/, "the count: exactly one img under the wrapper");
   assert.match(VIEW, /\nimport \{ pictureDest \} from "\.\/file-comments";/, "pictureDest is the panel's own rule, imported (on a line of its own, as the preview imports are: the registry pin in file-comments.test.ts holds the action's import line), not a second reading of data-fv-src");
   assert.match(VIEW, /\nexport const FIGURE_FAILED = "Image failed to load:";\n/, "contract C5's text, exported for the guide's pin");
   assert.match(VIEW, /p\.localName === "picture" \|\| p\.classList\.contains\("fc-imgwrap"\)/, "the anchor climbs a <picture> and the regions layer's wrap (C2 and its addendum)");
