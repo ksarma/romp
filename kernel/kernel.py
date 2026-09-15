@@ -21775,8 +21775,9 @@ def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
     plans/file-review.md) both take, so the gates and the stamp moment are decided once.
 
     Returns (got, warning). `got` is None when nothing was sent: a gate refused (`warning` says why)
-    or the backend refused the handover (`warning` is None: no running backend owns the session, the
-    caller is loud in its own words, nothing is stamped). Else it is _send_or_park's own verdict: True
+    or the backend refused the handover (`warning` is _USER_TODO_UNDELIVERED_WARN: no running backend
+    owns the session, nothing is stamped; the callers show it as they show a gate's). Else it is
+    _send_or_park's own verdict: True
     (parked: the op carries the todo id and stamps when it drains, _deliver_send_batch) or False (handed
     over now; stamped HERE when a todo is being answered). `warning` also rides a SENT message
     when the todo could not be stamped (must_stamp False only): the switch is off, or the todo was
@@ -21811,7 +21812,7 @@ def _deliver_todo_reply(be, sid, body, tid=None, must_stamp=True):
         return None, _USER_TODO_ENDED_WARN
     got = _send_or_park(be, sid, body, user=True, user_todo=stamp_tid)   # the person's own words: a user send (T315)
     if got is None:
-        return None, None                                # refused: no running backend owns the session; the caller says so
+        return None, _USER_TODO_UNDELIVERED_WARN         # refused: no running backend owns the session
     if got is False and stamp_tid:                       # handed over now: the delivery-keyed stamp fires here; a parked
         _stamp_user_todo_answered(sid, stamp_tid, body)  # answer (True) stamps when it drains (_deliver_send_batch)
     return got, warning
@@ -22236,8 +22237,8 @@ def _drive(msg, client):
         hit = next((x for x in _open_user_todos(sid) if x["id"] == tid), None)
         body = _user_todo_answer_body(hit["text"], str(msg["text"])) if hit else None
         got, warning = _deliver_todo_reply(be, sid, body, tid, must_stamp=True)
-        if got is None:                                   # a gate's warning, or the backend's refusal (no warning)
-            client["send"](json.dumps({"type": "warn", "text": warning or _USER_TODO_UNDELIVERED_WARN}))
+        if got is None:
+            client["send"](json.dumps({"type": "warn", "text": warning}))   # a gate's warning, or the backend's refusal
         _push_soon()
     elif t == "userTodoDismiss" and msg.get("todoId"):
         # the user clears a USER TODO without a reply — for moot and stale items; nothing reaches
@@ -43294,7 +43295,7 @@ def _feed_session_entry(s, ctx):
         st = "done" if done else ("question" if _closure_blocked(nid) else "open")
         # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
         # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
-        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid)
+        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid, sid=fsid)   # sid: the ledger memo's revision (see _node_anchor_rev)
         # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
         # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
         # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
@@ -50847,11 +50848,12 @@ def _client_reset_chat_base(client):
         client.get("echat", {}).clear()
         # …and the reconnect skeleton set (2026-09-07): a renderer that just evaluated holds NOTHING, so there
         # is nothing it could lazily reload — every tab must arrive whole, and the status slots go with the set.
-        # Unless this socket declared a redial (client["redial"], set at accept and never consumed): under
-        # READY_GATE_CAP the fork's shim re-sends `ready` on a redial once the bundle has sent its own, and that
-        # re-sent `ready` is not a fresh evaluation (upstream's reset targets one; the page still holds every
-        # session it had), so a declared redial keeps its skeleton state for _resolve_reconnect to fill (the
-        # 2026-09-09 ruling, condition 3; the accept-time comment in _ws states the rationale in full).
+        # Unless this socket declared a redial (client["redial"], set at accept and never consumed): a declared
+        # redial is ready from accept and re-posts no `ready` (the shim posts its ready only until a caps frame
+        # acks it, and dials reconnect=1 only after that ack), so a `ready` reaching this socket is not a fresh
+        # evaluation (upstream's reset targets one; the page still holds every session it had) and a declared
+        # redial keeps its skeleton state for _resolve_reconnect to fill (the 2026-09-09 ruling, condition 3;
+        # the accept-time comment in _ws states the rationale in full).
         if not client.get("redial"):
             client.pop("skeleton", None); client.pop("skeletonOrder", None); client.pop("reconnect", None)
         # A SKELETON client (a later chat column, ?skeleton=1 at its handshake, 2026-09-11): the pop above took the
@@ -55089,9 +55091,8 @@ def _file_comments_send_op(msg):
                                   note=note)
     tid = str(msg["todoId"]) if msg.get("todoId") else None
     got, warning = _deliver_todo_reply(Sessions.backend_for(sid), sid, body, tid, must_stamp=False)
-    if got is None:                                       # a gate's warning, or the backend's refusal (no warning)
-        return fail(warning or "Couldn't deliver the message — the session didn't take it. Your comments are saved with "
-                    "the file; try again, or send them as a normal message.")
+    if got is None:                                       # a gate's warning, or the backend's refusal
+        return fail(warning)
     queued = got is True
     if tid:
         _push_soon()                                   # a stamp (or a parked answer) changes the board
@@ -63390,7 +63391,7 @@ if(m.romp==='picker'){
 // just opened; a phone's hidden iframe boots late): a postMessage into a document whose files.js has not
 // registered its listener yet would be dropped with the pane brought forward empty, so the iframe's load
 // event, after which the listener exists, is when a click that arrived early is delivered. A viewFile
-// naming no pane is the feed route's, the else branch below (the cards-pane preference). The Waiting-on-you
+// naming no pane is not this arm's: the chat opens those in place. The Waiting-on-you
 // pane's detail links post the same message (plans/file-review.md, Slice 0) with todoId, the user todo the
 // path came from, forwarded as is so the viewer can tie its work back to the todo; a chat click carries none
 // and the pane sees null. `at` (Slice 6 of plans/markdown-viewer.md) is the place the link named after its
@@ -63403,23 +63404,6 @@ if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files
   var fwd=function(){try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*');}catch(e){}};
   var rd='';try{rd=(ff&&ff.contentDocument)?ff.contentDocument.readyState:'';}catch(e){}
   if(ff&&rd!=='complete'){var once=function(){ff.removeEventListener('load',once);fwd();};ff.addEventListener('load',once);}else fwd();}
-// A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
-// 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
-// pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
-// (render.ts openPath): this relay forwards whatever arrives, exactly like browseFiles below. Same
-// pane juggling, but a SEPARATE was-off flag, so the viewer and the browser (which close
-// independently) each restore only their own bring-forward — the one deliberate coupling is the
-// one-way handoff below, in the feed's browseFiles arm. ARM ON ACK: postMessage into an iframe is
-// fire-and-forget, so the was-off bit is only STASHED here (…Pend) and committed when the feed answers
-// viewFileOpened, the ack a real open sends and a lost message or a dirty-edit veto never does. An
-// armed-at-send flag left a viewFile lost to a mid-reload iframe cocked, and a later open/close cycle
-// consumed it and hid a pane the user was using. A lost message now costs only a pane left forward,
-// never a surprise hide.
-else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
-  window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
-  if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
-  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null,frag:m.frag||null},'*');}catch(e){}}
 // the Files pane's viewer closed (files.ts posts it on the close edge: nothing left up in the pane): on a
 // phone, where the arm above switched tabs to show it, go back to the tab the click came from; on desktop
 // the column simply shows its recent list again. The remembered tab is dropped either way, so a rotation to
@@ -63445,58 +63429,16 @@ if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getEl
   var fwdb=function(){try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}};
   var rdb='';try{rdb=(fb&&fb.contentDocument)?fb.contentDocument.readyState:'';}catch(e){}
   if(fb&&rdb!=='complete'){var onceb=function(){fb.removeEventListener('load',onceb);fwdb();};fb.addEventListener('load',onceb);}else fwdb();}
-// 'feed', the default while the Files pane is closed (and an ask naming no pane at all), surfaces the FILE
-// BROWSER in the FEED pane, which is a different document — so the shell relays it. If the feed pane is
-// toggled off we turn it on for the duration and remember to put it back, so the browser never costs the
-// user their layout. (File VIEWS
-// default to needing none of this since 2026-08-15 — the viewer is a modal over whatever document
-// clicked, but the cards-pane preference above opts a chat click back into the same juggling.)
-// THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its flags: the viewFile
-// feed route above, viewFileOpened below), the browser takes the pane over: openFileBrowse closes that
-// viewer and its close stays silent (file-view.ts), so the COMMITTED restore obligation moves onto the
-// browser's own flag here and is discharged at browseClosed. Hiding the pane at this moment would hide
-// the very browser the click asked for, and a viewer flag left armed under an open browser would let a
-// later viewer's close do the same. The PENDING stash is RETIRED here, never converted: nothing else ever
-// retires a pend whose ack was lost (a mid-reload feed, a veto), so converting it let a much-later
-// browse open/close turn that stale bit into a pane-hide out from under active use. An ack that DID
-// land before this arm sits on the committed flag (which transfers); one still in flight arrives to
-// a cleared pend and arms nothing — that open costs a pane left forward, arm-on-ack's one named
-// price, never a surprise hide.
+// A browse ask naming no pane surfaces the FILE BROWSER in the FEED pane, which is a different
+// document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
+// and remember to put it back, so the browser never costs the user their layout. (File VIEWS need
+// none of this since 2026-08-15: the viewer is a modal over whatever document clicked, so it never
+// touches the panes and has nothing to restore; a view routed to the Files pane is the arm above.)
 else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
-  if(window.__rompFeedWasOffView){window.__rompFeedWasOff=true;window.__rompFeedWasOffView=false;}
-  window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  // a phone's tab switch and its way back wait for the feed's browseOpened ack (the arm below), not this relay
+  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
-// The feed's ack: its browser is up and the listing asked for (file-browse.ts openFileBrowse posts browseOpened
-// after its listDir, the viewFileOpened idiom). ARM ON ACK, and only here: on a phone (one pane at a time) the
-// Feed tab comes forward ONLY in the mobile layout (on desktop the column is already visible and show() would
-// only persist a stale romp-mobile-tab for a later narrow layout, the viewFile pane branch's gate, 2026-09-07),
-// and the tab showing at the ack, the one the click came from, is remembered so the listing's close puts the
-// person back (the browseClosed arm below). Armed at the relay, the memory outlived a relay the feed stood down
-// (its openFileBrowse keeps a viewer with unsaved edits when the person says so: nothing opens, no browseClosed
-// ever consumes it), and a listing the feed later opened for itself replayed the stale tab at its close (review
-// round 2, 2026-09-07). A vetoed relay sends no ack, so nothing arms; a listing the feed opens for itself (a
-// viewer's directory link) acks with the Feed tab already showing, so nothing arms either.
-if(m.romp==='browseOpened'){
-  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';
-    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}}
-// the browser's close ends the overlay chain, and the feed's browser tells the shell on every close path
-// (file-browse.ts tellShellClosed). First the phone's way back: where the browseOpened arm above switched
-// tabs to show the listing, return to the tab the click came from (the filesViewerClosed idiom below); a
-// browse the feed opened for itself remembered nothing and moves nothing. The memory is dropped either way,
-// so a rotation to desktop in between makes the return a no-op, never a stale switch later.
-if(m.romp==='browseClosed'){var backf=window.__rompFeedTabFrom;window.__rompFeedTabFrom=null;
-  if(backf&&window.__rompMobileOn&&window.__rompMobileOn()){try{window.__rompMobileTab&&window.__rompMobileTab(backf);}catch(e){}}}
-// Then the pane: browseClosed puts a brought-forward feed back the way
-// it was, consuming the VIEWER's flag too — the feed-document handoff (the viewer's own dir-link →
-// initFileBrowse) opens the browser without any browseFiles reaching this shell, so the transfer
-// above never ran and the handed-off obligation still sits on the viewer flag. Either way: one
-// restore, both flags cleared, nothing lingers.
-if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){
-  window.__rompFeedWasOff=false;window.__rompFeedWasOffView=false;
-  if(feedHere())try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}   // with the Feed pane off in this browser there is nothing to put back (the pane is out of the toggle's set)
 // A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
 // the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
 // whole into the chat pane, whose composer seeds the labeled quote chip for the session the file was opened
@@ -63508,18 +63450,6 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
   // way the browseFiles arm does for the feed — desktop only; the phone's one-pane tab swap is untouched.
   if(!document.body.classList.contains('po-chat')){try{window.__rompPaneToggle&&window.__rompPaneToggle('chat',true);}catch(e){}}
   try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}
-// the feed's ack: the viewer really opened, so the restore obligation arms for real
-if(m.romp==='viewFileOpened'){if(window.__rompFeedWasOffViewPend)window.__rompFeedWasOffView=true;
-  window.__rompFeedWasOffViewPend=false;}
-// the viewer's close announces only a RELAY-opened view the browser did NOT take over (file-view.ts
-// viaRelay + its handoff suppress), and the restore consumes only what the viewFile arm turned on.
-// The phone returns to the Chat tab unconditionally — the relay only ever fires from a chat click,
-// and the tab switch happened whatever the desktop pane state was — while the silent handoff keeps
-// the Feed tab, where the browser the user is heading into lives.
-if(m.romp==='viewFileClosed'){
-  try{window.__rompMobileTab&&window.__rompMobileTab('chat');}catch(e){}
-  if(window.__rompFeedWasOffView){window.__rompFeedWasOffView=false;
-    if(feedHere())try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}}
 // the browser owns the restore: browseClosed alone puts a brought-forward feed back the way it was. With the
 // Feed pane off in this browser there is nothing to put back (the pane is out of the toggle's set): the flag
 // is dropped and no pane moves, so a pane hidden in the gear while its browser was up cannot be re-toggled.
@@ -71711,7 +71641,11 @@ class Handler(BaseHTTPRequestHandler):
         client["caps"] = set(x for x in caps.split(",") if x)
         # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-
         # served pane does); ready from accept otherwise (a relay, a pipe, an older page: nothing to wait for).
-        client["ready"] = READY_GATE_CAP not in client["caps"]
+        # A socket dialled with reconnect=1 is ready from accept too: the shim dials that term only once its
+        # bundle's ready was acked by a caps frame and none is queued, and it re-posts no ready on the redial,
+        # so nothing else would ever lift a hold here (every pane froze after a kernel restart or a socket drop
+        # until a reload, 2026-09-15); _resolve_reconnect stamps the client on the first pusher cycle instead.
+        client["ready"] = READY_GATE_CAP not in client["caps"] or reconnect
         if active:
             client["active"] = active                  # active-tab-first streaming (the user 2026-06-24)
         if (q.get("delta") or [""])[0] == "1":
@@ -71725,12 +71659,13 @@ class Handler(BaseHTTPRequestHandler):
         # with nobody listening and lost — and the later `ready` frame was then deduped against it, leaving
         # the pane on its loader until the next board change (the 2026-09-03 review reproduced it in real
         # browsers; removing only the accept-time push left the pusher's 0.5 s cycle to lose the frame the
-        # same way). The ready handler serves the cached feed frame at once (_send_feed_now); the shim
-        # re-sends `ready` on a reconnect once the bundle has sent its own, so a reconnected socket — a new
-        # client dict, held again — resyncs the moment it can render, and a redial that completes BEFORE
-        # the bundle has loaded sends nothing: the bundle's own `ready` lifts the hold (a re-send there
-        # served the frame to a page with no listener — the 2026-09-03 review). Keepalives still flow to a
-        # held client: the shim consumes them.
+        # same way). The ready handler serves the cached feed frame at once (_send_feed_now). The shim posts
+        # its ready only until a caps frame acks it (readyAcked); a socket it dials after that declares itself
+        # with reconnect=1 and is ready from accept (above): a new client dict, served by the next pusher
+        # cycle the moment the page can render, with no ready of its own. A redial that completes BEFORE the
+        # bundle has loaded, or before its ready was acked, dials fresh (no reconnect term) and is held here
+        # until the bundle's own `ready` (a re-send there served the frame to a page with no listener, the
+        # 2026-09-03 review). Keepalives still flow to a held client: the shim consumes them.
         if reconnect:
             # The page held every session before its socket died, so the FIRST tabOrder sender to see this
             # flag skeletons the tabs it is not looking at (_resolve_reconnect); a full push for one tab on

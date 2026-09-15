@@ -93,7 +93,7 @@ import { LINK_SEL, browserTabClick, linkHref } from "./md-links";   // the link 
 import { PREVIEW_DWELL_MS, PREVIEW_GRACE_MS, HoverIntent, parsePreviewLink, previewKindOf, sliceUrl, contentFor, textOnlyContent, stripRemoteLoads, type PreviewContent } from "./file-preview";
 import { buildMatcher, linkifyTerms, type GlossaryIndex, type TermMatcher } from "./glossary-links";   // the team's coinages, linked where written (T351 stage 2)   // the file preview popover's pure half (T351)
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
-import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
+import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: here, or the Files pane (file-route.test.ts, browse-route.test.ts)
 import { pastedFilePath } from "./paste-path";
 import { insertAtCaret } from "./composer-insert";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostIsDialing, hostDownNote } from "./host-prefix";
@@ -1754,34 +1754,25 @@ document.addEventListener("click", (e) => {
 //     first cut filled the feed pane, and reading a file cost the cards). The bytes come to the
 //     browser over /file, which is the fix for the original break (the user 2026-08-08): the kernel
 //     used to run an opener on ITS machine, the wrong screen entirely from another device.
-//   • Web dashboard, cards-pane preference set (fileLinkPane: "feed" — gear.js; the user 2026-08-20,
-//     who reads the transcript while a file is up) → hand the open to the SHELL instead, which
-//     brings the feed pane forward and forwards viewFile into it; the feed's initFileView opens the
-//     viewer there, so the chat stays readable and interactive under no modal.
-//   • Web dashboard, Files-pane preference set (fileLinkPane: "pane", 2026-09-03) → the same relay,
-//     aimed at the FILES pane: the viewer as its own column, which stays up beside the chat and the
-//     feed instead of covering either (ui/webview/files.ts).
-//   • Web dashboard, Files pane OPEN (the user 2026-09-04) → the Files pane, whatever the setting says.
-//     The pane being open IS the intent — a click that opened as a modal over the chat while the
-//     pane sat there empty was the bug. The setting decides only where a link goes while the pane is
-//     CLOSED.
+//   • Web dashboard, the Files pane on screen (the one route to it since T404: no setting names a closed pane) → the
+//     open is handed to the SHELL, which brings that pane forward and forwards the click into it
+//     (kernel.py's landing shell; ui/webview/files.ts): the viewer as a column of its own, which stays
+//     up beside the chat and the feed instead of covering either.
 //
-// The route decision is fileLinkRoute (file-route.ts: pure, so the table runs for real in tests). It names
-// the TARGET, "feed", "pane", or "here" (the in-document modal), and a preference relays ONLY when a shell
-// exists to relay to (framed). Standalone /chat has no shell and no other pane, so either preference quietly
-// means "here". The gate lives at THIS end deliberately: the shell forwards whatever arrives (browseFiles'
-// contract), so a message never sent is a click that opens in place; no setting check shell-side can
-// swallow a click. A FOLDER click walks the same ladder through browseRoute (openBrowse below).
+// The route is fileLinkRoute (ui/webview/file-route.ts), pure so the table is testable: an OPEN Files
+// pane takes the click whatever the setting says (the pane being open is the intent); a closed one
+// only when the setting names it; a relay only when a shell exists to relay to (framed). Standalone
+// /chat has no shell and no other pane, so the setting quietly means "here", the in-document modal.
+// The gate lives at THIS end deliberately: the shell forwards whatever arrives, so a message never
+// sent is a click that opens in place, and no setting check shell-side can swallow a click. A FOLDER
+// click walks the same ladder through browseRoute (openBrowse below), so a listing lands where a file would.
 //
-// panesOn is the shell's pane set as the shell last told it — {romp:"panes", on:{chat,feed,files,…}},
-// where on means ON SCREEN: a desktop column toggled on, or on a phone the one tab showing (a po flag
-// left true by a desktop session must not steer a phone's links into a tab nobody is looking at).
-// Posted on every pane toggle (the shell's apply()), on a mobile tab switch or layout flip, and on this
-// iframe's load (kernel.py _LANDING_COLLAPSE_JS / _LANDING_MOBILE_JS), so a chat that boots or reloads
-// after the shell hears it too; the shell's storage/rebind re-applies re-send an unchanged set, which is
-// redundant and harmless. A cache of the owner's state refreshed by the owner's own events, never a
-// per-click guess (no reading the parent's DOM, no polling). Standalone /chat never hears one and reads
-// as all-off, which the framed gate makes moot anyway.
+// panesOn is the shell's pane set as the shell last told it: {romp:"panes", on:{chat,feed,files,...}},
+// posted on every pane toggle (its apply(), the exact event of the set changing), on this iframe's
+// load and on a phone's tab switch (kernel.py _LANDING_COLLAPSE_JS, _LANDING_MOBILE_JS), so a chat that
+// boots or reloads after the shell hears it too. A cache of the shell's state refreshed by the shell's
+// own event, never a per-click guess (no reading the parent's DOM, no polling). Standalone /chat never
+// hears one and reads as all-off, which the framed gate makes moot anyway.
 // `ev` is the click that asked (a middle-click arrives through onMiddleClick), read by openFileClick for
 // the own-tab gesture; a caller with no gesture (a programmatic open) passes none.
 // `at` (Slice 6 of plans/markdown-viewer.md, item 4): the place the link named after its path (a todo's
@@ -1794,30 +1785,21 @@ function openPath(path: string, sid?: string | null, ev?: MouseEvent | null, at:
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
     const to = sid || activeId || null;
-    const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true, panesAvail.files !== false);
-    // The gesture is read FIRST, at this end, on every route: openFileClick opens a Cmd/Ctrl- or middle-clicked
-    // PDF in the browser's own tab inside the click itself, and hands only a plain click, a tab the browser
-    // blocked, or a non-PDF to the route's opener: the viewer in this document for "here", the shell relay
-    // below for a pane. The tab cannot open at the relay's far end: window.open passes a popup blocker only
-    // inside the user's gesture, and a message into another pane's iframe lands outside it. Before this the
-    // relay swallowed the modifier, so the tab was reachable only while the Files pane was closed and no
-    // File-links preference was set (review of the 2026-09-07 fold).
-    // The relay is fire-and-forget by nature: postMessage to a live parent never throws, so there is no
-    // catchable failure here and no honest in-document fallback to offer. The one real loss mode is a
-    // stale shell page from before this relay existed — it has no viewFile arm and WILL swallow the click
-    // until it reloads (a known limitation). The shell arms its pane-restore only on the feed's
-    // viewFileOpened ack, so a swallowed or lost message can never leave a stale armed flag behind either.
-    // The message names its target pane and carries the session's IDENTITY (name + colour, the tab set's
-    // own — nameOf's ladder) for the Files pane, which has no session list to resolve a title-bar chip
-    // from; the feed resolves its own and ignores it. Looked up, never invented: a sid neither list names
-    // sends null, and the receiving resolver falls to the kernel's stub. It carries no gesture: a relayed
-    // open is always the target pane's viewer.
-    const relay = route === "here" ? undefined : (p: string, s: string | null, a: At | null) => {
-      const meta = s ? (sessions.get(s) ?? tabMeta.get(s)) : undefined;
-      window.parent.postMessage({ romp: "viewFile", path: p, sid: s, pane: route,
-        identity: meta && meta.name ? { name: meta.name, color: meta.color ?? null } : null, at: a }, "*");
-    };
-    openFileClick(ev, path, to, relay, at);   // the gesture, then the viewer here or the relay to the pane
+    const route = fileLinkRoute(window.parent !== window, panesOn.files === true, panesAvail.files !== false);
+    // with its gesture, read first: a Cmd/Ctrl- or middle-click on a PDF takes the browser's own tab wherever
+    // the plain click would have landed; a plain click routed to the Files pane is handed to the shell.
+    // `at`: the place the link named after its path (Slice 6: a heading or a line, read off the span by openLinkedPath), through either route
+    openFileClick(ev, path, to, route === "pane" ? () => {
+      // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no catchable
+      // failure here and no honest in-document fallback exists. The message names its target pane and
+      // carries the session's IDENTITY (name and colour, the tab set's own, the way the viewer's resolver
+      // below names a session) for the Files pane, which has no session list to resolve a title-bar chip
+      // from. Looked up, never invented: a sid neither list names sends null, and the pane's resolver
+      // falls to the kernel's stub.
+      const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
+      window.parent.postMessage({ romp: "viewFile", path, sid: to, pane: "pane", at,
+        identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
+    } : undefined, at);
     return;
   }
   // the host's editor arm reads `line` (extension.ts openFileInEditor, 1-based); a heading or an offset has no editor
@@ -1841,46 +1823,41 @@ function onMiddleClick(a: HTMLElement, fn: (e: MouseEvent) => void): void {
 // tells the person where Browse files will land, so the two cannot disagree.
 function browseRouteNow(): BrowseRoute {
   const web = location.protocol === "http:" || location.protocol === "https:";
-  return browseRoute(web, settings.fileLinkPane, window.parent !== window, panesOn.files === true, panesAvail.files !== false);
+  return browseRoute(web, window.parent !== window, panesOn.files === true, panesAvail.files !== false);
 }
-// Surface the FILE BROWSER at `path` for the session: the statusline's folder, the System-context Directory
-// row, a tab menu's Browse files, a chat-hosted viewer's directory link. The SAME ladder as a file link,
-// with one difference: a framed chat never browses in place (the user 2026-09-06: the folder at the bottom
-// of the chat opened its listing over the transcript; it belongs in the Files pane, or over the feed). The
-// 2026-08-24 pane-local move answered a listing that opened over the FEED CARDS while the user read the
-// chat; the Files pane (2026-09-03) is the surface that complaint was asking for, and the feed route is
-// what the shell already does for a browse. The route names the target; the shell does the pane work at
-// the other end, on this click and nothing else (the folder click is the one gesture that moves a pane):
-//   "pane"   the Files pane is on screen, or the gear's File-links setting names it: the listing opens IN
-//            that pane (files.ts hosts the same browser); a closed pane comes forward and stays. A file
-//            picked from the listing opens there, pane-resident, with the viewer's back button to the listing.
-//   "feed"   the default while the pane is closed: the feed pane's browser, brought forward for the
-//            duration and put back on browseClosed (the shell's feed-lift machinery, unchanged).
-//   "here"   only UNFRAMED (standalone /chat), where neither surface exists: the browser as a modal over
-//            this document, the one place the chat's own overlay (and its CSS mirror in styles.css) shows.
-// Web-only: in VS Code the folder link keeps openFolder (asFolderLink) and the menu row is not built; the
-// webview cannot reach the kernel origin, and the editor has its own explorer.
-// A viewer up over this chat stays where it is when the listing opens in another pane: closing it bought
-// nothing there and, with unsaved edits in the viewer, cost a discard prompt for a click that never needed
-// the edits gone (review 2026-09-07). Only the in-place route closes it first ("browse" means the person
-// wants the listing now, the browser's own rule, in openFileBrowse), and a dirty-edit veto there stands the
-// click down whole. The message carries the session's identity (name + color, nameOf's ladder) for the
-// Files pane, which has no session list to name a picked file's session by (openPath's viewFile does the
-// same); the feed resolves its own and ignores it.
+// Surface the FILE BROWSER at `path` for the session: the folder shown under the chat, the system context
+// card's Directory row, a tab menu's Browse files, a chat-hosted viewer's directory link. The listing goes
+// where a file link would (the ladder above):
+//   "pane"   the Files pane is on screen (no setting names a closed one since T404): the listing opens IN
+//            that pane (files.ts hosts the same browser as a column); a closed pane comes forward and stays.
+//            The message names its target and carries the session's IDENTITY (name and colour, looked up the
+//            way openPath's viewFile looks it up, null when neither list names the sid) for the pane, which
+//            has no session list to name a picked file's session by. Fire-and-forget by nature: postMessage
+//            to a live parent never throws. A viewer up over this chat is left alone: the listing opens
+//            elsewhere, closing it would buy nothing here, and with unsaved edits it would cost a discard
+//            prompt the click never needed.
+//   "here"   the default while the pane is closed, and the only route without a shell (standalone /chat): the
+//            browser as a modal over this chat, as since 2026-08-24 (the user then: it opened over the FEED
+//            cards, the wrong pane). openFileBrowse closes a viewer up over this chat first ("browse" means
+//            the person wants the listing now, the browser's own rule), and a dirty-edit veto there stands
+//            the click down whole.
+//   "editor" VS Code: nothing here. asFolderLink gave the click openFolder instead (the editor has its own
+//            explorer, and the webview cannot reach the kernel origin).
 function openBrowse(path: string, sid?: string | null): void {
   const route = browseRouteNow();
   if (route === "editor") return;
   const to = sid || activeId || null;
   if (route === "here") { openFileBrowse(path || ".", to); return; }
   const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
-  window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,
+  window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: "pane",
     identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
 }
-// The chat hosts its own browser instance for the unframed route. A chat-hosted viewer's directory link posts
-// browseFiles to THIS window (file-view.ts); onRelay hands that ask to openBrowse, so it walks the same ladder
-// as the folder link instead of opening in place. The chat never asks the shell to lift a pane for its own
-// browser, so its close owes the shell no restore (shellRestore false: a browseClosed from here would consume
-// a flag the FEED's relay armed and hide the feed under its own browser).
+// The chat hosts its own browser instance for the "here" route, under its own contract (file-browse.ts
+// BrowseHost). A chat-hosted viewer's directory link posts browseFiles to THIS window (file-view.ts); onRelay
+// hands that ask to openBrowse, so it walks the same ladder as a folder click instead of always opening in
+// place. The chat never asks the shell to lift a pane for its browser, so its close owes the shell no restore
+// (shellRestore false: a browseClosed from here would consume a flag the FEED's relay armed and hide the feed
+// under its own browser). A pick in the chat's own listing opens the viewer here, the default.
 initFileBrowse((m) => vscodeApi?.postMessage(m), {
   shellRestore: false,
   onRelay: (m) => openBrowse(m.path, typeof m.sid === "string" ? m.sid : null),
@@ -8724,10 +8701,10 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
   // ── 4. FILES: Browse files (web only). A different kind of thing, it opens another surface; last and
   // alone behind its own divider (the 2026-08-24 ruling).
   // BROWSE FILES — at the BOTTOM behind its own divider (the user 2026-08-24: it is a different
-  // kind of thing from the switches above), wearing the standard icon + sub-description dress. It
-  // opens where the folder link opens (openBrowse's ladder: the Files pane, the feed pane, or over
-  // this chat only when unframed), and the sub-line names that place, read when the menu builds.
-  // Web-only: the VS Code webview cannot reach the kernel origin, and the editor has its own explorer.
+  // kind of thing from the switches above), wearing the standard icon + sub-description dress. It opens
+  // where a folder click opens (openBrowse's ladder: the Files pane, or over this chat), and the sub-line
+  // names that place, read when the menu builds. Web-only: the VS Code webview cannot reach the kernel
+  // origin, and the editor has its own explorer.
   if (location.protocol === "http:" || location.protocol === "https:") {
     menu.appendChild(el("div", "ctx-sep"));
     const browse = el("div", "ctx-item ctx-item-toggle");
@@ -8736,7 +8713,7 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     const l = el("span", "ctx-item-label"); l.textContent = "Browse files"; bodyEl.appendChild(l);
     const where = browseRouteNow();
     const sb = el("span", "ctx-item-sub");
-    sb.textContent = "the session's working tree, " + (where === "pane" ? "in the Files pane" : where === "feed" ? "in the feed pane" : "in a viewer over this chat");
+    sb.textContent = "the session's working tree, " + (where === "pane" ? "in the Files pane" : "in a viewer over this chat");
     bodyEl.appendChild(sb);
     browse.appendChild(bodyEl);
     browse.addEventListener("click", (ev) => {
@@ -19048,17 +19025,6 @@ function requestFullSession(id: string, why: NeedFullWhy): void {
   // its own goodbye traffic — the kernel keeps listing + talking about it for a push or two after the ✕
   // (the same reason renderTabs skips closingTabs ids on both passes).
   if (isProvisionalId(id) || closingTabs.has(id)) return;
-  // A remote session's re-ask can only be answered by its OWNING kernel (needFull pops that kernel's
-  // per-client echat/dedup latch — routeOutbound sends it there by the id's host prefix). A DETACHED host
-  // (closeRemote is tearing its tabs down with synthesized `closed` frames, and its ids may briefly ride
-  // stale tabMeta) or a DOWN host can't answer, so asking would only queue dropWarn noise — suppress, the
-  // same way closingTabs suppresses. The reattach opens a fresh remote socket whose connect push re-sends
-  // every session in full anyway, which is the heal this ask would have requested.
-  const h = hostOf(id);
-  if (h) {
-    const fed = (window as any).__rompFed;
-    if (!fed || typeof fed.hosts !== "function" || fed.hosts().indexOf(h) < 0 || hostIsDown(id)) return;
-  }
   awaitingFull.add(id);
   vscodeApi?.postMessage({ type: "needFull", id, why });
   pendingFullWhy.set(id, why);   // the reason, for upsert's merge-or-replace decision when the answer lands (round 2, item 3)

@@ -3074,7 +3074,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   directories, the largest 2,581 files) and a runaway spend is minutes,
   not the first cycle (T401 follow-up); `nudgeGate` is the auto-nudge walk's
   planner-placement gate, derived once per (parse, store) and served while
-  both stand (`served`, `derived`, and `failed`: the derivations that raised;
+  both stand, and on this fork while `cleared.jsonl` stands too, its stat a
+  fourth term of the key since the plan units read that file live (`served`,
+  `derived`, and `failed`: the derivations that raised;
   the except leg answers NOT unplanned, so the walk skips the planner-queue
   hold and proceeds on the closer gate alone, and a non-zero `failed` means
   nudges were waved PAST the planner gate, not held; zero on a healthy box, and

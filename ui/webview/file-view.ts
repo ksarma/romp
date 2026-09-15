@@ -689,18 +689,6 @@ function dropMediaUrl(): void {
     mediaUrlLive = null;
   }
 }
-// Set when the open viewer arrived via the SHELL's viewFile relay (the chat's cards-pane preference,
-// render.ts openPath → kernel.py's landing shell): that relay may have brought a toggled-off feed
-// pane forward, and only the viewer knows when it closes — so a relay-opened close announces itself
-// (viewFileClosed) and the shell restores the pane, the browser's browseClosed contract. In-document
-// opens never announce: the browser overlay owns its own restore, and a chat-hosted viewer moved no
-// pane. openFileView leaves the flag alone on purpose — a same-viewer replace (the conflict Reload)
-// must not eat the restore, and the relay-opened modal covers the browser's rows, so no in-document
-// open can slip in underneath before the close consumes it. The announce has ONE suppress — the
-// browser handoff in closeFileView: with the browser overlay in this document, "close the viewer"
-// means the browser is taking the pane over, and the shell moves the restore onto the browser's
-// flag rather than hearing a close that would hide the pane mid-open.
-let viaRelay = false;
 // ONE in-flight URL read at a time, the same shape as mediaUrlLive: the URL viewer registers its
 // AbortController here and BOTH exits (closeFileView and either replace path) abort it, so a modal
 // torn down mid-body cancels its fetch and its stream — a stale read must never keep pulling bytes
@@ -1064,22 +1052,6 @@ export function closeFileView(): void {
   runCloseHooks();                                     // the panel's poll and listeners leave with the viewer
   wrap.remove();
   document.body.classList.remove("fileview-open");
-  if (viaRelay) {
-    viaRelay = false;
-    // Ownership handoff (the pre-2026-08-15 suppress, back for the relay era): the BROWSER overlay
-    // in this document means this close is openFileBrowse surfacing the listing — the browser owns
-    // the pane now (its box is built before it closes us, exactly so this check can see it).
-    // Announcing would hand the shell a viewFileClosed at the very moment the browser opens inside
-    // the pane and hide it; staying silent lets the shell move the restore obligation onto the
-    // browser's own flag (the browseFiles transfer / browseClosed union in kernel.py's landing
-    // shell), so the pane still goes back when the browser closes. The tag still clears above: a
-    // viewer opened later from the browser's rows is the browser's, not the relay's.
-    if (document.getElementById("romp-filebrowse")) return;
-    // the shell may have brought the feed pane forward for this view — tell it the view is over;
-    // it restores only what IT turned on (__rompFeedWasOffView, kernel.py's landing shell)
-    try { if (window.parent !== window) window.parent.postMessage({ romp: "viewFileClosed" }, "*"); }
-    catch { /* no shell — then nothing was brought forward */ }
-  }
 }
 
 /** A click on a file — a path in the chat, a file-browser row — WITH its gesture. A Cmd/Ctrl- or
@@ -1102,10 +1074,8 @@ export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined,
 }
 
 /** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks.
- *  Returns whether the open actually happened: false means the dirty-edit guard kept the PREVIOUS
- *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
- *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
-*  survivor as relay-opened nor arm a restore for an open that never happened).
+ *  Returns whether the open happened: false when the dirty-edit guard kept the previous viewer, so a caller
+ *  that records the open (the Files pane's recent list) records only real ones.
  *  `opts.todoId`: the user todo the file was opened from (the Waiting-on-you pane's detail link).
  *  `opts.at`: where the open lands (At; plans/markdown-viewer.md Slice 6, item 4). `{ line }` (a `path:12` link in another
  *  file, file-view-links.ts, or after a path in a todo, path-links.ts): the code view scrolls its row into view once the
@@ -4752,15 +4722,10 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
 /** Bind the pane's WS poster and route saveFile + fileGitLink replies back to the open viewer.
  *  Called once, from the pane's boot (render.ts, feed.ts and files.ts: any document, one mechanism);
  *  every reply is reqId-guarded so one landing after a close or a replace-open touches nothing. The
- *  viewFile branch is the receiving end of the shell's relay of a chat file-link click — sent again
- *  since 2026-08-20, when the click site carries the cards-pane preference (fileLinkPane, render.ts
- *  openPath); the sid rides along so a remote session's file still resolves against the host that
- *  owns it. A REAL open answers the shell with viewFileOpened — the shell arms its pane-restore
- *  flag only on that ack, so a lost relay (or a dirty-edit veto, which opens nothing) can never
- *  leave a stale armed flag behind. That ack and viaRelay are the FEED's contract; a document with
- *  a relay contract of its own passes `onRelay` and takes the relayed message whole instead (the
- *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
- *  owes the shell no pane restore, since the pane stays up). The relayed message carries `at` since Slice 6 of
+ *  viewFile branch honors a shell's relay of a chat file-link click: the Files pane is its receiver
+ *  (kernel.py's landing shell forwards the click there with the session's identity), and a document
+ *  with a relay contract of its own passes `onRelay` and takes the relayed message whole instead of
+ *  the plain open (files.ts caches the identity for its chip and keeps its recent list). The relayed message carries `at` since Slice 6 of
  *  plans/markdown-viewer.md (a todo link's line or heading: render.ts openPath and waiting.ts openTodoPath post it,
  *  the shell's two forwarders in kernel.py copy it), and both receivers read it through readAt, since it crossed a
  *  frame boundary. `host.openFile`: this document's own opener for a link inside a shown file (the Files pane's
@@ -4782,15 +4747,8 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
     const m = e.data;
     if (!m) return;
     if (m.romp === "viewFile" && typeof m.path === "string" && m.path) {
-      if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) — not the feed's
-      // gated on the verdict: a dirty-edit veto keeps the PREVIOUS viewer, which must not be
-      // re-tagged as relay-opened (a false announce on ITS close) and earns no ack (arm-on-ack —
-      // the shell must not arm a restore for an open that never happened)
-      if (openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) })) {
-        viaRelay = true;   // this open rode the shell's relay — the close must tell the shell (closeFileView)
-        try { if (window.parent !== window) window.parent.postMessage({ romp: "viewFileOpened" }, "*"); }
-        catch { /* no shell — nothing was brought forward, nothing to arm */ }
-      }
+      if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) takes the message whole
+      openFileView(m.path, typeof m.sid === "string" ? m.sid : null, { at: readAt(m.at) });
     } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
       const h = gitHooks; gitHooks = null;
       h.apply(String(m.url || ""), String(m.reason || ""));

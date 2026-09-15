@@ -74,11 +74,15 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   merged frame with `nowAt`), never on the moment a frame is handed to it: the
   merged frame is re-emitted on a view-order write, on a remote host's frame and
   on a detach, and an anchor taken then moved every age back by the quiet period.
-  The shim re-sends `ready` on a reconnect once the bundle has sent its own, so a
-  reconnecting pane resyncs at once rather than on the pusher's next cycle; a
-  redial that completes before the bundle has loaded sends nothing, and the
-  bundle's own `ready` lifts the hold. A `ready` on a socket that is already
-  ready is a re-base: the frame is served again rather than deduped.
+  The shim posts its bundle's `ready` once and re-posts it on a later open only
+  until the kernel's caps frame acknowledges it; a socket that redials after
+  that acknowledgment dials with `reconnect=1` and is ready from accept, and
+  `_resolve_reconnect` stamps it on the first pusher cycle, which the accept
+  wakes, so a reconnecting pane resyncs at once rather than on the pusher's
+  backstop; a redial that completes before the bundle has loaded dials as a
+  fresh page, and the bundle's own `ready` lifts the hold. A `ready` on a socket
+  that is already ready is a re-base: the frame is served again rather than
+  deduped.
   The kernel dedups per client. A client
   that announces `?caps=feedDelta` on its socket (the kernel-served feed,
   Outline and Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed

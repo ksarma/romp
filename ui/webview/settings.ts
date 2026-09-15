@@ -22,7 +22,6 @@ export interface RompSettings {
   showSessionBadge: boolean; // chat bottom-bar: a small badge with the session's NAME on its identity colour before Awaiting / Ready / Working (session-badge.ts). OFF by default (the maintainers via the user, 2026-09-10: the composer's placeholder already names the session; the badge is an opt-in second reading of it where the state shows).
   tabCtx: TabCtxMode;        // chat tabs: WHEN the context gauge shows beside each session name (the user 2026-08-08) — "over50" (default: only once half full, so quiet tabs stay clean), "always", or "never".
   stripGroupRows: boolean;   // chat tabs, grouped by tag: start EVERY tag group on its own row (upstream's T264 default, its row breaks in render.ts). OFF by default on the fork (the user 2026-09-08, whose strip of eleven tag groups became eleven rows): off, the groups follow one another inline and wrap as they need, the untagged trail behind its divider. Per device, like every setting here. Read by renderTabs and part of the strip's rebuild signature, so a gear flip repaints at once.
-  fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB while the Files pane is CLOSED (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked), "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up) or "pane" (the Files pane, 2026-09-03 — the viewer as its own column, which stays up). An OPEN Files pane takes every file link regardless (the user 2026-09-04: the pane being open is the intent — render.ts fileLinkRoute, fed by the shell's pane-set broadcast). Read at click time (render.ts openPath; and openBrowse for a FOLDER click, the same ladder except that a framed chat never browses in place, 2026-09-06); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
   showFilesControl: boolean;   // the Files control (the dashboard bar's toggle, the phone's tab) shows when on; off, the default since T317b (the user 2026-09-10), hides it and closes the pane (T317). A FRESH key: the T317-era gear merged its default `filesControl: true` into the object and saved it whole on any change, so that key cannot tell a chosen on from a merged-in one; it is never read and is dropped on the next save
   chatScheme: ChatScheme;    // chat TEXT scheme (the user 2026-08-24): raises body-text contrast without collapsing the tool-dimmer-than-prose hierarchy. A scheme = a text-tier variable set (styles.css body.scheme-*); "default" applies nothing — today's values exactly.
   chatTabTheme: ChatTabTheme;   // LEGACY, derived (2026-08-28): the chat TAB STRIP's appearance (T113). Now computed from `theme` on every load/save ("classic" -> classic strip, anything else -> the yatharth strip) so older panes/extension builds keep working; never set it directly.
@@ -97,7 +96,7 @@ export type ChatTabTheme = "classic" | "yatharth";
 export function chatTabTheme(v: unknown): ChatTabTheme {
   return v === "yatharth" ? "yatharth" : "classic";
 }
-// The Comments panel's filter (the filter follow-on, 2026-09-07). fileLinkPane's idiom: only the two literals are
+// The Comments panel's filter (the filter follow-on, 2026-09-07). tabCtxMode's idiom: only the two literals are
 // opt-ins; anything else a store might hold reads as "all", so a corrupt entry costs the preference, never the list.
 export type CommentsFilter = "all" | "comments" | "changes";
 export function commentsFilter(v: unknown): CommentsFilter {
@@ -113,13 +112,6 @@ export function chatScheme(v: unknown): ChatScheme {
 // When the tab strip's context gauge shows. "over50" is the default (the user 2026-08-08): a gauge
 // on every tab is clutter while nothing is filling up — it should appear only when it has news.
 export type TabCtxMode = "always" | "over50" | "never";
-// Which pane a chat file-link click opens the viewer in, on the web. tabCtxMode's normalization
-// idiom: only the literals "feed" and "pane" (the Files pane, 2026-09-03) are opt-ins — anything else
-// a store might hold reads as the default, so a corrupt entry may cost the preference, never the click.
-export type FileLinkPane = "chat" | "feed" | "pane";
-export function fileLinkPane(v: unknown): FileLinkPane {
-  return v === "feed" || v === "pane" ? v : "chat";
-}
 // The gauge shipped for a few hours as a boolean toggle (2026-08-08) — normalize a stored
 // true/false (or anything else unrecognized) into the mode enum: false was an explicit "hide"
 // → never; true was the shipped default nobody chose → the new default. loadSettings applies
@@ -131,7 +123,7 @@ export function tabCtxMode(v: unknown): TabCtxMode {
 // hand-written "why" as their line; they show the distiller's summary instead (the why demotes to a hover).
 // compact defaults ON (the user 2026-07-14): a fresh install reads the tidy transcript
 // (thinking hidden, tool runs folded); the gear opts back into the full stream.
-export const DEFAULT_SETTINGS: RompSettings = { tabsLocked: false, compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: true, showSessionBadge: false, tabCtx: "over50", stripGroupRows: false, fileLinkPane: "chat", showFilesControl: false, chatScheme: "default", chatTabTheme: "classic", theme: "classic", changesInline: true, commentsFilter: "all", denseChrome: false, figureHosts: [...FIGURE_HOSTS_DEFAULT], panes: { timeline: true, fleet: true, feed: true }, statusWidgets: { on: {}, order: [], opts: {} }, tabWidgets: { on: {}, order: [], opts: {} } };
+export const DEFAULT_SETTINGS: RompSettings = { tabsLocked: false, compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: true, showSessionBadge: false, tabCtx: "over50", stripGroupRows: false, showFilesControl: false, chatScheme: "default", chatTabTheme: "classic", theme: "classic", changesInline: true, commentsFilter: "all", denseChrome: false, figureHosts: [...FIGURE_HOSTS_DEFAULT], panes: { timeline: true, fleet: true, feed: true }, statusWidgets: { on: {}, order: [], opts: {} }, tabWidgets: { on: {}, order: [], opts: {} } };
 const KEY = "romp:settings";
 
 export function loadSettings(): RompSettings {
@@ -141,7 +133,7 @@ export function loadSettings(): RompSettings {
       const parsed = JSON.parse(raw);
       const s = { ...DEFAULT_SETTINGS, ...parsed };
       s.tabCtx = tabCtxMode(s.tabCtx);   // a store written by the boolean-era gear holds true/false
-      s.fileLinkPane = fileLinkPane(s.fileLinkPane);   // foreign values read as the default
+      delete (s as Record<string, unknown>).fileLinkPane;   // the file-links preference (removed T404: the route follows the open Files pane): never read, gone on the next save
       s.tabsLocked = s.tabsLocked === true;   // the tab lock (T395): only the literal true locks; a store from before the key reads unlocked
       s.showFilesControl = s.showFilesControl === true;   // only the literal true shows the control; anything else hides it (the default since T317b)
       delete (s as Record<string, unknown>).filesControl;   // the T317-era key (merged in by that gear's whole-object save): never read, gone on the next save

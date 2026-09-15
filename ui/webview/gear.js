@@ -162,19 +162,9 @@ var GEAR_HTML =
   '<span class=rs-sub>Adds the Files toggle to the bottom of the dashboard, and the Files tab on a phone. Off (the default) hides them and closes the Files pane if it is open; file links then open over the pane you clicked.</span>' +
   '</span></label>' +
   // FILES (the fork; plans/file-review.md, plans/markdown-viewer.md): how the files the panes show behave, the rows the fork
-  // kept when upstream re-cut the card (T400, T404): where a chat file link opens (the user 2026-08-20 and 2026-09-06), the
-  // hosts a viewed file loads pictures from, and the File comments report. A section of General after Panes: the Panes
-  // rows say which panes this browser shows, these say what the files in them do.
+  // kept when upstream re-cut the card (T400, T404): the hosts a viewed file loads pictures from, and the File comments report.
+  // A section of General after Panes: the Panes rows say which panes this browser shows, these say what the files in them do.
   "<div class='rs-sec' data-section=files>Files</div>" +
-  // where a file or folder clicked in the chat opens (render.ts openPath and openBrowse through file-route.ts):
-  // the hidden select is
-  // the value holder, selectPick below dresses it as a house menu like the other selects
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>File links open in</b>" +
-  '<span class=rs-sub>Where a file or folder clicked in the chat opens. While the Files pane is open, both open there. When it is closed, a file opens over the chat itself, in the Feed pane so the transcript stays readable while the file is up, or in the Files pane, its own column that stays open until you close the file. A folder’s listing follows the same choice, except that it never covers the chat: with the first option it opens in the Feed pane. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no other pane to use.</span>' +
-  "<select id=rs-filelink style='display:none'>" +
-  '<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
-  '</select>' +
-  '</span></div>' +
   // Figures from the web in a viewed file (plans/markdown-viewer.md decision 8, ruling 2026-09-07): the hosts whose
   // pictures and clips load when a file opens; every other host is a placeholder the person clicks. The list itself,
   // one host per line, mirrored from settings.ts figureHosts (the default list is FIGURE_HOSTS_DEFAULT below).
@@ -448,7 +438,6 @@ function initGear(post, opts) {
     csg = document.getElementById('rs-suggestcompact'),
     dd = document.getElementById('rs-defaultdir'),
     fsc = document.getElementById('rs-filesctl'),
-    fl = document.getElementById('rs-filelink'),
     fh = document.getElementById('rs-figurehosts'), fhn = document.getElementById('rs-figurehosts-note'),
     sr = document.getElementById('rs-striprows'),
     cs = document.getElementById('rs-chatscheme'),
@@ -511,7 +500,7 @@ function initGear(post, opts) {
   // Context bar read as on at 50 percent whatever the user had chosen, and a save of ANY setting wrote the empty prefs and
   // rewrote the mirror. A store with no tabWidgets derives the prefs from tabCtx at read time (widgetPrefs, the same
   // derivation settings.ts makes), and only a widget change writes the key (saveWidgets).
-  function load() { try { var o = Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, fileLinkPane: 'chat', denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); delete o.filesControl; return o; } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, fileLinkPane: 'chat', denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }; } }
+  function load() { try { var o = Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); delete o.filesControl; delete o.fileLinkPane; return o; } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', tabCtx: 'over50', showFilesControl: false, stripGroupRows: false, denseChrome: false, figureHosts: FIGURE_HOSTS_DEFAULT.slice(), collapseGaps: true, activeOnly: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
   // few hours as a boolean toggle — false was an explicit hide, true the default nobody chose.
   function tabCtxMode(v) { return (v === 'always' || v === 'never') ? v : (v === false ? 'never' : 'over50'); }
@@ -539,7 +528,6 @@ function initGear(post, opts) {
   if (sr) sr.addEventListener('change', function () { var s = load(); s.stripGroupRows = sr.checked; save(s); });
   // compact tabs and agents (off by default): render.ts applies a body class on the save, and the strip and the panel repaint through the cascade
   if (dn) dn.addEventListener('change', function () { var s = load(); s.denseChrome = dn.checked; save(s); });
-  if (fl) fl.addEventListener('change', function () { var s = load(); s.fileLinkPane = fl.value; save(s); });   // webview-local pref read at click time (render.ts openPath)
   if (fh) fh.addEventListener('change', function () { var s = load(); s.figureHosts = figureHostList(fh.value); save(s); fh.value = s.figureHosts.join('\n'); figureHostsNote(s.figureHosts); });   // read by the file viewer at every paint of a rendered markdown file (file-view.ts, figure-gate.ts); painted back so the textarea shows the host names the setting holds, and the note names what is not one
   if (fsc) fsc.addEventListener('change', function () { var s = load(); s.showFilesControl = fsc.checked; save(s); });   // the shell hears the store change (its storage listener) and hides or shows the control (T317)
   // the optional panes: the whole set is rewritten from the three boxes on every change (a missing key reads
@@ -1126,7 +1114,6 @@ function initGear(post, opts) {
   }
   selectPick(upm, 'margin-top:5px');
   selectPick(bk, 'margin-top:5px');
-  selectPick(fl, 'margin-top:5px');
   selectPick(je, 'flex:0 0 auto;width:45%');
   selectPick(ie, 'flex:0 0 auto;width:45%');
   selectPick(jc, 'flex:0 0 auto;width:45%');   // T277: the concurrency select wears the same facade as the effort picks
@@ -2066,7 +2053,7 @@ function initGear(post, opts) {
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
     try { if (window.parent !== window) window.parent.postMessage({ romp: 'logUnseenQuery' }, '*'); } catch (e) { /* no shell to ask */ }   // T290: the Open log count
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows === true; if (dn) dn.checked = s.denseChrome === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (fl) fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'; if (fh) { var fhl = figureHostList(s.figureHosts); fh.value = fhl.join('\n'); figureHostsNote(fhl); } (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; tl.checked = !!s.tabsLocked; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (sr) sr.checked = s.stripGroupRows === true; if (dn) dn.checked = s.denseChrome === true; if (fsc) fsc.checked = (s.showFilesControl === true); if (fh) { var fhl = figureHostList(s.figureHosts); fh.value = fhl.join('\n'); figureHostsNote(fhl); } (function (p) { Object.keys(pn).forEach(function (k) { if (pn[k]) pn[k].checked = p[k]; }); })(panesOf(s)); tcPaint(); paintWidgets(); csPaint(); ttPaint(); if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) { bk.value = BN.effectiveDefaultBackend(s.backend); repaintSelectPicks(); } if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); if (section) showSection(section); else clearSectionScroll(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(typeof e.data.tab === 'string' ? e.data.tab : undefined, typeof e.data.section === 'string' ? e.data.section : undefined); });   // the tab and its section ride the ask (T379: the strip's gear opens Chat at Tab widgets)
   // Escape, relayed by the web shell's Escape chain (_LANDING_ESC_JS captures keydown in this same-origin

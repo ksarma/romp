@@ -4282,7 +4282,6 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
 .file-preview-pop .fp-code { margin: 0; white-space: pre; font-size: 0.92em; }
 .file-preview-pop .fp-text { font-family: ui-monospace, monospace; word-break: break-all; }
 .file-preview-pop .rl-in { margin: auto; }
-/* a callout (md-wiki.ts calloutBlockquote): the kind as a small label at the top of its blockquote */
 /* the glossary's term links (T351 stage 2, design A): a quiet dotted underline in the text colour, no colour change;
    a retired term greys (its card says to use the plain phrase) */
 /* a glossary term is a link to the glossary's section and dresses as one (T375, the user 2026-09-12): the link colour,

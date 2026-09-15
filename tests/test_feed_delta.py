@@ -677,7 +677,8 @@ class ReadyHandshake(_DefaultPalette):
         self.assertIn("Nothing is pushed at accept", accept)
         self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
         self.assertIn('client["caps"] = set(x for x in caps.split(",") if x)', accept)
-        self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"]', accept, "the hold is decided at accept")
+        self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"] or reconnect', accept,
+                      "the hold is decided at accept, and a declared redial is ready from it (2026-09-15)")
         self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
         i = KSRC.index('if msg and msg.get("type") == "ready":')
         handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
