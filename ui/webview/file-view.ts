@@ -106,21 +106,6 @@ applyMdConfig();
 // file — per-browser view state, the same call feed-view-state.ts makes for the feed's open sections (it
 // must survive a kernel restart without a round-trip to the thing that just restarted). RENDERED is the
 // default for markdown (the user 2026-08-09); Raw stays one click away.
-/** Run a paint pass of the viewer as one timed frame of the page's performance collector (ui/webview/perf-telemetry.ts,
- *  window.__rompPerf), under the type `fileview:<why>`: `paint` for a text body painted anew, `reflow` for the panel's
- *  re-place of its cards over reflowed text (the body's width changed, or a text-size step). The Files pane gets no
- *  frames pushed to it, so these brackets and the socket's op replies (`fed:<type>`) are the only work its collector
- *  times; the cost of a large reviewed file then shows per minute in `romp perf client` under app "files", with the
- *  main-thread-free sample the collector takes after an outermost bracket, instead of a long frame nobody attributed
- *  (2026-09-09: a divider drag with a big note open blocked the main thread for about 20 s and no pane recorded it).
- *  On the chat page the same brackets count under the chat's collector. No collector (a page without one, a
- *  stand-in): the pass runs untimed, exactly as before. */
-export function perfTimed<T>(why: string, fn: () => T): T {
-  let p: any = null;
-  try { p = typeof window !== "undefined" ? (window as any).__rompPerf : null; } catch { p = null; }
-  return p && typeof p.timed === "function" ? p.timed("fileview:" + why, fn) : fn();
-}
-
 const FMT_KEY = "romp:fileviewFmt";
 // wrap is GONE from the format state (the user 2026-08-24: "there doesn't need to be a button for
 // that") — long lines always soft-wrap; a stored wrap key from the toggle era is simply ignored.
@@ -150,6 +135,24 @@ function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
   return e;
+}
+
+// ── the paint bracket ──────────────────────────────────────────────────────────────────────────────
+// Runs one pass of the viewer as a timed frame of the page's performance collector (perf-telemetry.ts; the
+// page publishes it as window.__rompPerf, federation.js on a kernel page and the pane's own bundle in VS Code),
+// under the type `fileview:<why>`: `paint`, the text body painted anew, in the file view and the URL view alike,
+// and `reflow`, the Comments panel's re-place of its cards over reflowed text (the body's width changed, or a
+// text-size step; fireRenderedKeepingSelection). The viewer receives no frames of its own, so without this the
+// cost of painting a large document (marked, the sanitizer, the highlight, the link pass) reached the pane's
+// minute row only as a long animation frame attributed to whichever callback ran it, and `romp perf client`
+// could not name the viewer.
+// Counted under the pane that hosts the viewer (app chat, feed or files), with the main-thread-free sample the
+// collector takes after an outermost bracket. No collector on the page (a page without one, a stand-in), or a
+// slot holding something of another shape: the pass runs untimed, exactly as before.
+function perfTimed<T>(why: string, fn: () => T): T {
+  let p: any = null;
+  try { p = typeof window !== "undefined" ? (window as any).__rompPerf : null; } catch { p = null; }
+  return p && typeof p.timed === "function" ? p.timed("fileview:" + why, fn) : fn();
 }
 
 // ── text size (A−, A+, Ctrl/Cmd + wheel) ───────────────────────────────────────────────────────────
@@ -3737,27 +3740,30 @@ export function openUrlView(href: string): void {
     }
     textSize.sync();                                   // shown once the document's text is up
     if (text === null) return;                         // the loader holds the body until the bytes land
-    folds.note();                                      // the folds under the view about to go
-    const kept = keptPlace();                          // the reader's place under the view about to go (the held one across a clamp)
-    // The build and the swap in one try, the local viewer's shape (plans/markdown-viewer.md Slice 7, item 1): a render that
-    // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
-    // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
-    try {
-      body.replaceChildren(fmt.md === "rendered"
-        ? mdBlock(text, { kind: "url", href: loc })    // relative refs resolve against where it LIVES
-        : codeBlock(text, parts.base, true));          // basename → langFor → markdown highlighting
-      renderFell = null;
-    } catch (err) {
-      const fell = fellMessage(err);
-      body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
-      renderFell = fell;
-    }
-    if (text === "") body.prepend(bytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment); one whose bytes were a BOM alone (the read counted them) says that instead (BOM_ONLY_FILE)
-    folds.restore();                                   // each fold as the person left it, before the seat reads the heights
-    if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
-    shownText = text;
-    seat(kept);                                        // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
-    landFragment();                                    // after the paint, and only a rendered one lands
+    perfTimed("paint", () => {                         // the whole pass, the place read to the seat, as one fileview:paint frame of the page's collector (perfTimed above)
+      if (text === null) return;                       // never taken (the guard above): a let's narrowing does not reach into the closure
+      folds.note();                                    // the folds under the view about to go
+      const kept = keptPlace();                        // the reader's place under the view about to go (the held one across a clamp)
+      // The build and the swap in one try, the local viewer's shape (plans/markdown-viewer.md Slice 7, item 1): a render that
+      // throws paints the RENDER_FELL line and the document's text as Raw rows under it, the message recorded once that fallback
+      // stands (fellMessage; the local viewer's header), and a throw from that fallback propagates over the previous paint.
+      try {
+        body.replaceChildren(fmt.md === "rendered"
+          ? mdBlock(text, { kind: "url", href: loc })  // relative refs resolve against where it LIVES
+          : codeBlock(text, parts.base, true));        // basename → langFor → markdown highlighting
+        renderFell = null;
+      } catch (err) {
+        const fell = fellMessage(err);
+        body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
+        renderFell = fell;
+      }
+      if (text === "") body.prepend(bytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment); one whose bytes were a BOM alone (the read counted them) says that instead (BOM_ONLY_FILE)
+      folds.restore();                                 // each fold as the person left it, before the seat reads the heights
+      if (fmt.md === "rendered") stampBodyWidth();     // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
+      shownText = text;
+      seat(kept);                                      // the same passage at the same height across the Rendered/Raw switch, as in the local viewer
+      landFragment();                                  // after the paint, and only a rendered one lands
+    });
   };
   renderBody();
 
@@ -3899,7 +3905,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   gutter.textContent = lines.map((_, i) => String(i + 1)).join("\n");
   gutter.setAttribute("aria-hidden", "true");
   if (hl !== null) code.innerHTML = hl; else code.textContent = text;
-  linkifyFileText(code, path);
+  linkifyFileText(code, path);   // the same pass on the gutter layout, which no caller in the viewer asks for (every call passes wrapLines)
   pre.appendChild(code);
   wrap.appendChild(gutter); wrap.appendChild(pre);
   return wrap;
@@ -4693,7 +4699,7 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
 }
 
 /** Bind the pane's WS poster and route saveFile + fileGitLink replies back to the open viewer.
- *  Called once, from the pane's boot (render.ts and feed.ts today — either document, one mechanism);
+ *  Called once, from the pane's boot (render.ts, feed.ts and files.ts: any document, one mechanism);
  *  every reply is reqId-guarded so one landing after a close or a replace-open touches nothing. The
  *  viewFile branch is the receiving end of the shell's relay of a chat file-link click — sent again
  *  since 2026-08-20, when the click site carries the cards-pane preference (fileLinkPane, render.ts

@@ -6,8 +6,9 @@ credential and merges new version ids into the families — ADD-ONLY (an id the 
 knows stays; key-scoped visibility differs per account), newest-first by each id's own version tuple,
 labels from display_name. The seed is also the LOUD fallback: an unreachable API or a credential-less
 box serves seed+cache and says so (stderr + /version.modelCatalog), never a quietly stale list. The
-refresh is EVENT-keyed — boot, plus the exact staleness event of a claude-* id reaching a set path or
-the pick store that the merged list does not know — never a timer. A durable cache
+fetch is EVENT-keyed — an install's first boot, when no cache exists, plus the exact staleness event of
+a claude-* id reaching a set path or the pick store that the merged list does not know — never a timer,
+and not a boot that has a cache (T296). A durable cache
 (STATE/model-catalog.json) means a dead API never blanks a picker.
 
 The Models API leg runs against a HERMETIC fake here (a local HTTP server; the kernel's fetch URL is
@@ -424,6 +425,82 @@ class FetchAndFallback(unittest.TestCase):
         self.assertEqual(v["source"], "api")
         self.assertEqual(v["added"], ["claude-opus-9-9"])
         self.assertIsNone(v["lastError"])
+
+
+class BootPolicy(FetchAndFallback):
+    """T296 (the user 2026-09-10): boot fetches only when no catalog cache exists. The fetch runs Claude Code's
+    apiKeyHelper, a desktop prompt on some boxes, and several converges a day each raised one nobody
+    answered; with a cache the list serves as is and the staleness event alone refreshes it."""
+
+    def _boot(self):
+        err = io.StringIO()
+        with redirect_stderr(err):
+            started = km._model_catalog_boot(_async=False)
+        return started, err.getvalue()
+
+    def test_a_boot_with_a_cache_runs_no_helper_and_serves_the_cache(self):
+        km._atomic_write(km._catalog_cache_path(), json.dumps({"fetchedAt": 1_800_000_000, "models": list(FAKE_ROWS)}))
+        started, err = self._boot()
+        self.assertFalse(started, "no fetch")
+        self.assertEqual(self._runs(), 0, "the helper never ran: no prompt on the user's box")
+        self.assertEqual(_FakeModelsAPI.seen, [], "the API was not asked")
+        self.assertEqual(km._catalog_status["source"], "cache")
+        self.assertEqual(km._catalog_status["fetchedAt"], 1_800_000_000)
+        self.assertIn("claude-opus-9-9", km._VERSION_FAMILY, "the cached list serves")
+        self.assertIn("serving the cached list (%d id(s), fetched 2027-01-15" % len(FAKE_ROWS), err)
+        self.assertIn("refreshes when a session reports a model it lacks, not at boot", err)
+        self.assertEqual(km._catalog_public_status()["source"], "cache", "/version stays honest")
+
+    def test_a_first_boot_with_no_cache_fetches(self):
+        self.assertFalse(km._catalog_cache_path().exists())
+        started, err = self._boot()
+        self.assertTrue(started)
+        self.assertEqual(self._runs(), 1, "the helper ran once, for the one fetch an install's first boot needs")
+        self.assertTrue(_FakeModelsAPI.seen)
+        self.assertEqual(km._catalog_status["source"], "api")
+        self.assertTrue(km._catalog_cache_path().exists(), "...and cached, so the next boot serves it")
+
+    def test_an_empty_or_unreadable_cache_counts_as_none(self):
+        km._catalog_cache_path().write_text("{not json")
+        started, _ = self._boot()
+        self.assertTrue(started, "an unreadable cache is no cache: fetch")
+        _reset_catalog(); _FakeModelsAPI.seen = []
+        km._atomic_write(km._catalog_cache_path(), json.dumps({"fetchedAt": 1, "models": []}))
+        started, _ = self._boot()
+        self.assertTrue(started, "a cache with no rows serves nothing: fetch")
+
+    def test_a_corrupt_fetch_time_in_the_cache_still_serves_and_says_an_unknown_time(self):
+        # T296b: an out-of-range, NaN, negative-beyond-epoch, string or null fetchedAt must not turn the served
+        # cache into a swallowed traceback under the boot's own except; the line says "an unknown time"
+        rows = json.dumps(list(FAKE_ROWS))
+        for stamp in ('"corrupt"', "1e30", "NaN", "-1e18", "null"):
+            _reset_catalog(); _FakeModelsAPI.seen = []
+            km._catalog_cache_path().write_text('{"fetchedAt": %s, "models": %s}' % (stamp, rows))
+            started, err = self._boot()
+            self.assertFalse(started, stamp)
+            self.assertEqual(self._runs(), 0, stamp)
+            self.assertIn("fetched an unknown time", err, stamp)
+            self.assertNotIn("Traceback", err, stamp)
+            self.assertEqual(km._catalog_status["source"], "cache", "the cache serves whatever its stamp says")
+
+    def test_an_unknown_id_still_refreshes_with_a_cache_present(self):
+        km._atomic_write(km._catalog_cache_path(), json.dumps({"fetchedAt": 1_800_000_000, "models": list(FAKE_ROWS)}))
+        self._boot()
+        self.assertEqual(self._runs(), 0)
+        fired = []
+        orig = km._refresh_model_catalog
+        km._refresh_model_catalog = lambda reason, _async=True: (fired.append(reason), True)[1]
+        try:
+            self.assertTrue(km._note_unknown_model("claude-opus-9-10"), "the staleness event is untouched by the boot policy")
+        finally:
+            km._refresh_model_catalog = orig
+        self.assertEqual(fired, ["unknown model id claude-opus-9-10"])
+
+    def test_the_kernel_boots_through_the_policy(self):
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn("                _model_catalog_boot()\n", src)
+        self.assertNotIn('_refresh_model_catalog("boot")\n', src.split("def _model_catalog_boot")[0] + src.split("def _model_catalog_boot")[1].split("def _note_unknown_model")[1],
+                         "no other boot-time fetch remains")
 
 
 class StalenessEvent(unittest.TestCase):

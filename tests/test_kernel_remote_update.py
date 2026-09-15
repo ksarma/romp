@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import unittest
 from romp_load import load_source
+from git_fixture import git, init_repo
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -485,10 +486,10 @@ class UpdateRemote(unittest.TestCase):
         self.assertNotIn("--refresh", apply, "does NOT rely on `romp --refresh` (needs a manager) — the stuck bug")
 
     def test_a_host_stopped_by_romp_down_is_synced_but_not_restarted(self):
-        # review find (2026-09-06): with the down-by-romp marker on the host, `romp-manager ensure`
-        # refuses (that is the marker's job), the port poll fails and the bare fallback booted an
-        # UNSUPERVISED kernel while `romp status` there kept saying down. The apply now checks the
-        # marker after the owning-manager branch and before the immediate path touches anything
+        # with the down-by-romp marker on the host, `romp-manager ensure` refuses (that is the marker's
+        # job), the port poll fails and the bare fallback would boot an UNSUPERVISED kernel while
+        # `romp status` there kept saying down. The apply checks the marker after the owning-manager
+        # branch and before the immediate path touches anything
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
         self.addCleanup(km._remotes.pop, "TESTHOST", None)
         calls = self._wire(apply_out="SYNCED:abcdef0:DOWN")
@@ -500,8 +501,7 @@ class UpdateRemote(unittest.TestCase):
         self.assertIn("romp up on it starts the new code", detail, "the way to start it is named for the user")
         self.assertNotIn("restartExpected", km._remotes["TESTHOST"], "no restart is coming: the gap is not expected")
         apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
-        # $K trails every outcome after the guarded cleanup (upstream #1025, folded 2026-09-08): a REFKEPT on
-        # a downed host would otherwise be dropped
+        # $K trails every outcome after the guarded cleanup: a REFKEPT on a downed host is not dropped
         marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi'
         self.assertIn(marker, apply)
         self.assertLess(apply.index('restart-all >>'), apply.index(marker),
@@ -513,14 +513,12 @@ class UpdateRemote(unittest.TestCase):
         self.assertLess(apply.index(marker), apply.index('nohup "$R/bin/romp-serve"'), "no bare kernel")
 
     def test_a_romp_down_host_gets_no_audit_row_unless_a_manager_owns_its_kernel(self):
-        # the audit row's two sites (fold review, 2026-09-07): upstream writes it before the owner check so the
-        # far kernel's drift check sees it during the manager status call; the fork's `romp down` marker branch
-        # exits with no restart, and a row there named a restart nobody made (before T269 it parked a quiet
-        # restart to the kernel `romp up` starts later). So: no marker, the row precedes the owner check
-        # (upstream's timing); a marker, the row is written only once a manager is found owning the kernel,
-        # right before its restart. One writer function, so the ledger still has one helper writer and one
-        # immediate-fallback writer. The row is T269's immediate request (no when=quiet), so the helper is
-        # `arow` (the 2026-09-09 fold; it was `qrow` while it wrote a quiet row).
+        # the audit row's two sites: with no marker the row is written before the owning-manager check, so the
+        # far kernel's drift check sees it during the manager status call; with a marker the branch
+        # exits with no restart, and a row there would name a restart nobody made, so the row is
+        # written only once a manager is found owning the kernel, right before its restart. One
+        # writer function, so the ledger still has one helper writer and one immediate-fallback
+        # writer. The row is an immediate request (no when=quiet).
         calls = self._wire(apply_out="SYNCED:abcdef0:DOWN")
         km._update_remote("TESTHOST")
         apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
@@ -529,13 +527,13 @@ class UpdateRemote(unittest.TestCase):
         self.assertIn('arow() { python3 -c', apply, "the audit row is one function, called per site")
         self.assertLess(apply.index("arow() {"), apply.index(gate))
         self.assertLess(apply.index(gate), apply.index("OWNED=0; if command -v node"),
-                        "a live host: the row is on disk before the owner check runs")
+                        "a live host: the row is on disk before the owning-manager check runs")
         self.assertLess(apply.index('if [ "$OWNED" = 1 ]'), apply.index(owned_row))
         self.assertLess(apply.index(owned_row), apply.index('restart-all >>'),
                         "a manager beside a marker: the row lands before the restart it attributes")
         self.assertEqual(apply.count("restart-audit.jsonl"), 3, "one helper writer, the REFUSED branch's refusal writer, one immediate-fallback writer")
         self.assertEqual(apply.count("arow;"), 2)
-        self.assertNotIn("'when':'quiet'", apply, "T269: the p2p row is an immediate request at both sites")
+        self.assertNotIn("'when':'quiet'", apply, "the p2p row is an immediate request at both sites")
 
     def test_a_same_build_restart_of_a_romp_down_host_says_not_restarting(self):
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
@@ -610,12 +608,15 @@ class ApplyHonesty(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, True)
         self.repo = os.path.join(self.home, "romp")
         env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1", HOME=self.home)
+        # every git here rides the shared runner (T299): `git commit` spawns a detached `git maintenance run
+        # --auto` that can still be writing into .git while the temp dir is removed (the CI flake "Directory
+        # not empty: '.git'", tests/test_restart_classifier.py, 2026-09-10); the runner forbids that work on
+        # every invocation, and init_repo writes the same keys into the repo the apply's own git runs against
         def g(*a, **kw):
-            return subprocess.run(["git", "-C", self.repo] + list(a), capture_output=True, text=True,
-                                  env=env, check=True, **kw).stdout.strip()
+            return git(self.repo, *a, env=env, **kw).stdout.strip()
         self.g = g
         os.makedirs(self.repo)
-        subprocess.run(["git", "init", "-q", "-b", "main", self.repo], check=True, env=env)
+        init_repo(self.repo, "-q", "-b", "main", env=env)
         self.f = os.path.join(self.repo, "f")
         def commit(text, msg):
             with open(self.f, "w") as fh:
@@ -665,8 +666,7 @@ class ApplyHonesty(unittest.TestCase):
         return ok, detail, calls
 
     def _scratch(self):
-        r = subprocess.run(["git", "-C", self.repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + km._P2P_REF],
-                           capture_output=True, text=True)
+        r = git(self.repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + km._P2P_REF, check=False)
         return r.stdout.strip()
 
     def _sibling_push_at_the_apply(self, dirty=False):
@@ -692,6 +692,11 @@ class ApplyHonesty(unittest.TestCase):
                      'exec env -i HOME="%s" PATH="%s:/usr/bin:/bin" ROMP_REPO_ROOT="%s" bash -c "$last"\n'
                      % (self.home, shim_dir, self.repo))
         return lambda: open(marker, "w").close()
+
+    def test_the_fixture_repos_forbid_background_git_work(self):
+        # the probe and the apply run git against this repo through the ssh stub, under `env -i` and the
+        # kernel's own subprocess, so the no-background keys must sit in the repo's own config (T299)
+        self.assertEqual(git(self.repo, "config", "--local", "--get", "maintenance.auto").stdout.strip(), "false")
 
     def test_an_edit_landing_after_the_probe_is_refused_and_survives(self):
         # the probe saw a clean tree; an edit lands before the apply; the apply must see it itself
@@ -1203,10 +1208,10 @@ class DriftWordingUI(unittest.TestCase):
 class ApplyScriptRuns(unittest.TestCase):
     """The apply script RUN against a sandbox host: a scratch git clone at the pushed sha, a stub romp-serve,
     the state root under ROMP_STATE_DIR, and `pkill` shadowed by a no-op first on PATH, so a fall-through
-    into the immediate path can kill nothing on the box running the tests. What the text pins above cannot
-    show: which audit rows each branch leaves on disk (fold review, 2026-09-07). The far manager is a stub
-    that lists the polled port (owning) or nothing, notes whether the p2p audit row was already on disk when its
-    status was read, and records the restart it is asked for. Synthetic host, port 1 (nothing answers)."""
+    into the immediate path can kill nothing on the machine running the tests. What the text pins above
+    cannot show: which audit rows each branch leaves on disk. The far manager is a stub that lists the
+    polled port (owning) or nothing, notes whether the p2p audit row was already on disk when its status
+    was read, and records the restart it is asked for. Synthetic host, port 1 (nothing answers)."""
     PORT = 1
 
     def setUp(self):
@@ -1224,8 +1229,8 @@ class ApplyScriptRuns(unittest.TestCase):
         self.sha = self._git("rev-parse", "--short", "HEAD").strip()
         self.full = self._git("rev-parse", "HEAD").strip()      # what the kernel's rev-parse fake answers (see _script)
         # the stubs below live INSIDE the checkout: excluded, so the apply's own dirtiness re-check (`git status
-        # --porcelain`, upstream #1025: an untracked file is a dirty tree and answers DIRTYNOW) reads it clean,
-        # as a real host's bin/ is. Untracked and ignored, so `reset --hard` leaves them in place
+        # --porcelain`: an untracked file is a dirty tree and answers DIRTYNOW) reads it clean, as a real host's
+        # bin/ is. Untracked and ignored, so `reset --hard` leaves them in place
         os.makedirs(os.path.join(self.host, ".git", "info"), exist_ok=True)
         with open(os.path.join(self.host, ".git", "info", "exclude"), "a") as fh:
             fh.write("/bin/\n")
@@ -1268,9 +1273,8 @@ class ApplyScriptRuns(unittest.TestCase):
                 return _R()
             if argv[0] == "git" and "rev-parse" in argv:
                 # the sandbox's own full HEAD: the apply's WANT is the local head the push sent, and its
-                # first gate (upstream #1025, folded 2026-09-08) refuses with REFMISMATCH when the scratch
-                # ref on the host holds anything else. The discover fake's HEAD below stays a different
-                # sha, so the host is not "already up to date"
+                # first gate refuses with REFMISMATCH when the scratch ref on the host holds anything else.
+                # The discover fake's HEAD below stays a different sha, so the host is not "already up to date"
                 return _R(out=self.full)
             cmd = argv[-1]
             if "for d in" in cmd:
@@ -1307,25 +1311,25 @@ class ApplyScriptRuns(unittest.TestCase):
         self.assertEqual(self._rows(), [], "no row for a restart nobody made")
         self.assertEqual(self._git("rev-parse", "--short", "HEAD").strip(), self.sha, "the code was synced")
 
-    @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
-    def test_a_live_host_has_the_audit_row_on_disk_when_the_owner_check_runs(self):
+    @unittest.skipUnless(shutil.which("node"), "the owning-manager check needs node on PATH")
+    def test_a_live_host_has_the_audit_row_on_disk_when_the_owning_manager_check_runs(self):
         self._manager(owns=True)
         out, err = self._apply()
         self.assertEqual(out, "SYNCED:%s:MANAGED" % self.sha, err)
-        self.assertEqual(self._rows(), [("p2p-update", None)], "T269: an immediate request, no when=quiet")
+        self.assertEqual(self._rows(), [("p2p-update", None)], "an immediate request, no when=quiet")
         self.assertEqual(self._calls(), ["row-on-disk", "restart-all"],
-                         "upstream's timing: the row precedes the status call, and the restart goes through the manager at once")
+                         "the row precedes the status call, and the restart goes through the manager at once")
 
-    @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
+    @unittest.skipUnless(shutil.which("node"), "the owning-manager check needs node on PATH")
     def test_a_manager_owning_the_kernel_beside_a_marker_gets_one_attributed_immediate_restart(self):
         self._marker()
         self._manager(owns=True)
         out, err = self._apply()
         self.assertEqual(out, "SYNCED:%s:MANAGED" % self.sha, err)
-        self.assertEqual(self._rows(), [("p2p-update", None)], "exactly one row, written once the owner was found")
+        self.assertEqual(self._rows(), [("p2p-update", None)], "exactly one row, written once the owning manager was found")
         self.assertEqual(self._calls(), ["restart-all"], "no row on disk yet at the status read")
 
-    @unittest.skipUnless(shutil.which("node"), "the owner check needs node on PATH")
+    @unittest.skipUnless(shutil.which("node"), "the owning-manager check needs node on PATH")
     def test_a_marker_beside_a_manager_owning_nothing_leaves_no_row_and_restarts_nothing(self):
         self._marker()
         self._manager(owns=False)

@@ -810,6 +810,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                  "killed": sb.CRASH_RESUME_NUDGE_KILLED}
         for name, text in forms.items():
             with self.subTest(form=name):
+                # every mechanics notice ends in its one-line gist marker (the trailing comment the client folds into
+                # the head); the prose under test is what stands between the leading markers and that tail
+                text = re.sub(r"<!-- romp-gist: [^>]+ -->$", "", text.rstrip())
                 prose = text[text.index("[romp]"):]
                 self.assertNotIn("<!--", prose, "markers lead, prose follows")
                 body = prose.split("]", 1)[1].lower()

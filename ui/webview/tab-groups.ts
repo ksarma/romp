@@ -624,14 +624,14 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  stands in for; a pinned member's own tab is on screen and is not counted. When EVERY member is pinned
  *  the fold hides nothing, and a "0" beside two visible tabs read as a broken number (the 2026-09-06
  *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
- *  truthful either way — the section IS folded, and the click opens it. A click also shows the section
- *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so, except while the
- *  pane already shows the section (`shown`): then the click's clause names the fold alone, or the way
- *  back to the transcript when the open section also holds the tab being read (`back`). `holdsActive`
- *  — the section holds the tab being read — is a phrase in the words, not a different action: the
- *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
+ *  truthful either way — the section IS folded, and the click opens it. */
 export interface HeadWords { count: string; title: string; label: string }
 
+// The click's clause: a click also shows the section in the pane (the section at a glance, tab-snapshot.ts),
+// open or folded, so every title says so, except while the pane already shows the section (`shown`): then the
+// clause names the fold alone, or the way back to the transcript when the open section also holds the tab
+// being read (`back`). `holdsActive`, the section holds the tab being read, is a phrase in the words, not a
+// different action: the section folds like any other, and folded, its header is the tab's stand-in.
 export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean, back = false, shown = false): HeadWords {
   const n = (k: number) => `${k} session${k === 1 ? "" : "s"}`;
   const reading = holdsActive ? "; holds the tab you are reading" : "";
@@ -660,9 +660,8 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     return { count: compactCount(total, hidden), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
              title: `${name} — ${n(total)}${spelled}${reading}; ${click}; drag to reorder the groups` };
   }
-  // folded and `shown`: the header's click just folded the section and put its sessions in the pane (render.ts
-  // toggle-group sets snapView on a fold too), so the click opens it and the title says that alone (round 4 of the
-  // tabhide review: "see its sessions at a glance" described what the pane was already showing)
+  // folded and `shown`: the header's click just folded the section and put its sessions in the pane, so the
+  // click opens it and the title says that alone
   const open = shown ? "click to open this group" : "click to open and see its sessions at a glance";
   if (hidden === 0) {
     const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
@@ -758,17 +757,17 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   return { items, folded, sectioned };
 }
 
-/** The section a tab is homed in, from a rendered plan's items: the header whose ids include it, or
- *  null (a flat strip, or an id the plan does not know). */
+/** The section a tab is homed in, from a rendered plan's items: the first header whose ids include it,
+ *  or null (a flat strip, or an id the plan does not know). */
 export function homeSectionOf(items: readonly StripItem[], id: string): TabSection | null {
   for (const it of items) if ("head" in it && it.head.ids.includes(id)) return it.head;
   return null;
 }
 
-/** Where ←/→ land when the active tab is folded away: the header holding it is its stand-in, so the
- *  step starts THERE — `dir` +1 the first tab rendered after that header, −1 the last one before it,
- *  wrapping round the strip. Folded ids are not items, so the walk sees only tabs on screen. Null when
- *  no header holds the id or no tab is on screen at all. */
+/** Where the arrows land when the active tab is folded away: the header holding it is its stand-in, so
+ *  the step starts THERE. `dir` +1 is the first tab rendered after that header, -1 the last one before
+ *  it, wrapping round the strip. Folded ids are not items, so the walk sees only tabs on screen. Null
+ *  when no header holds the id or no tab is on screen at all. */
 export function neighborOfFolded(items: readonly StripItem[], id: string, dir: 1 | -1): string | null {
   const at = items.findIndex((it) => "head" in it && it.head.ids.includes(id));
   if (at < 0) return null;

@@ -511,17 +511,18 @@ const MAX_INTERP_AHEAD = 150;  // seconds the edge may glide past the last data.
                                // the kernel's 60 s repost of an unchanged frame (a quiet board sends nothing
                                // sooner, since 2026-09-04 the skeleton dedups too), so a healthy kernel never
                                // stalls the edge; a dead one is announced by the socket, not by this cap
-// A REBUILD advances the live edge in whole-pixel steps: when the last build left the tick no plot group to
-// translate (a glyph rides the live edge; see _tickLive), the loop looks once the edge could have moved this far at
-// the current zoom (_liveWaitMs, 100-2000 ms between looks) and rebuilds then. Before the pacing it was 0.15 px on
-// every animation frame: a full rebuild about twice a second at a one-hour window, on the main thread every pane
-// shares, which is what a chat tab click waited behind (measured 2026-09-04). With a plot group to translate, a
-// look is one transform write (_tickTranslate) and the loop runs on animation frames under the finer TICK_MIN_PX
-// guard below: the glide is a pacing choice, not a rebuild cost.
+// Two guards pace the live edge (see _tickLive). LIVE_MIN_PX paces the look that must REBUILD: a build that left
+// the tick no plot group to translate (a glyph rides the live edge) looks again once the edge could have moved a
+// whole pixel at the current zoom (_liveWaitMs, 100-2000 ms between looks) and redraws then. Before the pacing it
+// was 0.15 px on every animation frame: a full rebuild about twice a second at a one-hour window, on the main
+// thread every pane shares, which is what a chat tab click waited behind (measured 2026-09-04).
 const LIVE_MIN_PX = 1;
-// A TRANSLATE (the tick's usual frame, _tickTranslate: one transform write on the plot group the build left) is
-// written once the edge would move at least this many px; below it the frame is a no-op — small so the glide
-// stays smooth at high zoom (effectively native rAF), but >0 so a near-static (zoomed-out) edge idles.
+// TICK_MIN_PX paces the TRANSLATE (_tickTranslate: one transform write on the plot group the build left, plus a
+// width per live-edge rider): the loop looks again once the edge could have moved this far (_tickWaitMs), which at
+// a narrow window is the next animation frame and at a wide one a short sleep, and the look writes the frame once
+// the edge has moved at least this far. Small, so the glide is smooth at high zoom (a move every frame); above zero,
+// so a zoomed-out edge sleeps between the moves (at a one-hour window, a move about once or twice a second). A glide
+// is a smaller step and a shorter sleep, not a rebuild cost; the rebuild keeps its whole pixel.
 const TICK_MIN_PX = 0.15;
 function perfNow() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 function interpNow(baseSec, baseMs, nowMs, live, maxAheadSec) {
@@ -1242,7 +1243,7 @@ class TimelinePanel {
     this._viewsMenu = null;      // the Show-dropdown element, when open
     this._viewsDialog = null;    // the sessions/group dialog backdrop, when open
     this._tagColorPop = null;    // the tag colour popover a dialog row's dot opens, when open
-    this._tagColorAnchor = null; // …and the dot it hangs on, re-pointed when a repaint replaces the node
+    this._tagColorAnchor = null; // and the dot it hangs on, re-pointed when a repaint replaces the node
     this._tagColorFocus = null;  // the row whose dot takes focus at the next repaint (after a pick)
     this._viewsDialogKey = null; // its Escape hook {doc, fn}, removed on every close path
     this._palette = [];          // group color choices (the kernel ships its palette on the payload)
@@ -1448,7 +1449,9 @@ class TimelinePanel {
     // Obsidian leaf, where the tab never changed state). One catch-up draw per return, never one per frame.
     // Both are events; no timer polls for visibility. The observer is optional (Obsidian / a bare host may
     // lack it) — see _hiddenForPaint for what the hold keys on without it.
-    this._paneIntersecting = null;   // the observer's last word (null: it has not spoken yet); one input of the shim's word (_publishPaneHidden)
+    // The same two events also publish this pane's hidden word for the kernel's pane shim (_publishPaneHidden),
+    // before the release runs.
+    this._paneIntersecting = null;   // the observer's last word (null: it has not spoken yet); one input of the pane's hidden word (_publishPaneHidden)
     this._onVis = () => { this._publishPaneHidden(); this._releasePaintHold(); };
     if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', this._onVis);
     this._io = null;
@@ -2003,10 +2006,11 @@ class TimelinePanel {
   // node (no offsetParent) so the loop doesn't spin for an invisible pane. False-negative just degrades
   // to per-poll redraw (no interpolation), never breaks.
   _isVisible() {
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+    if (this._tabHidden()) return false;
     const w = this.wrap;
     return !!(w && w.offsetParent !== null);
   }
+  _tabHidden() { return typeof document !== 'undefined' && document.visibilityState === 'hidden'; }
   // Out of sight, for the PAINT hold in update()/applyBars() (2026-09-07)? Says "hidden" only for a reason
   // whose RELEASE event is wired: the tab's visibilityState always (visibilitychange); the pane's own layout
   // (offsetParent null — a display:none iframe, a hidden Obsidian leaf) only where the IntersectionObserver
@@ -2017,26 +2021,25 @@ class TimelinePanel {
     if (this._io) return !this._isVisible();
     return typeof document !== 'undefined' && document.visibilityState === 'hidden';
   }
-  // The paint hold's release (2026-09-07): the tab came back or the pane came into view. Repaint the held
-  // frames as ONE catch-up — exactly what hideTip / _release do for their holds — and re-arm the live tick,
-  // which _tickLive stopped while hidden. Still hidden by the OTHER criterion (tab visible, pane display:none,
-  // or the reverse) → that criterion's own event releases later. A shown tip or a pressed pointer keeps its
-  // own hold and its own release repaints; the tick re-arm is safe under both (it self-gates).
-  // The shim's word (the 2026-09-08 fold's round-2 ruling; ui/webview/paint-gate.ts publishPaneHidden is the panes'
-  // copy of this): the kernel's pane shim gates its stale banner on its zero-viewport probe OR a published
-  // window.__rompPaneHidden of true, and in Chromium the probe misses a pane hidden after a first show (the iframe
-  // keeps its size). Published on the hold's own events (visibilitychange, the observer's callback), never on a timer;
-  // and NOT until the observer has spoken (round 3): a page loaded in a background tab gets no observer callback
-  // before the tab's first rendering step after its return, so the return's visibilitychange would publish the
-  // visible verdict for a display:none pane one step early, and the shim would prefer it over its probe, which
-  // reads innerWidth 0 and is right. While _paneIntersecting is null (unspoken, or no observer) the probe decides.
+  // The pane's hidden word for the kernel's pane shim, which gates its stale banner on paneHidden(): a pane the
+  // user cannot see never raises it. The shim's own witness is the zero-viewport probe, which in Chromium misses a
+  // pane hidden after a first show (a display:none iframe keeps the size of its last show there), so every pane
+  // publishes what its own two measures say (document hidden OR the observer's last word) as
+  // window.__rompPaneHidden, and the shim says hidden when either its probe or a word of true says so
+  // (ui/webview/paint-gate.ts publishPaneHidden states the rule; this is the same publisher for a plain-JS host).
+  // Published on the hold's own events (visibilitychange, the observer's callback), never on a timer, and not
+  // before the observer has spoken: until then the pane has measured nothing and the probe decides.
   _publishPaneHidden() {
     if (typeof window === 'undefined') return;
     if (this._paneIntersecting === null) return;
     const docHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     window.__rompPaneHidden = docHidden || this._paneIntersecting === false;
   }
-
+  // The paint hold's release (2026-09-07): the tab came back or the pane came into view. Repaint the held
+  // frames as ONE catch-up — exactly what hideTip / _release do for their holds — and re-arm the live tick,
+  // which _tickLive stopped while hidden. Still hidden by the OTHER criterion (tab visible, pane display:none,
+  // or the reverse) → that criterion's own event releases later. A shown tip or a pressed pointer keeps its
+  // own hold and its own release repaints; the tick re-arm is safe under both (it self-gates).
   _releasePaintHold() {
     if (this._hiddenForPaint()) return;
     const tipUp = this.tip && this.tip.classList && this.tip.classList.contains('show');
@@ -2057,13 +2060,14 @@ class TimelinePanel {
   // update(), so even after the loop self-stops it returns within one poll once we're live again. NOT
   // called from draw() — draw() runs inside the tick, and re-arming there would double the loop.
   // The live-follow loop: a look (a translate if the edge moved TICK_MIN_PX, a draw where a translate cannot
-  // express the frame; see _tickLive), then the next look: on the next animation frame while the build left a
-  // plot group to translate, or, when the look had to rebuild and got no handle, after a sleep sized to the edge's
-  // speed (_liveWaitMs). Restarted by update()/applyBars() (each frame re-paces it: a pending sleep computed for
-  // the old zoom or data is dropped), by gestures, and by the pointer release when a look was skipped under a
-  // held pointer. Hidden pane: the loop STOPS (its old 2 s sleep re-entered _isVisible()'s forced offsetParent
-  // layout every wake, for a pane nobody could see — 2026-09-07) and the paint hold's release
-  // (_releasePaintHold) re-arms it; not live-following: it stops until a gesture pins the edge again.
+  // express the frame; see _tickLive), then a sleep sized to the edge's speed, then the next look on an animation
+  // frame: TICK_MIN_PX's worth while the build left a plot group to translate (_tickWaitMs, within a frame at a
+  // narrow window), a whole pixel's when the look had to rebuild and got no handle (_liveWaitMs). Restarted by
+  // update()/applyBars() (each frame re-paces it: a pending sleep computed for the old zoom or data is dropped), by
+  // gestures, and by the pointer release when a look was skipped under a held pointer. Hidden pane: the loop STOPS
+  // (its old 2 s sleep re-entered _isVisible()'s forced offsetParent layout every wake, for a pane nobody could
+  // see, 2026-09-07) and the paint hold's release (_releasePaintHold) re-arms it; not live-following: it stops
+  // until a gesture pins the edge again.
   _startLiveTick() {
     if (!this._liveFollowing() || !this._isVisible()) return;
     if (this._liveRAF != null) return;                                        // a look is already imminent
@@ -2073,30 +2077,50 @@ class TimelinePanel {
   _sleep(ms) {
     this._liveTO = setTimeout(() => { this._liveTO = null; this._liveRAF = requestAnimationFrame(() => this._tickLive()); }, ms);
   }
-  // How long until the live edge has moved LIVE_MIN_PX at the current zoom — the loop sleeps exactly that
-  // long between looks that must REBUILD (the build left no plot group to translate; see _tickLive) instead of
-  // waking every animation frame: at a one-hour window over a few hundred px that is a look every several
-  // seconds, not two a second; and the sleeping loop touches no layout (the old per-frame _isVisible() read
-  // forced one — measured 2026-09-04: ~40% of the main thread on an idle four-pane dashboard, on the thread
-  // the chat pane's clicks share). A look with a plot group is a translate on the next animation frame.
+  // How long until the live edge has moved LIVE_MIN_PX at the current zoom: the loop sleeps exactly that long
+  // between looks that must REBUILD (the build left no plot group to translate; see _tickLive) instead of
+  // rebuilding on every animation frame. At a one-hour window over a few hundred px that is a rebuild every
+  // several seconds, not two a second; and the sleeping loop touches no layout (the old per-frame _isVisible()
+  // read forced one, measured 2026-09-04: ~40% of the main thread on an idle four-pane dashboard, on the thread
+  // the chat pane's clicks share). A look with a plot group is a translate, paced by _tickWaitMs.
   _liveWaitMs() {
     const g = this._geom;
     if (!g || !g.winSec || !g.plotW) return 1000;
     const pxPerSec = g.plotW / g.winSec;
     return Math.max(100, Math.min(2000, Math.round(LIVE_MIN_PX / Math.max(pxPerSec, 1e-6) * 1000)));
   }
+  // How long until the live edge has moved TICK_MIN_PX at the current zoom: the sleep between translate looks, a
+  // smaller step and a shorter sleep than the rebuild's, with nothing touched in between. Under a frame at a narrow
+  // window (a one-minute window over 1300 px: 7 ms), so the look lands on the next animation frame and the edge
+  // glides every frame; about 70 ms at ten minutes over that width; about 0.4 s at an hour. Where the edge does not
+  // move on screen the rebuild's wait applies: inside a collapsed trailing gap, and once the clock has reached the
+  // interpolation cap (MAX_INTERP_AHEAD: a kernel quiet that long has stopped the edge until the next frame, which
+  // re-anchors the clock and re-paces the loop), so a stopped edge is not looked at every frame.
+  _tickWaitMs() {
+    const g = this._geom, tp = this._tickPlot;
+    if (!g || !g.winSec || !g.plotW || (tp && tp.trailing)) return this._liveWaitMs();
+    if (this._nowBaseMs != null && perfNow() - this._nowBaseMs >= MAX_INTERP_AHEAD * 1000) return this._liveWaitMs();
+    return Math.min(2000, Math.round(TICK_MIN_PX / Math.max(g.plotW / g.winSec, 1e-6) * 1000));
+  }
   _tickLive() {
     this._liveRAF = null; this._liveTO = null;
     if (!this._liveFollowing() || !this.data) return;          // gate closed → stop; a gesture or a frame re-arms
-    if (!this._isVisible()) return;                             // hidden pane: stop; _releasePaintHold re-arms when it shows (no 2 s layout poll)
+    // Can the pane be seen? Once the wrap's IntersectionObserver has spoken, its last word (_paneIntersecting) and
+    // the tab's state answer without a layout read: a translate look can run on every animation frame, and
+    // _isVisible()'s offsetParent read forces a style recalc or a layout whenever the tree is dirty (a lane's
+    // working pulse dirties style every frame). A pane out of view stops the loop as a hidden one always did, and
+    // the observer's next word re-arms it (_releasePaintHold). Without the observer, or before its first word, the
+    // read the loop always made.
+    if (this._paneIntersecting !== null) { if (!this._paneIntersecting || this._tabHidden()) return; }
+    else if (!this._isVisible()) return;                        // hidden pane: stop; _releasePaintHold re-arms when it shows (no 2 s layout poll)
     // Click-safe: don't rebuild the SVG under a pressed pointer (a click in progress). The release event
     // (_release) restarts the loop — no polling for it. See the constructor.
     if (this._pointerHeld) { this._liveResume = true; return; }
     const g = this._geom, nowS = this._liveNow();
     // The look MOVES the view, it does not rebuild it: the last full build left a plot group and its live-edge
     // riders (draw(), `_tickPlot`), and advancing the edge is one transform write on that group plus a width write
-    // per rider — _tickTranslate, which also owns the sub-pixel guard (TICK_MIN_PX), in COMPRESSED movement (inside
-    // a collapsed trailing gap the edge does not move on screen at all, where a real-seconds guard redrew for
+    // per rider: _tickTranslate, which also owns the sub-pixel guard (TICK_MIN_PX), in COMPRESSED movement (inside a
+    // collapsed trailing gap the edge does not move on screen at all, where a real-seconds guard redrew for
     // nothing). The full draw() stays for what a translate cannot express — no build yet, a glyph riding the live
     // edge, the next gridline entering the window, a drift into the gutter, never for the clock's advance. A
     // build that left NO handle (a glyph rode the live edge) has only the full draw for a look, and that look
@@ -2108,15 +2132,14 @@ class TimelinePanel {
     if (!g || this._lastLiveNow == null) this.draw();
     else if (!tp || !tp.g || !tp.g.parentNode) { if ((nowS - this._lastLiveNow) / g.winSec * g.plotW >= LIVE_MIN_PX) this.draw(); }
     else if (!this._tickTranslate(nowS)) this.draw();
-    // The next look. With a plot group to translate: the next animation frame, a translate being cheap enough to
-    // run on every frame, and the finer guard keeps the glide smooth at high zoom (2026-09-06). With none (a glyph
-    // rides the live edge, so the next look must rebuild too): a sleep paced as a rebuild must be (_liveWaitMs,
-    // the 2026-09-04 fix) instead of rebuilding on every frame.
-    if (this._tickPlot) this._liveRAF = requestAnimationFrame(() => this._tickLive());
-    else this._sleep(this._liveWaitMs());
+    // The next look, after a sleep sized to the edge's speed. With a plot group to translate: TICK_MIN_PX's worth
+    // (_tickWaitMs; within a frame at a narrow window, so the edge glides every frame there). With none (a glyph
+    // rides the live edge, so the next look must rebuild too): a whole pixel's (_liveWaitMs), so a rebuild never
+    // runs on every frame.
+    this._sleep(this._tickPlot ? this._tickWaitMs() : this._liveWaitMs());
   }
   // Advance the live edge to `nowS` by moving the plot group (see draw()'s plot group and `_tickPlot`). Returns
-  // true when the frame is expressed — including the no-op of a sub-TICK_MIN_PX move, or no movement in
+  // true when the frame is expressed, including the no-op of a sub-TICK_MIN_PX move, or no movement in
   // compressed time (a collapsed trailing gap) — and false when only a full draw() can: no handle (the loader, or
   // a glyph riding the live edge was drawn); the clock has reached the next axis gridline (`nextTick`: nothing is
   // pre-drawn outside the window, so an entering gridline and its clock ARE a rebuild, and the build dated the
@@ -2124,8 +2147,8 @@ class TimelinePanel {
   // it every 60 s, so a quiet board would otherwise show a stale axis for up to a minute); or the drift since the
   // build has reached the gutter gap (no frame has rebuilt since — a quiet or disconnected kernel). The window
   // geometry the handlers read (_geom's cT0/t0/t1, the held right edge) follows the move, so a pan or a focus
-  // jump begun between builds starts from what is on screen, and the hover re-arms as after a rebuild: the
-  // content moved under a pointer that did not.
+  // jump begun between builds starts from what is on screen, and the hover re-arms once per whole pixel of drift,
+  // as after a rebuild: the content moved under a pointer that did not.
   _tickTranslate(nowS) {
     const tp = this._tickPlot, g = this._geom;
     if (!tp || !g || !tp.g || !tp.g.parentNode) return false;
@@ -2135,6 +2158,7 @@ class TimelinePanel {
     if (px < 0 || px >= tp.maxDrift) return false;
     this._lastLiveNow = nowS;
     if (Math.abs(px - tp.applied) < TICK_MIN_PX) return true;   // the sub-pixel guard: nothing visible to write yet
+    const prev = tp.applied;
     tp.applied = px;
     tp.g.setAttribute('transform', 'translate(' + (-px) + ' 0)');
     for (const r of tp.riders) { if (r.fn) r.fn(px); else r.el.setAttribute(r.attr, Math.max(r.min || 0, r.base + px)); }   // the build's floor applies to the grown extent, so the frame matches a full draw
@@ -2144,7 +2168,9 @@ class TimelinePanel {
     }
     g.cT0 = tp.cT0 + dc; g.t0 = g.decompress(g.cT0); g.t1 = g.decompress(g.cT0 + g.winSec);
     this._holdReal = g.t1;
-    this._rehover();
+    // The hover re-arm is a hit test (elementFromPoint, a forced layout right after the writes above): once per
+    // whole pixel of drift, the rate the paced look had, not once per frame at a narrow window.
+    if (Math.floor(px) !== Math.floor(prev)) this._rehover();
     return true;
   }
   _stopLiveTick() {
@@ -4589,17 +4615,17 @@ class TimelinePanel {
         // and when the floors together outgrow the card, the card scrolls (overflow-y:auto) instead of
         // clipping. The padding is room inside the clip for the pills' and the dots' rings (a scroll
         // container clips its descendants' outlines); the negative margins keep the layout put.
-        // THE FLOOR is measured, not a constant (review round 2, 2026-09-09: a 22px-a-row constant left 6px
+        // THE FLOOR is measured, not a constant (review find, 2026-09-09: a 22px-a-row constant left 6px
         // of blank under one tag and cut the third of three rows by 7px, the row height being the font's):
         // a table of at most three rows does not shrink at all (its natural height IS its rows: no blank,
         // no scroll), and a taller one may shrink to three rows at its first row's rendered height, set
         // once the rows are laid out (tgridFloor, at the end of build); no rows, no box and no padding. The
         // row height is kept across builds (tagRowH): a build in a document without layout reads 0 and
-        // keeps the last floor rather than dropping to none (round 3).
+        // keeps the last floor rather than dropping to none.
         // overflow-anchor:none: with scroll anchoring on, a reorder cue leaving the first partly clipped
         // row moves that row's pill 2px and the browser shifts scrollTop by 2 to hold it, which with the
         // drag's exact measurement re-admits the row, so the cue and the scroll oscillate every frame
-        // (round 3, traced in Chromium and Firefox); the cap's own scroll is unaffected.
+        // (traced in Chromium and Firefox); the cap's own scroll is unaffected.
         const rowsN = viewTagUnion(v).length;
         const tgridStyle = (floor) => 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
           + 'column-gap:14px;row-gap:4px;align-items:center;'
@@ -4631,6 +4657,9 @@ class TimelinePanel {
           a.setAttribute('title', title);
           return a;
         };
+        // the open colour popover's dot as this build drew it, when it drew one it can hang on (see the check
+        // after the loop)
+        let popDot = null;
         for (const tg of viewTagUnion(v)) {
           // a create still in flight (`pending`) is not editable and not draggable: its row wears
           // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
@@ -4664,18 +4693,18 @@ class TimelinePanel {
               pillCell.style.opacity = '0.45';
               const clearCues = () => cells.forEach((c) => { c.style.borderTop = ''; c.style.borderBottom = ''; });
               // THE CANDIDATES are the rows whose whole box, plus the 2px the cue adds, lies inside the
-              // table's visible box (the table scrolls now; review 2026-09-09, then round 2 with real
-              // pointer events: a row whose centre was inside the box but whose bottom edge was under the
-              // clip took the cue and the drop while the cue, a border on that very edge, painted under the
+              // table's visible box (the table scrolls now; review 2026-09-09, then with real pointer
+              // events: a row whose centre was inside the box but whose bottom edge was under the clip
+              // took the cue and the drop while the cue, a border on that very edge, painted under the
               // clip, invisible). The held row itself counts as a candidate while any of it shows, so
               // dragging a row cut by the edge past that edge leaves it where it is rather than ranking
               // the whole row above it and moving it AGAINST the gesture. THE CUE COMES OFF FOR THE
               // MEASUREMENT: the pill cell is the tallest of its row, so a cue on EITHER edge grows the
-              // cell 2px at the bottom and pushes every row under it 2px down (round 3, measured in both
-              // browsers; arithmetic on the cued cell alone judged a top-cued row 2px low and corrected no
-              // row under a cued row, so a stepped drag past the table's edge lost a last row with 2 to 4px
-              // of room and a top cue landed one row above the pointer). The border is cleared, the rects
-              // read, and the border put back in the same task, so nothing paints between; the table's
+              // cell 2px at the bottom and pushes every row under it 2px down (measured in both browsers;
+              // arithmetic on the cued cell alone judged a top-cued row 2px low and corrected no row under
+              // a cued row, so a stepped drag past the table's edge lost a last row with 2 to 4px of room
+              // and a top cue landed one row above the pointer). The border is cleared, the rects read,
+              // and the border put back in the same task, so nothing paints between; the table's
               // overflow-anchor:none keeps the browser from scrolling to follow the 2px the lift moves.
               // The rects are live, and the ranking re-runs with the last pointer y on the table's scroll
               // (a wheel mid-drag fires no pointermove), so the rows scrolled into view take the cue and the
@@ -4831,7 +4860,7 @@ class TimelinePanel {
               dot.addEventListener('blur', () => ring(''));
               dot.addEventListener('click', () => this._openTagColorPop(tg, dot));
               dot.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this._openTagColorPop(tg, dot); } });
-              if (open) this._tagColorAnchor = dot;   // this repaint replaced the node the popover hangs on
+              if (open) { this._tagColorAnchor = dot; popDot = dot; }   // this repaint replaced the node the popover hangs on
               if (this._tagColorFocus === unionKey(tg)) {   // a pick closed the popover: focus lands back on the dot
                 this._tagColorFocus = null;
                 setTimeout(() => { try { dot.focus(); } catch (e) {} }, 0);
@@ -4839,8 +4868,11 @@ class TimelinePanel {
             }
           }
         }
-        // a repaint that dropped the popover's row (its tag deleted from another surface) closes it
-        if (this._tagColorPop && !viewTagUnion(v).some((tg) => unionKey(tg) === this._tagColorPop._key)) this._closeTagColorPop();
+        // a repaint that drew no live dot for the popover's tag closes it: its row is gone (the tag deleted from
+        // another surface), or its dot is held now (a remote half landed with no bridge to reach it, so a pick
+        // could only be refused). Left open, the popover hung on the detached dot of the last build, whose rect
+        // is all zeros, and the re-place below read that as a place (review find, 2026-09-09)
+        if (this._tagColorPop && !popDot) this._closeTagColorPop();
         // [+ New tag]: the row under the table, at the dialog's own scale, its own flex child rather than the
         // table's last row, so it never scrolls under the table's fold (with ten tags at 800px the cap
         // held exactly the ten rows and hid it, review find 2026-09-09). While a create is in flight the
@@ -5034,13 +5066,13 @@ class TimelinePanel {
       // never squeezed while the sessions have room) and never below four rows, its floor: past it the
       // tag table and the open matrix give way, and past their floors the card scrolls (review, 2026-09-09).
       // The floor is sized under the rows there are: min(live, 4) rows at the SMALLEST rendered row height
-      // plus the gaps, set at the end of build (gridFloor). Review round 2: a fixed 96px held 74px of blank
-      // over one live session; round 3: the first row's height, times four, held 74px of blank again when
-      // that row's chips wrapped (a session in many tags at the phone shell's 351px card), so the smallest
-      // row sizes the floor: a wrapped row can make the box hold fewer whole rows, never blank. The LIVE
-      // count, not the search hits, so typing in the search box never moves the floor (on a short page the
-      // box stays put under a query; on a tall one it still shrinks to its hits, the content sizing it has
-      // always had); the rows are measured on an unfiltered build only (a query could leave the wrapped
+      // plus the gaps, set at the end of build (gridFloor). Review finds, 2026-09-09: a fixed 96px held 74px
+      // of blank over one live session; then the first row's height, times four, held 74px of blank again
+      // when that row's chips wrapped (a session in many tags at the phone shell's 351px card), so the
+      // smallest row sizes the floor: a wrapped row can make the box hold fewer whole rows, never blank. The
+      // LIVE count, not the search hits, so typing in the search box never moves the floor (on a short page
+      // the box stays put under a query; on a tall one it still shrinks to its hits, the content sizing it
+      // has always had); the rows are measured on an unfiltered build only (a query could leave the wrapped
       // row alone on screen) and the height is kept across builds, so a build under a query, or in a
       // document without layout, keeps the last measured floor.
       const liveN = ((this.data && this.data.sessions) || []).filter((s) => s.live).length;
@@ -5172,8 +5204,8 @@ class TimelinePanel {
     };
     // the card is in its FINAL document before the first build: the floors are measured off the laid-out
     // rows, and a card built in the pane's own document lays out at 90vw of the pane's viewport rather than
-    // the host's (round 3: in a narrow same-origin frame the first floors were a frame's worth of wrapped
-    // rows until the first repaint; from a hidden pane they were 0)
+    // the host's (review find, 2026-09-09: in a narrow same-origin frame the first floors were a frame's
+    // worth of wrapped rows until the first repaint; from a hidden pane they were 0)
     const h = this._menuHost({ left: 0, top: 0, bottom: 0, right: 0 });
     h.doc.body.appendChild(back);
     build();

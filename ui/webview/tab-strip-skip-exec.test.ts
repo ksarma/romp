@@ -96,11 +96,10 @@ function lift(): (hooks: Hooks) => Api {
     let order = [], closingTabs = new Set(), tabMeta = new Map(), sessions = new Map(), views = new Map();
     let collapsedTabIds = new Set(), draggedGroup = null, provisionalId = null, provisionalTags = [];
     let settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora" };
-    // the strip's other readers and writers on this fork, inert: the plan the section snapshot reads (lastStripItems),
-    // the section whose snapshot the pane shows (snapView, null: no snapshot open), the hover tip's owner (tabTipOwner,
-    // null: no tip up), the feed's per-session ledgers (empty: no needs-you verdict); the dragged copy (draggedEl) is
-    // declared with the drag state above, as upstream's prelude has it (2026-09-10 fold)
-    let lastStripItems = [], snapView = null, tabTipOwner = null;
+    // the strip's other readers on this fork, inert: the hover tip's owner (tabTipOwner, null: no tip up) and the feed's
+    // per-session ledgers (empty: no needs-you verdict); the section view's readers (lastStripItems, snapView) and its
+    // painter and focus probe are declared below with upstream's prelude, the dragged copy (draggedEl) with the drag state above
+    let tabTipOwner = null;
     const ledgers = new Map();
     const H = HOOKS;
     const el = (tag, cls) => new H.FakeEl(tag, cls);
@@ -110,6 +109,11 @@ function lift(): (hooks: Hooks) => Api {
     const auditTabOrder = () => {}; const onlyTag = () => H.only; const matchesOnly = (name, only) => name.includes(only);
     const tabInView = (id) => id === peekId || !H.hidden.has(id);
     const setActive = () => {}; const setTimeout = () => 0;
+    // the section-at-a-glance view's readers on the strip, inert: the plan the view reads (lastStripItems), the
+    // section the pane shows (snapView, null: no view open, so stripAftermath's follow does nothing), and the
+    // view's own painter and focus probe (never reached while snapView is null)
+    let lastStripItems = [], snapView = null;
+    const renderSnapshot = () => false; const snapshotHoldsFocus = () => false; const showActive = () => {};
     const titleWithKey = () => H.keyHint; const surfaceLens = () => H.lens; const effViews = () => null; const viewTagUnion = () => H.unions;
     const hostIsDown = (id) => H.down.has(id); const hostDownNote = (id) => H.notes[id] ?? "";
     function makePlaceholderTab(id) { const t = el("div", "tab tab-placeholder"); t.dataset.id = id; H.placeholders++; return t; }
@@ -121,11 +125,11 @@ function lift(): (hooks: Hooks) => Api {
     const tabGroups = () => readTabGroups(H.unions); const writeTabGroups = () => {};
     const phoneLayout = () => H.phone;
     const tabStateClass = H.tabStateClass, tabDotClass = H.tabDotClass, tabDotTitle = H.tabDotTitle, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;   // tabDotClass: the state-dot slot every tab carries (the tab-strip fix, 2026-09-08); tabDotTitle: what the slot says on hover
-    // fork-only calls the resolved body makes, stubbed inert: the @-mention roster refresh ahead of the strip's guards,
-    // the tab's emoji (none in these worlds), the row break between groups (only under stripGroupRows), the tip
-    // re-hover after a rebuild, and stripAftermath's section-snapshot pass (no snapshot is open: snapView stays null)
+    // calls the resolved body makes, stubbed inert: the @-mention roster refresh ahead of the strip's guards (upstream's
+    // hook, composer-mention-pane.test.ts), and the fork's: the tab's emoji (none in these worlds), the row break between
+    // groups (only under stripGroupRows, off here), the tip re-hover after a rebuild; the section view's pass is stubbed above
     const mentionRosterChanged = () => {}; const tabEmojiNode = () => null; const makeRowBreak = () => el("span", "tab-row-break");
-    const rehoverTabTip = () => {}; const snapshotHoldsFocus = () => false; const renderSnapshot = () => false; const showActive = () => {};
+    const rehoverTabTip = () => {};
     function makeGroupHead(sec, folded, active, hidden) {
       const h = el("div", "tab-group-head" + (folded ? " collapsed" : ""));
       h.dataset.group = String(sec.name);
@@ -136,6 +140,7 @@ function lift(): (hooks: Hooks) => Api {
     const flipTabs = (f) => f(); const applyCompactSweep = () => {};
     const hostNameNodes = (name) => [document.createTextNode(name)]; const fadedColor = (h) => h;
     const tabCtxGauge = () => el("span", "tab-ctx"); const pickTone = (a, b) => b ?? a;
+    const fedMissing = false;   // the page has its federation manager (render.ts fedMissing, 2026-09-10): tabs drag as before
     const showTabTip = (tab, s) => { H.tips.push(s); }; const toggleLedgerCollapsed = () => {}; const showTabMenu = () => {}; const openPicker = () => {};
     const tagMenuButton = () => el("span", "tag-btn"); const openTagMenu = () => {}; const postLens = () => {}; const vscodeApi = null;
     const syncTagFilter = () => { H.tagSyncs++; }; const paintTabRowLines = () => { H.rowPaints++; }; const ensureTabRowObserver = () => {};
@@ -304,6 +309,39 @@ test("the paint wears the shared state → class rule (tab-state.ts), and the si
   assert.equal(H.bar.wipes, 2);
   const tab2 = H.bar.tabs().find((t) => t.dataset.id === "a")!;
   assert.ok(tab2.has("tab-retrying") && !tab2.has("tab-blocked"), "a transient API error auto-retries: amber");
+});
+
+test("the dot slot explains its state on hover: a visible dot carries the feed's phrase for that state, the hidden slot says nothing", () => {
+  // the phrases are the feed's (feed.ts DOT_TIP), read from its source so the two surfaces cannot drift apart
+  const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
+  const at = FEED.indexOf("const DOT_TIP");
+  const tip: Record<string, string> = Object.fromEntries([...FEED.slice(at, FEED.indexOf("};", at)).matchAll(/^\s*(work|await|unknown): "([^"]+)",/gm)].map((m) => [m[1], m[2]]));
+  assert.deepEqual(Object.keys(tip).sort(), ["await", "unknown", "work"]);
+  const sep = /^working(\s\S\s)/.exec(tip.work)![1];   // the feed's separator: the opening phrase (no feed twin) keeps the feed's shape
+  const { H, api, sessions } = world();
+  api.renderTabs();
+  // the dot is found BY CLASS: the label, the context gauge and the close button follow it, so once the paint is
+  // done it is not the tab's last child (it is at the moment applyTabStatus writes the title)
+  const dot = (id: string): FakeEl => {
+    const d = H.bar.tabs().find((t) => t.dataset.id === id)!.children.filter((c) => c.has("tab-dot"));
+    assert.equal(d.length, 1, id + ": one dot slot");
+    return d[0];
+  };
+  assert.ok(!dot("b").has("none"), "working: a visible dot");
+  assert.equal(dot("b").title, tip.work, "the working dot speaks the feed's working phrase");
+  assert.ok(dot("a").has("none"), "ready: the hidden slot");
+  assert.equal(dot("a").title, "", "the hidden slot says nothing");
+  const a = sessions.get("a");
+  a.status = { state: "awaitingBg" }; api.renderTabs();
+  assert.ok(dot("a").has("await")); assert.equal(dot("a").title, tip.await, "awaiting background work: the feed's awaiting phrase");
+  a.status = {}; api.renderTabs();
+  assert.ok(dot("a").has("unknown")); assert.equal(dot("a").title, tip.unknown, "no state: the feed's unknown phrase");
+  a.status = { state: "opening" }; api.renderTabs();
+  assert.ok(dot("a").has("opening")); assert.equal(dot("a").title, "opening" + sep + "this session is still starting up", "opening: the strip's own phrase (the feed draws no opening pip)");
+  a.status = { state: "compacting" }; api.renderTabs();
+  const tabA = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.equal(tabA.children.filter((c) => c.has("tab-dot")).length, 0, "compacting: no dot");
+  assert.ok(tabA.children.find((c) => c.has("tab-compacting-bar"))!.title.startsWith("compacting"), "the bar carries its own title");
 });
 
 test("a render held by the pressed-tab or rename guard is not lost to the skip", () => {

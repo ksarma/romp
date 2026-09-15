@@ -55,7 +55,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()       # hermetic state BEFORE the load (import-time root)
 os.environ.pop("ROMP_STATE_DIR", None)
 sb = load_source("romp_sdk_backend_streamsurvive",
-                 os.path.join(BIN, "romp_sdk_backend.py"))
+                      os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-aaaaaaaaaaa1"           # this module's own synthetic sid
 UNKNOWN_SID = "11111111-2222-3333-4444-bbbbbbbbbbb2"   # a session id the kernel never registered
@@ -1150,7 +1150,7 @@ class TheDeferredReconnectTakesTheHeldQueueWithIt(unittest.TestCase):
     def test_the_hold_keys_on_the_armed_flag_by_source(self):
         src = inspect.getsource(sb.SdkSession._amain)
         i_inputs = src.index("async def inputs():")
-        i_pop = src.index("item = self._pending.pop(0)", i_inputs)
+        i_pop = src.index("item, _meta = self._pop_for_feed_locked()", i_inputs)
         gate = src[i_inputs:i_pop]
         self.assertIn("blocked = blocked or self._reconnect\n", gate, "the armed flag is a hold in the gate")
         self.assertNotIn("_reconnect_when_idle", gate, "…and the deferred flag is not (mid-turn forwards flow)")

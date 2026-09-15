@@ -1,13 +1,20 @@
-// The "Files" pane (files.ts): the file VIEWER as its own column of the dashboard, hosting the shared
-// viewer pane-resident, with an empty state that lists the files most recently open there. No jsdom
-// harness, so the wiring is pinned at source (the waiting.test.ts idiom); the pure half — the recent
-// list and the relayed identity's validation (files-recent.ts) — runs for real.
+// The Files pane (files.ts): the file viewer as its own column of the dashboard, hosting the shared viewer
+// pane-resident, with an empty state that lists the files most recently open there. No jsdom harness, so
+// the boot wiring is pinned at source; what can run, runs: the pure half (the recent list and the relayed
+// identity's validation, files-recent.ts), the viewer's relay guard (lifted from file-view.ts, plain JS
+// inside the listener), and the pane's own open and close-edge functions (openHere, onBodyChange, lifted
+// from files.ts with esbuild at run time, the chat-exact-tail-exec.test.ts idiom) over stubs for the viewer,
+// the store and the shell. The shell's own relay arms run in tests/test_pane_state_broadcast.py and, lifted from
+// kernel.py's landing shell, in the relay case below (this fork's feed route rides beside the Files pane's). Synthetic rows: the notes-api demo world, placeholder sids, TESTHOST for a remote host.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { asIdentity, asPlace, parseRecent, rememberRecent, placeRecent, latestPlace, RECENT_MAX, type RecentFile, type RecentPlace } from "./files-recent";
 import { hostOf } from "./host-prefix";   // the viewer's placeKey reads a remote session's host through it (the lifted rule below is bound to the real one)
+
+const requireCjs = createRequire(__filename);
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
@@ -26,7 +33,42 @@ const row = (p: string, sid: string | null, name = "web", t = 1, place: RecentPl
 // a reader's place as the viewer records it (file-view.ts RememberedPlace; contract C2): a span, pixels, a view, an mtime, a time; no text
 const PLACE: RecentPlace = { start: 1200, end: 1480, top: -12.5, atTop: false, view: "rendered", mtimeNs: "1757145600000000001", scrollTop: 3312, t: 7 };
 
-test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the feed's", () => {
+// files.ts's own functions, lifted whole (an anchored function, to its closing brace at column 0) and run
+// over stubs: the viewer (openFileView answers H.openOk; this fork's open takes an options bag, ignored by the stub and records the identity it could resolve at that
+// moment), the store, the repaint, the document (which surfaces are up, by id) and the shell (window.parent).
+const ts = (code: string): string => requireCjs("esbuild").transformSync(code, { loader: "ts" }).code;
+function fnSlice(startAnchor: string): string {
+  const a = SRC.indexOf(startAnchor);
+  assert.ok(a > 0, startAnchor.slice(0, 40) + " moved; re-anchor");
+  const b = SRC.indexOf("\n}\n", a);
+  assert.ok(b > a);
+  return SRC.slice(a, b + 3);
+}
+type PaneHooks = { up: Set<string>; openOk: boolean; opens: Array<[string, string | null, unknown]>; writes: RecentFile[][]; paints: number; framed: boolean; posted: unknown[] };
+type PaneApi = { openHere: (p: string, sid: string | null, identity: unknown) => void; onBodyChange: () => void; recent: () => RecentFile[]; identities: Map<string, unknown> };
+function liftPane(over: Partial<PaneHooks> = {}): { H: PaneHooks; api: PaneApi } {
+  const H: PaneHooks = { up: new Set(), openOk: true, opens: [], writes: [], paints: 0, framed: true, posted: [], ...over };
+  const js = ts(fnSlice("function surfaceUp(): boolean {") + fnSlice("function openHere(") + fnSlice("let viewerUp = surfaceUp();\nfunction onBodyChange(): void {"));
+  const prelude = `
+    const H = HOOKS;
+    const identities = new Map();
+    let recent = [];
+    const writeStore = () => { H.writes.push(recent.slice()); };
+    const paint = () => { H.paints++; };
+    const openFileView = (p, sid) => { H.opens.push([p, sid, (sid && identities.get(sid)) || null]); return H.openOk; };
+    const document = { getElementById: (id) => (H.up.has(id) ? { id } : null) };
+    const window = {};
+    window.parent = H.framed ? { postMessage: (m) => { H.posted.push(m); } } : window;
+    const Date = { now: () => 777 };
+    const placeKey = (p, sid) => p + "\u0000" + (sid ?? "");   // one row per path and session here; the viewer's real rule is pinned in the openHere place case below
+  `;
+  const api = (new Function("HOOKS", "rememberRecent", "latestPlace", prelude + js + "return { openHere, onBodyChange, recent: () => recent, identities };") as
+    (h: PaneHooks, rr: typeof rememberRecent, lp: typeof latestPlace) => PaneApi)(H, rememberRecent, latestPlace);
+  return { H, api };
+}
+
+
+test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the default open", () => {
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
   assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);\n\}, \{/,
@@ -55,7 +97,7 @@ test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its ow
 // TS listener, so it runs as written) with the feed's arms — openFileView, viaRelay, the shell ack — stubbed.
 // With onRelay the message is taken whole and the function RETURNS before any of them; without it the feed
 // route runs exactly as before. Deleting the guard turns the first case into the second.
-test("the relay guard, executed: onRelay takes the message and short-circuits the feed's arms; no onRelay, the feed route", () => {
+test("the relay guard, executed: onRelay takes the message and short-circuits the default open", () => {
   const branch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const body = 'var viaRelay = false; (function () { if (m.romp === "viewFile"' + branch + "} })(); return viaRelay;";
   // readAt (file-view.ts): the receiver's validation of the relay's `at` (Slice 6 of plans/markdown-viewer.md); a stand-in here
@@ -103,6 +145,34 @@ test("the session chip resolves from what the relay carried, cached per sid, els
   assert.doesNotMatch(SRC, /sessionsMeta|tabMeta|sessions\.get/, "the pane has no session list of its own");
 });
 
+// executed: openHere as files.ts spells it. The identity is cached BEFORE the viewer opens (the chip's resolver
+// runs during the open, so a cache filled after it would miss on the first paint); a vetoed open (the viewer
+// kept a dirty edit, openFileView false) records nothing and repaints nothing; a real one enters Recent with
+// the identity the relay carried, else the one cached for the sid, else none, and persists.
+test("openHere, executed: the identity is cached before the open, a vetoed open records nothing, a real one enters Recent and persists", () => {
+  const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
+  const { H, api } = liftPane({ openOk: false });
+  api.openHere("/repo/notes-api/src/app.py", SID, identity);
+  assert.deepEqual(H.opens, [["/repo/notes-api/src/app.py", SID, identity]], "the viewer was asked, and could already resolve the chip");
+  assert.deepEqual(api.recent(), [], "the veto: nothing recorded");
+  assert.deepEqual(H.writes, [], "nothing persisted");
+  assert.equal(H.paints, 0, "nothing repainted");
+  H.openOk = true;
+  api.openHere("/repo/notes-api/src/app.py", SID, identity);
+  assert.deepEqual(api.recent(), [{ path: "/repo/notes-api/src/app.py", sid: SID, identity, t: 777, place: null }], "a real open enters Recent");
+  assert.deepEqual(H.writes, [api.recent()], "and persists once");
+  assert.equal(H.paints, 1, "and repaints the rows once");
+  // a recent row re-opened carries its own identity; a relay with none falls to the identity cached for the sid
+  api.openHere("/repo/notes-api/README.md", SID, null);
+  assert.deepEqual(api.recent()[0], { path: "/repo/notes-api/README.md", sid: SID, identity, t: 777, place: null }, "the cached identity");
+  assert.equal(api.recent().length, 2);
+  // no sid and no identity: a row with no chip, never an invented one
+  api.openHere("/repo/notes-api/notes.md", null, null);
+  assert.deepEqual(api.recent()[0], { path: "/repo/notes-api/notes.md", sid: null, identity: null, t: 777, place: null });
+  assert.equal(H.opens.length, 4);
+  assert.equal(H.writes.length, 3); assert.equal(H.paints, 3);
+});
+
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
   assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
@@ -138,46 +208,50 @@ test("recent files: recorded only on a REAL open, painted as re-open rows in the
 
 test("close returns to the empty state: the placeholder repaints on the viewer element's removal, never a hidden pane", () => {
   // closeFileView only removes #romp-fileview; the body's childList mutation IS the close event, and one
-  // observer covers every open/close path (relay, recent row, browser rows and back, ✕, Esc, Reload)
+  // observer covers every open/close path (relay, recent row, the browser's rows and back, the close button, Escape, Reload)
   assert.match(SRC, /new MutationObserver\(onBodyChange\)\.observe\(document\.body, \{ childList: true \}\);/);
-  assert.match(SRC, /function onBodyChange\(\): void \{\n\s*paint\(\);/, "the repaint still rides the observer");
-  // "open" is either surface: the viewer OR the browser (2026-09-06, the listing as a column), by element presence
+  assert.match(SRC, /function onBodyChange\(\): void \{\n\s*paint\(\);/, "the repaint rides the observer");
+  // "open" is either surface: the viewer OR the browser, by element presence
   assert.match(SRC, /const open = surfaceUp\(\);\n\s*empty\.hidden = open;\n\s*if \(open\) return;/);
   assert.match(SRC, /function surfaceUp\(\): boolean \{\n\s*return !!\(document\.getElementById\("romp-fileview"\) \|\| document\.getElementById\("romp-filebrowse"\)\);\n\}/);
   assert.doesNotMatch(SRC, /setInterval|setTimeout/, "event-based, no polling");
 });
 
-// The close is also told to the SHELL (the 2026-09-04 review): on a phone the viewFile relay switched tabs
-// to show this pane, and closing the file otherwise stranded the person on the Files tab's recent list
-// (the feed route resets to chat on viewFileClosed; this pane never posted anything). The shell restores
-// the tab the click came from, mobile only (kernel.py filesViewerClosed; tests/test_pane_state_broadcast.py).
-test("the viewer's close EDGE posts filesViewerClosed up to the shell — once, framed only, never on an open-over-open", () => {
-  // the edge is "nothing left up": a viewer closing back onto the listing beneath it is not a close (2026-09-06)
+// The close is also told to the SHELL: on a phone the viewFile relay switched tabs to show this pane, and
+// closing the file would otherwise strand the person on the Files tab's recent list. The shell restores the
+// tab the click came from, mobile only (kernel.py filesViewerClosed; tests/test_pane_state_broadcast.py).
+test("the viewer's close EDGE posts filesViewerClosed up to the shell: once, framed only, never on an open-over-open", () => {
   assert.match(SRC, /let viewerUp = surfaceUp\(\);/);
   assert.match(SRC, /const up = surfaceUp\(\);\n\s*if \(viewerUp && !up && window\.parent !== window\) window\.parent\.postMessage\(\{ romp: "filesViewerClosed" \}, "\*"\);\n\s*viewerUp = up;/);
   assert.equal((SRC.match(/filesViewerClosed/g) || []).length, 2, "one post site (plus its comment)");
-  // executed: the edge detector as the source spells it — a post only on up→down, framed
-  const run = (states: boolean[], framed: boolean): number => {
-    let viewerUp = states[0], posts = 0;
-    for (const up of states.slice(1)) { if (viewerUp && !up && framed) posts++; viewerUp = up; }
-    return posts;
+  // executed: onBodyChange as files.ts spells it, the observer's callback, driven by what is up in the document
+  // (the viewer's wrap, the browser's overlay, by id) between calls
+  const run = (states: string[][], framed: boolean): { posts: unknown[]; paints: number } => {
+    const { H, api } = liftPane({ framed, up: new Set(states[0]) });   // the module's initial viewerUp reads the document at boot
+    for (const up of states.slice(1)) { H.up = new Set(up); api.onBodyChange(); }
+    return { posts: H.posted, paints: H.paints };
   };
-  assert.equal(run([false, true, false], true), 1, "open then close → one notice");
-  assert.equal(run([false, true, true, false], true), 1, "the Reload replace / open-over-open (still up when the observer runs) is not a close");
-  assert.equal(run([false, true, false, true, false], true), 2, "two closes → two notices");
-  assert.equal(run([false, false], true), 0, "an unrelated body mutation with nothing open posts nothing");
-  assert.equal(run([false, true, false], false), 0, "unframed (no shell): nothing to tell");
+  const V = "romp-fileview", B = "romp-filebrowse";
+  assert.deepEqual(run([[], [V], []], true), { posts: [{ romp: "filesViewerClosed" }], paints: 2 }, "open then close: one notice, a repaint per mutation");
+  assert.deepEqual(run([[], [V], [V], []], true).posts, [{ romp: "filesViewerClosed" }], "the Reload replace / open-over-open (still up when the observer runs) is not a close");
+  assert.deepEqual(run([[], [V], [], [V], []], true).posts, [{ romp: "filesViewerClosed" }, { romp: "filesViewerClosed" }], "two closes: two notices");
+  assert.deepEqual(run([[], []], true).posts, [], "an unrelated body mutation with nothing open posts nothing");
+  assert.deepEqual(run([[V, B], [B], []], true).posts, [{ romp: "filesViewerClosed" }], "a viewer closing onto the listing beneath it is no edge; the listing's close is");
+  assert.deepEqual(run([[], [V], []], false), { posts: [], paints: 2 }, "unframed (no shell): nothing to tell, the repaint still runs");
 });
 
 test("the pane-resident variant is keyed on the page's body class and lives ONLY in the pane sheet", () => {
-  assert.match(KERNEL, /<body class=fileview-pane>/);
+  assert.match(KERNEL, /<body class=fileview-pane>/);   // the kernel serves the pane's page under it (this fork pins the served side too)
   assert.ok(CSS.includes("body.fileview-pane #romp-fileview{position:relative;inset:auto;flex:1 1 auto;min-height:0;background:none}"));
   assert.ok(CSS.includes("body.fileview-pane .fileview{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}"));
   // relative, not static: the viewer keeps its z-index, so a file opened from a browser row still paints
-  // above the browser's fixed overlay (styles.css .filebrowse) and "‹ Files" has something to go back to
+  // above the browser's fixed overlay (styles.css .filebrowse) and the back button has something to go back to
   assert.doesNotMatch(CSS, /position:static/);
   for (const sheet of ["styles.css", "feed.css"]) assert.doesNotMatch(read(sheet), /fileview-pane/, sheet + " stays a mirror");
   for (const sel of ["#files-empty{", ".fs-title{", ".fs-hint{", ".fs-recent{", ".fs-row{"]) assert.ok(CSS.includes(sel), sel);
+  // print: the pane's own screen rules (a clipped, flexed page) are undone so a file prints as a document,
+  // the way the base sheets' print block does for the modal
+  assert.match(CSS, /@media print\{html,body\{height:auto;overflow:visible;display:block/);
 });
 
 test("wired and vocabulary-clean: esbuild entries, no federation import, no fleet identifiers or prose", () => {
@@ -185,7 +259,7 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
   assert.match(ESBUILD, /"\.\.\/ui\/webview\/files-pane\.css",/);
   for (const [name, src] of [["files.ts", SRC], ["files-recent.ts", HELPERS], ["files-pane.css", CSS]] as const) {
     assert.doesNotMatch(src, /from "\.\/federation"/, name + ": importing it boots a second FederationManager");
-    assert.doesNotMatch(src, /fleet/i, name + ": no new fleet identifiers or prose (repo vocabulary rule)");
+    assert.doesNotMatch(src, /fleet/i, name + ": no fleet identifiers or prose");
   }
 });
 
@@ -193,7 +267,7 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
 // flag-algebra idiom) and run against a shimmed window/document — a `pane:"pane"` click drives the
 // Files branch and never touches the feed's flags; the same click without `pane` still takes the feed route
 test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; the feed route is untouched", () => {
-  const start = KERNEL.indexOf("if(m.romp==='browseFiles'&&m.pane==='pane'){");   // the first browse arm (2026-09-06)
+  const start = KERNEL.indexOf("if(m.romp==='viewFile'&&m.pane==='pane'){");   // the viewer's pane arm leads the files arms (#1305 as landed, 2026-09-15); the fork's feed route is its else branch
   const stop = KERNEL.indexOf("// The dashboard's one id", start);   // the comment after the listener's close (2026-09-09 fold)
   assert.ok(start >= 0 && stop > start, "arm anchors not found — re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();
@@ -209,7 +283,8 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
     const doc = {
       body: { classList: { contains: (c: string) => c === "po-feed" },   // feed on, files off
               getAttribute: (a: string) => (a === "data-tab" ? opts.tab ?? "chat" : null) },
-      getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) } } : null),
+      // a loaded page: the pane arms forward at once (a page still loading would hold the message for its load event)
+      getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) }, contentDocument: { readyState: "complete" } } : null),
     };
     const send = (m: unknown) => { armsFn(win, doc, m); return { toggles, tabs, posted, pend: win.__rompFeedWasOffViewPend, from: win.__rompFilesTabFrom }; };
     return { send, win };
@@ -323,7 +398,7 @@ test("asIdentity validates the relayed identity to the chip's shape; anything el
   assert.deepEqual(asIdentity({ name: "TESTHOST:api", color: null }), { name: "TESTHOST:api", color: null }, "a remote session's prefixed name, uncolored");
   assert.deepEqual(asIdentity({ name: "web", color: { bg: 1 } }), { name: "web", color: null }, "a malformed colour is dropped, the name kept");
   assert.equal(asIdentity({ name: "" }), null);
-  assert.equal(asIdentity({ color: { bg: "#123456", fg: "#fff" } }), null, "no name, no chip — never invented");
+  assert.equal(asIdentity({ color: { bg: "#123456", fg: "#fff" } }), null, "no name, no chip: never invented");
   assert.equal(asIdentity(null), null);
   assert.equal(asIdentity("web"), null);
 });

@@ -1620,7 +1620,7 @@ class DeliveryKeyedStamp(_StoreSandbox):
         self.assertTrue(handled)
         ops = km._pending_ops.get(SID) or []
         self.assertTrue(ops and ops[0][0] == "send", "the answer parked (compaction)")
-        self.assertEqual(ops[0][3], tid, "the parked op carries the todo id for the drain stamp")
+        self.assertEqual(km._op_todo(ops[0]), tid, "the parked op carries the todo id for the drain stamp (its fifth slot)")
         self.assertNotIn("resolved", km._user_todos()[SID][0], "no stamp at park time")
         return tid, ops
 
@@ -1754,7 +1754,7 @@ class RecallRidesTheEntry(_StoreSandbox):
         tid = km._add_user_todo(SID, "Need the staging port")
         body = km._user_todo_answer_body("Need the staging port", "8443.")
         self.assertTrue(km._resolve_user_todo(SID, tid, "dismissed"))
-        km._deliver_send_batch(be, SID, [("send", body, None, tid)])
+        km._deliver_send_batch(be, SID, [("send", body, None, None, tid)])
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed",
                          "the drain's stamp attempt must not overwrite the dismiss")
         err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
@@ -1768,7 +1768,7 @@ class RecallRidesTheEntry(_StoreSandbox):
         be = _FakeBackend()
         tid = km._add_user_todo(SID, "Need the auth-scheme decision")
         body = km._user_todo_answer_body("Need the auth-scheme decision", "Cookie.")
-        km._deliver_send_batch(be, SID, [("send", body, None, tid)])
+        km._deliver_send_batch(be, SID, [("send", body, None, None, tid)])
         self.assertEqual(getattr(be.queue[0], "todo", ""), tid,
                          "the drained entry carries the todo id end to end")
 
@@ -2178,7 +2178,7 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         tid2 = km._add_user_todo(SID, "Need the staging port")
         b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
         b2 = km._user_todo_answer_body("Need the staging port", "8443.")
-        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1), ("send", b2, None, tid2)])
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, None, tid1), ("send", b2, None, None, tid2)])
         self.assertEqual([r["resolved"]["kind"] for r in self._rows()], ["answered", "answered"],
                          "the drain stamped both at the truthy merged send")
         gate.set()                                   # NOW the clear-guard refuses the paste
@@ -2451,7 +2451,7 @@ class TmuxPendingPasteMarks(_TmuxPasteHarness):
         tid2 = km._add_user_todo(SID, "Need the staging port")
         b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
         b2 = km._user_todo_answer_body("Need the staging port", "8443.")
-        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1), ("send", b2, None, tid2)])
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, None, tid1), ("send", b2, None, None, tid2)])
         merged = b1 + "\n\n" + b2
         self.assertEqual(self._marks(), [(tid1, merged), (tid2, merged)],
                          "both marks persisted before the truthy merged send, on the merged text")
@@ -2666,8 +2666,8 @@ class TmuxStampStandDown(_TmuxPasteHarness):
         b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
         b2 = km._user_todo_answer_body("Need the staging port", "8443.")
         with contextlib.redirect_stderr(io.StringIO()):
-            km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1),
-                                                  ("send", b2, None, tid2)])
+            km._deliver_send_batch(self.be, SID, [("send", b1, None, None, tid1),
+                                                  ("send", b2, None, None, tid2)])
         self.assertTrue(all("resolved" not in r for r in self._rows()),
                         "every late stamp stood down — both asks still wait on the user")
         self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
@@ -2737,7 +2737,7 @@ class SeamOrderPins(_TmuxPasteHarness):
         tid2 = km._add_user_todo(SID, "Need the staging port")
         b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
         b2 = km._user_todo_answer_body("Need the staging port", "8443.")
-        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1), ("send", b2, None, tid2)])
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, None, tid1), ("send", b2, None, None, tid2)])
         gate.set()                                   # stamps are in; NOW the clear-guard refuses
         self.assertTrue(self._await(lambda: self._marks() == []))
         self.assertEqual(calls, [("ruled", tid1), ("ruled", tid2), ("unmark", (tid1, tid2))],
@@ -2774,7 +2774,7 @@ class TmuxBatchDuplicateAnswers(_TmuxPasteHarness):
     def _dup_run(self):
         tid = km._add_user_todo(SID, self.ASK)
         body = km._user_todo_answer_body(self.ASK, "8443.")
-        return tid, body, [("send", body, None, tid), ("send", body, None, tid)]
+        return tid, body, [("send", body, None, None, tid), ("send", body, None, None, tid)]
 
     def test_a_refusal_that_outruns_a_duplicate_answer_batch_never_stamps_answered(self):
         # finding A (probe ordering 1): the clear-guard refuses on the paste thread while both
@@ -2838,8 +2838,8 @@ class TmuxBatchDuplicateAnswers(_TmuxPasteHarness):
         tid = km._add_user_todo(SID, self.ASK)
         b1 = km._user_todo_answer_body(self.ASK, "8443.")
         b2 = km._user_todo_answer_body(self.ASK, "8444 actually — checked twice.")
-        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid),
-                                              ("send", b2, None, tid)])
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, None, tid),
+                                              ("send", b2, None, None, tid)])
         merged = b1 + "\n\n" + b2
         self.assertEqual(self._marks(), [(tid, merged)],
                          "one mark per unique todo, keyed on the merged text")
@@ -3523,6 +3523,7 @@ class FloorNotificationDedup(_StoreSandbox):
     def setUp(self):
         super().setUp()
         km._NOTIFY_PREV[0] = None
+        km._NOTIFY_PREV_DISK[0] = None                       # the persisted snapshot's load latch: this world's own file
         getattr(km, "_NOTIFY_UT_FIRED", [{}])[0].clear()
         patches = [
             mock.patch.object(km, "_notify_card_effective", lambda cards, iid, sid: True),
@@ -3534,6 +3535,7 @@ class FloorNotificationDedup(_StoreSandbox):
 
     def tearDown(self):
         km._NOTIFY_PREV[0] = None
+        km._NOTIFY_PREV_DISK[0] = None
         getattr(km, "_NOTIFY_UT_FIRED", [{}])[0].clear()
         super().tearDown()
 
@@ -3567,13 +3569,17 @@ class FloorNotificationDedup(_StoreSandbox):
         self.assertEqual(len(out), 1, "a todo id joining the floored set IS news")
 
     def test_the_dedup_is_scoped_to_the_floor(self):
-        # a permission stop that re-enters after an answer is a NEW block — unchanged contract
-        # (test_notify_bells.py::test_reblocking_after_an_answer_notifies_again is the master pin)
+        # a non-todo card follows the notification snapshot's own rule, not the floor's set diff: a permission
+        # stop is announced once per (card, column) unless the user acted on the card since, or the other
+        # column was announced since (the persisted snapshot; test_notify_bells.py's re-blocking pin is the
+        # master for the answer-then-re-block case, which journals the user's act). A dip to working with
+        # nothing from the user in between is not news for it, where the floored card above re-arms on a
+        # new todo id alone.
         km._feed_notifications(self._card(floored=False))
         self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1)
         km._feed_notifications(self._card(floored=False))
-        self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1,
-                         "non-todo cards keep the column-diff contract exactly as before")
+        self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 0,
+                         "the same card under the same column, no user act since: announced once")
 
     def test_a_restart_baseline_seeds_the_latch_from_the_floored_world(self):
         # round-2 verification (repro test_A): the latch is in-memory and the baseline build
@@ -3665,7 +3671,7 @@ class FloorNotificationDedup(_StoreSandbox):
         # the loss seam's unlatch runs THREADED beside the build's read-modify-write; every
         # writer holds _NOTIFY_UT_LOCK, or a stale fire could overwrite a concurrent unlatch
         # (a lost update that re-arms or re-silences the wrong sid)
-        for fn in (km._feed_notifications, km._notify_ut_unlatch):
+        for fn in (km._feed_notifications_diff, km._notify_ut_unlatch):   # the diff holds the build's read-modify-write
             self.assertIn("with _NOTIFY_UT_LOCK", inspect.getsource(fn),
                           "%s must hold the latch lock around its read-modify-write" % fn.__name__)
 

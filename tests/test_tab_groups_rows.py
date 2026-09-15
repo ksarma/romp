@@ -34,6 +34,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -43,6 +44,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+sys.path.insert(0, HERE)
+import test_ship_reship as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes: an
+#                                   imported TestCase would be collected here a second time)
 
 # name → (sid, tags) ; the web tag is wide enough to wrap at a 640px viewport; "archived" folds by default;
 # web-search carries TWO tags and appears under both (T264b: tags are equivalent, no home tag)
@@ -215,10 +219,7 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         Path(cls.state, "timeline-views.json").write_text(json.dumps({"tags": tags, "tagOrder": [t[1] for t in TAGS]}))
         cls.port = _free_port()
         cls.token = "testtok-tabrows"
-        env = dict(os.environ, XDG_STATE_HOME=os.path.join(cls.lab, "xdg"), CLAUDE_CONFIG_DIR=claude,
-                   ROMP_MANAGER_PORT="1", ROMP_KERNEL_NO_OPEN="1", ROMP_SERVE_TOKEN=cls.token,
-                   ROMP_KERNEL_PORT=str(cls.port), ROMP_DIST_DIR=dist, ROMP_MODEL_CATALOG="off")
-        env.pop("ROMP_STATE_DIR", None)
+        env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
@@ -478,6 +479,30 @@ class ServedGroupsOnOwnLines(unittest.TestCase):
         self.assertEqual(d["innerWidth"], 640)
         self._check_dense_flip(z, d, "dense flip at 640px")
         self._openers_share_rows(d, "dense flip at 640px")
+
+    def test_with_the_setting_off_the_strip_flows_inline_no_breaks_and_the_trail_behind_its_divider(self):
+        # the gear's "One tag group per row in the tab strip" turned off (written to the settings store before the
+        # page loads): the strip emits no row break, a group's header is followed by its tabs with nothing between,
+        # and the untagged trail stands behind a visible 13px divider
+        o = self._drive(DRIVER, "inline", rows=False)["open"]
+        self.assertEqual(o["breaks"], 0, "no row break with the setting off: %r" % [i["cls"] for i in o["items"]])
+        self.assertEqual(len(o["seps"]), 1, "one trail boundary: %r" % o["seps"])
+        self.assertEqual(round(o["seps"][0]["w"]), 13, "the divider is a 13px box: %r" % o["seps"])
+        self.assertGreater(o["seps"][0]["h"], 0, "…and visible: %r" % o["seps"])
+        secs = self._sections(o["items"])
+        self.assertEqual([g for g, _h, _t in secs], ["web", "infra", "archived", None], "three groups in tag order, then the trail: %r" % secs)
+        by_name = {n: sid for (n, sid, _t) in SESSIONS}
+        want = {"web": ["web-frontend", "web-backend", "web-gateway", "web-search", "web-billing"],
+                "infra": ["web-search", "infra-ci", "infra-deploy"], "archived": [], None: ["scratch"]}
+        for g, _h, tabs in secs:
+            # membership, not order: within a group the strip orders tabs by the user's order and recency, and
+            # _sections already proves contiguity (every tab between this header and the next belongs here)
+            self.assertCountEqual([t["id"] for t in tabs], [by_name[n] for n in want[g]], "%r: its tabs, contiguous after its header, nothing else between: %r" % (g, tabs))
+        # nothing of zero height sits in the strip besides the T134 hairlines (a break spans the row at zero height),
+        # the fork painter's keep breaks and its width sentinel (render.ts tab-row-sentinel, the ResizeObserver's
+        # target; the fork-default test above pins that it stands once): every other item is a header, a tab or the divider
+        zero = [i for i in o["items"] if i["h"] == 0 and not ({"tab-row-line", "tab-keep-break", "tab-row-sentinel"} & set(i["cls"].split()))]
+        self.assertEqual(zero, [], "no zero-height item (a break) with the setting off: %r" % zero)
 
 
 if __name__ == "__main__":

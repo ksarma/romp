@@ -146,19 +146,42 @@ class Collector(unittest.TestCase):
                                               "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores",
                                               "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
-        self.assertEqual(set(snap["memos"]),
-                         {"pass", "shared", "chain",
-                          "nudgeGate", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip",
-                          "lift_gate", "nudge_walk", "wire", "intr_marks", "sessions_scope",
-                          "caps", "states_overlay", "thread_reg", "bg_tops",
-                          "feed_segs", "lanes",
-                          "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
-                         "one block per memo the kernel keeps (plan D4): the three identity memos on the goal-store "
-                         "path under upstream's names (pass, shared, chain; review find, 2026-09-08), the seven "
-                         "judge- and walk-side memos of the 2026-09-09 fold (nudgeGate, cleared, courierSkip, backref, "
-                         "captions, goalArchive, plannerSkip), then the rest; `caps` is the kernel's _Caps object memo, "
-                         "renamed from `captions` when upstream's captions file-read memo took that key")
         # the three identity memos' readers land here (review find, 2026-09-08: they had no consumer)
+        self.assertEqual(set(snap["memos"]), {"pass", "shared", "chain", "nudgeGate", "cleared", "courierSkip", "backref", "captions", "goalArchive", "plannerSkip",
+                                              "bgTops", "liftGate", "intrMarks", "statesOverlay", "lanes",
+                                              "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks",   # the chat build's fixed-cost memos (2026-09-09)
+                                              "nudge_walk", "wire", "sessions_scope", "caps", "thread_reg", "feed_segs"},
+                         "one block per memo the kernel keeps: the shared names spelled as upstream reports them "
+                         "(camelCase), plus this kernel's own memos (the nudge walk, the wire caches, the discover "
+                         "scope, the _Caps object memo, the SDK registry reader, the feed's per-session memo); "
+                         "`caps` is the _Caps object memo, renamed from `captions` when the captions file-read memo "
+                         "took that key")
+        self.assertEqual(set(snap["memos"]["bgTops"]), {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
+                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
+        for k, v in snap["memos"]["bgTops"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["liftGate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
+                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
+                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
+        for k, v in snap["memos"]["liftGate"].items():
+            self.assertIsInstance(v, int, k)
+        # the two memos the interrupt tick trims to its alive set: the interrupt-marks memo and the awaiting
+        # overlay's states-log fold, each with its counters and its occupancy
+        self.assertEqual(set(snap["memos"]["intrMarks"]), {"hit", "miss", "evict", "entries"})
+        self.assertEqual(snap["memos"]["intrMarks"], km._intr_marks_memo_report())
+        self.assertEqual(set(snap["memos"]["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
+        self.assertEqual(snap["memos"]["statesOverlay"], km._states_overlay_report())
+        for blk in ("intrMarks", "statesOverlay"):
+            for k, v in snap["memos"][blk].items():
+                self.assertIsInstance(v, int, "%s.%s" % (blk, k))
+        self.assertEqual(set(snap["memos"]["lanes"]), {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
+                                                     "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"},
+                         "the timeline's per-lane segment memo: one outcome per live lane per bars build, the dead lanes beside")
+        self.assertTrue(all(type(v) is int for v in snap["memos"]["lanes"].values()))
+        self.assertEqual(set(snap["memos"]["chatMergeSets"]), {"hit", "miss", "entries"})
+        self.assertEqual(set(snap["memos"]["chatPostal"]), {"gate", "hit", "commit_new"})
+        self.assertEqual(set(snap["memos"]["chatLedger"]), {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"})
+        self.assertEqual(set(snap["memos"]["chatFoldTasks"]), {"hit", "miss", "entries"})
         self.assertEqual(set(snap["memos"]["plannerSkip"]), {"skipped", "planned", "recorded"})
         self.assertEqual(set(snap["memos"]["captions"]), {"served", "parsed"})
         self.assertEqual(set(snap["memos"]["goalArchive"]), {"served", "loaded"})
@@ -178,32 +201,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
                          "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
         self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
-        self.assertEqual(set(snap["memos"]["chat_ledger"]),
-                         {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"},
-                         "the ledger memo (round-4 P3 a, interim): counters, its three bypasses, its occupancy")
-        for k, v in snap["memos"]["chat_ledger"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_fold_tasks"]), {"hit", "miss", "entries"},
-                         "the per-turn task fold memo (round-4 P3 b, interim)")
-        for k, v in snap["memos"]["chat_fold_tasks"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_merge_sets"]), {"hit", "miss", "entries"},
-                         "the live-merge sets memo (round-4 P3 d): counters plus its occupancy")
-        for k, v in snap["memos"]["chat_merge_sets"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["chat_postal"]), {"gate", "hit", "commit_new"},
-                         "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
-        for k, v in snap["memos"]["chat_postal"].items():
-            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["pass"]),
                          {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
                          "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
         for k, v in snap["memos"]["pass"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
-                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
-                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
-        for k, v in snap["memos"]["lift_gate"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["nudge_walk"]),
                          {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"},
@@ -213,11 +214,6 @@ class Collector(unittest.TestCase):
                          "served / derived pair is memos.nudgeGate (a hit reads as served, a miss or a bypass as derived; "
                          "no stale pin exists under the parse cache's own key)")
         for k, v in snap["memos"]["nudge_walk"].items():
-            self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["bg_tops"]),
-                         {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
-                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
-        for k, v in snap["memos"]["bg_tops"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["shared"]),
                          {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",
@@ -233,10 +229,6 @@ class Collector(unittest.TestCase):
                          "fallback, the values a wire encoder shipped as str()")
         for k, v in snap["memos"]["wire"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["intr_marks"]), {"hit", "miss", "evict", "entries"},
-                         "the _interrupt_marks memo: counters plus its occupancy")
-        for k, v in snap["memos"]["intr_marks"].items():
-            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["sessions_scope"]), {"hit", "miss", "wide_hit", "wide_miss"},
                          "the pusher cycle's discover memo: _sessions reads and the wide walk")
         for k, v in snap["memos"]["sessions_scope"].items():
@@ -245,19 +237,9 @@ class Collector(unittest.TestCase):
                          "the _Caps object memo (perf round 4, item C; memos.caps since the 2026-09-09 fold, when upstream's "
                          "captions file-read memo took `captions`): reads served against read, failed reads, entries "
                          "dropped, and its occupancy")
-        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"},
-                         "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
         self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
                          "the SDK registry reader's memo: the captions memo's shape")
-        self.assertEqual(set(snap["memos"]["lanes"]),
-                         {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
-                          "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"},
-                         "the per-lane segment memo (perf round 4, item A): one outcome per LIVE lane per bars build "
-                         "(served, derived, live tail, complained, unshared store), entries dropped, its "
-                         "occupancy, the segments served against derived, and the dead lanes' outcomes since the "
-                         "2026-09-09 fold (served from the dead-lane memo, derived directly, served as a cached "
-                         "failed parse)")
-        for blk in ("caps", "captions", "states_overlay", "thread_reg", "lanes"):
+        for blk in ("caps", "captions", "thread_reg"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
         self.assertEqual(set(snap["memos"]["feed_segs"]),
@@ -272,6 +254,13 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_every_memo_key_is_named_in_the_collectors_docstring(self):
+        # the /perf reader's reference for a memo block is _PerfStats's own docstring (its `memos` rows): a memo
+        # registered without a row there is a counter nobody can read about
+        doc = km._PerfStats.__doc__
+        for key in self.st.snapshot()["memos"]:
+            self.assertTrue(re.search(r"\b%s\b" % re.escape(key), doc), "memos.%s has no docstring row" % key)
 
     def test_the_process_block_carries_the_memory_gauges(self):
         # M1-lite (perf round 4): the three-way RSS question (allocator retention, an object graph, one cache
@@ -425,10 +414,10 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 750.0)
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 100.0)
-        chat = snap["builds"]["chat"]
-        self.assertEqual({k: chat[k] for k in ("cached", "built", "ms")}, {"cached": 1, "built": 1, "ms": 40.0})
-        self.assertEqual((chat["active_built"], chat["bg_built"], sum(chat["bg_miss"].values())), (0, 0, 0),
-                         "the plain writer records no split; build_chat does (test_chat_fixed_cost_memos)")
+        # chat also carries the watched/background split and the per-component attribution (2026-09-09); the
+        # plain writer counts the build and attributes nothing
+        self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0, "active_built": 0, "bg_built": 0,
+                                                  "moved": 0, "bg_miss": {k: 0 for k in km._PerfStats.CHAT_MISS}})
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
         self.assertEqual(snap["judge"]["passes"], 2)
@@ -681,9 +670,19 @@ class GoalIoCounters(unittest.TestCase):
         # with this PR, so the doc names the memos section and sends the reader there (review find, 2026-09-08)
         doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
         self.assertIn("- `memos`:", doc)
-        for k in ("`pass`", "`shared`", "`chain`"):
+        for k in ("`pass`", "`shared`", "`chain`", "`intrMarks`", "`statesOverlay`"):
             self.assertIn(k, doc)
         self.assertIn("`memos.shared`", doc)
+
+    def test_the_reference_doc_names_the_shared_memos_by_their_camelcase_keys(self):
+        # the memo keys upstream also reports are spelled one way in GET /perf and in the doc (bgTops, liftGate,
+        # intrMarks, statesOverlay, chatMergeSets, chatPostal, chatLedger, chatFoldTasks); the older snake_case
+        # spellings of the same memos must not survive in the reference as backticked names
+        doc = Path(HERE).parent.joinpath("docs", "reference.md").read_text()
+        for k in ("bgTops", "liftGate", "intrMarks", "statesOverlay", "chatMergeSets", "chatPostal", "chatLedger", "chatFoldTasks"):
+            self.assertIn("`%s`" % k, doc, k)
+            snake = re.sub(r"[A-Z]", lambda m: "_" + m.group(0).lower(), k)   # the retired spelling of the same memo
+            self.assertNotIn("`%s`" % snake, doc, "the retired spelling of a shared memo: %s" % snake)
 
     def test_the_pushers_shared_loads_count_under_memos_shared_not_under_goals_loads(self):
         # `goals.loads` is the writer's loader alone; the pusher's read-only loads ride load_goals_shared and
@@ -865,6 +864,34 @@ class PusherRecords(unittest.TestCase):
         after = km._PERF_STATS.snapshot()["stages_ms"]
         self.assertEqual(after["push"], before["push"])
         self.assertGreaterEqual(after["jobs"], before["jobs"])
+
+    def test_a_connect_serves_the_build_it_tested_when_the_cache_is_replaced_between_its_reads(self):
+        # _cached_timeline tested the cached payload and returned it as two reads of the shared list while the
+        # pusher thread assigns _built_timeline[:] on a rebuild; a connect on the handler thread whose two reads
+        # straddled that assignment returned the replacement build, not the one its freshness test saw. One read.
+        class Swapped(list):
+            """_built_timeline with the pusher's `_built_timeline[:] = [...]` landing between two reads of the
+            payload slot: the first read answers the build, every later one the replacement."""
+            def __init__(self, entry, later):
+                super().__init__(entry)
+                self.reads, self.later = 0, later
+
+            def __getitem__(self, i):
+                if i == 1:
+                    self.reads += 1
+                    if self.reads > 1:
+                        return self.later
+                return list.__getitem__(self, i)
+        built = {"type": "timeline", "now": 1.0, "turns": {}, "judging": {}, "messages": []}
+        replacement = {"type": "timeline", "now": 2.0, "turns": {}, "judging": {}, "messages": []}
+        real = km._built_timeline
+        km._built_timeline = Swapped(["sig-a", built, 5.0, 4.0], replacement)   # the pusher replaced the build between the two reads
+        self.addCleanup(setattr, km, "_built_timeline", real)
+        km.build_timeline = lambda *a, **k: (_ for _ in ()).throw(AssertionError("a connect never rebuilds"))
+        served = km._VIEW_STATS["tlServe"]
+        self.assertIs(km._cached_timeline(int(time.time()), {}, "sig-b", connect=True), built,
+                      "the connect gets the build its freshness test saw, not the replacement that landed under it")
+        self.assertEqual(km._VIEW_STATS["tlServe"], served + 1)
 
     def test_feed_and_timeline_builds_count_cached_and_rebuilt(self):
         km.build_feed = lambda now, tmux: {"working": [], "items": []}

@@ -1,9 +1,9 @@
-// The file-path matcher the chat's transcript links are made from, as a module ANY pane can import
-// (plans/file-review.md, Slice 0). It lived inside render.ts, the chat's entry, which exports nothing —
-// so the Waiting-on-you pane, an iframe of its own, rendered a todo's detail path as plain text while the
-// chat's card for the same todo linked it. Lifted, not copied: one regex, one set of gates, one span
-// shape, so the kernel's tokenizer parity (tests/fixtures/path_token_parity.json) and the chat's link
-// behaviour have a single source.
+// The file-path matcher the chat's transcript links are made from, as a module any surface can import. It
+// lived inside render.ts, the chat's entry, which exports nothing, so the file viewer (file-view.ts), which
+// shows text with paths in it, could reach the matcher only by copying it, and two copies drift. Lifted, not
+// copied: one regex, one set of gates, one span shape, so the kernel's tokenizer parity
+// (tests/fixtures/path_token_parity.json) and the chat's link behaviour keep a single source. The viewer runs
+// the same walk with options (PathLinkOptions, below) rather than a matcher of its own.
 //
 // This module MATCHES and MARKS; it binds no action. Every link it emits is a `.file-uri-link` span
 // carrying data-act="openpath" (PATH_LINK_ACT), data-path (what a click opens — for a shortened mention
@@ -24,8 +24,8 @@ function el(tag: string, cls?: string): HTMLElement { const e = document.createE
 
 // A file:// URI that names a path on THIS machine: an empty authority (`file:///a/b`) or `localhost`
 // (`file://localhost/a/b`), then the path. `file://host/a/b` names a file on another host and is not a local
-// path: stripping its scheme used to leave `host/a/b`, a relative path the opener joined onto a session's cwd
-// (the 2026-09-07 review). Such a token is prose to the walk, and fileUriToPath returns it as written.
+// path: stripping its scheme used to leave `host/a/b`, a relative path the opener joined onto a session's cwd.
+// Such a token is prose to the walk, and fileUriToPath returns it as written.
 const FILE_URI_RE = /^file:\/\/(?:localhost)?(?=\/)/i;
 export function isFileUri(tok: string): boolean { return FILE_URI_RE.test(tok); }
 // A local file:// URI → its filesystem path: strip the scheme (and a `localhost`), percent-decode. file:///a/b → /a/b.
@@ -35,15 +35,13 @@ export function fileUriToPath(uri: string): string {
   try { p = decodeURIComponent(p); } catch { /* malformed %-escape — use verbatim */ }
   return p;
 }
-// A <span> is not a control: it has no tab stop and no activation key, so a keyboard user could reach the
-// links in the Waiting-on-you pane's row fold and its Reply modal — where the focus already sits in a
-// textarea — only by leaving for the pointer (2026-09-06). Enter or Space on a focused link clicks it;
-// the click is still the host's (a delegate on a stable root in waiting.ts, render.ts's per-span binder),
-// this only gives the keyboard the route a pointer has. Both keys, as the dashboard's other keyboard-
-// activated rows take them (render.ts); Space is prevented so it does not also scroll the pane. A Cmd/Ctrl
-// held with the key rides into the click as the same modifier, so a host that reads a modified click as
-// "in a tab of its own" (the file viewer, file-view.ts) hears it from the keyboard too; element.click()
-// carries no modifiers, so that case dispatches the click itself.
+// A <span> is not a control: it has no tab stop and no activation key, so a keyboard user could reach a path
+// link only by leaving for the pointer. Enter or Space on a focused link clicks it; the click is still the
+// host's (render.ts's per-span binder, the viewer's body listener), this only gives the keyboard the route a
+// pointer has. Both keys, as the dashboard's other keyboard-activated rows take them (render.ts); Space is
+// prevented so it does not also scroll the pane. A Cmd/Ctrl held with the key rides into the click as the
+// same modifier, so a host that reads a modified click as "in a tab of its own" (the file viewer) hears it
+// from the keyboard too; element.click() carries no modifiers, so that case dispatches the click itself.
 function pathLinkKey(e: KeyboardEvent): void {
   if (e.key !== "Enter" && e.key !== " ") return;
   e.preventDefault();
@@ -51,25 +49,23 @@ function pathLinkKey(e: KeyboardEvent): void {
   if (e.metaKey || e.ctrlKey) a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey }));
   else a.click();
 }
-// A tab stop is focusable by the pointer too, and that is the one thing the plain span it replaced was
-// not: a mouse click left focus on the body, a click on a tabindex span leaves it on the link. The chat's
-// keyboard model reads the difference — Enter from the bare transcript (nothing focused) drops the cursor
-// into the message box (render.ts, the user 2026-06-26) — and the viewer a click opens takes no focus, so
-// after Escape closed it the next Enter found the link still focused and opened the file AGAIN instead of
-// the message box; a selection dragged FROM a link met the same fate on Enter, re-opening the file rather
-// than seeding the quote, and in Chromium the focus change itself ended that drag's selection before it
-// began (2026-09-06). So a mouse press does not focus the link at all: the browser focuses the span as the
-// mousedown's default action, run after its listeners, so the press drops the tabindex attribute — a span
-// without one is not focusable — and focus lands where a click on plain text puts it, the body, as
-// before, with the click and the selection the press starts untouched. The attribute comes back on the
-// events that end the press on this span: mouseup (a click), mouseleave (a drag that goes on elsewhere),
-// contextmenu and dragstart (a menu or a native drag took the pointer, and the mouseup may never reach
-// the page). Between them the link is out of the tab order, for the length of a press; a keyboard focus
-// meets no press and stays — Enter and Space then activate, as an <a> does. Not mousedown.preventDefault(),
-// which would also keep a selection from starting on the link (the text is meant to be selectable in
-// place); not a blur on the focus event, which in Chromium clears the selection the press made (a
-// double-click's word). A span already focused (by Tab, then clicked) is blurred by the press itself,
-// since the browser fires no focus for it.
+// A tab stop is focusable by the pointer too, and that is the one thing the plain span it replaced was not:
+// a mouse click left focus on the body, a click on a tabindex span leaves it on the link. The chat's keyboard
+// model reads the difference (Enter from the bare transcript, nothing focused, drops the cursor into the
+// message box; render.ts), and the viewer a click opens takes no focus, so after Escape closed it the next
+// Enter would find the link still focused and open the file AGAIN instead of the message box; a selection
+// dragged FROM a link would meet the same fate on Enter, and in Chromium the focus change itself ends that
+// drag's selection before it begins. So a mouse press does not focus the link at all: the browser focuses the
+// span as the mousedown's default action, run after its listeners, so the press drops the tabindex attribute
+// (a span without one is not focusable) and focus lands where a click on plain text puts it, the body, with
+// the click and the selection the press starts untouched. The attribute comes back on the events that end the
+// press on this span: mouseup (a click), mouseleave (a drag that goes on elsewhere), contextmenu and dragstart
+// (a menu or a native drag took the pointer, and the mouseup may never reach the page). Between them the link
+// is out of the tab order, for the length of a press; a keyboard focus meets no press and stays, and Enter and
+// Space then activate, as an <a> does. Not mousedown.preventDefault(), which would also keep a selection from
+// starting on the link (the text is meant to be selectable in place); not a blur on the focus event, which in
+// Chromium clears the selection the press made (a double-click's word). A span already focused (by Tab, then
+// clicked) is blurred by the press itself, since the browser fires no focus for it.
 function pathLinkPress(e: MouseEvent): void {
   const a = e.currentTarget as HTMLElement;
   a.removeAttribute("tabindex");                // not focusable for the rest of this press
@@ -82,22 +78,22 @@ function pathLinkRelease(e: Event): void {
 // A VERBATIM file link, marked for whoever hosts it. `raw` is shown as written (selectable/copyable in
 // place); `open` is what gets opened. A bare file:// can't be followed by the browser from the http
 // dashboard (blocked scheme) and a VS Code editor won't render a PDF, so it is routed, never navigated.
-// `relative` bare paths are resolved against a session's cwd by whoever opens them — a relative
-// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06);
-// `sid` names that session when the text belongs to one other than the host's active one — a todo's
-// detail is written by the session that filed it, wherever it is read.
+// `relative` bare paths are resolved against a session's cwd by whoever opens them: a relative
+// `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06).
+// `sid` names that session when the text belongs to one other than the host's active one: a todo's detail is
+// written by the session that filed it, wherever it is read.
 export function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
   const a = el("span", "file-uri-link");
   a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
   return markPathLink(a, open, relative, sid);
 }
 // The link's SHAPE on an element the caller already has: the class, the title, the tab stop, the keyboard and
-// pointer handlers, and the act's data. openPathLink mints a span and marks it; the file viewer marks a Markdown
-// link's own <a> (its label keeps its nested formatting) when the link's target is a file (file-view-links.ts).
-// The class is appended as a string so an element that already wears one keeps it. The class and the title are
-// written as ATTRIBUTES: on an SVG <a> (inline SVG in rendered Markdown keeps its anchors through the sanitizer)
-// `className` is a read-only animated string and `title` is no property at all, so the property writes were
-// silent no-ops there (the 2026-09-07 review); setAttribute reaches both element kinds.
+// pointer handlers, and the target's data. openPathLink mints a span and marks it; the file viewer marks a
+// Markdown link's own <a> (its label keeps its nested formatting) when the link's target is a file
+// (file-view-links.ts). The class is appended as a string so an element that already wears one keeps it. The
+// class and the title are written as ATTRIBUTES: on an SVG <a> (inline SVG in rendered Markdown keeps its
+// anchors through the sanitizer) `className` is a read-only animated string and `title` is no property at
+// all, so property writes would be silent no-ops there; setAttribute reaches both element kinds.
 export function markPathLink(a: HTMLElement, open: string, relative = false, sid?: string | null): HTMLElement {
   const cls = a.getAttribute("class") || "";
   if (!(" " + cls + " ").includes(" file-uri-link ")) a.setAttribute("class", (cls ? cls + " " : "") + "file-uri-link");
@@ -115,12 +111,13 @@ export function markPathLink(a: HTMLElement, open: string, relative = false, sid
 }
 export function fileUriLink(uri: string): HTMLElement { return openPathLink(uri, fileUriToPath(uri)); }
 
-/** A selection left open inside `el` when a click arrives: the click ends a press-drag-release that selected text (a
- *  press on text collapses the selection first, so a plain click never sees one), and the selection is what the person
- *  gets, not the link under it. Every opener a link's click can reach reads this and yields: the viewer's body delegate
- *  over its box, and the chat's document-level anchor opener over the anchor itself, which runs first, at the capture
- *  phase, and opened the URL as well until it did (the 2026-09-07 review, round 3). The viewer's anchors are not
- *  draggable, so a drag on one selects; the chat's own anchors are draggable and send no such click. */
+/** A selection left open inside `el` when a click arrives: the click ends a press-drag-release that selected
+ *  text (a press on text collapses the selection first, so a plain click never sees one), and the selection is
+ *  what the person gets, not the link under it. Every opener a link's click can reach reads this and yields:
+ *  the viewer's body listener over its box, and the chat's document-level anchor opener over the anchor itself,
+ *  which runs first, at the capture phase. In the viewer a press-drag inside a path link (a span) selects its text,
+ *  and so does a press held on a URL anchor before it drags (Chromium's rule for a link, which is not draggable
+ *  there: an immediate drag on one selects nothing); the chat's own anchors are draggable and send no such click. */
 export function selectionOpenIn(el: Node): boolean {
   const sel = window.getSelection();
   return !!sel && !sel.isCollapsed && el.contains(sel.anchorNode);
@@ -152,19 +149,19 @@ export function looksLikeBareFileName(tok: string): boolean {
   return BARE_FILE_EXTS.has(tok.slice(dot + 1).toLowerCase());
 }
 // One finder covers the file: scheme, the slashed-path alternative, and the bare-filename alternative.
-// The kernel's _path_tokens is a port of it (kernel.py), and both sides run the same fixture — a token
+// The kernel's _path_tokens is a port of it (kernel.py), and both sides run the same fixture: a token
 // the kernel never saw is a verdict the client can never look up. Its TEXT is that contract; how it is
-// run is PathTokenScanner's business (below) — the g-flag loop it was written for is quadratic.
+// run is PathTokenScanner's business (below), since the g-flag loop it was written for is quadratic.
 export const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}/gi;
 // Trailing sentence punctuation is left out of a token, not swallowed by it ("see a/b.md." links a/b.md).
-// The characters are the source; the regex is built from them (the kernel mirrors it as _PATH_TRAIL_RE).
+// The characters are the source; the regex is built from them.
 export const TRAILING_PUNCT = ".,;:!?)]}>\"'`";
 export const TRAILING_PUNCT_RE = new RegExp("[" + TRAILING_PUNCT.replace(/[\\\]^-]/g, "\\$&") + "]+$");
-// The token's trailing punctuation, found from the END. TRAILING_PUNCT_RE's `+$` is tried from every
-// position of the token and backs off one character at a time when the end is not there, which is
-// quadratic on a long token made of punctuation: a token of 40K dots and a slash (the path arm matches
-// it whole) cost 1.5 s in the trim alone. Shaped like the regex's match — [the run] or null — because
-// that is how the walk reads it.
+// The token's trailing punctuation, found from the END. TRAILING_PUNCT_RE's `+$` is tried from every position
+// of the token and backs off one character at a time when the end is not there, which is quadratic on a long
+// token made of punctuation: a token of 40K dots and a slash (the path arm matches it whole) costs over a
+// second in the trim alone. Shaped like the regex's match, [the run] or null, because that is how the walk
+// reads it.
 function trailingPunct(tok: string): [string] | null {
   let i = tok.length;
   while (i > 0 && TRAILING_PUNCT.includes(tok[i - 1])) i--;
@@ -172,24 +169,23 @@ function trailingPunct(tok: string): [string] | null {
 }
 
 // ── a linear-time driver for CLICKABLE_PATH_RE ────────────────────────────────────────────────────
-// Run with the g flag, the engine restarts at every position, and on an unbroken run of word characters
-// both path arms scan to the run's end and back before failing — quadratic in the run's length: one
-// slash plus a 40K-character run of hex, words or dashes (a hash, a separator line, a minified dump)
-// cost 3-5 s, per text node, on the main thread. A todo's detail has no length cap, and the
-// Waiting-on-you pane re-links every session's detail on every feed frame, so one session's detail could
-// freeze the pane for every reader. The regex's text is the kernel's parity contract and stays; this
-// drives it in linear time. It tries the three arms in the regex's own order at each position, as
-// sticky regexes cut from the one source, and remembers what a failure PROVES about the positions ahead:
-//   - the path arm `[~.\w\-]*\/[~.\w\-/]*[\w\-]` failing at i fails at every later position of the same
-//     run of [~.\w\-/] characters — the first slash it can reach from there is the same one or a later
-//     one, and the word character it needs after that slash is drawn from a smaller suffix of the run;
-//   - the bare arm `[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}` failing at i fails at every later position of the
-//     same run of [\w\-.] characters — the dot-then-alphanumeric it needs is drawn from a smaller suffix;
+// Run with the g flag, the engine restarts at every position, and on an unbroken run of word characters both
+// path arms scan to the run's end and back before failing: quadratic in the run's length. One slash plus a
+// 40K-character run of hex, words or dashes (a hash, a separator line, a minified dump) costs seconds, per text
+// node, on the main thread; the viewer shows whole files, where such lines are ordinary. The regex's text is
+// the kernel's parity contract and stays; this drives it in linear time. It tries the three arms in the
+// regex's own order at each position, as sticky regexes cut from the one source, and remembers what a failure
+// PROVES about the positions ahead:
+//   - the path arm `[~.\w\-]*\/[~.\w\-/]*[\w\-]` failing at i fails at every later position of the same run of
+//     [~.\w\-/] characters: the first slash it can reach from there is the same one or a later one, and the
+//     word character it needs after that slash is drawn from a smaller suffix of the run;
+//   - the bare arm `[\w\-][\w\-.]*\.[A-Za-z0-9]{1,8}` failing at i fails at every later position of the same
+//     run of [\w\-.] characters: the dot-then-alphanumeric it needs is drawn from a smaller suffix;
 //   - the URI arm starts only at an f or F, and its `file:` cannot lie inside either run (a colon is in
 //     neither class), so a dead run's positions are tried for it as cheaply as any other.
-// Each arm therefore scans a run at most once beyond its matches in it, and the text costs time linear
-// in its length. The matches are exactly the regex's — pinned by a differential test over the regex
-// itself at every start position, and by the kernel parity fixture (path-links.test.ts).
+// Each arm therefore scans a run at most once beyond its matches in it, and the text costs time linear in
+// its length. The matches are exactly the regex's: pinned by a differential test over the regex itself at
+// every start position, and by the kernel parity fixture (path-links.test.ts).
 const [URI_ARM, PATH_ARM, BARE_ARM] = CLICKABLE_PATH_RE.source.split("|").map((arm) => new RegExp(arm, "iy"));
 const isWordCh = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;   // \w
 const isBareStartCh = (c: number): boolean => isWordCh(c) || c === 45;              // [\w\-]
@@ -203,13 +199,13 @@ export class PathTokenScanner {
   private pathDead = 0;   // the path arm is proven to fail at every position before this one
   private bareDead = 0;   // the bare arm likewise
   constructor(private readonly text: string) {}
-  /** The first match at or after `from`, as [start, end) — what CLICKABLE_PATH_RE.exec finds with
-   *  lastIndex = from — or null. Successive calls must not move `from` backwards. */
+  /** The first match at or after `from`, as [start, end): what CLICKABLE_PATH_RE.exec finds with
+   *  lastIndex = from, or null. Successive calls must not move `from` backwards. */
   next(from: number): [number, number] | null {
     const t = this.text, n = t.length;
     for (let i = from; i < n; i++) {
       const c = t.charCodeAt(i);
-      if (c === 0x66 || c === 0x46) {                       // f / F — the only characters a URI can start at
+      if (c === 0x66 || c === 0x46) {                       // f / F: the only characters a URI can start at
         URI_ARM.lastIndex = i;
         if (URI_ARM.test(t)) return [i, URI_ARM.lastIndex];
       }
@@ -229,37 +225,25 @@ export class PathTokenScanner {
   }
 }
 
-/** One link the walk emitted: the span, what it opens, and whether the kernel stat'd that target this
- *  build (a fixed mention) — the chat's figure pass wants exactly these. */
+/** One link the walk emitted: the element, what it opens, and whether the kernel stat'd that target this
+ *  build (a fixed mention). The chat's figure pass wants exactly these. */
 export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean }
 
-// Mark bare file:// URLs AND bare file paths inside `root`'s text — a relative `design/foo.md` too,
-// resolved against a session's cwd by whoever opens it (the user 2026-07-06). Inside INLINE <code> a
-// slash-less filename with a known extension marks too; only FENCED <pre> blocks, text already inside
-// a link and text inside an inline SVG (DEAD_TEXT) are skipped. Text nodes only: an element the caller
-// already made a link stays one.
-// `pathLinks` (the user 2026-08-09): the kernel's verdict on every path-shaped token in this text
-// (build_session's _path_links — tier 1 exact stat, tiers 2/3 a unique repo-list match that FIXES a
-// shortened mention to its real file). When the map is present, a token links ONLY if it's in the map,
-// and it opens the map's value — so `render.js` in prose stops 404ing, and hover shows the real target.
-// Every shape gate still applies; the map only ever narrows. No map at all (an old kernel, a cached
-// payload, a surface the kernel never judged — a todo's detail) keeps shape-only linking.
-// file:// URIs are explicit absolute paths — never gated on the map.
-// Returns the hits in document order, so a caller's "first mention" is the walk's first.
-// `opts` is how a surface whose text is not chat prose runs the same walk (the file viewer, file-view-links.ts):
-// `inPre` walks the text inside <pre> too (the viewer's code body IS one); `accept` narrows every non-URI
-// token that passed the shape gates (the map narrows a chat message the same way; a surface with no kernel
+// `opts` is how a surface whose text is not chat prose runs the same walk (the file viewer, file-view-links.ts).
+// `inPre` walks the text inside <pre> too (the viewer's code body IS one); `accept` narrows every non-URI token
+// that passed the shape gates (the kernel's map narrows a chat message the same way; a surface with no kernel
 // verdict brings its own gate), and is handed the text the token was found in and the token's offset there, so
-// a gate can read the token's line; `resolve` names what a token opens when the surface knows its
-// own place (the viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or
-// GitHub's `#L12`) right after a token into the link (data-line) instead of leaving it as prose, off a file://
-// URI too (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `targetSuffix`
+// a gate can read the token's line; `resolve` names what a token opens when the surface knows its own place
+// (the viewer joins a relative token onto the shown file's directory; a file:// URI's own path, absolute, passes
+// through it too); `lineSuffix` reads a `:12` (or GitHub's
+// `#L12`) right after a token into the link (data-line) instead of leaving it as prose, off a file:// URI too
+// (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `targetSuffix`
 // reads the same line grammar AND a section written after the path, `docs/report.md#results`, into the link
 // (data-frag, the fragment percent-decoded and its trailing sentence punctuation left out as a token's is), the
 // shape a user todo's text or detail names a place in a file with (plans/markdown-viewer.md, Slice 6; the chat's
 // transcript walk keeps the line shape alone, since the kernel's verdict there is on the bare path); `unit` names
-// the element whose text nodes are scanned as ONE string (the viewer's row: a highlight's spans cut a line's
-// text into several nodes, and a token is what the LINE says, never what one node says). Absent, the walk is
+// the element whose text nodes are scanned as ONE string (the viewer's row: a highlight's spans cut a line's text
+// into several nodes, and a token is what the LINE says, never what one node says). Absent, the walk is
 // exactly the chat's.
 export interface PathLinkOptions {
   inPre?: boolean;
@@ -275,7 +259,7 @@ export const LINE_SUFFIX_RE = /^(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?\d+)?)(?![\w/])/
 // The same reference at the END of a token (a file:// URI took it into itself): where it starts.
 const URI_LINE_TAIL_RE = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
 // The same reference AT a position of the unit's text (sticky, lastIndex set): read in place, so the walk never
-// slices the rest of the text per token, which was quadratic over a body that is one unit (the 2026-09-07 review).
+// slices the rest of the text per token, which is quadratic over a body that is one unit.
 const LINE_SUFFIX_AT_RE = new RegExp(LINE_SUFFIX_RE.source.replace(/^\^/, ""), "y");
 // A section written after a path (`targetSuffix`): `#` and the run to the next space or `#`, unless the run is a line
 // reference's `L12` (read by the line arm above first; `#L12abc`, which that arm refuses, is not a section either).
@@ -316,17 +300,16 @@ export function linkTarget(el: HTMLElement): LinkTarget | null {
  *  scan READS it, so a token glued to it is seen whole, but never marks in it. */
 export interface TextSpan { tn: Text; start: number; end: number; dead: boolean; inCode: boolean }
 export interface TextUnit { text: string; spans: TextSpan[] }
-/** The ancestors whose text no walk marks in, whatever the surface: a link already made, and an inline SVG (an HTML
- *  span or anchor put inside SVG text does not render, so a mark there would make the token vanish from the figure;
- *  the 2026-09-07 review). The text is still READ, so a token glued to it is seen whole. */
+/** The ancestors whose text no walk marks in, whatever the surface: a link already made, and an inline SVG (an
+ *  HTML span or anchor put inside SVG text does not render, so a mark there would make the token vanish from the
+ *  figure). The text is still READ, so a token glued to it is seen whole. */
 export const DEAD_TEXT = "a, .file-uri-link, svg";
 /** The text under `root` cut into units: under `unit` (a selector), the consecutive text nodes sharing their
  *  nearest such ancestor, joined; a node under none, or with no selector, is a unit of its own. A `<br>` ends a
- *  unit too: it is a line break, and a token never crosses one (`a<br>docs/a.md` read as `adocs/a.md` before; the
- *  2026-09-07 review). A unit element with no text under it is an EMPTY unit, in its place: a code view's blank
- *  row is `<span class=fv-cl><span class=fv-ct></span></span>`, and a walk over text nodes alone saw no unit there,
- *  so the units were not the view's rows: one per row that held text, none for a blank one (the 2026-09-07 review,
- *  round 5). `skip` names the ancestors whose text is dead to marking. */
+ *  unit too: it is a line break, and a token never crosses one (`a<br>docs/a.md` is not `adocs/a.md`). A unit
+ *  element with no text under it is an EMPTY unit, in its place: a code view's blank row is
+ *  `<span class=fv-cl><span class=fv-ct></span></span>`, and the units are the view's rows, blank ones included.
+ *  `skip` names the ancestors whose text is dead to marking. */
 export function textUnits(root: HTMLElement, unit: string | undefined, skip: string): TextUnit[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   const units: TextUnit[] = [];
@@ -353,9 +336,9 @@ export function textUnits(root: HTMLElement, unit: string | undefined, skip: str
   return units;
 }
 /** The span holding [start, end) whole and open to marking, else null: a match that crosses a node's edge (a
- *  highlight span cut through it) or lies in a link is left as it is, never re-read as its pieces. A binary search
- *  over the spans (they are in text order): a highlighted body is one unit of thousands of spans, and a walk over
- *  them per token was quadratic (the 2026-09-07 review). */
+ *  highlight span cut through it) or lies in a link is left as it is, never re-read as its pieces. A binary
+ *  search over the spans (they are in text order): a highlighted body is one unit of thousands of spans, and a
+ *  walk over them per token would be quadratic. */
 export function spanHolding(u: TextUnit, start: number, end: number): TextSpan | null {
   const spans = u.spans;
   let lo = 0, hi = spans.length - 1;
@@ -381,6 +364,20 @@ export function rewriteSpan(u: TextUnit, span: TextSpan, marks: Array<{ start: n
   span.tn.replaceWith(frag);
 }
 
+// Mark bare file:// URLs AND bare file paths inside `root`'s text, a relative `design/foo.md` too,
+// resolved against a session's cwd by whoever opens it (the user 2026-07-06). marked doesn't autolink these
+// and DOMPurify strips the file: scheme, so without this they read as dead text. Inside INLINE <code> a
+// slash-less filename with a known extension marks too; only FENCED <pre> blocks, text already inside a link
+// and text inside an inline SVG (DEAD_TEXT) are skipped. Text nodes only: an element the caller already made
+// a link stays one. Trailing sentence punctuation is left out, not swallowed.
+// `pathLinks` (the user 2026-08-09): the kernel's verdict on every path-shaped token in this text
+// (build_session's _path_links — tier 1 exact stat, tiers 2/3 a unique repo-list match that FIXES a
+// shortened mention to its real file). When the map is present, a token links ONLY if it's in the map,
+// and it opens the map's value — so `render.js` in prose stops 404ing, and hover shows the real target.
+// Every shape gate still applies; the map only ever narrows. No map at all (an old kernel, a cached
+// payload, a surface the kernel never judged) keeps shape-only linking. file:// URIs are explicit absolute
+// paths — never gated on the map. Returns the hits in document order, so a caller's "first mention" is the
+// walk's first.
 export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
   const hits: PathLinkHit[] = [];
   const skip = opts && opts.inPre ? DEAD_TEXT : DEAD_TEXT + ", pre";   // a link, an SVG, or (the chat) a fenced code block
@@ -421,10 +418,12 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       if (!isUri && opts && opts.accept && !opts.accept(tok, { text, at: start })) continue;   // the surface's own gate (the viewer's: an extension on the file)
       const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
-      // what the link opens: a URI's own path; else the kernel's fixed target or the token, placed by the surface's
-      // resolve when it has one (a URI is absolute already and takes no resolve)
-      const open = isUri ? fileUriToPath(tok) : (opts && opts.resolve ? opts.resolve(fixed ?? tok) : (fixed ?? tok));
-      const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
+      // what the link opens: a URI's own path (absolute, percent-decoded), else the kernel's fixed target or the token;
+      // placed by the surface's resolve when it has one (the viewer normalizes a URI's path there as it does any
+      // absolute path, so `file:///a/b/../c.md` opens and is titled the same whichever way it was written)
+      const target = isUri ? fileUriToPath(tok) : (fixed ?? tok);
+      const open = opts && opts.resolve ? opts.resolve(target) : target;
+      const link = openPathLink(tok, open, !isUri, sid);
       // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it);
       // one the highlight cut into another node stays prose
       let suffix: RegExpExecArray | null = null;
@@ -445,7 +444,7 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       if (!list) { list = []; marks.set(span, list); }
       list.push({ start, end: last, el: link });
       hits.push({ el: link, open, verified: !isUri && typeof fixed === "string" });   // the kernel stat'd a fixed one this build
-      from = last;                                  // a linked token: resume right after what was linked — its trimmed tail is prose
+      from = last;                                  // a linked token: resume right after what was linked; its trimmed tail is prose
     }
     for (const [span, list] of marks) rewriteSpan(u, span, list);
   }

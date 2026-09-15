@@ -29,6 +29,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -38,6 +39,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+sys.path.insert(0, HERE)
+import test_ship_reship as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes: an
+#                                   imported TestCase would be collected here a second time)
 
 RENDER = open(os.path.join(ROOT, "ui", "webview", "render.ts")).read()
 
@@ -51,7 +55,11 @@ class SourcePins(unittest.TestCase):
         for fn in ("function chatTail(msg: any) {", "function update(msg: any) {", "function statusOnly(msg: any) {"):
             body = RENDER.split(fn)[1].split("\n}")[0]
             self.assertIn("const before = awaitKey(s.status);", body, fn)
-            self.assertIn("if (awaitKey(s.status) !== before) renderBgTasks();", body, fn)
+            # since 2026-09-10 the box render goes through awaitChanged(sid), which also re-renders the subagent
+            # viewer's header when the active tab is a viewer into this session (its "waiting on" tail reads the
+            # parent's nested rows) — the call sits after the active/inactive branch so a viewer tab reaches it
+            self.assertIn("if (awaitKey(s.status) !== before) awaitChanged(msg.id);", body, fn)
+        self.assertIn("function awaitChanged(sid: string): void {\n  if (sid === activeId) renderBgTasks();", RENDER)
 
     def test_the_chip_and_the_gist_agree_in_number_from_one_count(self):
         # since slice 2 (plans/subagent-transcripts.md, 2026-09-05) the ONE rule is awaitWord: the kernel's
@@ -160,11 +168,7 @@ class ServedSync(unittest.TestCase):
                                     "stop_reason": "end_turn"}}) + "\n")
         cls.port = _free_port()
         cls.token = "testtok-awaitsync"
-        env = dict(os.environ, XDG_STATE_HOME=os.path.join(cls.lab, "xdg"), CLAUDE_CONFIG_DIR=claude,
-                   ROMP_MANAGER_PORT="1", ROMP_KERNEL_NO_OPEN="1", ROMP_SERVE_TOKEN=cls.token,
-                   ROMP_KERNEL_PORT=str(cls.port), ROMP_DIST_DIR=dist,
-                   ROMP_MODEL_CATALOG="off")   # hermetic: never reach the network
-        env.pop("ROMP_STATE_DIR", None)
+        env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)

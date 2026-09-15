@@ -187,7 +187,7 @@ test("the viewer is READ-ONLY: the message box is hidden, send disabled, one dim
   assert.match(RENDER, /if \(sendBtn\) sendBtn\.disabled = closed \|\| viewer;/);
   assert.match(RENDER, /if \(s\.sub\) \{[\s\S]{0,400}?ro\.textContent = "read-only · a subagent's transcript";[\s\S]{0,100}?return;/);
   // the tab: no drag (a reorder would post the id into the kernel's order), no rename menu, ✕ = Close tab
-  assert.match(RENDER, /tab\.draggable = !s\.sub;/);
+  assert.match(RENDER, /tab\.draggable = !s\.sub && !fedMissing;/);   // …nor on a page without its manager (2026-09-10)
   assert.match(RENDER, /if \(!s\.sub\) tab\.addEventListener\("contextmenu"/);
   assert.match(RENDER, /close\.title = dead \|\| s\.sub \? "Close tab" : copies > 1 \? "End session \(it is the one session, shown in every group it is tagged with\)" : "End session";/);
   assert.match(RENDER, /if \(id && isSubId\(id\)\) \{ closeSubagentView\(id\); return; \}/);
@@ -203,7 +203,7 @@ test("the header: 'subagent of <parent>' links back to the launch (setActive + t
   assert.match(RENDER, /if \(s\.sub\.truncated && !s\.sub\.error\) \{[\s\S]{0,200}?note\.textContent = "earlier part not shown";/);
   // the header lives in #content and is removed for every real session
   assert.match(RENDER, /if \(!s \|\| !s\.sub\) \{ if \(host\) host\.remove\(\); return; \}/);
-  assert.match(CSS, /#sub-head \{ position: sticky; top: 0;[^}]*font-size: 0\.86em;/);
+  assert.match(CSS, /#sub-head \{ position: sticky; top: 0;[^}]*font-size: 0\.82em;/);   // the notice META rung (2026-09-08; was 0.86em)
 });
 
 test("frames: events replace in place through appendActive (the chat's scroll rule); error → the sentence in the pane; loader first", () => {

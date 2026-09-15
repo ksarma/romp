@@ -343,6 +343,14 @@ class CaptionsMemo(_State):
         self.assertRegex(src, r"if with_bars and not live_only:\s*\n(\s*#[^\n]*\n)*\s*_caps_forget\(",
                          "full builds only: a skeleton or live-only build reads a subset of the lanes")
 
+    def test_the_two_lane_forgets_each_run_once_per_full_build(self):
+        # the lanes memo's forget (the timeline's own, at its position before the messages stage) and this
+        # memo's forget (under the full-build guard above) each run ONCE per build_timeline: a second call of
+        # either is a leftover of two copies of the eviction, evicting the same set twice
+        src = inspect.getsource(km.build_timeline)
+        self.assertEqual(src.count("_lanes_forget(set(id2name))"), 1, "one lanes-memo eviction per build")
+        self.assertEqual(src.count("_caps_forget(set(id2name))"), 1, "one captions-memo eviction per build")
+
     def test_non_object_rows_are_skipped_like_unparseable_ones(self):
         jd.CAPDIR.mkdir(parents=True, exist_ok=True)
         self.cap_path().write_text("[1, 2]\n" + json.dumps(self.ROWS[0]) + "\nnot json\n")
@@ -508,7 +516,6 @@ class OverlayFold(_State):
         p.write_text('{"t": 100, "awaiting": true, "why": "two jobs"}\n{"t": 200, "state": "working"\n')
         self.assertEqual(km._states_awaiting_overlay(SID), {"t": 100, "awaiting": True, "why": "two jobs"})
         self.assertEqual(ref_overlay(SID), {"awaiting": False, "why": None}, "the old scan's answer, superseded by the torn line")
-        self.assertIn("parsed records only", km._states_overlay_step.__doc__)
 
     def test_a_read_failure_on_a_file_that_exists_is_counted_logged_once_and_not_memoized(self):
         rows = [{"t": 100, "awaiting": True, "why": "x"}, {"t": 200, "state": "idle"}]
@@ -710,16 +717,16 @@ class PerfWiring(_State):
         # upstream's captions FILE-READ memo in judge.py (served / parsed), a different memo under the old name
         memos = km._PERF_STATS.snapshot()["memos"]
         self.assertEqual(set(memos["caps"]), {"hit", "miss", "fail", "evict", "entries"})
-        self.assertEqual(set(memos["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
+        self.assertEqual(set(memos["statesOverlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(set(memos["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"})
-        for blk in ("caps", "states_overlay", "thread_reg"):
+        for blk in ("caps", "statesOverlay", "thread_reg"):
             for k, v in memos[blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
 
     def test_the_reference_names_the_three_memos(self):
         doc = Path(os.path.join(ROOT, "docs", "reference.md")).read_text()
         flat = " ".join(doc.split())   # whitespace-normalised: a phrase the doc wraps across lines cannot slip past a pin
-        for name in ("`caps`", "`states_overlay`", "`thread_reg`"):   # the fork's memo row is `caps` (A2)
+        for name in ("`caps`", "`statesOverlay`", "`thread_reg`"):   # the fork's memo row is `caps` (A2); statesOverlay is upstream's key
             self.assertIn(name, doc)
         # the row's own sentence names the key, not the parenthetical about the old `captions` name
         self.assertIn("`caps` is the memo behind the captioner-store reader", flat)

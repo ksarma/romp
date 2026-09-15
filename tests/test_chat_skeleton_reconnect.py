@@ -5,7 +5,7 @@ pulled every session whole for the one tab on screen).
 When a pane's socket died while its browser tab was away (a long freeze, a laptop sleep, a network change),
 the redial used to be served as a client that holds nothing: a full {type:"session"} for EVERY tab — 17 frames,
 ~9 MB on the measured board — for one tab on screen. The page still holds every session it had; it only needs
-the one it shows. Now a redial after the bundle's ready declares itself (?reconnect=1, tested in test_pane_shim_return.py) and
+the one it shows. Now a redial after the bundle's ready declares itself (?reconnect=1, test_pane_shim_return.py) and
 the kernel sends THAT client the tab strip with a `skeleton` list (every listed tab but the active one, cheapest
 transcript first), the active tab's full session, and a small status frame per skeleton tab so its chip stays
 honest. A skeleton tab loads on the user's click (activeTab / needFull), on the client's idle prefetch
@@ -392,15 +392,10 @@ class SkeletonReconnect(unittest.TestCase):
             self.assertIn(strip, s, fn.__name__)
             self.assertLess(s.index("_resolve_reconnect(c, chat_list)"), s.index(strip),
                             fn.__name__ + ": resolve BEFORE the strip")
-        # the fork's ready handler sends no strip of its own (2026-09-03; the 2026-09-09 ruling keeps it so under
-        # READY_GATE_CAP): it resets the tails and runs the guarded push, whose strip resolves a redial's set; a fresh
-        # page's ready pops the state first (tests/test_chat_skeleton_reconnect_gate.py runs both paths)
-        i = src.find('if msg and msg.get("type") == "ready":')
-        body = src[i:src.index("_consume_pending_reveal(client)", i)]
-        self.assertIn("_client_reset_chat_base(client)", body)
-        self.assertIn("self._push_one(client)", body)
-        self.assertNotIn("_resolve_reconnect(", body)
-        self.assertNotIn("_send_tab_order(", body)
+        i = src.find('msg.get("type") == "ready"')
+        body = src[i:i + 2600]
+        self.assertNotIn("_send_tab_order(client", body,
+                         "the ready arm sends no strip of its own: its connect push (_push_one) resolves the flag and sends the strip")
         self.assertNotIn('client["send"](json.dumps({"type": "tabOrder"', src, "no strip bypasses the builder")
         i = src.find('msg.get("type") == "activeTab"')
         body = src[i:i + 700]
@@ -414,17 +409,14 @@ class SkeletonReconnect(unittest.TestCase):
         self.assertIn("_release_skeleton_locked(client, sid)", inspect.getsource(km._client_reset_chat_sid))
         s = inspect.getsource(km._client_reset_chat_base)
         for k in ('client.pop("skeleton", None)', 'client.pop("skeletonOrder", None)',
-                  'client.pop("reconnect", None)', 'k[0] in ("chat", "status")'):
+                  'client.pop("reconnect", None)', 'k[0] in ("chat", "status", "taborder")'):
             self.assertIn(k, s)
         s = inspect.getsource(km._push)
         self.assertIn("_send_chat_or_status(c, m, ms, change_from, led_changed)", s)
         self.assertNotIn("= _send_chat(c, m, ms, change_from, led_changed)", s,
                          "the pusher's per-client send goes through the skeleton-aware twin")
         self.assertIn('+((everConnected&&bundleReady&&!readyQueued)?"&reconnect=1":"")', km._shim("chat", 1),
-                      "the shim declares the redial once the page has held a socket AND its bundle has said ready AND that "
-                      "ready is not still queued for the open (a first socket that died before the bundle evaluated held "
-                      "nothing, and so did one whose bundle said ready only after it died): the dial term is "
-                      "everConnected&&bundleReady&&!readyQueued, on connect()'s new WebSocket line in the kernel's shim")
+                      "the shim declares the redial once its bundle's ready has left on a socket")
         s = inspect.getsource(km.Handler._ws)
         self.assertIn('reconnect = (q.get("reconnect") or [""])[0] == "1"', s)
         self.assertIn('client["reconnect"] = True', s)

@@ -601,7 +601,7 @@ class ImportRefusalIsLoud(unittest.TestCase):
         loads = [("romp_event_model", os.path.join(BIN, "romp-event-model")),
                  ("romp_judge", os.path.join(BIN, "romp-judge")),
                  ("romp_kernel", os.path.join(BIN, "romp-kernel"))]   # the same three loads as this module's own
-        code = ("import sys; sys.path.insert(0, %r)\n"          # the tests dir: load_source is romp_load's
+        code = ("import sys; sys.path.insert(0, %r)\n"          # the tests dir, where romp_load lives
                 "from romp_load import load_source\n"
                 "for name, path in %r:\n"
                 "    load_source(name, path)\n" % (HERE, loads))

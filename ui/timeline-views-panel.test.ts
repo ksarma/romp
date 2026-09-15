@@ -312,8 +312,8 @@ test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap 
     "membership chip cells ditto");
   // re-aimed 2026-09-09 (the many-tags change's review): the sessions box gives way first when height
   // runs out (the thousandfold flex-shrink) and never below its floor, min(live, 4) rows at the rendered
-  // row height (round 2: a fixed 96px left blank over one live session); past that floor the tag table and
-  // the open matrix give way, and past THEIR floors the card scrolls rather than clip (timeline-tags-scale)
+  // row height (a fixed 96px left blank over one live session); past that floor the tag table and the
+  // open matrix give way, and past THEIR floors the card scrolls rather than clip (timeline-tags-scale)
   assert.match(SRC, /const gridStyle = \(floor\) => 'flex:1 1000 auto;min-height:' \+ floor \+ 'px;overflow-y:auto;';/,
     "the session rows pan within their box, which keeps a floor under its rows");
   assert.match(SRC, /const k = Math\.min\(liveN, 4\);/, "…four rows at most, by the live count");

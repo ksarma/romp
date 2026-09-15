@@ -41,24 +41,26 @@ pick_python() {
     # the time, and pyvenv.cfg records it. Running anything else imports 3.X-compiled extensions into a
     # 3.Y process: on 2026-09-06 a `uv python install 3.14` in an unrelated shell put a python3.14 into
     # ~/.local/bin, the next kernel respawn picked it over the venv's 3.12, and every SDK session died at
-    # import for two hours while the message blamed a missing install. So a box that HAS a venv runs the
-    # venv's interpreter, however old, and the newest-first walk below is only for a box without one
-    # (or whose recorded interpreter is gone; then we say so and romp-sdk-setup rebuilds to match).
-    # Builtins only in here: the unit tests run it on a bare PATH. Kept in sync with romp-sdk-setup.
+    # import for two hours while the message blamed a missing install. So a machine that HAS a venv runs
+    # the venv's interpreter, however old, and the newest-first walk below is only for a machine without
+    # one (or whose recorded interpreter is gone; then we say so and romp-sdk-setup rebuilds to match).
+    # Builtins only in here: the unit tests run it on a bare PATH. This function is kept byte for byte
+    # with its copies in bin/romp-serve, bin/romp-sdk-setup and bin/romp-codex-setup (tests/romp-serve.bats
+    # diffs the three).
     #
     # A candidate must RUN, and when the cfg names a version it must BE the python the venv was built for:
     # the X.Y the cfg records plus the build, `t` for a free-threaded interpreter, read from the tag venv
     # names lib/ with (lib/python3.14t; the cfg does not say). The kernel keys its venv match on that same
-    # tag (_running_python_tag), so a default-build 3.14 handed a 3.14t venv boots and then refuses the
-    # venv as a mismatch (review round 3). `home` is a directory, and a distro upgrade that removes
-    # python3.12 and repoints home/python3 at 3.14 leaves that path present and runnable while the venv's
-    # extensions are still 3.12's, the exact failure the recorded interpreter exists to prevent. The check
-    # reads sys.version_info and sys.abiflags (builtins only; the build is decided by the flags, never by
-    # the file name: uv's free-threaded install has python3.14 as a link to python3.14t), and it is
-    # bounded: this is the first place the picker executes a candidate, and an interpreter that blocks (a
-    # stalled network mount, a sitecustomize reaching for the network) would otherwise hang the launch
-    # with the manager watching a live pid. `timeout 5` where coreutils provides it (a bare test PATH does
-    # not); running out the clock counts as not runnable.
+    # tag (_running_python_tag), so a default-build 3.14 handed a 3.14t venv would boot and then refuse the
+    # venv as a mismatch. `home` is a directory, and a distro upgrade that removes python3.12 and repoints
+    # home/python3 at 3.14 leaves that path present and runnable while the venv's extensions are still
+    # 3.12's, the exact failure the recorded interpreter exists to prevent. The check reads
+    # sys.version_info and sys.abiflags (builtins only; the build is decided by the flags, never by the
+    # file name: uv's free-threaded install has python3.14 as a link to python3.14t), and it is bounded:
+    # this is the first place the picker executes a candidate, and an interpreter that blocks (a stalled
+    # network mount, a sitecustomize reaching for the network) would otherwise hang the launch with the
+    # manager watching a live pid. `timeout 5` where coreutils provides it (a bare test PATH does not);
+    # running out the clock counts as not runnable.
     _runs_as() {   # $1 candidate, $2 the X.Y it must be ("" for "runs at all"), $3 the build: "t" or ""
         local -a run=("$1")
         if command -v timeout >/dev/null 2>&1; then run=(timeout 5 "$1"); fi
@@ -88,9 +90,9 @@ pick_python() {
         if [[ -n "$mm" && ! -d "$state/sdkvenv/lib/python$mm" && -d "$state/sdkvenv/lib/python${mm}t" ]]; then abi="t"; fi
         tag="$mm$abi"
         # The home candidates need the version. Without it `$home/python$mm` is the bare `$home/python`
-        # (python2 on many boxes) and `$home/python3` can be checked against nothing, so a cfg with a
+        # (python2 on many machines) and `$home/python3` can be checked against nothing, so a cfg with a
         # home but no version line (hand-edited or truncated; venv, uv and virtualenv all write one)
-        # offers only its `executable`, the recorded binary itself. A tagged venv tries home/python3.14t
+        # yields only its `executable`, the recorded binary itself. A tagged venv tries home/python3.14t
         # and then home/python3.14 (a link to the t build in uv's layout; a default build under that name
         # fails the flags check, where it used to be taken silently).
         for c in "$exe" "${mm:+${home:+$home/python$tag}}" "${abi:+${mm:+${home:+$home/python$mm}}}" "${mm:+${home:+$home/python3}}"; do

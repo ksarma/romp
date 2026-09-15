@@ -21,12 +21,11 @@ km = load_source("romp_kernel_mobile", os.path.join(BIN, "romp-kernel"))
 
 
 def _mobile_js():
-    """The phone shell script AS THE PAGE RUNS IT. _landing() splices the layout probe's media query into the
-    template's __MOBILE_MQ__ placeholder before serving, so an executed harness must splice the same way or the
-    probe's matchMedia(__MOBILE_MQ__) throws at top level (the 2026-09-09 fold review, ruling 3: teach the harness
-    the page's contract, never widen the probe's guard). One helper for every executor class, so the next one is
-    a one-line adoption; HarnessSplicesLikeThePage pins that the harness and the page cannot drift apart."""
-    return km._LANDING_MOBILE_JS.replace("__MOBILE_MQ__", json.dumps(km._MOBILE_MQ))
+    """The phone shell script AS THE PAGE RUNS IT: the served template itself. _landing() splices the layout probe's
+    media query inline when the template is built (json.dumps(_MOBILE_MQ) in the template string), so there is no
+    placeholder left for an executor to fill and the harness runs the template as served. Kept as the ONE door every
+    executor class reads the script through, so a future splice is a one-line adoption here and nowhere else."""
+    return km._LANDING_MOBILE_JS
 
 
 class LandingShell(unittest.TestCase):
@@ -542,19 +541,6 @@ console.log(JSON.stringify(out));
 """
 
 
-class HarnessSplicesLikeThePage(unittest.TestCase):
-    """The executed harnesses run the fork's template spliced the way the served page is, and neither can drift
-    from the other on the layout probe's media query (the 2026-09-09 fold review, ruling 3)."""
-
-    def test_the_harness_script_carries_the_pages_media_query_and_no_placeholder(self):
-        probe = "var MQ=(window.matchMedia&&matchMedia(%s))||null;" % json.dumps(km._MOBILE_MQ)
-        js = _mobile_js()
-        self.assertNotIn("__MOBILE_MQ__", js, "the harness must splice the placeholder as _landing() does")
-        self.assertIn(probe, js, "the spliced probe line reads the page's media query")
-        self.assertIn(probe, km._landing(), "the served page carries the same spliced probe line")
-        self.assertIn("__MOBILE_MQ__", km._LANDING_MOBILE_JS, "the template keeps the placeholder the page splices")
-
-
 class MobileFitExecutes(unittest.TestCase):
     """The installed iPhone app came back from the background with the chat pane filling only the
     top ~60% of the screen: the composer mid-screen, a keyboard-tall blank band under it, the tab
@@ -576,7 +562,7 @@ class MobileFitExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # The harness runs the template spliced the way the page does (_mobile_js above; the 2026-09-09 fold review).
+        # The harness runs the template as the page serves it (_mobile_js above: no placeholder is left to splice).
         assert r.returncode == 0, "the mobile script threw: " + r.stderr[:800]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 
@@ -755,7 +741,7 @@ class MobileBellExecutes(unittest.TestCase):
             r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30)
         finally:
             os.unlink(path)
-        # Spliced the way the page does (_mobile_js above).
+        # The template as the page serves it (_mobile_js above).
         assert r.returncode == 0, "the shell scripts threw: " + r.stderr[:1200]
         cls.out = json.loads(r.stdout.strip().splitlines()[-1])
 

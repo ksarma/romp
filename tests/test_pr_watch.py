@@ -53,7 +53,7 @@ def _backend_mod(which):
     """The real sdk_backend / codex_backend modules, loaded once for the tests that execute their readers."""
     if which not in _MODS:
         _MODS[which] = load_source("romp_%s_prw" % which,
-                                   os.path.join(os.path.dirname(BIN), "kernel", which + ".py"))
+                                        os.path.join(os.path.dirname(BIN), "kernel", which + ".py"))
     return _MODS[which]
 
 

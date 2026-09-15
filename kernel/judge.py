@@ -66,10 +66,6 @@ _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
-# credentials.py holds process state (the apiKeyHelper's TTL memo, forgotten at expiry), so a module already
-# loaded under this name is REUSED, never re-executed: load_source, like load_module(), runs the file again
-# into the existing object, which would empty that state (upstream's guard, kept). romp holds no key of its
-# own since 2026-09-08: the module reads Claude Code's apiKeyHelper setting and checks the boot environment.
 _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", HERE / "credentials.py")
 
 HOME     = Path.home()
@@ -245,10 +241,11 @@ def _triage_model():  return _state_str("judge-model", TRIAGE_MODEL)   # gear "T
 def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "Indexing model" → STATE/index-model
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
-def _judge_fast():    return _state_str("judge-fast", "") == "on"   # gear "Fast judging" → STATE/judge-fast
 def _judge_engine():  return _state_str("judge-engine", "claude")   # "claude" | "codex" — which model
 #   harness runs the judges (docs/codex.md §judges). "codex" lets a machine with no Claude login keep
 #   the board thinking: every judge becomes a one-shot `codex exec` billing the machine's codex login.
+def _judge_fast():    return _state_str("judge-fast", "off") == "on"   # the gear's Fast mode box (Triage model row): the CLI's fast-mode
+#   opt-in rides every judge call whose model is Opus (_judge_cmd); off by default. Read per call, like the tiers.
 INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on models that take --effort (2026-09-01; see _judge_env)
 
 
@@ -343,10 +340,6 @@ def _adaptive_thinking(model):
     if ver is None:                                # a bare alias: the version the CLI served for it, else the
         ver = _ALIAS_SERVED.get(fam) or _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])   # catalog head we assume
     return ver >= _EFFORT_FLOOR[fam]
-
-
-_FAST_MODELS = ("opus",)   # fast mode is an Opus-only research preview; the flag on any other model is
-#                            accepted by the CLI but fast never engages, so gate here and skip the argv noise
 
 
 def _note_served_model(model, wrap):
@@ -864,41 +857,27 @@ def _judge_cmd(model, sys_prompt, effort=None, auth=None):
            "--output-format", "json"]                 # stdout = {"result", "usage", "duration_ms", "total_cost_usd"}
     if effort:
         cmd += ["--effort", effort]
-    # Fast mode (gear "Fast judging", the user 2026-08-09 — a trial): the CLI ignores fast entirely in
-    # non-interactive runs unless the flag-settings layer carries the fastMode opt-in, so pass a static
-    # settings file when the toggle is on AND the model can run fast (Opus-only research preview; the
-    # result JSON's fast_mode_state reports whether it actually engaged). --safe-mode drops only the
-    # AUTO-DISCOVERED settings; an explicit --settings still loads. Costs 2x Opus rates and draws on
-    # fast mode's own rate-limit pool — the same pool interactive sessions' fast toggles use.
-    # A login-billed call must not bill the key (2026-09-08): in the CLI's precedence apiKeyHelper outranks
-    # every login form, so the per-call settings layer disables the helper. The empty string is the value
-    # the CLI takes as unset (null falls through to the settings files; verified on 2.1.257), the same
-    # lever a login-picked session's launch uses (sdk_backend.flag_settings_path).
-    # `--settings` takes ONE value (a file path or a JSON string), so when both apply they ride ONE overlay:
-    # the fast opt-in file alone, the helper suppression's inline string alone, one inline JSON with both.
-    fast = model in _FAST_MODELS and _judge_fast()
-    login = auth == "login"
-    if fast and login:
-        cmd += ["--settings", json.dumps({"fastMode": True, "apiKeyHelper": ""})]
-    elif fast:
-        cmd += ["--settings", _judge_fast_settings()]
-    elif login:
-        cmd += ["--settings", '{"apiKeyHelper": ""}']
+    # The per-call settings layer. `--settings` takes ONE value (a path or a JSON string), so every key the
+    # call needs rides one overlay; --safe-mode drops only the auto-discovered settings, an explicit
+    # --settings still loads. Two keys can ride it:
+    overlay = {}
+    if _judge_fast() and _model_family_version(model)[0] == "opus":
+        # Fast mode for the judges (the gear's box beside the Triage model picker, off by default): the CLI refuses fast mode to a
+        # non-interactive client unless the flag-settings layer carries this exact key, the same opt-in a
+        # fast-picked session's launch uses (sdk_backend.flag_settings_path), and fast mode is an Opus-only
+        # preview, so the key rides only a call whose model reads as the opus family: the bare alias or a
+        # pinned version id (a tier pinned to a version id reaches here with that id). Whether fast then
+        # engaged is the CLI's answer, per account: the envelope's fast_mode_state, kept on the usage row.
+        overlay["fastMode"] = True
+    if auth == "login":
+        # A login-billed call must not bill the key (2026-09-08): in the CLI's precedence apiKeyHelper outranks
+        # every login form, so the per-call settings layer disables the helper. The empty string is the value
+        # the CLI takes as unset (null falls through to the settings files; verified on 2.1.257), the same
+        # lever a login-picked session's launch uses (sdk_backend.flag_settings_path).
+        overlay["apiKeyHelper"] = ""
+    if overlay:
+        cmd += ["--settings", json.dumps(overlay)]
     return cmd
-
-
-def _judge_fast_settings():
-    """Path to the static flag-settings file carrying the fastMode opt-in. Written on demand with
-    constant content, so the argv is stable and the file survives STATE wipes."""
-    p = STATE / "judge-fast-settings.json"
-    want = '{"fastMode": true}'
-    try:
-        if not p.exists() or p.read_text() != want:
-            STATE.mkdir(parents=True, exist_ok=True)
-            p.write_text(want)
-    except OSError:
-        pass
-    return str(p)
 
 
 _DEBUG_CACHE = [None, None]                # (mtime_ns_or_None, bool) — one stat per check
@@ -1624,10 +1603,8 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
                                 "in": u.get("input_tokens"), "out": u.get("output_tokens"),
                                 "cache_w": u.get("cache_creation_input_tokens"),
                                 "cache_r": u.get("cache_read_input_tokens"),
-                                # the CLI's own word on whether fast mode ran this call ("on"/"off"/
-                                # "cooldown"; absent on CLIs that don't report it) — the observable for
-                                # the gear's "Fast judging" trial (the user 2026-08-09)
-                                "fast": wrap.get("fast_mode_state"),
+                                "fast": wrap.get("fast_mode_state"),   # the CLI's word on whether fast mode engaged
+                                #   ("on" | "off" | "cooldown"; null when the envelope carries none): the judges' fast-mode readback
                                 "cost": wrap.get("total_cost_usd")}) + "\n")
     except Exception:
         pass
@@ -4645,7 +4622,12 @@ def _replay_overrides(fsid, store, lines=None):
     a card reply in the same second are two gestures, and the old >= guard silently dropped the
     reply's replay, bouncing the card back mid-pass). Judge events do not cancel a replay: the user
     event is appended anyway and the fold's authority rules arbitrate. `block` keeps at-or-after: a
-    user reply in the same second as a nudge stamp genuinely answers it.
+    user reply in the same second as a nudge stamp genuinely answers it. The two seal ops (clear,
+    unclear) do not read a same-kind twin as their own write: a clear, an undo and a clear can share
+    one second, and the first clear's survival says nothing about the last one. Of a node's clear and
+    unclear rows in one second only the LAST acts (`last_seal_at`; an earlier one was superseded within
+    that second), and it asks whether the node's NEWEST seal at that second already is its op
+    (`_newest_seal` below).
 
     `lines`: the journal's lines when the caller has already read them (load_goals_shared reads the
     journal from a descriptor it also takes the file's identity from, so the replayed rows and the key
@@ -4669,13 +4651,15 @@ def _replay_overrides(fsid, store, lines=None):
     applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
     last_seal = {}                                     # node -> the LAST clear/unclear row's op, in journal order: a
-    for ln in lines:                                   # clear, undo and clear inside one second are settled by the rows'
-        try:                                           # order, not by their integer seconds (review find, 2026-09-09)
-            ev0 = json.loads(ln)
+    last_seal_at = {}                                  # clear, undo and clear inside one second are settled by the rows'
+    for ln in lines:                                   # order, not by their integer seconds (review find, 2026-09-09).
+        try:                                           # last_seal_at: (node, t) -> the last such row's op AT THAT SECOND;
+            ev0 = json.loads(ln)                       # an earlier row of the second stands down (see the arms)
         except ValueError:
             continue
         if ev0.get("op") in ("clear", "unclear") and ev0.get("node"):
             last_seal[ev0["node"]] = ev0["op"]
+            last_seal_at[(ev0["node"], int(ev0.get("t") or 0))] = ev0["op"]
     for ln in lines:
         try:
             ev = json.loads(ln)
@@ -4731,6 +4715,22 @@ def _replay_overrides(fsid, store, lines=None):
             # ev_t, same flag signature (msg/undo stored only when True — an absent key reads False)
             return any(e.get("kind") == kind and int(e.get("ev_t") or 0) == t
                        and all(bool(e.get(k)) == v for k, v in flags.items()) for e in uev)
+        def _newest_seal():                            # the node's newest user seal AT THIS SECOND, in _fold_node's
+            # order ((ev_t, at), ties in log order): "clear", "reopen" (an undo-clear), or None when the
+            # second holds neither. The clear and unclear arms ask this in place of a same-kind twin, and only
+            # from the second's LAST journal row (last_seal_at): a pass that loaded the store after an undo and
+            # saved after the re-clear left the log holding the first clear and its undo at the second all three
+            # gestures share, and the re-clear's row then read that first clear as its own survived write and
+            # skipped, so the store kept the card uncleared while cleared.jsonl hid it; the mirror (undo, clear,
+            # undo inside one second, the snapshot taken after the re-clear) kept the flag on a card cleared.jsonl
+            # had released, which no Undo could reach (2026-09-09). The newest seal says whether the second's last
+            # word is in the log already (survived, or re-recorded by an earlier row of the same second this
+            # load); the last row re-records it when not, and the next load finds the write and skips. An
+            # EARLIER row of the second never acts: read on its own it would take the later row's write for a
+            # missing one of its own and re-record a word the second did not end on.
+            seals = [e for e in uev if int(e.get("ev_t") or 0) == t
+                     and (e.get("kind") == "clear" or (e.get("kind") == "reopen" and e.get("undo")))]
+            return sorted(seals, key=lambda e: int(e.get("at") or 0))[-1].get("kind") if seals else None
         if op == "resolve":
             if nd.get("nodeComplete") or later or _twin("done"):
                 continue
@@ -4757,9 +4757,13 @@ def _replay_overrides(fsid, store, lines=None):
             # reopen (e.g. the card reply seconds after the restore) must NOT eat it, so `later` is
             # deliberately not consulted. was_done mirrors _mark_nodes_cleared: re-settle a completed
             # top so the restored card returns to Completed, not Working.
-            if _twin("reopen", undo=True) or last_seal.get(ev.get("node")) == "clear" or any(
+            if last_seal_at.get((ev.get("node"), t)) != "unclear" or _newest_seal() == "reopen" \
+                    or last_seal.get(ev.get("node")) == "clear" or any(
                     e.get("kind") == "clear" and int(e.get("ev_t") or 0) > t for e in uev):
-                continue                               # survived, re-dismissed by a LATER row (journal order, 2026-09-09), or since
+                continue                               # superseded by a later row of its own second, this second's
+                #                                        last word is an undo already (survived, or an earlier
+                #                                        same-second row's replay), re-dismissed by a LATER row (journal
+                #                                        order, 2026-09-09), or re-cleared since
             was_done = nd.get("parentId") is None and (
                 store.get("status", {}).get(ev.get("node")) == "completed" or nd.get("nodeComplete"))
             if record_verdict(store, nd, "user", "reopen", t, why="undo clear", undo=True):
@@ -4770,12 +4774,15 @@ def _replay_overrides(fsid, store, lines=None):
             # The cross-off (_mark_nodes_cleared value=True, append_clear), replayed so a store a racing pass
             # save clobbered re-seals exactly as the live one did (2026-09-09; the unclear arm's mirror).
             # Voided by a LATER undo: a strictly-later user reopen (the undo-clear's own verdict, or its
-            # replayed "unclear" row) outranks this entry; the twin check keeps the survived write as is.
-            if nd.get("cleared") or _twin("clear") or last_seal.get(ev.get("node")) != "clear" \
+            # replayed "unclear" row) outranks this entry; the newest-seal check keeps a survived write as is.
+            if nd.get("cleared") or last_seal_at.get((ev.get("node"), t)) != "clear" or _newest_seal() == "clear" \
+                    or last_seal.get(ev.get("node")) != "clear" \
                     or any(e.get("kind") == "reopen" and int(e.get("ev_t") or 0) > t for e in uev):
-                continue                               # sealed already, survived, undone by a LATER row (the undo's
-                #                                        unclear row follows its clear row in the journal, whatever the
-                #                                        seconds say), or reopened strictly later by another gesture
+                continue                               # sealed already, superseded by a later row of its own second,
+                #                                        this second's last word is a clear already, undone by a LATER
+                #                                        row (the undo's unclear row follows its clear row in the
+                #                                        journal, whatever the seconds say), or reopened strictly later
+                #                                        by another gesture
             if record_verdict(store, nd, ev.get("src") or "user", "clear", t,
                               why=ev.get("why") or "cleared from the feed"):
                 applied = True
@@ -9605,7 +9612,8 @@ def _fold_node(nd):
     #                                       verdict: "that reply wasn't about this goal") restores it
     clear_snap = None                     # symmetric snapshot at `clear`: an undo-reopen restores the state
     #                                       the cross-off displaced (a cleared COMPLETED card comes back
-    #                                       completed, never "open"), instead of blindly opening
+    #                                       completed, never "open"), instead of blindly opening; an undo
+    #                                       with nothing to restore leaves the state as it stands
     for e in sorted(nd.get("log") or [], key=lambda e: (e.get("ev_t") or 0, e.get("at") or 0)):
         src, kind, t = e.get("src"), e.get("kind"), e.get("ev_t") or 0
         if kind == "reopen":
@@ -9620,9 +9628,17 @@ def _fold_node(nd):
                 # assert's own `t >= floor` equality-lands rule below: within one turn the reopen is the
                 # trigger, the wait is how the turn ENDED.
                 awaiting_why = awaiting_at = awaiting_kind = awaiting_peers = None
-            if e.get("undo") and clear_snap is not None:
-                state, cur_settle, prev_settle = clear_snap      # restore what the cross-off displaced
-                clear_snap = None
+            if e.get("undo"):
+                if clear_snap is not None:
+                    state, cur_settle, prev_settle = clear_snap  # restore what the cross-off displaced
+                    clear_snap = None
+                # An undo-reopen with NO clear before it has nothing to restore and is a state no-op: it
+                # asserts nothing about doneness, so a completed top stays done and its settle stands. Two
+                # shapes reach here (2026-09-10): a second undo row for one clear, when a same-second re-clear
+                # collapsed into the first clear as a rebase twin while both undo-reopens were kept; and an
+                # undo whose clear never landed, when a clear and its undo were both lost to a pass save and
+                # only the undo replays (the journal's last word). Both used to fall through to "open" like a
+                # plain reopen, and the completed top came back Working. The user's floor still advances.
                 if src == "user":
                     floor = max(floor, t)
                 continue
@@ -9631,8 +9647,7 @@ def _fold_node(nd):
             state = "open"
             if src == "user":
                 floor = max(floor, t)
-                if not e.get("undo"):     # an undo-clear restores; it asserts nothing about doneness
-                    held = True
+                held = True               # a user's plain reopen; an undo-clear left the loop body above
             if e.get("msg"):
                 pending = True
             if cur_settle is not None:    # this reopen ends a settled episode → its settle becomes the
@@ -10575,7 +10590,13 @@ def _plan_session(fsid, path, now):
                 # this response is processed; the old unconditional _reopen below then UN-completed it, and a "blocked
                 # on you" reply re-blocked it — a completed→blocked flip, which must never happen. If the goal is
                 # already done, the nudge is moot (its "what's the status?" is answered by completion): record the
-                # unit processed and place NOTHING, leaving the completed goal completed.
+                # unit processed and place NOTHING, leaving the completed goal completed. "Done" here is the
+                # target's OWN verdict (nodeComplete) or its sticky settle — never all-children-done: rollup's
+                # is_complete retired that bottom-up rule (VERDICTS ONLY, the user 2026-07-15), so a top whose
+                # steps are all done but which carries no verdict of its own reads WORKING on the board, its
+                # nudge fires legitimately, and its reply must reach the planner. Reading it through
+                # _subtree_done discarded that reply here (nothing placed, plan_llm never called), after which
+                # the kernel's follow-up-failed path filed a procedural block with no brief (2026-09-10).
                 _nkids = {}
                 for _nid, _nd in store["nodes"].items():
                     _nkids.setdefault(_nd.get("parentId"), []).append(_nid)
@@ -10593,7 +10614,7 @@ def _plan_session(fsid, path, now):
                         _open_items.append(_x)
                     _stack.extend(_nkids.get(_x, []))
                 if (not _open_items and not _fold_node(store["nodes"][target])["held"]
-                        and (_subtree_done(store["nodes"], _nkids, target)
+                        and (store["nodes"][target].get("nodeComplete")
                              or store["nodes"][target].get("settledDone"))):
                     # (held check 2026-07-07: a user reopen no verdict has answered means the user asserted
                     # NOT done — an all-done subtree under it is exactly why they were asked; never moot.)

@@ -5,8 +5,8 @@ forced the PLAN_SESSIONS cap). An unchanged transcript is served from cache; a c
 import os
 import tempfile
 import time
-from pathlib import Path
 from romp_load import load_source
+from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only

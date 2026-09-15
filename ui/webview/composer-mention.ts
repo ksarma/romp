@@ -1,4 +1,4 @@
-// @-mention autocomplete for the composer (the user 2026-09-07): typing "@ro" in the message box offers
+// @-mention autocomplete for the composer (the user 2026-09-07): typing "@ro" in the message box lists
 // the live sessions whose names match, and a pick puts the plain name in the text the way an agent
 // addresses a peer with its mail tools ("@web ", or "@host:web " for a session on another kernel, the
 // form postal takes to break a name tie; see mentionToken for whose kernel the host is relative to).
@@ -8,9 +8,9 @@
 import { hostOf, hostPrefix } from "./host-prefix";
 
 export interface MentionCandidate {
-  id: string;        // the session id as the webview holds it ("host:uuid" for a federated session)
-  name: string;      // the display name as the webview holds it ("host:name" for a federated session)
-  emoji?: string;
+  id: string;        // the session id as the webview holds it ("host:uuid" for a session on another kernel)
+  name: string;      // the display name as the webview holds it ("host:name" for a session on another kernel)
+  emoji?: string;    // the session's tab emoji, shown before the name in the card's row (fork-only)
   color?: { bg: string; fg: string } | null;
 }
 
@@ -22,7 +22,7 @@ export interface MentionQuery { start: number; query: string; }
 export const MENTION_MAX_ROWS = 12;
 
 /** The "@query" token the caret sits at the end of, or null. The "@" must OPEN a word: at the start
- *  of the box or after whitespace, so an email address (a@b.example) or a path (/tmp/@x) never
+ *  of the text or after whitespace, so an email address (a@b.example) or a path (/tmp/@x) never
  *  triggers. The query is the run of characters after the "@" up to the caret, with no whitespace and
  *  no second "@", at least one character long; and the caret must END the word, so a caret placed back
  *  inside "@ro|mp" opens nothing. */
@@ -34,18 +34,18 @@ export function mentionQuery(text: string, caret: number): MentionQuery | null {
   return { start: caret - m[2].length - 1, query: m[2] };
 }
 
-/** The name without the "host:" the viewer prefixed onto a federated session (host-prefix.ts). */
+/** The name without the "host:" the viewer prefixed onto a session from another kernel (host-prefix.ts). */
 export function mentionBareName(c: MentionCandidate): string {
   const p = hostPrefix(c.name, c.id);
   return p ? p.rest : c.name;
 }
 
 /** Every match in the roster, ranked, case-insensitively: a prefix of the name first, then a prefix
- *  of the whole "host:name" (a federated session found by its host), then a substring anywhere;
- *  alphabetical by name within a rank. The session being written to is left out (a message to it
- *  never needs its own name). An empty query matches nothing: the card opens on "@" plus a character,
- *  never on the bare "@". Uncapped: the card shows the first MENTION_MAX_ROWS (matchMentions) and
- *  says how many more there were (mentionMoreNote). */
+ *  of the whole "host:name" (a remote session found by its host), then a substring anywhere;
+ *  alphabetical by bare name within a rank, and a local session ahead of a remote namesake. The
+ *  session being written to is left out (a message to it never needs its own name). An empty query
+ *  matches nothing: the card opens on "@" plus a character, never on the bare "@". Uncapped: the card
+ *  shows the first MENTION_MAX_ROWS (matchMentions) and says how many more there were (mentionMoreNote). */
 export function rankMentions(query: string, roster: readonly MentionCandidate[], selfId: string | null | undefined): MentionCandidate[] {
   const q = (query || "").toLowerCase();
   if (!q) return [];
@@ -58,7 +58,6 @@ export function rankMentions(query: string, roster: readonly MentionCandidate[],
     const rank = bare.startsWith(q) ? 3 : full.startsWith(q) ? 2 : full.includes(q) ? 1 : 0;
     if (rank) scored.push({ c, rank, key: bare, remote: bareName === c.name ? 0 : 1 });
   }
-  // same rank and same bare name (a local "web" and a remote "host:web"): the local one first
   scored.sort((a, b) => b.rank - a.rank || a.key.localeCompare(b.key) || a.remote - b.remote || a.c.name.localeCompare(b.c.name));
   return scored.map((x) => x.c);
 }
@@ -83,8 +82,8 @@ export function mentionMoreNote(total: number): string | null {
  *  postal name or the label under which IT peers with the named kernel (postal_service.py,
  *  resolve_recipient and peer_route). So the right form depends on who is being written to:
  *  - a session on THIS kernel: the display name the webview holds is exactly right. Bare for a local
- *    session; "host:name" for a federated one, since this kernel registers that peer under the same
- *    host label the frame prefixes (kernel.py _notify_bus_peer).
+ *    session; "host:name" for a remote one, since this kernel registers that peer under the same host
+ *    label the frame prefixes (kernel.py _notify_bus_peer).
  *  - a session on ANOTHER kernel: the frame carries none of that kernel's labels. The viewer's label
  *    for it need not be its own hostname, and its labels for the viewer's kernel or a third host are
  *    unknowable here. Every name goes in bare: the recipient's own siblings resolve as locals there,
@@ -99,9 +98,9 @@ export function mentionToken(c: MentionCandidate, recipientId?: string | null): 
 /** Replace the typed "@query" (from its "@" to the caret) with the token; the caret lands after it.
  *  The caret must still END that token, so text.slice(at.start, caret) is "@" + at.query. When it does
  *  not (the card stayed open across a caret move the input handler never saw: Ctrl+A, PageUp, a drag
- *  that ended outside the box), the splice would repeat the draft between the two positions ("ask @ro"
- *  with the caret at 0 came out as "ask @romp ask @ro"), so the insert is REFUSED: the text and the
- *  caret come back unchanged, and the caller closes the card. */
+ *  that ended outside the composer), the splice would repeat the draft between the two positions ("ask
+ *  @ro" with the caret at 0 would come out as "ask @romp ask @ro"), so the insert is REFUSED: the text
+ *  and the caret come back unchanged, and the caller closes the card. */
 export function insertMention(text: string, at: MentionQuery, caret: number, token: string): { text: string; caret: number } {
   if (caret < at.start || caret > text.length || text.slice(at.start, caret) !== "@" + at.query) return { text, caret };
   const head = text.slice(0, at.start);
@@ -133,7 +132,7 @@ export interface MentionSegment<T> { text: string; hit?: T; }
 /** Split a run of plain text at the "@name" tokens that name a live session: `lookup` answers the
  *  session for a word, or null. The same word rule as the trigger: the "@" opens the word and the word
  *  runs to whitespace or the end with no second "@" in it, so an email address, a path and a
- *  "@name@handle" (a fediverse-style handle, or a typo; the trigger never offered a card for it) all
+ *  "@name@handle" (a fediverse-style handle, or a typo; the trigger never opened a card for it) all
  *  stay text. Trailing sentence punctuation is left outside the token ("ask @web." names web). A word
  *  that names nothing stays text. The segments concatenate back to the input exactly. */
 export function mentionSegments<T>(text: string, lookup: (word: string) => T | null | undefined): MentionSegment<T>[] {

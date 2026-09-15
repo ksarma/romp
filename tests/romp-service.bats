@@ -386,13 +386,13 @@ EOF2
     [ "$status" -ne 0 ]
 }
 
-# ─── stop / start: the supervisor halves of `romp down` / `romp up` (2026-09-06) ─────────────
+# ─── stop / start: the supervisor halves of `romp down` / `romp up` ──────────────────────────
 # A stop has to go THROUGH the supervisor: the manager exiting on its own is a crash to
 # Restart=always / KeepAlive and it respawns within seconds. ROMP_SYSTEMCTL stubs systemctl the
 # way ROMP_LAUNCHCTL stubs launchctl; both record their argv so the tests assert the exact call.
 
 _systemctl_stub() {
-    # $1 = what `is-active` answers (active|inactive); every call's argv lands in systemctl-calls
+    # $1 = what `is-active` answers (active|inactive|failed); every call's argv lands in systemctl-calls
     local stub="$TEST_DIR/systemctl-stub" calls="$TEST_DIR/systemctl-calls"
     cat > "$stub" <<EOF
 #!/bin/sh
@@ -429,7 +429,7 @@ EOF
     [[ "$output" == *"Started the login service"* ]]
 }
 
-@test "stop / start with no unit installed exit 3 and touch nothing — the caller falls back" {
+@test "stop / start with no unit installed exit 3 and touch nothing: the caller falls back" {
     unset ROMP_SERVICE_NO_LOAD
     local stub; stub="$(_systemctl_stub inactive)"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" stop
@@ -448,7 +448,7 @@ EOF
     unset ROMP_SERVICE_NO_LOAD
     ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
     local stub="$TEST_DIR/systemctl-stub"
-    printf '#!/bin/sh\necho "Failed to stop" >&2\nexit 1\n' > "$stub"
+    printf '#!/bin/sh\ncase "$2" in is-active) echo active; exit 0 ;; esac\necho "Failed to stop" >&2\nexit 1\n' > "$stub"
     chmod +x "$stub"
     ROMP_SYSTEMCTL="$stub" ROMP_OS_OVERRIDE=Linux run "$SVC" stop
     [ "$status" -eq 1 ]
@@ -479,7 +479,7 @@ EOF
     unset ROMP_SERVICE_NO_LOAD
     ROMP_OS_OVERRIDE=Darwin ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
     local stub="$TEST_DIR/launchctl-stub" calls="$TEST_DIR/launchctl-calls"
-    # not loaded: print fails → bootstrap
+    # not loaded: print fails, so bootstrap
     cat > "$stub" <<EOF
 #!/bin/sh
 echo "\$1" >> "$calls"
@@ -492,7 +492,7 @@ EOF
     grep -q bootstrap "$calls"
     run grep -q kickstart "$calls"
     [ "$status" -ne 0 ]
-    # loaded: print succeeds → kickstart, no bootstrap
+    # loaded: print succeeds, so kickstart, no bootstrap
     : > "$calls"
     printf '#!/bin/sh\necho "$1" >> "%s"\nexit 0\n' "$calls" > "$stub"
     ROMP_LAUNCHCTL="$stub" ROMP_OS_OVERRIDE=Darwin run "$SVC" start
@@ -539,8 +539,8 @@ EOF
 }
 
 @test "stop (Linux): an installed unit that is not running is exit 4, says so, and is not stopped again" {
-    # `systemctl --user stop` on an inactive unit exits 0, which read as a stop while a manager started
-    # outside the service kept running (review 2026-09-06); the caller stops that one itself on a 4
+    # `systemctl --user stop` on an inactive unit exits 0, which would read as a stop while a manager
+    # started outside the service kept running; the caller stops that one itself on a 4
     unset ROMP_SERVICE_NO_LOAD
     ROMP_OS_OVERRIDE=Linux ROMP_SERVICE_NO_LOAD=1 "$SVC" install >/dev/null
     local stub; stub="$(_systemctl_stub inactive)"

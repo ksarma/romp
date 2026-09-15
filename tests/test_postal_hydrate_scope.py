@@ -17,7 +17,6 @@ A genuine multi-message drain must still hydrate EVERY id, so that stays covered
 
 SYNTHETIC fixtures only: invented sessions (notes-api's web/api/tests), placeholder UUIDs, TESTHOST.
 """
-import inspect
 import io
 import json
 import os
@@ -217,18 +216,39 @@ class HydrateRecipient(unittest.TestCase):
                          "no sid to compare against → no recipient check (direct callers)")
 
     def test_build_session_passes_its_sid_in(self):
-        # Without the wiring the recipient check is dead code in the only caller that matters. The tail
-        # pass hands over the build's one index and one caption-map getter (round-4 P17/P3(c)).
-        self.assertIn("_hydrate_postal(events, _pidx, sid, captions=_msum)",
-                      inspect.getsource(km.build_session))
+        # Without the wiring the recipient check is dead code in the only caller that matters: a spy on the
+        # hydrator records the sid every hydration build_session makes carries (the tail pass at least).
+        seen = []
+        real = km._hydrate_postal
+
+        def spy(events, index, sid=None, captions=None):
+            seen.append(sid)
+            return real(events, index, sid, captions=captions)
+        km._hydrate_postal = spy
+        self.addCleanup(setattr, km, "_hydrate_postal", real)
+        saved = (km._sessions, km._tmux_sessions, km._msg_summaries)
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        tx = os.path.join(td.name, ME + ".jsonl")
+        with open(tx, "w") as f:
+            f.write(json.dumps({"type": "user", "uuid": "u1", "timestamp": "2026-09-01T10:00:00.000Z",
+                                "message": {"role": "user", "content": "hello"}}) + "\n")
+        km._sessions = lambda now, **kw: [{"sid": ME, "name": "web", "anchor": ME, "path": tx, "mtime": 1}]
+        km._tmux_sessions = lambda: {}
+        km._msg_summaries = lambda: {}
+        try:
+            km.build_session(ME, 1700000000, {})
+        finally:
+            km._sessions, km._tmux_sessions, km._msg_summaries = saved
+        self.assertTrue(seen, "build_session hydrated at least once")
+        self.assertEqual(set(seen), {ME}, "every hydration carried the session's own sid")
 
 
 class HydrateIndependence(unittest.TestCase):
     """hydrate(A + B) == hydrate(A) + hydrate(B). The chat fold's commit hydrates only the raw postal events
-    new since its seal and prepends the sealed cards (round-4 plan, P17 merged with P3(c)); that equals a
-    hydration of the whole list only while hydration carries no state from one event to the next. Pinned
-    over the four event shapes: an outgoing send, a resolved incoming id, an unresolved id, a plain Bash
-    row, split at every position."""
+    new since its seal and prepends the sealed cards (2026-09-09); that equals a hydration of the whole list
+    only while hydration carries no state from one event to the next. Pinned over the four event shapes: an
+    outgoing send, a resolved incoming id, an unresolved id, a plain Bash row, split at every position."""
 
     M_OUT = "1700000009.77777_88888.TESTHOST"
 

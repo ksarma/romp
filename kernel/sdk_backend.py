@@ -30,6 +30,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -59,14 +60,18 @@ _pal = load_source("romp_palette", _HERE / "palette.py")
 # A copy already loaded under this name is REUSED, never re-executed: the module holds process state (the
 # helper's TTL memo), and load_source, like load_module(), would run the file again into that object.
 _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", _HERE / "credentials.py")
-# The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
-# text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
-# scan below can never find what prune_live cannot retire. The kernel's own copy of that module when it
-# is loaded (the same idiom as _cred above); otherwise the file is loaded under its OWN module name:
-# the kernel loads it as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
-# re-executing the source into that module object would rebind the class out from under the subclass.
-echo_text_key = (sys.modules.get("romp_session_backend")
-                 or load_source("romp_session_backend_keys", _HERE / "session_backend.py")).echo_text_key
+# The by-text KEY RULES (session_backend.echo_text_key, and command_text_key for a slash send): the one
+# normalization under which an input echo's text is compared with a transcript record's, shared with the
+# kernel's _atom_user_texts so the landing scan below can never find what prune_live cannot retire. The
+# kernel's own copy of that module when it is loaded (the same idiom as _cred above); otherwise the file
+# is loaded under its OWN module name: the kernel loads it as romp_session_backend and TmuxBackend
+# subclasses that copy's ABC, and re-executing the source into that module object would rebind the class
+# out from under the subclass.
+_keys = (sys.modules.get("romp_session_backend")
+         or load_source("romp_session_backend_keys", _HERE / "session_backend.py"))
+echo_text_key = _keys.echo_text_key
+command_text_key = _keys.command_text_key
+echo_keys = _keys.echo_keys                  # both keys of a text, the "either key" rule written once
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -1119,6 +1124,25 @@ _SKILL_MD_CAP = 16000
 _IMG_ECHO_RE = re.compile(r"^\[Image:[^\]]*\]$")
 
 
+def _command_invocation(text):
+    """(name, display) for a slash-command WRAPPER record's text, or None. `name` is the <command-name>
+    value with its leading slash; `display` is the "/name args" the file adapter and msg_to_atom show for
+    it (the arguments outer-stripped, one space between). The tag is read anchored, or anywhere inside a
+    record that BEGINS with a command wrapper (_CMD_WRAP_RE), never from prose that quotes it. Read by
+    msg_to_atom for the live atom and by _landed_texts for the landing scan, so the scan finds a slash
+    send under exactly the text the kernel's prune retires its echo by."""
+    mcmd = _COMMAND_NAME_RE.match(text) or (_COMMAND_NAME_ANY_RE.search(text)
+                                            if _CMD_WRAP_RE.match(text) else None)
+    if not mcmd:
+        return None
+    name = mcmd.group(1).strip() or "/?"
+    if not name.startswith("/"):
+        name = "/" + name
+    margs = _COMMAND_ARGS_RE.search(text)
+    args = (margs.group(1).strip() if margs else "")
+    return name, name + ((" " + args) if args else "")
+
+
 def _note_skill_tool_ids(atom, ids):
     """Collect Skill tool_use block ids from a streamed ASSISTANT atom into `ids` — the live twin's
     anchor set for the newer skill-instructions shape (2026-07-10): the payload UserMessage carries
@@ -1182,15 +1206,9 @@ def msg_to_atom(msg, sid, fsid, t, skill_tool_ids=()):
             return None
         text = " ".join(b.get("text", "") for b in content
                         if isinstance(b, dict) and b.get("type") == "text")
-        mcmd = _COMMAND_NAME_RE.match(text) or (_COMMAND_NAME_ANY_RE.search(text)
-                                                if _CMD_WRAP_RE.match(text) else None)
-        if mcmd:                                     # the command INVOCATION → the command-flagged user atom
-            name = mcmd.group(1).strip() or "/?"
-            if not name.startswith("/"):
-                name = "/" + name
-            margs = _COMMAND_ARGS_RE.search(text)
-            args = (margs.group(1).strip() if margs else "")
-            disp = name + ((" " + args) if args else "")
+        cmd = _command_invocation(text)
+        if cmd:                                      # the command INVOCATION → the command-flagged user atom
+            name, disp = cmd
             return {"type": "user", "uuid": u, "session_id": sid, "t": t, "fsid": fsid, "parentUuid": None,
                     "author": "human", "command": name,
                     "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
@@ -1633,6 +1651,111 @@ def append_resume_fork(state_dir: Path, sid: str, from_fsid: str, to_fsid: str, 
         f.write(json.dumps(rec) + "\n")
 
 
+# ── The session-event ledger and the per-turn ledger (T304 stage 0 of the restart-surviving sessions
+# program, 2026-09-10; the row shape agreed with the lease work, T305, which writes its `lease.*` kinds
+# through the same helper). Two append-only files under the state directory, read by `romp restart-metrics`
+# (cli/restart_metrics.py), which reads FILES and the kernel's routes only, never the kernel log:
+#   session-events.jsonl  one row per thing that went wrong with a session's process, or per boot sweep:
+#                         {"t": epoch s (int), "pid": the writing kernel, "kind": "<writer>.<what>",
+#                          "sid": romp sid when about a session, "name": its name then, ...flat fields}.
+#                         Kinds this file writes: reconcile.boot (the sweep's summary, every boot, ledger only),
+#                         reconcile.orphan-reaped, reconcile.scope-stopped, reconcile.duplicate-cli, crash.heal,
+#                         crash.loop, drain.unjoined. Every kind that IS a problem also lands on the backend's
+#                         problem ring (the dashboard's bell and error center) as its prose, and on the kernel
+#                         log as `<prose> ;; problem-row {json}` so a log reader parses the same object with
+#                         `line.rsplit(PROBLEM_ROW_MARK, 1)[1]`.
+#   turns.jsonl           one row per settled turn (SdkSession._turn_ledger_row): the event stamps the latency
+#                         and redo-cost figures read. Every stamp is an EVENT's time: fedT is the feed pop
+#                         (the turn left the queue for the CLI's stdin), firstOutT the first streamed work atom,
+#                         resultT the ResultMessage; durationMs / apiMs are the CLI's own figures on that
+#                         result; usd and the token columns are what the spend fold recorded for the turn;
+#                         resumeNotice marks a turn whose fed text was a boot or crash continuation notice.
+# Both writers are best-effort and never raise: a ledger must not be able to break the thing it measures.
+SESSION_EVENTS_FILE = "session-events.jsonl"
+TURNS_FILE = "turns.jsonl"
+PROBLEM_ROW_MARK = " ;; problem-row "
+LEDGER_ROTATE_BYTES = 32 * 1024 * 1024   # a ledger past this size is rotated to <name>.1 (one predecessor kept),
+#                                          so the pair is bounded at twice this: at ~300 bytes a turn and a few
+#                                          thousand turns a day, turns.jsonl holds about a month; the reader reads both
+
+
+_LEDGER_LOCK = threading.Lock()   # one appender at a time across the ledgers: two threads crossing the
+#                                    rotation size together would rotate twice, moving a one-row file over the
+#                                    predecessor just made and losing its month of rows (review find, 2026-09-10)
+
+
+def _append_ledger_row(state_dir: Path, name: str, row: dict) -> None:
+    try:
+        p = Path(state_dir) / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with _LEDGER_LOCK:
+            try:
+                if p.stat().st_size >= LEDGER_ROTATE_BYTES:
+                    os.replace(p, p.with_name(p.name + ".1"))   # the older predecessor, if any, is dropped
+            except FileNotFoundError:
+                pass
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row) + "\n")
+                f.flush()
+    except Exception:
+        pass
+
+
+def append_session_event(state_dir: Path, kind: str, *, sid=None, name=None, t=None, **fields) -> dict:
+    """One session-events.jsonl row (see the ledger note above). Fields are FLAT by contract: a scalar rides
+    as is, None is dropped, anything else is its str. Returns the row written (pid and t filled in)."""
+    row = {"t": int(time.time() if t is None else t), "pid": os.getpid(), "kind": str(kind)}
+    if sid:
+        row["sid"] = str(sid)
+    if name:
+        row["name"] = str(name)
+    for k, v in fields.items():
+        if v is None:
+            continue
+        row[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
+    _append_ledger_row(state_dir, SESSION_EVENTS_FILE, row)
+    return row
+
+
+def problem_row(state_dir: Path, prose: str, kind: str, *, sid=None, name=None, log=None, ring=True,
+                **fields) -> str:
+    """A session problem said three ways at once: the ledger row (append_session_event, `text` = the
+    prose), the kernel-log line `<prose> ;; problem-row {json}` (returned; written when `log` is given), and
+    the prose alone on the problem ring when `ring` (SdkBackend._log's ring_text, so the error center stays
+    readable while the log line stays parseable). `log` is the backend's _log; a plainer callable gets the
+    line alone."""
+    row = append_session_event(state_dir, kind, sid=sid, name=name, text=str(prose), **fields)
+    line = str(prose) + PROBLEM_ROW_MARK + json.dumps(row)
+    if log is not None:
+        try:
+            log(line, problem=bool(ring), ring_text=str(prose))
+        except TypeError:
+            try:
+                log(line)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return line
+
+
+def parse_problem_row(line: str) -> "dict | None":
+    """The JSON object a `;; problem-row` log line carries, or None for any other line."""
+    if PROBLEM_ROW_MARK not in str(line):
+        return None
+    try:
+        obj = json.loads(str(line).rsplit(PROBLEM_ROW_MARK, 1)[1])
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def append_turn_row(state_dir: Path, row: dict) -> None:
+    """One turns.jsonl row (SdkSession._turn_ledger_row builds it). Best-effort, never raises."""
+    if isinstance(row, dict) and row:
+        _append_ledger_row(state_dir, TURNS_FILE, row)
+
+
 def append_awaiting(state_dir: Path, sid: str, awaiting: bool, why: str = "") -> None:
     """Append an "awaiting" OVERLAY record to states/<sid>.jsonl (interleaved with the state
     records; the kernel reader scans for the latest line carrying an "awaiting" key). "Awaiting" =
@@ -1768,12 +1891,12 @@ def cut_turn_start(state_dir: Path, sid: str) -> int | None:
     marker with no state record after it (a resumed session that never marked again) answers its
     own stamp. Overlays, other keyed rows and corrupt lines are skipped.
 
-    The boot reconcile compares the `romp down` audit row against THIS, not the newest state stamp
-    (review find, round 2, 2026-09-06): `romp down` files its row after the wait, a moment before
-    the service stop, and a mark written in that window (an api_retry storm's `retrying`, a
-    mid-turn forward's `working`) postdated the row and demoted the turn to the plain restart
-    notice, with no stop time or gap. A turn begun AFTER the row (its hold lapsed with no stop) is
-    still not the down's: its start postdates the row."""
+    The boot reconcile compares the `romp down` audit row against THIS, not the newest state stamp:
+    `romp down` files its row after the wait, a moment before the service stop, and a mark written
+    in that window (an api_retry storm's `retrying`, a mid-turn forward's `working`) postdates the
+    row, which would demote the turn to the plain restart notice, with no stop time or gap. A turn
+    begun AFTER the row (its hold lapsed with no stop) is still not the down's: its start postdates
+    the row."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     start: int | None = None
     boundary: int | None = None     # a machineCut newer than every state record
@@ -2145,6 +2268,38 @@ def api_health_counts(events, now: float, window: int, uptime_s=None) -> dict:
             "rate5xx": None if r5xx is None else round(r5xx, 4)}
 
 
+def api_health_series(events, now: float, window: int, bin_s: int = 60) -> dict:
+    """Attempts per bin over (now - window, now], for the dashboard's graph (T301, the user 2026-09-10, who
+    wanted a storm visible at a glance instead of per-window percentages): `binS` seconds per bin, the last
+    bin ending at `now`, `from` the start of the first. Four parallel arrays, oldest first, one integer per
+    bin: `ok` (successful responses), `rateLimited` (429 attempts), `serverErrors` (529 and other 5xx attempts,
+    the rate5xx numerator), `noStatus` (connection-level failures: the offline class). Other-status errors
+    are counted in `other`. ADDITIVE to the payload (schema 1 unchanged): a reader that ignores it sees the
+    document it always saw. Pure: the same events at the same now give the same arrays."""
+    bin_s = max(1, int(bin_s))
+    n = max(1, int(-(-int(window) // bin_s)))       # ceil(window / bin_s) bins
+    start = now - n * bin_s
+    keys = ("ok", "rateLimited", "serverErrors", "noStatus", "other")
+    out = {k: [0] * n for k in keys}
+    for e in events:
+        if not (start < e.t <= now):
+            continue
+        i = min(n - 1, int((e.t - start) // bin_s))
+        if e.kind == "ok":
+            k = "ok"
+        elif e.cls == "429":
+            k = "rateLimited"
+        elif e.cls in ("529", "5xx"):
+            k = "serverErrors"
+        elif e.cls == "none":
+            k = "noStatus"
+        else:
+            k = "other"
+        out[k][i] += 1
+    out.update({"binS": bin_s, "from": round(start, 3)})
+    return out
+
+
 API_HEALTH_SEVERITY = {"unknown": 0, "healthy": 1, "recovering": 2, "degraded": 3, "thrashing": 4}
 API_HEALTH_RESTART_WHY = "kernel restarted: the event ring is empty"
 
@@ -2336,6 +2491,104 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return True                                     # exists; not ours to signal
     return True
+
+
+TEST_ROOT_PREFIX = "romp-tests-"
+TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"    # tests/conftest.py writes it at mint time
+TEST_ROOT_TOMBSTONE = ".sweeping"                   # a root renamed to <name>.sweeping is ours to finish deleting
+TEST_ROOT_SWEEP_BUDGET_S = 30.0                     # per boot; the rest waits for the next boot's sweep
+
+
+def _rmtree_stubborn(root: str) -> None:
+    """rmtree that gets past a child with its permission bits cleared (a 000-mode directory some suite
+    tests create and restore only in a finally that an os._exit skipped): on the first failure at a
+    path, restore owner rwx on it and its parent and retry that step once. Raises on a second failure
+    so the caller can leave the tombstone standing and say so."""
+    def onexc(func, path, exc):
+        # `func` is whichever os call failed (3.12's fd-based rmtree hands over os.open, os.scandir,
+        # os.rmdir, os.unlink with their own signatures), so it is not called back: the subtree at
+        # `path` is removed again plainly after the chmod, and a second failure raises.
+        try:
+            os.chmod(os.path.dirname(path), 0o700)
+            os.chmod(path, 0o700)
+        except OSError:
+            pass
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.unlink(path)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(root, onexc=onexc)
+    else:                                               # pre-3.12 spelling: (func, path, exc_info)
+        shutil.rmtree(root, onerror=lambda func, path, ei: onexc(func, path, ei[1]))
+
+
+def sweep_dead_test_roots(tmpdir: str, log=None, budget_s: float = TEST_ROOT_SWEEP_BUDGET_S) -> int:
+    """Remove the test suite's `romp-tests-*` temp roots under `tmpdir` whose OWNER IS DEAD; return the
+    count removed. tests/conftest.py mints one root per run, redirects TMPDIR into it and removes it
+    at run end — but a run that dies without reaching that removal (pytest-timeout's os._exit, a kernel
+    restart cutting the tool shell, the cut-turn reaper's kill) leaves the whole root standing, and on
+    a shared machine those roots piled into millions of files that the next boot's /tmp cleanup spent
+    39 minutes deleting (2026-09-10). Nothing in the dead run can clean up, so the kernel does, from
+    boot reconcile — AFTER the session pass and on its own thread (a dead pile is minutes of rmtree;
+    the orphan-CLI reap and the cut-session resumes must not wait behind it), within `budget_s` per
+    boot: whatever is left waits for the next boot, and the count left is logged.
+    The marker inside the root names the owning pid. A root whose pid is ALIVE is a run in progress
+    and stays (a sibling test kernel booting inside a run's TMPDIR sees the run's own live root); a
+    root with NO marker, or one this code cannot read, stays too — the sweep cannot tell a foreign
+    directory or a pre-marker root from a leak, and refusing is the safe direction. Only a readable
+    marker naming a dead pid is a leak by construction.
+    Deleting is two steps so a partial failure can never strand a marker-less root the sweep would
+    then refuse forever: the root is first RENAMED to a tombstone (`<name>.sweeping`, which this sweep
+    owns outright and deletes on every boot regardless of marker), then removed; a child that resists
+    (a 000-mode directory) is chmod'ed and retried once, and a survivor is logged on EVERY boot, never
+    silently skipped. Never raises. Under the test suite the kernel's own tmpdir IS a run's root
+    (TMPDIR is redirected), so the sweep never reaches the real system temp dir from inside a test."""
+    swept = 0
+    deadline = time.monotonic() + max(0.0, float(budget_s))
+    try:
+        names = sorted(os.listdir(tmpdir))
+    except OSError:
+        return 0
+    todo = []                                           # (path, is_tombstone)
+    for name in names:
+        if not name.startswith(TEST_ROOT_PREFIX):
+            continue
+        root = os.path.join(tmpdir, name)
+        try:
+            if os.path.islink(root) or not os.path.isdir(root):
+                continue
+        except OSError:
+            continue
+        if name.endswith(TEST_ROOT_TOMBSTONE):
+            todo.append((root, True))                   # a previous sweep's unfinished delete
+            continue
+        try:
+            with open(os.path.join(root, TEST_ROOT_OWNER_MARKER), "r", encoding="utf-8") as fh:
+                pid = int(json.load(fh)["pid"])
+        except (OSError, ValueError, TypeError, KeyError):
+            continue                                    # no marker, or not one we wrote: not ours to remove
+        if pid == os.getpid() or _pid_alive(pid):
+            continue
+        todo.append((root, False))
+    left = 0
+    for i, (root, is_tomb) in enumerate(todo):
+        if time.monotonic() > deadline:
+            left = len(todo) - i
+            break
+        tomb = root if is_tomb else root + TEST_ROOT_TOMBSTONE
+        try:
+            if not is_tomb:
+                os.rename(root, tomb)                   # claim it: from here on the marker no longer matters
+            _rmtree_stubborn(tomb)
+            swept += 1
+        except OSError as e:
+            if log:
+                log("boot reconcile: dead test root not removed (will retry next boot): %s: %s" % (tomb, e))
+    if left and log:
+        log("boot reconcile: test-root sweep budget (%.0fs) spent — %d dead root(s) left for the next boot"
+            % (budget_s, left))
+    return swept
 
 
 class ApiHealth:
@@ -2655,6 +2908,24 @@ class ApiHealth:
                 pass
 
     # ---- the read ----
+    def quiet(self, now: float | None = None) -> bool:
+        """No API event (attempt, response, give-up) inside the longest window ending at `now`: the rail's gray
+        dot (T301). A clock-derived answer, so the frame that carries it changes at the moment the last event
+        ages out of the window, which is an event of its own."""
+        now = time.time() if now is None else float(now)
+        with self._lock:
+            last = self._last_event_at
+        return last is None or (now - last) > max(api_health_config()["windows"])
+
+    def window_errors(self, now: float | None = None) -> int:
+        """Failed attempts (a retry or a give-up) inside the longest window ending at `now` (T301): the frame's
+        `errs`, so the rail's dot reads red for a storm the window still holds while no session waits, and clears
+        the cycle the last failure ages out. Clock-derived like quiet(): the frame that carries it changes then."""
+        now = time.time() if now is None else float(now)
+        lo = now - max(api_health_config()["windows"])
+        with self._lock:
+            return sum(1 for e in self._ring if e.kind != "ok" and lo < e.t <= now)
+
     def snapshot(self, now: float | None = None, uptime_s=None) -> dict:
         """The /api-health payload minus `bootId` (the kernel stamps that from /version's globals; `bootAt`
         is this aggregator's `boot_stamp`, the number every seeded stateSince and every restart row
@@ -2685,18 +2956,19 @@ class ApiHealth:
             auth, fam = (evs[0].auth, evs[0].family) if evs else (prev["auth"], prev["family"])
             st = api_health_state(evs, now, (prev["state"], prev["since"]) if prev else None, cfg)
             wins = {str(w): api_health_counts(evs, now, w, uptime_s) for w in cfg["windows"]}
+            series = api_health_series(evs, now, max(cfg["windows"]))   # the graph's per-minute bins (T301)
             last_err = None
             for e in reversed(evs):
                 if e.kind != "ok":
                     last_err = {"at": round(e.t, 3), "status": e.status, "category": e.category or None,
                                 "class": e.cls, "kind": e.kind}
                     break
-            derived.append((key, auth, fam, prev, st, wins, last_err))
+            derived.append((key, auth, fam, prev, st, wins, last_err, series))
         buckets = {}
         worst, worst_key = "unknown", None
         filed = False
         with self._lock:
-            for key, auth, fam, prev, st, wins, last_err in derived:
+            for key, auth, fam, prev, st, wins, last_err, series in derived:
                 cur = self._last_state.get(key)
                 if cur != prev:
                     rec = cur                    # a concurrent read filed this bucket first: its record stands
@@ -2714,7 +2986,7 @@ class ApiHealth:
                                 "state": rec["state"], "stateSince": round(rec["since"], 3),
                                 "evidence": rec["evidence"], "why": rec["why"],
                                 "transitions": list(self._by_bucket.get(key, ())),
-                                "lastError": last_err}
+                                "lastError": last_err, "series": series}
                 if API_HEALTH_SEVERITY[rec["state"]] > API_HEALTH_SEVERITY[worst] or worst_key is None:
                     worst, worst_key = rec["state"], key
             if filed:
@@ -2796,7 +3068,8 @@ _RESUME_NUDGE_REST = (
     "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
     "stopped, without asking whether to continue. Any messages queued before the restart follow "
     "this one.")
-BOOT_RESUME_NUDGE = _RESUME_NUDGE_LEAD + _RESUME_NUDGE_REST
+BOOT_RESUME_NUDGE = (_RESUME_NUDGE_LEAD + _RESUME_NUDGE_REST
+                     + "<!-- romp-gist: resumed after a romp restart cut its turn -->")
 
 
 def _clock_pair(stop_t: int, start_t: int) -> tuple[str, str]:
@@ -2821,16 +3094,19 @@ def _gap_text(seconds: int) -> str:
 
 
 def down_resume_nudge(stop_t: int, start_t: int) -> str:
-    """BOOT_RESUME_NUDGE for a turn that `romp down` cut (2026-09-06): the same lead sentence (the
-    kernel's INTR_RESTART_SIG lockstep, and is_resume_nudge's prefix), then the stop and the start
-    named with their times, because a model resumed hours or days later otherwise reads the cut as
-    a restart seconds long and trusts shell state, running jobs and remote work it last saw before
-    the gap. A `[romp]` notice about romp's own act, so it may name romp and the command."""
+    """BOOT_RESUME_NUDGE for a turn that `romp down` cut: the same lead sentence (the kernel's
+    INTR_RESTART_SIG lockstep, and is_resume_nudge's prefix), then the stop and the start named
+    with their times, because a model resumed hours or days later otherwise reads the cut as a
+    restart seconds long and trusts shell state, running jobs and remote work it last saw before
+    the gap. A `[romp]` notice about romp's own act, so it may name romp and the command; its gist
+    is the head the chat shows for it."""
     stop_s, start_s = _clock_pair(int(stop_t), int(start_t))
+    gap = _gap_text(int(start_t) - int(stop_t))
     return (_RESUME_NUDGE_LEAD
             + " The stop was on purpose: romp down at %s, started again at %s (%s later). Check anything "
-              "you were running or watching before relying on it." % (stop_s, start_s, _gap_text(int(start_t) - int(stop_t)))
-            + _RESUME_NUDGE_REST)
+              "you were running or watching before relying on it." % (stop_s, start_s, gap)
+            + _RESUME_NUDGE_REST
+            + "<!-- romp-gist: resumed after romp down cut its turn (stopped %s, started again %s) -->" % (stop_s, start_s))
 
 
 def is_resume_nudge(text) -> bool:
@@ -2853,11 +3129,11 @@ def newest_down_stop(state_dir: Path) -> int | None:
     marker it also leaves is cleared by the deliberate start, so at boot the row is what remains).
     None when the newest intent is anything else: a refresh, a p2p update, a `down-failed`, or no
     row at all (a crash respawn). Rows with action `manager-sigterm` are skipped on the way back:
-    the manager appends one right before it kills a kernel (fork PR #272; `trigger` names what set
-    it off), so under `romp down` it lands AFTER the CLI's `down` row. It says the manager was the
-    messenger, never who asked, and a reader that stopped at it read every `romp down` as no
-    deliberate stop. The caller still checks the row is newer than the cut turn's own state stamp,
-    so a `down` from days ago cannot be blamed for a later crash's cut."""
+    the manager appends one right before it kills a kernel (`trigger` names what set it off), so
+    under `romp down` it lands AFTER the CLI's `down` row. It says the manager was the messenger,
+    never who asked, and a reader that stopped at it would read every `romp down` as no deliberate
+    stop. The caller still checks the row is no older than the cut turn's start, so a `down` from
+    days ago cannot be blamed for a later crash's cut."""
     try:
         for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl"):
             line = line.strip()
@@ -2872,6 +3148,13 @@ def newest_down_stop(state_dir: Path) -> int | None:
     except (OSError, ValueError):
         pass
     return None
+# Every [romp] mechanics notice carries a <!-- romp-gist --> marker (2026-09-08): the ONE-LINE, user-facing
+# head the chat shows for it. The prose is written to the AGENT ("Re-read the tail… pick the work back
+# up"), and its first sentence read wrong as a head in the transcript; the kernel lifts the gist beside
+# the rompSystem flag (build_session) and the chat folds the agent-facing text beneath it. Appended on these
+# constants (the rename ping is detected by its leading head, RENAME_PING_HEAD, and the interrupt causes by
+# their leading sentences, kernel INTR_RESTART_SIG / INTR_CRASH_SIG); task_death_notice carries its gist in
+# the leading marker run instead, where its voice test wants every marker. The lift reads either position.
 
 # T214: the restart also killed a QUESTION the session had up — the ask future lived only in the
 # old process, so the user's answer (often flushed by the reconnecting page) had nowhere to land,
@@ -2880,7 +3163,8 @@ def newest_down_stop(state_dir: Path) -> int | None:
 ASK_DIED_NOTICE = (
     "<!-- romp-injected --><!-- romp-system -->[romp] The restart also killed a question this "
     "session had up awaiting the user's answer — it was never delivered, and any answer they sent "
-    "could not land. Ask the question again so they can answer it.")
+    "could not land. Ask the question again so they can answer it."
+    "<!-- romp-gist: a question it had up was lost in the restart -->")
 
 # Staggered boot-resume (the user 2026-07-20): spawning every reconciled session's CLI at once
 # detonated a fleet-wide CPU storm — each resumed claude burns ~a full core catching up on its
@@ -2932,7 +3216,8 @@ _CRASH_NUDGE_REST = (
     "; the session has been resumed with its history intact. If the conversation "
     "tail shows '[Request interrupted by user]', that record came from this cut, not from the user: "
     "nobody asked you to stop. Re-read the tail of the conversation and pick the work back up where "
-    "it stopped, without asking whether to continue.")
+    "it stopped, without asking whether to continue."
+    "<!-- romp-gist: resumed after its process died mid-turn -->")
 CRASH_RESUME_NUDGE = _CRASH_NUDGE_LEAD + " (killed or crashed)" + _CRASH_NUDGE_REST
 CRASH_RESUME_NUDGE_OOM = (_CRASH_NUDGE_LEAD
                           + " (out of memory: the OOM killer took a process running under this session, and anything "
@@ -2941,6 +3226,16 @@ CRASH_RESUME_NUDGE_OOM = (_CRASH_NUDGE_LEAD
 CRASH_RESUME_NUDGE_KILLED = (_CRASH_NUDGE_LEAD
                              + " (killed by signal 9 partway through the last turn; no out-of-memory kill is on record for it, "
                                "which does not rule one out; keep memory use modest for now)" + _CRASH_NUDGE_REST)
+
+
+def fed_text_opener(text: str) -> str:
+    """Who a text we FEED the CLI speaks for: "injected" when it carries the romp-injected marker (a nudge,
+    a follow-up romp wrote, a restart or rename notice, relayed mail, the retry line: everything romp puts
+    into a session on its own), "human" otherwise (the composer's words, a queued message, a typed
+    follow-up, a button's /command). The COMMENT FORM only, the rule send()'s echo authoring and the event
+    model's ROMP_INJECT_RE follow: prose that merely mentions the marker is the user's. Feeds the turn-
+    opener stamp (SdkSession._note_turn_opener), whose reader is the kernel's turn-finished push."""
+    return "injected" if "<!-- romp-injected -->" in (text or "") else "human"
 
 
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
@@ -2972,11 +3267,53 @@ SDK_MISSING_TEXT = (
     "then restart romp. Claude Code (tmux) sessions are unaffected.")
 
 
+def sdk_importable() -> bool:
+    """Is claude_agent_sdk actually importable RIGHT NOW? Checked at backend construction so the failure
+    is reported ONCE, up front, for every session — rather than one session at a time as each one's
+    thread dies at the lazy import inside _amain."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("claude_agent_sdk") is not None
+    except Exception:
+        return False
+
+
+def usage_fallback_is_sdk(msg) -> bool:
+    """A paid result carried no modelUsage map (SdkSession._turn_usage read the flat `usage` dict instead): is
+    that the imported SDK's doing? The current claude-agent-sdk declares `model_usage` as a field of
+    ResultMessage, None when the CLI sends no map, so a result with no such ATTRIBUTE at all came from
+    an older copy of the SDK, whichever one the kernel's interpreter imported: a copy found on sys.path
+    ahead of the dedicated venv's (kernel._ensure_sdk_on_path takes an importable copy first), or the
+    venv's own, as old as its last bin/romp-sdk-setup run. That is a fact about the host, the same for
+    every session this kernel runs; a field that is there but empty is this session's CLI's doing on
+    this result."""
+    return not hasattr(msg, "model_usage")
+
+
+def usage_fallback_notice(name, msg) -> str:
+    """The problem line for a paid result with no modelUsage map, by the cause usage_fallback_is_sdk
+    tells apart. The SDK cause names no session (it holds for all of them) and names the copy the
+    kernel imported, so the remedy is a path and not a search; the CLI cause names the session. Either
+    way the reader learns what the token columns now count and that the dollars are unaffected: the
+    flat dict is the main loop's own per-turn total, so what subagents and sidechains spent is not in
+    it, while total_cost_usd stays the process total."""
+    if usage_fallback_is_sdk(msg):
+        where = getattr(sys.modules.get("claude_agent_sdk"), "__file__", None) or "an unknown path"
+        return ("spend: every session's token columns count the main loop alone from here on (no subagent or "
+                "sidechain tokens; the dollars are unaffected). Cause: the claude-agent-sdk the kernel imported "
+                "(%s) has no model_usage field on ResultMessage, so the CLI's modelUsage map never reaches the "
+                "kernel. Run bin/romp-sdk-setup to install a current one, or remove a copy that shadows the "
+                "venv's, then restart romp." % where)
+    return ("spend (%s): a paid turn's tokens were recorded from the main loop alone (no subagent or sidechain "
+            "tokens; the dollars are unaffected): the CLI emitted no modelUsage on the result. Said once per "
+            "session." % name)
+
+
 def running_python_tag() -> str:
     """This interpreter as a venv names its lib dir: `3.14`, or `3.14t` for a free-threaded build. venv
-    appends the abi tag to the directory (lib/python3.14t), so a comparison on major.minor alone made a
-    kernel on 3.14t refuse the venv that very interpreter built as a mismatch (review 2026-09-06). The
-    twin of kernel.py's _running_python_tag, which runs before this module loads."""
+    appends the abi tag to the directory (lib/python3.14t), so a comparison on major.minor alone would
+    make a kernel on 3.14t refuse the venv that very interpreter built as a mismatch. The twin of
+    kernel.py's _running_python_tag, which runs before this module loads."""
     return "%d.%d%s" % (sys.version_info[0], sys.version_info[1],
                         "t" if "t" in getattr(sys, "abiflags", "") else "")
 
@@ -3000,20 +3337,39 @@ def sdk_venv_has_sdk(state_dir, tag) -> bool:
         return False
 
 
-def interpreter_runs(path, timeout=5.0) -> bool:
-    """Does the interpreter at `path` start and exit cleanly (`-c pass`)? The test bin/romp-serve's
-    pick_python applies before following the venv's recorded interpreter, applied here for the same
-    reason: an executable file is not a working python. A uv-managed install that lost its shared
-    library or stdlib passes os.access and fails to run, and the mismatch text used to prescribe a
-    ROMP_PYTHON pin to exactly that binary, which romp-serve then execs blindly into a respawn loop
-    (review 2026-09-06). A probe that hangs or errors reads as not running."""
+# The one-line program a python prints its venv tag with: the expression running_python_tag() evaluates
+# in this process, and the one bin/romp-sdk-setup's pytag runs in the setup script.
+_TAG_PROGRAM = ("import sys; print('%d.%d%s' % (sys.version_info[0], sys.version_info[1], "
+                "'t' if 't' in getattr(sys, 'abiflags', '') else ''))")
+_TAG_RE = re.compile(r"3\.\d+t?")
+
+
+def interpreter_tag(path, timeout=5.0) -> str:
+    """The tag (`3.12`, `3.14t`) the interpreter at `path` reports itself as when run, or "" when it does
+    not run as a python: not executable, a non-zero exit, a hang, or an answer that is not a tag. The
+    test bin/romp-serve's pick_python applies before following the venv's recorded interpreter (its
+    _runs_as reads sys.version_info and sys.abiflags from the candidate), applied here so the kernel's
+    verdict and the picker's agree on what "the venv's interpreter still runs" means: an executable file
+    is not a working python, and a working python is not the venv's unless it is the python the venv was
+    built for. A uv-managed install that lost its shared library or stdlib passes os.access and fails to
+    run; a `python3` an upgrade repointed runs and exits 0 as some other minor. A mismatch text that
+    prescribed a ROMP_PYTHON pin to either would have romp-serve exec it as given, into a respawn loop
+    or into the same mismatch after the restart. The probe runs the interpreter and reads what it prints
+    (the stripped last stdout line must be a whole tag, so a sitecustomize that prints ahead of it does
+    not defeat it and a script that prints anything else does not pass for a python), bounded the way
+    the picker's is: the clock only ends a probe that never answers."""
     if not path or not os.access(path, os.X_OK):
-        return False
+        return ""
     try:
-        return subprocess.run([path, "-c", "pass"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
+        res = subprocess.run([path, "-c", _TAG_PROGRAM], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, timeout=timeout)
     except Exception:
-        return False
+        return ""
+    if res.returncode != 0:
+        return ""
+    lines = res.stdout.decode("utf-8", "replace").strip().splitlines()
+    tag = lines[-1].strip() if lines else ""
+    return tag if _TAG_RE.fullmatch(tag) else ""
 
 
 def sdk_venv_interpreter(state_dir) -> str:
@@ -3062,7 +3418,7 @@ def sdk_venv_fingerprint(state_dir) -> tuple:
     return tuple(parts)
 
 
-def sdk_venv_verdict(state_dir, runs=None) -> dict:
+def sdk_venv_verdict(state_dir, probe=None) -> dict:
     """What the disk says about the SDK venv against THIS interpreter, read now. `kind` is one of
       none      no venv (or none with a lib/python3.*): the install remedy fits;
       broken    a venv for this python with no claude_agent_sdk in it (a half-built install): same remedy;
@@ -3070,16 +3426,18 @@ def sdk_venv_verdict(state_dir, runs=None) -> dict:
                 answer for this: the venv was built after it started (bin/romp-sdk-setup run while the
                 kernel ran, the 2026-09-06 recovery), and the remedy is the restart;
       mismatch  venv(s) for other python(s) only. bin/romp-serve's pick_python follows the venv's
-                interpreter, so this means ROMP_PYTHON chose another python, or the venv's own is gone or
-                will not run (2026-09-06: two hours of "isn't installed" over a venv that was present,
-                intact and built for the previous python). `interp` is the recorded interpreter and
-                `interp_runs` whether it actually starts (interpreter_runs; `runs` is the test seam), which
-                decides between the two remedies: point romp back at it, or rebuild for the one romp runs.
+                interpreter, so this means ROMP_PYTHON chose another python, or the venv's own is gone,
+                will not run, or is no longer the python the venv was built for (2026-09-06: two hours of
+                "isn't installed" over a venv that was present, intact and built for the previous python).
+                `interp` is the recorded interpreter and `interp_tag` the tag it reports when run
+                (interpreter_tag; "" when it does not run as a python; `probe` is the test seam), which
+                decides between the two remedies: point romp back at it when that tag is one the venv was
+                built for, or rebuild for the one romp runs.
     ONE function, so every surface that refuses (the session card, the boot log, the creation refusal)
     reads the same facts at the same moment."""
     running = running_python_tag()
     built = sdk_venv_built_for(state_dir)
-    v = {"kind": "none", "built": built, "running": running, "interp": "", "interp_runs": False}
+    v = {"kind": "none", "built": built, "running": running, "interp": "", "interp_tag": ""}
     if not built:
         return v
     if running in built:
@@ -3087,15 +3445,20 @@ def sdk_venv_verdict(state_dir, runs=None) -> dict:
         return v
     v["kind"] = "mismatch"
     v["interp"] = sdk_venv_interpreter(state_dir)
-    v["interp_runs"] = bool(v["interp"]) and bool((runs or interpreter_runs)(v["interp"]))
+    v["interp_tag"] = (probe or interpreter_tag)(v["interp"]) if v["interp"] else ""
     return v
 
 
 def _mismatch_remedy(v, then="then restart romp") -> str:
-    """The ONE remedy the disk supports for a mismatch verdict: the recorded interpreter still runs, so
-    point romp back at it; or it is gone or broken, so rebuild for the one romp runs. Never both, and
-    never a pin to an interpreter nothing has seen run."""
-    if v["interp_runs"]:
+    """The ONE remedy the disk supports for a mismatch verdict: the recorded interpreter still runs as
+    the venv's python, so point romp back at it; or it is gone, broken, or now another python, so
+    rebuild for the one romp runs. Never both, and never a pin to an interpreter nothing has seen run as
+    the venv's python. The test is the one the kernel applies to its own interpreter when it adds the
+    venv (_ensure_sdk_on_path: the running tag is one the venv's lib names), so a pin to an interpreter
+    that passes it brings up a kernel that matches the venv; a pin to a `python3` an upgrade repointed,
+    which runs and exits 0 as another minor, would have bin/romp-serve honor the pin as given and the
+    kernel show this same text again after the restart."""
+    if v["interp_tag"] and v["interp_tag"] in v["built"]:
         return "Set ROMP_PYTHON=%s in service.env, %s." % (v["interp"], then)
     return "Re-run bin/romp-sdk-setup to rebuild it for Python %s, %s." % (v["running"], then)
 
@@ -3121,6 +3484,8 @@ def sdk_unavailable_text(state_dir, verdict=None, started_missing=True) -> str:
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v)))
 
 
+# The plain session-creation refusal, the same words as the kernel's SDK_SETUP_HINT (which the kernel
+# passes in as `default`, so the two never drift apart in the process that matters).
 SDK_SETUP_REFUSAL = ("Session not created: the Claude Code backend's Agent SDK isn't installed. "
                      "Run bin/romp-sdk-setup, then try again. (Claude Code (tmux) sessions still work.)")
 
@@ -3129,61 +3494,19 @@ def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
     """The session-creation refusal (`romp new`, the browser's create) for a venv verdict: the same
     facts as sdk_unavailable_text, in the voice of a session that does not exist yet. Built HERE, next
     to the card's text and from the same verdict, so the two surfaces cannot tell different stories
-    (review 2026-09-06: after a rebuild while the kernel ran, `romp new` said "isn't installed" while
-    the card said mismatch, and the refusal offered a ROMP_PYTHON pin without checking the interpreter
-    existed). `default` is the plain install refusal (the kernel passes its own SDK_SETUP_HINT, the
-    same words) for the verdicts where the install remedy fits."""
+    (after a rebuild while the kernel ran, `romp new` would say "isn't installed" while the card said
+    mismatch, and a refusal built from the kernel's own reading named a ROMP_PYTHON pin without
+    checking the interpreter existed). `default` is the plain install refusal (the kernel passes its own
+    SDK_SETUP_HINT, the same words) for the verdicts where the install remedy fits."""
     v = verdict
     if v["kind"] == "present":
-        return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s after romp started. "
-                "Restart romp, then try again. (Claude Code (tmux) sessions still work.)" % v["running"])
+        return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s after romp "
+                "started. Restart romp, then try again. (Claude Code (tmux) sessions still work.)" % v["running"])
     if v["kind"] != "mismatch":
         return default
-    return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s, but romp is running on "
-            "Python %s. %s (Claude Code (tmux) sessions still work.)"
+    return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s, but romp is "
+            "running on Python %s. %s (Claude Code (tmux) sessions still work.)"
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v, then="restart romp and try again")))
-
-
-def sdk_importable() -> bool:
-    """Is claude_agent_sdk actually importable RIGHT NOW? Checked at backend construction so the failure
-    is reported ONCE, up front, for every session — rather than one session at a time as each one's
-    thread dies at the lazy import inside _amain."""
-    try:
-        import importlib.util
-        return importlib.util.find_spec("claude_agent_sdk") is not None
-    except Exception:
-        return False
-
-
-def usage_fallback_is_sdk(msg) -> bool:
-    """A paid result carried no modelUsage map (SdkSession._turn_usage read the flat `usage` dict instead): is
-    that the imported SDK's doing? The current claude-agent-sdk declares `model_usage` as a field of
-    ResultMessage, None when the CLI sends no map, so a result with no such ATTRIBUTE at all came from
-    an older copy of the SDK, whichever one the kernel's interpreter imported: a copy found on sys.path
-    ahead of the dedicated venv's (kernel._ensure_sdk_on_path takes an importable copy first), or the
-    venv's own, as old as its last bin/romp-sdk-setup run. That is a fact about the host, the same for
-    every session this kernel runs; a field that is there but empty is this session's CLI's doing on
-    this result."""
-    return not hasattr(msg, "model_usage")
-
-
-def usage_fallback_notice(name, msg) -> str:
-    """The problem line for a paid result with no modelUsage map, by the cause usage_fallback_is_sdk
-    tells apart. The SDK cause names no session (it holds for all of them) and names the copy the
-    kernel imported, so the remedy is a path and not a search; the CLI cause names the session. Either
-    way the reader learns what the token columns now count and that the dollars are unaffected: the
-    flat dict is the main loop's own per-turn total, so what subagents and sidechains spent is not in
-    it, while total_cost_usd stays the process total."""
-    if usage_fallback_is_sdk(msg):
-        where = getattr(sys.modules.get("claude_agent_sdk"), "__file__", None) or "an unknown path"
-        return ("spend: every session's token columns count the main loop alone from here on (no subagent or "
-                "sidechain tokens; the dollars are unaffected). Cause: the claude-agent-sdk the kernel imported "
-                "(%s) has no model_usage field on ResultMessage, so the CLI's modelUsage map never reaches the "
-                "kernel. Run bin/romp-sdk-setup to install a current one, or remove a copy that shadows the "
-                "venv's, then restart romp." % where)
-    return ("spend (%s): a paid turn's tokens were recorded from the main loop alone (no subagent or sidechain "
-            "tokens; the dollars are unaffected): the CLI emitted no modelUsage on the result. Said once per "
-            "session." % name)
 
 
 # What the SDK puts on ProcessError.stderr when NOBODY registered an options.stderr callback: it does
@@ -3282,7 +3605,11 @@ def task_death_notice(tasks: list, cause: str = "a restart or crash") -> str:
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
     one = n == 1
-    return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s you had running %s "
+    # the gist marker rides in the LEADING marker run here (this notice's voice test wants every marker ahead of
+    # the prose, one line after it); the restart constants above append theirs — the lift reads either position
+    return ("<!-- romp-injected --><!-- romp-system --><!-- romp-gist: %d background task%s cut off when the process ended -->"
+            % (n, "" if one else "s")
+            + "[romp] %d background task%s you had running %s "
             "cut off when the claude process that started %s ended (%s)%s. "
             "%s completion notification%s will never arrive. Check whether %s still running before "
             "relaunching %s; if %s needed, carry on."
@@ -3338,10 +3665,14 @@ def _is_kernel_cmd(cmd: str) -> bool:
     return False
 
 
-def find_orphan_clis(ps_lines: list[str], lastsids: list[str], own_pid: int) -> list[int]:
+def find_orphan_clis(ps_lines: list[str], lastsids: list[str], own_pid: int, leases: list[dict] | None = None,
+                     now: float | None = None, start=None, version: str = "") -> list[int]:
     """PIDs of ORPHANED SDK-driven `claude` CLIs holding one of OUR sessions (--resume/--session-id
-    in either flag spelling, + the stream-json mark — see _cli_carries_sid). Orphaned = its PARENT
-    is not a live romp kernel (absent from the listing, or a process that is not a kernel): a live
+    in either flag spelling, + the stream-json mark — see _cli_carries_sid). With `leases` (the
+    session leases on disk, list_leases) the verdict is lease_census's: a CLI with a VALID lease is
+    owned by its holder whatever its parent, and a CLI with no valid lease and no live kernel parent is
+    an orphan (T305; the rules and the anomaly rows are documented there). Without leases, the
+    parentage rule below stands alone. Orphaned = its PARENT is not a live romp kernel (absent from the listing, or a process that is not a kernel): a live
     SDK CLI is always a child of the kernel that spawned it, so only a dead kernel's leftover — a
     zombie writer that would fight the resume for the transcript — has any other parent. The parent
     check is load-bearing: matching on the command line alone let a duplicate backend's reconcile
@@ -3362,6 +3693,8 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str], own_pid: int) -> 
     a full service restart, which empties the unit's cgroup (systemd's default KillMode=control-group),
     ever ended such a CLI. The definition now names the property the ppid-1 check approximated. Pure
     (takes PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
+    if leases is not None:
+        return lease_census(ps_lines, lastsids, own_pid, leases, now=now, start=start, version=version)["orphans"]
     procs: dict[int, tuple[int, str]] = {}    # pid -> (ppid, command), in listing order
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
@@ -3380,6 +3713,247 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str], own_pid: int) -> 
         out.append(pid)
     return out
 
+
+def cli_sid_of(cmd: str, sids) -> "str | None":
+    """The one of `sids` this CLI's argv names (_cli_carries_sid's match, returning the id), or None."""
+    for s in sids:
+        if not s:
+            continue
+        for flag in ("--resume", "--session-id"):
+            if (flag + " " + s) in cmd or (flag + "=" + s) in cmd:
+                return s
+    return None
+
+
+def duplicate_clis(ps_lines: list[str], lastsids: list[str]) -> dict[str, list[int]]:
+    """Conversation ids that MORE THAN ONE SDK-driven CLI in a PS_ARGV listing is holding, id -> pids in
+    listing order (T304: two writers for one transcript is the failure the boot reap exists to prevent, and
+    until now nothing recorded when it was found). Same match as find_orphan_clis (the stream-json mark plus
+    a --resume/--session-id spelling), whatever the parents are: an orphan beside this kernel's live child
+    counts, and so do two orphans. Pure."""
+    seen: dict[str, list[int]] = {}
+    for ln in ps_lines:
+        parts = ln.strip().split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit():
+            continue
+        cmd = parts[2]
+        if _SDK_CLI_MARK not in cmd:
+            continue
+        s = cli_sid_of(cmd, lastsids)
+        if s:
+            seen.setdefault(s, []).append(int(parts[0]))
+    return {s: pids for s, pids in seen.items() if len(pids) > 1}
+
+
+# ── SESSION OWNERSHIP LEASES (T305, stage 1 of sessions that survive a kernel restart) ─────────────
+# Who owns a running CLI used to be answered by parentage: a live SDK CLI was a child of the kernel that
+# spawned it, so "parent is a live romp kernel" meant owned and anything else meant an orphan to reap.
+# That fact is wrong the moment a CLI is re-parented on purpose — a wrapper or a debugger between the
+# kernel and the CLI, or (stage 4 of the same program) a per-session host process that outlives the
+# kernel — and the reaper then kills a live session at the next boot. Ownership is now a LEASE: one file
+# per session under STATE/leases/, written by whoever holds the CLI (this kernel, in this stage; the host
+# in stage 4) the moment it knows the CLI's pid, refreshed on a heartbeat, and removed when the holder
+# ends the CLI on purpose. A lease is VALID when its heartbeat is fresh, its holder is alive and its CLI
+# is alive — each process named by pid AND start time, never pid alone (a pid is reused; a start time is
+# not). A CLI with a valid lease is owned by whoever holds it, whatever its parent is; a CLI with no
+# valid lease and no live kernel parent is an orphan. The precedent is the deploy-drain hold below
+# (refresh_drain_hold / DRAIN_HOLD_TTL): a lease the holder refreshes and a fresh boot reads, never a
+# latch. Its cadence is that hold's, exactly: the manager's parked poll refreshes the drain hold every
+# ~3 s and the hold lasts 12 s (four beats), so it outlives a missed beat and not a dead holder; the
+# lease beats every LEASE_HEARTBEAT_S and is fresh for LEASE_TTL_S, the same two numbers. Holder
+# identity is the primary check (a crashed kernel's leases are invalid at the next boot because their
+# holder is gone, so its CLIs are reaped exactly as before and the transcript keeps one writer); the
+# heartbeat is the second line, against a holder that is alive but wedged.
+LEASE_DIR = "leases"
+LEASE_HEARTBEAT_S = 3.0      # the drain hold's poll cadence
+LEASE_TTL_S = 12.0           # DRAIN_HOLD_TTL: four beats, outlives a missed beat, not a dead holder
+
+LEASE_ANOMALIES = ("lease.cli-without-lease",   # an SDK CLI of ours with no valid lease, kept because a live kernel parents it
+                   "lease.no-live-process",     # a lease whose pid is gone, or now names another process
+                   "lease.holder-gone",         # a live CLI whose lease holder is gone (a crashed kernel): reaped
+                   "lease.stale-heartbeat",     # a live CLI whose holder lives but stopped beating: reaped
+                   "lease.version-skew")        # a valid lease written by another code version (owned, reported)
+# Every anomaly is a PROBLEM ROW through problem_row above (the T304 helper): prose on the ring, prose plus the
+# JSON object on the kernel-log line, one JSON line in session-events.jsonl. Two CLIs on one conversation are
+# the boot sweep's own row (reconcile.duplicate-cli, duplicate_clis), filed once, not again here.
+
+
+def proc_start(pid: int, run=None) -> str | None:
+    """The process's start-time identity as text: /proc/<pid>/stat field 22 (clock ticks since boot)
+    where there is a procfs, else `ps -o lstart=` (macOS). None when the pid is gone. Writer and reader
+    run on the same box, so the two forms never meet; a fake pid above pid_max reads None on both."""
+    if os.path.isdir("/proc"):
+        t = _read_starttime(pid)
+        return None if t is None else str(t)
+    run = run or subprocess.run
+    try:
+        out = run(["ps", "-o", "lstart=", "-p", str(int(pid))], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return None
+    out = (out or "").strip()
+    return out or None
+
+
+def lease_path(state_dir, sid: str) -> Path:
+    return Path(state_dir) / LEASE_DIR / (str(sid) + ".json")
+
+
+def write_lease(state_dir, lease: dict) -> None:
+    """Write one session's lease atomically (writer-unique temp + os.replace, as write_reg does: the
+    outgoing and the incoming kernel may touch one sid's files at a restart)."""
+    p = lease_path(state_dir, lease["sid"])
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
+    try:
+        tmp.write_text(json.dumps(lease, sort_keys=True))
+        os.replace(tmp, p)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def read_lease(state_dir, sid: str) -> dict | None:
+    """The session's lease as written, or None when there is none (or it does not parse)."""
+    try:
+        d = json.loads(lease_path(state_dir, sid).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(d, dict) or not d.get("sid"):
+        return None
+    return d
+
+
+def remove_lease(state_dir, sid: str) -> bool:
+    """Drop the session's lease; True when a file was removed."""
+    try:
+        os.unlink(lease_path(state_dir, sid))
+        return True
+    except OSError:
+        return False
+
+
+def list_leases(state_dir) -> list[dict]:
+    """Every parseable lease under STATE/leases/, in name order. A file that does not parse is skipped
+    (a half-written temp is never a `.json`; a corrupt one is nobody's claim)."""
+    d = Path(state_dir) / LEASE_DIR
+    out = []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return out
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        lease = read_lease(state_dir, n[:-len(".json")])
+        if lease is not None:
+            out.append(lease)
+    return out
+
+
+def lease_state(lease: dict, now: float, start=None) -> str:
+    """Why a lease does or does not hold: 'valid', or the first failing check in the order a reader
+    should report it — 'no-live-process' (its CLI pid is gone or now names another process),
+    'holder-gone' (the holder's pid is gone or reused), 'stale-heartbeat' (the holder lives but has
+    not beaten within LEASE_TTL_S). Identity is pid plus start time on both processes; `start` is the
+    identity reader (proc_start), a seam for tests with fake pids. A lease missing a field fails the
+    check that needs it."""
+    start = start or proc_start
+    try:
+        pid, pstart = int(lease.get("pid")), str(lease.get("start") or "")
+    except (TypeError, ValueError):
+        return "no-live-process"
+    if not pstart or start(pid) != pstart:
+        return "no-live-process"
+    holder = lease.get("holder") if isinstance(lease.get("holder"), dict) else {}
+    try:
+        hpid, hstart = int(holder.get("pid")), str(holder.get("start") or "")
+    except (TypeError, ValueError):
+        return "holder-gone"
+    if not hstart or start(hpid) != hstart:
+        return "holder-gone"
+    try:
+        beat = float(lease.get("t") or 0)
+    except (TypeError, ValueError):
+        beat = 0.0
+    if now - beat > LEASE_TTL_S:
+        return "stale-heartbeat"
+    return "valid"
+
+
+def lease_census(ps_lines: list[str], lastsids: list[str], own_pid: int, leases: list[dict],
+                 now: float | None = None, start=None, version: str = "") -> dict:
+    """The ownership verdict over a PS_ARGV listing and the leases on disk. Returns
+    {"orphans": [pid…], "owned": {pid: reason}, "dead_leases": [sid…], "problems": [row…]} where a
+    problem row is a flat dict with `kind` (LEASE_ANOMALIES), `cliPid`, `fsid`, `sid`, `text`, ready for
+    problem_row. Rules, per SDK CLI carrying one of OUR conversation ids (the stream-json mark plus
+    _cli_carries_sid, as before):
+      * a VALID lease naming its pid (lease_state) → owned by that lease's holder, whoever it is; a
+        lease from another code `version` is owned and reported (the deploy-week skew the monitors count);
+      * else a direct child of `own_pid` → owned: the window between this kernel's spawn and its
+        connect-time lease write is by design, and not a row;
+      * else a child of a live romp kernel (_is_kernel_cmd) → owned and REPORTED (`cli-without-lease`):
+        the previous code version's kernel wrote no leases, and its sessions survive the upgrade boot
+        exactly as they did before leases existed;
+      * else an ORPHAN, reported with its lease's failing check when it has a lease (`holder-gone`,
+        `stale-heartbeat`, or `no-live-process` when the lease's identity no longer matches the pid).
+    A lease naming no live CLI at all is `no-live-process` and listed in `dead_leases` for removal. Two
+    CLIs on one conversation id are each judged by their own rule (the boot sweep files that event itself,
+    reconcile.duplicate-cli). Pure on its inputs."""
+    now = time.time() if now is None else now
+    start = start or proc_start
+    procs: dict[int, tuple[int, str]] = {}
+    for ln in ps_lines:
+        parts = ln.strip().split(None, 2)
+        if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        procs[int(parts[0])] = (int(parts[1]), parts[2])
+    clis = {pid: (ppid, cmd) for pid, (ppid, cmd) in procs.items()
+            if _SDK_CLI_MARK in cmd and _cli_carries_sid(cmd, lastsids)}
+    by_pid: dict[int, dict] = {}
+    for lease in leases:
+        try:
+            by_pid.setdefault(int(lease.get("pid")), lease)
+        except (TypeError, ValueError):
+            continue
+    states = {pid: lease_state(lease, now, start) for pid, lease in by_pid.items()}
+    problems: list[dict] = []
+    def row(kind, text, pid=None, lease=None, fsid=None):
+        problems.append({"kind": kind, "text": text, "cliPid": pid,
+                         "sid": (lease or {}).get("sid"), "fsid": fsid or (lease or {}).get("fsid")})
+    orphans: list[int] = []
+    owned: dict[int, str] = {}
+    for pid, (ppid, cmd) in clis.items():
+        lease = by_pid.get(pid)
+        fsid = cli_sid_of(cmd, lastsids)
+        if lease is not None and states.get(pid) == "valid":
+            owned[pid] = "lease"
+            if version and str(lease.get("version") or "") != version:
+                row("lease.version-skew", "lease of session %s (pid %d) was written by code version %s; this kernel runs %s"
+                    % (str(lease.get("sid") or "")[:8], pid, lease.get("version") or "unknown", version), pid, lease)
+            continue
+        if ppid == own_pid:
+            owned[pid] = "own-child"
+            continue
+        parent = procs.get(ppid)
+        if parent is not None and _is_kernel_cmd(parent[1]):
+            owned[pid] = "kernel-child"
+            row("lease.cli-without-lease", "CLI pid %d on conversation %s is a live kernel's child (pid %d) with no valid lease; kept, not reaped"
+                % (pid, (fsid or "")[:8], ppid), pid, lease, fsid)
+            continue
+        orphans.append(pid)
+        if lease is not None:
+            why = states.get(pid)
+            row("lease." + why, "CLI pid %d of session %s has a lease that does not hold (%s); reaped as an orphan"
+                % (pid, str(lease.get("sid") or "")[:8], why.replace("-", " ")), pid, lease, fsid)
+    for pid, lease in by_pid.items():
+        if pid in clis:
+            continue
+        row("lease.no-live-process", "lease of session %s names pid %d, which is not a live CLI of that session; lease dropped"
+            % (str(lease.get("sid") or "")[:8], pid), pid, lease)
+    dead = [str(lease.get("sid")) for pid, lease in by_pid.items() if pid not in clis]
+    return {"orphans": orphans, "owned": owned, "dead_leases": dead, "problems": problems}
 
 # ENDING A CUT TURN'S WHOLE TREE (T276, the user 2026-09-08). Reaping the orphaned CLI alone left its Bash
 # tool's processes alive: a stress harness's 32 busy loops and a benchmark's 11 (setsid'd from tool shells,
@@ -3815,13 +4389,30 @@ def _read_ppid(pid: int) -> int | None:
         return None
 
 
-def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> int | None:
-    """The LIVE CLI pid holding one of `sids` as a child of `parent_pid` (this kernel), or None.
+def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int, lease: dict | None = None,
+                     start=None) -> int | None:
+    """The LIVE CLI pid holding one of `sids` as a child of `parent_pid` (this kernel), or None. With
+    the session's `lease` (T305), the lease's pid comes first: when the listing shows it as an SDK CLI
+    carrying one of `sids` and its start time still matches the lease (`start`, proc_start), that is the
+    session's CLI whatever its parent — a re-parented CLI is reachable by the escalation. Otherwise the
+    child scan below stands.
     The interrupt escalation's (and the drain reap's) target: same signature match as
     find_orphan_clis (_cli_carries_sid + the stream-json mark) but the OPPOSITE parent check — it
     may only signal our own child, never a tmux CLI (no mark), never another kernel's, never an
     orphan (a CLI whose parent is no live kernel — the reaper's territory). Pure (takes
     PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
+    if lease:
+        start = start or proc_start
+        try:
+            lpid, lstart = int(lease.get("pid")), str(lease.get("start") or "")
+        except (TypeError, ValueError):
+            lpid, lstart = None, ""
+        for ln in ps_lines:
+            parts = ln.strip().split(None, 2)
+            if len(parts) < 3 or not parts[0].isdigit() or int(parts[0]) != lpid:
+                continue
+            if _SDK_CLI_MARK in parts[2] and _cli_carries_sid(parts[2], sids) and lstart and start(lpid) == lstart:
+                return lpid
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
         if len(parts) < 3 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -4616,24 +5207,21 @@ def helper_fast_org_env(log, cwd=None) -> dict:
 # ---------------------------------------------------------------------------
 
 class _QueueText(str):
-    """A queued text that carries an identity: a plain str to every consumer (equality, sets,
-    joins, json — all unchanged), with up to two ids riding as attributes. `todo` is the id of
-    the user todo this text ANSWERS (the 2026-08-22 shape, then named _TodoText); `send_id` is
-    the id the CLIENT minted for the send at the press (2026-09-08), so its "sending…" bubble
-    can be matched to this exact entry — in the queued chip, in the echo, and in the record that
-    lands it — instead of to the first entry wearing the same words. Both travel WITH the
-    message — through _pending, the reg mirror, the fed-turn twin and the stranded re-head — so
-    the recall and loss machinery read them off the entry they act on, and no side table (whose
-    lifetime was the kernel process while the queue it tracked was persisted — the round-2
-    2026-08-22 restart-recall hole) has to remember which message is which.
-    getattr(entry, "todo", "") / getattr(entry, "send_id", "") read them off any queue text."""
+    """A queued text that carries the ask it answers: a plain str to every consumer (equality, sets,
+    joins, json, all unchanged), with one id riding as an attribute. `todo` is the id of the user
+    todo this text ANSWERS (the 2026-08-22 shape, then named _TodoText). It travels WITH the
+    message, through _pending, the reg mirror, the fed-turn twin and the stranded re-head, so the
+    recall and loss machinery read it off the entry they act on, and no side table (whose lifetime
+    was the kernel process while the queue it tracked was persisted: the round-2 2026-08-22
+    restart-recall hole) has to remember which message is which. The copy's own identity (the qid
+    the press or send() minted, T252c) rides beside the text in _pending_meta, never on the entry.
+    getattr(entry, "todo", "") reads the id off any queue text."""
 
-    __slots__ = ("todo", "send_id")
+    __slots__ = ("todo",)
 
-    def __new__(cls, text, todo="", send_id=""):
+    def __new__(cls, text, todo=""):
         o = str.__new__(cls, text)
         o.todo = str(todo or "")
-        o.send_id = str(send_id or "")
         return o
 
 
@@ -4642,18 +5230,18 @@ _TodoText = _QueueText   # the answer-only name the 2026-08-22 change introduced
 
 def _queue_text(e):
     """One persisted queue entry → the text the in-memory queue holds: a bare string stays a bare
-    string; a {"text","todo","sendId"} dict (an id-carrying entry — see _QueueText) comes back
-    carrying its ids. None for malformed junk, exactly as the old strings-only filter treated it.
+    string; a {"text","todo"} dict (an answer entry, see _QueueText) comes back carrying its
+    ask's id. None for malformed junk, exactly as the old strings-only filter treated it.
     Bare entries are byte-identical to the pre-todo mirror in BOTH directions, so a send with no
     id round-trips untouched by any kernel version; an OLDER kernel reading a dict entry drops it
     from its seed (its filter is isinstance(str)) — accepted for the downgrade path: the message
-    class did not exist before the ids rode the entry."""
+    class did not exist before the ids rode the entry. The copies' own identities are not here:
+    they ride reg['queueMeta'] (queue_meta_from_reg), aligned with this list."""
     if isinstance(e, str):
         return e or None
     if isinstance(e, dict) and isinstance(e.get("text"), str) and e["text"]:
         todo = str(e.get("todo") or "")
-        send_id = str(e.get("sendId") or "")
-        return _QueueText(e["text"], todo, send_id) if (todo or send_id) else e["text"]
+        return _QueueText(e["text"], todo) if todo else e["text"]
     return None
 
 
@@ -4664,17 +5252,11 @@ def _queue_texts(q):
 
 def _queue_wire(t):
     """One in-memory queue text → its persisted shape: bare strings stay bare (byte-compat with
-    every reader of reg['queue']); an id-carrying entry serializes as {"text","todo","sendId"},
-    each id only when set."""
-    todo, send_id = getattr(t, "todo", ""), getattr(t, "send_id", "")
-    if not (todo or send_id):
+    every reader of reg['queue']); an answer entry serializes as {"text","todo"}."""
+    todo = getattr(t, "todo", "")
+    if not todo:
         return str(t)
-    d = {"text": str(t)}
-    if todo:
-        d["todo"] = todo
-    if send_id:
-        d["sendId"] = send_id
-    return d
+    return {"text": str(t), "todo": todo}
 
 
 class _AskCancelled(Exception):
@@ -4705,26 +5287,72 @@ def _model_downgrade(frm, to):
 
 
 def _echo_queued_in(a: dict, queued) -> bool:
-    """Whether echo atom `a` is in the surviving queue `queued`: the queue's entries as the in-memory queue
-    holds them (plain texts, or _QueueText entries carrying the client's send id; _queue_texts gives a
-    persisted queue the same shape). By identity where both sides have one, upstream's T252c third-review
-    rule re-expressed on the fork's send id: an echo whose `_send_id` a queued entry wears is queued; an
-    echo whose text is queued only under OTHER send ids is not (by text alone, the second of two identical
-    sends hid the loss of the first, which was neither re-delivered nor flagged). An echo without a send id
-    (an agent's `romp send`, a nudge) and a queue without any id-carrying entry keep the text reading, and
-    an identified echo still counts as queued when an id-less entry carries its text (an older kernel's
-    mirror, a notice the backend queued), so an upgrade mid-flight never re-delivers a copy that is in
-    fact queued."""
-    entries = [q for q in (queued or []) if isinstance(q, str)]
-    texts = {str(q) for q in entries}
-    ids = {getattr(q, "send_id", "") for q in entries} - {""}
-    idless = {str(q) for q in entries if not getattr(q, "send_id", "")}
-    send_id = a.get("_send_id")
-    if send_id and send_id in ids:
+    """Whether echo atom `a` is in the surviving queue `queued` — its copies as {"md", "qid"} (a plain text is an
+    id-less copy) — by identity where it has one (T252c, third review): an echo whose uuid a queued copy wears is
+    queued; an echo whose text is queued only under OTHER ids is not (by text alone, the second of two identical
+    sends hid the loss of the first). A copy without an id (an older kernel's mirror, a notice the backend queued)
+    and an echo the reseed re-minted (an older mirror carried no uuid) keep the text reading, so an upgrade
+    mid-flight never re-delivers a copy that is in fact queued."""
+    metas = [m if isinstance(m, dict) else {"md": m, "qid": None} for m in (queued or [])]
+    qs = {m.get("md") for m in metas if isinstance(m.get("md"), str)}
+    ids = {m.get("qid") for m in metas if isinstance(m.get("qid"), str) and m.get("qid")}
+    idless = {m.get("md") for m in metas if isinstance(m.get("md"), str) and not m.get("qid")}
+    if a.get("uuid") in ids:
         return True
-    if not send_id or not ids:
-        return a.get("_echo_text") in texts
+    if a.get("_echo_reminted") or not ids:
+        return a.get("_echo_text") in qs
     return a.get("_echo_text") in idless
+
+
+def _enqueue_with_id(s, text: str, uuid_, t, todo: str = ""):
+    """Re-queue `text` on session `s` under the echo's uuid as its id (T252c) — a stand-in session in tests takes
+    the text alone. `todo` (the user-todo answer path): the id of the ask the text answers, read off its echo,
+    so a re-delivered answer still reopens exactly that ask on a later loss."""
+    qid = uuid_ if isinstance(uuid_, str) and uuid_.startswith("echo:") else None
+    try:
+        s.enqueue(text, qid=qid, qts=(int(t or 0) * 1000 or None) if qid else None, todo=todo)
+    except TypeError:
+        s.enqueue(text)
+
+
+def queue_meta_from_reg(reg: dict) -> list:
+    """The per-copy identities the registry mirror carries for reg['queue'], ALIGNED with it (one entry per text,
+    None for a copy without one). reg['queueMeta'] lists {"text", "qid", "qts"} for each identified copy in queue
+    order (_persist_queue), text alone for an id-less one. The run is aligned as one BLOCK of the queue, wherever
+    the reg-level edits that know texts only (a boot notice prepended, a re-delivered send appended, the
+    crash-resume nudge) have shifted it; only a run no block of the queue matches falls to first-in-first-out by
+    text over the identified entries. An older kernel's mirror, which has no queueMeta, restores id-less copies
+    the chat reads by text (second review: a chat that latched a copy's id
+    before the kernel died must find the same id on the restored copy, or fall back to text — never neither)."""
+    texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
+    raw = reg.get("queueMeta")
+    entries = [m for m in raw if isinstance(m, dict) and isinstance(m.get("text"), str)] if isinstance(raw, list) else []
+
+    def ident(m):
+        return {"qid": m["qid"], "qts": m.get("qts")} if isinstance(m.get("qid"), str) and m["qid"] else None
+
+    # the mirror lists EVERY position (text alone for an id-less copy): align the mirrored run as one block of the
+    # queue — the boot paths that edit reg['queue'] by text (a notice prepended, a re-delivered send appended)
+    # shift it whole — so a same-text pair keeps its ids where they were (third review)
+    n = len(entries)
+    if n and len(entries) == len(raw):
+        run = [m["text"] for m in entries]
+        for k in range(0, len(texts) - n + 1):
+            if texts[k:k + n] == run:
+                return [None] * k + [ident(m) for m in entries] + [None] * (len(texts) - k - n)
+    # no block matches (a copy removed by text): first in first out by text over the identified entries
+    idents = [m for m in entries if ident(m)]
+    used = [False] * len(idents)
+    out = []
+    for t in texts:
+        hit = None
+        for i, m in enumerate(idents):
+            if not used[i] and m["text"] == t:
+                used[i] = True
+                hit = ident(m)
+                break
+        out.append(hit)
+    return out
 
 
 def _call_on_loop(loop, fn, *args) -> bool:
@@ -4873,9 +5501,25 @@ class SdkSession:
         # _cli_working mirrors the last lifecycle state we persisted so the live stream can re-assert
         # 'working' if a stamp ever falls behind actual output, with no reliance on feed-vs-result counting.
         self._cli_working = False
+        # WHO OPENED the turn in flight — "human" (any fed text without the romp-injected marker: the
+        # composer's words, a queued message, a typed follow-up, a button's /command) or "injected" (romp's
+        # own feed — a nudge, a follow-up, a restart notice, relayed mail — or a turn the CLI opened by
+        # itself: a background task's notification, a scheduled prompt, a peer's channel message, told by
+        # the streamed record's origin stamp). None until an open is seen. Set at the two places a turn can
+        # open (the feeder's pop; _forward's stamped user atom while idle — see _note_turn_opener), stamped
+        # beside lastStopAt by the Stop hook as lastTurnOpener, and read by the kernel's turn-finished push,
+        # which buzzes the phone for the human's turns only (the user 2026-09-10: ten buzzes in fifty minutes
+        # from one session reacting, turn after turn, to its own background subagents' completions).
+        self._turn_opener = None
         self._skill_tool_ids = set()   # Skill tool_use ids seen on THIS stream → classify their injected
         #                                instructions payload (parent_tool_use_id link) as a skillMd atom
         self.since = 0
+        self._first_out_t = None   # the turn's first streamed WORK atom (turns.jsonl firstOutT; reset per fresh feed)
+        self._turn_spend = None    # (delta usd, turn usage) the spend fold recorded for the turn in flight, read by the
+        #                            turn ledger row at the settle and spent with it
+        self._fed_t = None         # the fresh feed's pop at millisecond resolution (turns.jsonl fedT; `since` stays whole
+        #                            seconds for its other readers); both are spent at the settle, so a turn the CLI
+        #                            opens by itself never inherits the previous fed turn's stamps
         self.model = reg.get("liveModel") or ""   # seed from the last-known model so the badge/picker show on
         #                                           OPEN (even once eager-connected, before init/a turn reports)
         self._model_id = reg.get("liveModelId") or ""   # the RAW id behind that name (claude-fable-5-1), the
@@ -5153,6 +5797,16 @@ class SdkSession:
         # Entries are plain strs, except a user-todo ANSWER which is a _TodoText carrying the id
         # of the ask it answers — the seed restores the id so a post-restart recall still reopens.
         self._pending: list[str] = _queue_texts(reg.get("queue"))
+        # Per-copy IDENTITY beside each queued text (T252c): {"qid", "qts"} — the echo key send() minted for
+        # it and its enqueue stamp (epoch ms) — or None for a copy nobody stamped (a notice this backend queued
+        # itself; a copy restored from an older kernel's text-only mirror). Kept ALIGNED with _pending by the _q_* helpers;
+        # pending_meta() refuses to answer when they disagree, so the chat falls back to text rather than
+        # misattribute. The feed moves a copy's identity to _fed_meta, where qid_for_landing pairs it with
+        # the record that lands the text (FIFO per text, at or after the feed) — the landed atom then carries
+        # the same id the queued copy and the echo wore, and the chat places by identity, never by text.
+        self._pending_meta: list = queue_meta_from_reg(reg)   # the ids the mirror carries, aligned with _pending
+        self._fed_meta: list = []
+        self._landed_qid: dict = {}
         self._ping_feeding = False   # a rename ping was fed and its turn hasn't streamed yet: hold the
         #                              queue so no message can share its pre-turn window (the CLI batches
         #                              everything pre-start into ONE record — the 2026-08-25 fold); cleared
@@ -5224,23 +5878,124 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("boot-settled callback (%s) failed: %s" % (self.name, e))
 
-    def enqueue(self, text: str, todo: str = "", send_id: str = ""):
+    def _q_append(self, text: str, meta=None):
+        self._pending.append(text)
+        self._pending_meta.append(meta if isinstance(meta, dict) and meta.get("qid") else None)
+
+    def _q_prepend(self, texts, metas=None):
+        texts = list(texts)
+        self._pending[0:0] = texts
+        metas = list(metas) if metas is not None and len(metas) == len(texts) else [None] * len(texts)
+        self._pending_meta[0:0] = [m if isinstance(m, dict) and m.get("qid") else None for m in metas]
+
+    def _unfeed_locked(self, texts):
+        """The fed entries for `texts` (FIFO per text), popped from the ledger: their identities go back to the queue
+        with the copies (the stranded re-head), so the same id rides the copy, its echo and the eventual landing —
+        and no stale entry is left to pair a later same-text landing. Under self._lock."""
+        metas = []
+        for t in texts:
+            k = echo_text_key(t)
+            hit = None
+            for j, f in enumerate(self._fed_meta):
+                if echo_text_key(f.get("text", "")) == k:
+                    hit = self._fed_meta.pop(j)
+                    break
+            metas.append({"qid": hit["qid"], "qts": hit.get("qts")} if hit else None)
+        return metas
+
+    def _q_pop(self, idx: int):
+        """(text, meta) at `idx`, both lists popped together — the one way a copy leaves the queue."""
+        text = self._pending.pop(idx)
+        meta = self._pending_meta.pop(idx) if idx < len(self._pending_meta) else None
+        return text, meta
+
+    def _pop_for_feed_locked(self):
+        """The head copy leaves for the CLI (the input generator, under self._lock): its identity moves to the
+        fed ledger, where the landing is paired with it. Returns (text, meta)."""
+        text, meta = self._q_pop(0)
+        if meta and meta.get("qid"):
+            self._fed_meta.append({"qid": meta["qid"], "qts": meta.get("qts"), "text": text, "t": int(time.time())})
+            del self._fed_meta[:-64]                       # bounded: a landing is paired within a turn or two
+        return text, meta
+
+    def pending_meta(self):
+        """[{"md", "qid", "qts"}] aligned with pending(), or None when the identities cannot be trusted (the
+        two lists disagree) — the chat then falls back to text for this queue rather than misattribute."""
+        with self._lock:
+            if len(self._pending_meta) != len(self._pending):
+                return None
+            return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts")}
+                    for t, m in zip(self._pending, self._pending_meta)]
+
+    def qids_for_landing(self, uuid_: str, texts, t=None):
+        """The ids of the fed copies a landed user record carries, one per text block: for each block the
+        OLDEST fed entry with the same text (echo_text_key), stamped at or before the record (a record
+        stamped before the feed is an older message's — 'ok', 'go ahead' repeat), or None. A record the CLI
+        wrote from several back-to-back sends is as many landings as it has blocks, so each block spends its
+        own entry (asked with the blocks joined, no entry matched and the stale ones mis-paired a later
+        same-text landing — the review of the first cut). Memoised per record uuid, so every rebuild answers
+        the same. The kernel's own ECHO atom is refused outright (its uuid is the copy's id, minted at the
+        send): it is the visible copy between the feed and the CLI's record, and asked as a landing it took
+        the fed entry the real landing needed.
+
+        A slash send is paired under command_text_key as well (2026-09-10): its record is the CLI's
+        wrapper, which the kernel reads as "/name args" with one space, whatever the sender typed between
+        the name and the arguments, so the fed copy's typed text equals it only when its whitespace
+        already matches. Without the second key the landing of a copy typed with a newline before the
+        arguments carried no id, and the chat's own pending bubble, which retires by id once it has
+        latched the copy's, stayed at the tail after the command had run."""
+        if not uuid_ or str(uuid_).startswith("echo:"):
+            return [None] * len(texts)
+        with self._lock:
+            if uuid_ in self._landed_qid:
+                return list(self._landed_qid[uuid_])
+            hits = []
+            for text in texts:
+                keys = set(echo_keys(text))            # the plain key and, for a slash send, its words
+                hit = None
+                for i, f in enumerate(self._fed_meta):
+                    if keys.isdisjoint(echo_keys(f["text"])):
+                        continue
+                    if t is not None and float(t) < f["t"] - 2:
+                        continue                           # stamped before the feed: not this copy's landing
+                    hit = self._fed_meta.pop(i)["qid"]
+                    break
+                hits.append(hit)
+            self._landed_qid[uuid_] = hits
+            if len(self._landed_qid) > 512:
+                for k in list(self._landed_qid)[:-256]:
+                    del self._landed_qid[k]
+            return list(hits)
+
+    def qid_for_landing(self, uuid_: str, text: str, t=None):
+        """qids_for_landing for a one-block record."""
+        return self.qids_for_landing(uuid_, [text], t)[0]
+
+    def forget_fed(self, qid: str):
+        """A fed copy the CLI dropped for good (its echo marked never delivered) leaves the fed ledger: its
+        landing will never come, and a later same-text landing must not be paired with it."""
+        with self._lock:
+            self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]
+
+    def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, todo: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
-        before the loop is ready too (the generator drains _pending on its first pass).
-        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo) and `send_id`
-        the client's id for the send (SdkBackend.send's send_id): both ride the entry itself
-        (_QueueText), through the reg mirror and back, so a recall reads them off the entry it
+        before the loop is ready too (the generator drains _pending on its first pass). `qid`/`qts`:
+        the copy's identity (send() mints them; a caller without one queues an id-less copy).
+        `todo` is the user-todo id this text ANSWERS (SdkBackend.send's user_todo): it rides the entry
+        itself (_QueueText), through the reg mirror and back, so a recall reads it off the entry it
         removes, never a kernel-side table a restart empties. Returns whether the text was queued:
         False, with nothing appended or persisted, once the crash heal has folded this dying session's
         queue into the reg and popped it (_queue_closed, round 5): the caller re-resolves the sid and
         the replacement takes the text (SdkBackend.send). True otherwise."""
-        if todo or send_id:
-            text = _QueueText(text, todo, send_id)
+        if todo:
+            text = _QueueText(text, todo)
         with self._lock:
             if self._queue_closed:
                 return False
-            self._pending.append(text)
+            if qid:
+                self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]   # back in the queue: not fed (a re-delivery)
+            self._q_append(text, {"qid": qid, "qts": qts} if qid else None)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
         _wake_feeder(loop, wake)
@@ -5256,7 +6011,7 @@ class SdkSession:
         with self._lock:
             if self._pending or self._queue_closed:
                 return False
-            self._pending.append(text)
+            self._q_append(text)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
         _wake_feeder(loop, wake)
@@ -5309,7 +6064,7 @@ class SdkSession:
         except RuntimeError:     # closed between the check and the call
             pass
 
-    def unqueue(self, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
+    def unqueue(self, idx: int, expect: str | None = None, qid: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
         and return its raw text, or None if it's gone — an id-carrying entry comes back as its
         _QueueText, so the caller reads the ask it was clearing off the entry itself (the recall's
@@ -5319,31 +6074,44 @@ class SdkSession:
         the CLI there is no recall (the control protocol has no queue-remove), so a miss here is the
         caller's cue to say so loudly. `expect` is the exact text the click meant: verified (and, on a
         shifted index, re-located) UNDER the lock, so the input generator consuming entries between the
-        caller's snapshot and this pop can never cancel the wrong message. `send_id` names the entry
-        exactly (the id the client minted at the press, riding the entry — _QueueText): when given
-        and found, it wins over both the index and the text, so of two queued entries wearing the same
-        words the ✕ removes the one it was pressed on (2026-09-08). When given and NOT found, the pop is
-        a miss: nothing is removed and the text relocation below does not run (review of 2026-09-08,
-        cancel by id is exact). The kernel applies the same rule over its snapshot before calling here,
-        but this pop runs under the lock and closes the window between that snapshot and the pop: if
-        the feeder took the named entry in between, a text fallback would pop a same-words neighbour
-        and the kernel would report the cancel as done. Only an id-less call relocates by text. A queue
-        the crash heal closed (_queue_closed, round 5) is a miss for every entry: the entries live on the
-        replacement now, and a pop here would persist a stale list over the reg the heal wrote."""
+        caller's snapshot and this pop can never cancel the wrong message. `qid` names the copy by its
+        identity (the id it was queued under: minted by the client at the press, or by send()) and wins
+        over both: located under the lock, so of two same-text copies the one named leaves, and an id no
+        copy wears is a miss, never the index's or the text's neighbour. A queue the crash heal closed
+        (_queue_closed) is a miss for every entry: the entries live on the replacement now, and a pop
+        here would persist a stale list over the reg the heal wrote."""
         with self._lock:
             if self._queue_closed:
                 return None
-            if send_id:
-                hit = next((i for i, q in enumerate(self._pending) if getattr(q, "send_id", "") == send_id), -1)
-                if hit < 0:
-                    return None
-                idx, expect = hit, None
-            if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
+            if qid:
+                idx = next((i for i, m in enumerate(self._pending_meta)
+                            if isinstance(m, dict) and m.get("qid") == qid and i < len(self._pending)), -1)
+            elif expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
                 idx = next((i for i, q in enumerate(self._pending) if q == expect), -1)
-            item = self._pending.pop(idx) if 0 <= idx < len(self._pending) else None
+            item = self._q_pop(idx)[0] if 0 <= idx < len(self._pending) else None
         if item is not None:
             self._persist_queue()
         return item
+
+    def replace_queued(self, idx: int, text: str, expect: str | None = None) -> str | None:
+        """Replace the queued turn at `idx` IN PLACE — the chat's edit of a message that has not started
+        (the user 2026-09-08): same _pending position (the queue drains front-first, so the edited message
+        still goes where it would have), new words. `expect` verifies — and, on a shifted index,
+        re-locates — the exact old text UNDER the lock, exactly as unqueue does, so the input generator
+        consuming entries between the caller's snapshot and this swap can never rewrite the wrong
+        message. Returns the OLD text, or None on a miss: the entry is gone (fed to the CLI, where no
+        recall exists) and nothing was changed."""
+        with self._lock:
+            if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
+                idx = next((i for i, q in enumerate(self._pending) if q == expect), -1)
+            if not (0 <= idx < len(self._pending)):
+                return None
+            old = self._pending[idx]
+            # the edited words keep the ask the old entry answered (_QueueText.todo): the position and the
+            # copy's identity (_pending_meta) stay where they were, only the text changes
+            self._pending[idx] = _QueueText(text, getattr(old, "todo", "")) if getattr(old, "todo", "") else text
+        self._persist_queue()
+        return old
 
     def _persist_queue(self):
         """Mirror _pending to the registry (reg['queue']) so queued turns survive a kernel death —
@@ -5353,7 +6121,9 @@ class SdkSession:
         turn already FED to the SDK is out of the persisted queue by design: it reaches the
         transcript as a user atom, which is the cut-turn resume's territory, not replay's.
         Serialization: bare strings, except an id-carrying answer's {"text","todo"} (_queue_wire)
-        so every non-answer entry is byte-identical to the pre-todo mirror.
+        so every non-answer entry is byte-identical to the pre-todo mirror; the copies' identities
+        (_pending_meta) ride beside it as reg['queueMeta'], one entry per position (queue_meta_from_reg
+        aligns the run at the seed).
         The snapshot and its write are ONE step (_persist_lock, 2026-09-08): the feeder's post-pop
         persist on the loop thread and an enqueue's persist on the kernel thread each snapshot under
         _lock and write under _update_reg's own lock, so the pair could interleave as snapshot-A (empty,
@@ -5370,8 +6140,11 @@ class SdkSession:
                 if self._queue_sealed or self._queue_closed:
                     return
                 snap = list(self._pending)
+                metas = list(self._pending_meta)
+            qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts")} if isinstance(m, dict) and m.get("qid") else {"text": t}
+                     for t, m in zip(snap, metas)]        # every position, so the restore aligns the run as a block
             try:
-                self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap])
+                self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap], queueMeta=qmeta)
             except Exception:
                 self.backend._log("persist queue (%s): %s" % (self.name, traceback.format_exc()))
 
@@ -6362,7 +7135,7 @@ class SdkSession:
             seen = None
         if seen is False or (seen is None and not self.resume_sid):
             with self._lock:
-                self._pending.insert(0, item)
+                self._q_prepend([item], self._unfeed_locked([item]))   # back at the head under its own id
             self._persist_queue()
             if seen is False:
                 self.backend._log("sdk %s: the CLI exited while it still held a fed text (never landed): back "
@@ -6384,7 +7157,7 @@ class SdkSession:
             self.backend._log("sdk %s: the CLI exited while it held a fed text and the transcript could not "
                               "be read (%s): the text's echo is flagged, not re-fed on doubt"
                               % (self.sid[:8], u.get("scan_error") or "unreadable"), problem=True)
-            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
+            self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending(), refeed=False)
 
     def _reconcile_stranded(self):
         """RECONCILE ACROSS A RECONNECT, at the loop's top where no client is connected so nothing can
@@ -6441,10 +7214,10 @@ class SdkSession:
         self.backend.retire_live_work(self.sid)    # the abandoned turn's stream is gone with its client
         if stranded and not self.resume_sid:
             with self._lock:
-                self._pending[0:0] = stranded
+                self._q_prepend(stranded, self._unfeed_locked(stranded))   # back at the head under their own ids
             self._persist_queue()                  # the fresh inputs() drains _pending on its first pass
         elif stranded:
-            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
+            self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending(), refeed=False)
         self.backend._poke()
 
     # ---- async internals (run inside the quarantined loop) ----
@@ -7011,7 +7784,7 @@ class SdkSession:
             # The SPAWN half of the dropped-echo marking (boot half: _reseed_echoes): a fresh CLI means
             # whatever held any earlier send is gone. An echo neither in self._pending (delivered to the
             # new CLI) nor landed has no holder left — flag it so the chat says "never delivered".
-            self.backend._mark_dropped_echoes(self.sid, self.pending())
+            self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending())
             asyncio.run(self._amain())
         except Exception as e:                       # surfaced for debugging; never crash kernel
             # The TRACEBACK too, not just the type and message: a bare "KeyError: <uuid>" names no line,
@@ -7143,7 +7916,7 @@ class SdkSession:
                     # turn-end events. Mid-turn forwards keep flowing (inflight > 0), so the
                     # in-flight turn can still finish; the wedged/rewind holds above are untouched.
                     blocked = blocked or (self.inflight == 0 and self.backend.drain_holding())
-                    item = self._pending.pop(0) if (self._pending and not blocked) else None
+                    item, _meta = self._pop_for_feed_locked() if (self._pending and not blocked) else (None, None)
                     # starting from idle, not mid-turn. inflight counts the CLI's own turns too (a turn
                     # frame at inflight 0 raises it, _on_message), so a text fed while the CLI runs a turn
                     # romp did not feed (the drain of a mid-turn text, a notification-started turn) is
@@ -7174,6 +7947,9 @@ class SdkSession:
                     self.since = int(time.time())    # a new turn starts now (mid-turn forwards keep the turn's clock)
                     self._interrupted = False        # a fresh turn → clear any stale interrupt flag
                     self._intr_level = 0             #   ...and its escalation episode (a new stop starts polite)
+                    self._first_out_t = None         # the turn's first output is still to come (turns.jsonl)
+                    self._fed_t = time.time()        # the pop, at millisecond resolution (turns.jsonl fedT)
+                self._note_turn_opener(fed_text_opener(item), fresh)   # who this turn is for (the Stop hook stamps it)
                 if item.startswith(RENAME_PING_HEAD):
                     self._ping_feeding = True       # hold feeds until this turn's first streamed message
                 self._mark("working")
@@ -7249,6 +8025,7 @@ class SdkSession:
                     # create, the ready chip landing at 5-12s with the cycle).
                     self.backend._push_session(self.sid)
                     self._connected.set()   # the control channel exists from here (move() waits on this)
+                    self.backend._lease_open(self, client)   # ownership by lease (T305): pid + start time, heartbeat
                     self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at
                     #   zero, or at what it restores from the resumed transcript's cost-state record
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
@@ -7342,6 +8119,10 @@ class SdkSession:
                     # silent by design. Without this the only trace is a kernel stderr line nobody reads.
                     self.backend._record_launch_error(self, e)
                 raise
+            finally:
+                # the client has closed (the SDK's own close ends the process), or never opened: the
+                # lease is dropped either way — only a kernel DEATH leaves one behind (T305)
+                self.backend._lease_close(self)
             if self.ended or not self._reconnect:
                 break        # drain ended on its own (process exit) or we're shutting down → done
 
@@ -7358,7 +8139,7 @@ class SdkSession:
         dropped = None
         if not bare:
             with self._lock:
-                dropped = self._pending.pop(0) if self._pending else None
+                dropped = self._q_pop(0)[0] if self._pending else None
             self._persist_queue()
             if dropped is not None and getattr(dropped, "todo", ""):
                 # defensively (arm refuses queued strangers, so the head SHOULD be the edit): a
@@ -7554,6 +8335,60 @@ class SdkSession:
             return "\n".join(self._stderr_tail)
         except Exception:
             return ""
+
+    def _note_turn_opener(self, opener: str, fresh: bool) -> None:
+        """Record who opened, or joined, the turn in flight (see _turn_opener in __init__). A HUMAN text
+        always makes the turn theirs: from idle it opens one; mid-turn the CLI splices it in at the next
+        tool boundary and answers it there, so the person asked during the turn and its end IS news to
+        them. An INJECTED opener counts only from idle (`fresh`): a nudge fed into the human's running turn,
+        or a task notification the CLI folds into it, does not take the turn from them. Never reset at the
+        settle: the next open overwrites, and the Stop hook (which runs BEFORE the ResultMessage) reads the
+        turn it is closing."""
+        if fresh or opener == "human":
+            self._turn_opener = opener
+
+    def _turn_ledger_row(self, msg, usd=None, turn_u=None, now=None) -> dict:
+        """The turns.jsonl row for the ResultMessage `msg` (see the ledger note by append_turn_row): the
+        turn's event stamps (fedT = since, the feed pop; firstOutT = the first streamed work atom; resultT =
+        now), the CLI's own duration_ms / duration_api_ms / num_turns / is_error when the result carries
+        them, the spend fold's usd and token counts when it ran (`usd`, `turn_u` as _turn_usage returns
+        it), who opened the turn, and resumeNotice: whether any text fed into this turn was the boot or the
+        crash continuation notice — the turn that REDOES cut work, the redo-cost marker. Pure over its
+        inputs; getattr throughout so a __new__-built test double works."""
+        now = time.time() if now is None else float(now)
+        fed = [x for x in (getattr(self, "_inflight_texts", None) or []) if isinstance(x, str)]
+        row = {"t": int(now), "sid": str(self.sid), "name": str(getattr(self, "name", "") or ""),
+               "resultT": round(now, 3),
+               "opener": str(getattr(self, "_turn_opener", None) or ""),
+               "resumeNotice": any(x.startswith((BOOT_RESUME_NUDGE, CRASH_RESUME_NUDGE)) for x in fed),
+               "fedTexts": len(fed)}
+        # fedT and firstOutT only for a turn THIS session fed and whose pop was stamped: a turn the CLI opened
+        # by itself (a channel message, a task notification, a scheduled prompt) or a mid-turn forward run as
+        # its own turn has no feed of its own, and the stamps still in memory would be the PREVIOUS fed
+        # turn's (review find, 2026-09-10: hours of feed-to-result, a duplicated first output). Absent, never
+        # wrong; the reader measures latency only where fedT is present.
+        ft = getattr(self, "_fed_t", None)
+        if fed and isinstance(ft, (int, float)) and ft:
+            row["fedT"] = round(float(ft), 3)
+            fo = getattr(self, "_first_out_t", None)
+            if isinstance(fo, (int, float)) and fo >= ft:
+                row["firstOutT"] = round(float(fo), 3)
+        for attr, key in (("duration_ms", "durationMs"), ("duration_api_ms", "apiMs"), ("num_turns", "numTurns")):
+            v = getattr(msg, attr, None)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                row[key] = int(v)
+        ie = getattr(msg, "is_error", None)
+        if isinstance(ie, bool):
+            row["isError"] = ie
+        if isinstance(usd, (int, float)) and not isinstance(usd, bool):
+            row["usd"] = round(float(usd), 6)
+        if isinstance(turn_u, dict):
+            for k, kk in (("input_tokens", "tokIn"), ("output_tokens", "tokOut"),
+                          ("cache_read_input_tokens", "tokCacheR"), ("cache_creation_input_tokens", "tokCacheW")):
+                v = turn_u.get(k)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    row[kk] = int(v)
+        return row
 
     def _mark(self, state: str) -> None:
         """Persist a lifecycle STATE to states/<sid>.jsonl AND track whether the CLI is producing.
@@ -8279,6 +9114,7 @@ class SdkSession:
                     # the tokens: THIS turn's counts, from whichever result counter is a running total —
                     # the two are not the same kind (see _turn_usage; the flat `usage` is per-turn now)
                     turn_u = self._turn_usage(msg)
+                    self._turn_spend = (delta, turn_u)   # for the turn ledger row the finally writes (T304)
                     self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
                                                sid=self.thread_of or self.sid)   # the rail's spend —
                     #   a comment THREAD bills its owning session (T144: whole-session truth for the
@@ -8299,6 +9135,19 @@ class SdkSession:
                                           "transcript than the connect-time seed (last_cost_state)."
                                           % (self.name, delta, SANE_TURN_USD, total), problem=False)
             finally:
+                # T304: one durable row per settled turn (turns.jsonl, see the ledger note by
+                # append_turn_row) — the event stamps the restart monitors read. In the finally, ahead of
+                # the settle, so a bookkeeping exception (a spend-fold fault: exactly the anomalous turn)
+                # still leaves its row (review find, 2026-09-10); guarded on its own, so a failing append
+                # costs the row alone and never the settle below.
+                try:
+                    _sp = getattr(self, "_turn_spend", None) or (None, None)   # the fold's figures, when it ran
+                    append_turn_row(self.backend.state_dir, self._turn_ledger_row(msg, _sp[0], _sp[1]))
+                except Exception as e:
+                    self.backend._log("turn ledger (%s): %s" % (self.name, e), problem=False)
+                self._turn_spend = None          # spent with the row, like the feed stamps below
+                self._fed_t = None               # the turn's feed stamps are spent (see _turn_ledger_row)
+                self._first_out_t = None
                 # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
                 # bookkeeping above did (api-health, the rewind flags, the live-tail sweep, the refreshes,
                 # the spend accounting last: any step may raise and stop the rest). The rule
@@ -8726,9 +9575,14 @@ class SdkSession:
             self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
         # The turn-end EVENT itself, durable and kernel-readable (2026-08-29, for the nudge layer's
         # memo re-arm and any consumer that needs "this session settled a turn at T" as a fact
-        # rather than an inference from transcript mtimes — romp_cards' round keys on it).
+        # rather than an inference from transcript mtimes — romp_cards' round keys on it). Beside it,
+        # in the SAME write so a reader never pairs one turn's settle with another's opener, WHO opened
+        # the turn (2026-09-10, see _turn_opener): the kernel's turn-finished push buzzes the phone for
+        # the human's turns only. No open seen (a session object born mid-turn at a kernel restart, a
+        # CLI that stamps no origin) reads "human" — fail OPEN on the buzz, never silently drop it.
         try:
-            self.backend._update_reg(self.sid, lastStopAt=int(time.time()))
+            self.backend._update_reg(self.sid, lastStopAt=int(time.time()),
+                                     lastTurnOpener=getattr(self, "_turn_opener", None) or "human")
         except Exception:
             pass
         # delete-while-busy: the turn this delete interrupted has ENDED — complete the arm here,
@@ -9115,7 +9969,7 @@ class SdkSession:
             note = task_death_notice(died, cause=self._RECONNECT_CAUSE)
             with self._lock:
                 if note not in self._pending:      # a flapping reconnect must not stack the same notice
-                    self._pending.append(note)
+                    self._q_append(note)
             self._persist_queue()
             try:
                 self.backend._update_reg(self.sid, bgTasks=[])   # reported — never re-notify these deaths
@@ -9559,7 +10413,13 @@ def _landed_texts(rec: dict) -> set:
     each text block: romp bundles its injected messages as several blocks in one record). Two record
     shapes carry user text: a native USER record, and the queued_command ATTACHMENT a mid-turn splice
     leaves, whose prompt is a plain string or a content-block list (the SDK injection path; event_model
-    reads it the same way). Anything else → empty."""
+    reads it the same way). Anything else → empty.
+
+    A slash send's own record is the WRAPPER the CLI writes for it (<command-name>, <command-args>), never
+    the typed text: it lands the send as the "/name args" the event model reads it as (_command_invocation,
+    the same reading msg_to_atom gives the live atom). Every text here also yields its slash-send key
+    (command_text_key), as the kernel's _atom_user_texts does, so the scan and the prune agree on the same
+    records (2026-09-10)."""
     out: set = set()
     typ = rec.get("type")
     if typ == "user":
@@ -9584,6 +10444,14 @@ def _landed_texts(rec: dict) -> set:
         cb = echo_text_key(b)
         if cb:
             out.add(cb)
+    if typ == "user":
+        cmd = _command_invocation(" ".join(blocks))
+        if cmd:
+            out.add(echo_text_key(cmd[1]))
+    for k in list(out):
+        ck = command_text_key(k)
+        if ck:
+            out.add(ck)
     return out
 
 
@@ -9794,9 +10662,13 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None):
+                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None, code_version=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
+        self.code_version = str(code_version or "")   # the kernel's git sha, stamped on every lease this kernel
+        #                                               writes (lease_census reports a skew as lease.version-skew)
+        self._leases: dict = {}            # sid -> (session, lease dict): the leases this kernel holds (T305)
+        self._lease_thread = None          # the heartbeat, started at the first lease, ends when none are held
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
         #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
         #                                    the catalog lives in the kernel; the backend never imports it
@@ -9830,11 +10702,11 @@ class SdkBackend:
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
-        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
-        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
-        #                                           — the chat-build signature's live component (2026-09-03; the
-        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
-        #                                           never read as a value beyond equality
+        self._live_rev: dict[str, int] = {}       # sid -> count of changes to its live tail (add/edit/drop/flag):
+        #                                           the exact "the live tail moved" event the kernel's chat-build
+        #                                           signature keys every tab on (Sessions.live_rev); bumped by
+        #                                           _touch_live once per mutating call, never read as a value
+        #                                           beyond equality
         # THE LIVE-TAIL LOCK (2026-09-06). `_live` and every per-sid dict inside it are shared by the
         # kernel thread (send, recall, dismiss_echo, the pusher's live_atoms/prune_live) and each
         # session's loop thread (_forward, the settle's retire_live_work, _mark_dropped_echoes at
@@ -9892,7 +10764,7 @@ class SdkBackend:
         # such rather than as a missing install, and a venv built AFTER this check names the restart.
         self._venv_verdict_cache = None
         if self._sdk_missing and log:
-            self._log("claude_agent_sdk is NOT importable — every Claude Code session will report itself unable to "
+            self._log("claude_agent_sdk is NOT importable: every Claude Code session will report itself unable to "
                       "start. %s" % self.unavailable_text(), problem=True)
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
@@ -10056,16 +10928,106 @@ class SdkBackend:
         except Exception as e:
             self._log("awaiting heal (%s): %s" % (sid[:8], e))
 
+    # ── session ownership leases (T305): see the module-level LEASE_* block ──────────────────────
+    def _lease_holder(self) -> dict:
+        """This kernel as a lease holder: its pid and start-time identity."""
+        return {"pid": os.getpid(), "start": proc_start(os.getpid()) or ""}
+
+    def _lease_open(self, sess, client) -> None:
+        """The SDK connect just handed us a CLI: write the session's lease and start the heartbeat if it
+        is not running. The CLI's pid is the SDK transport's subprocess (the one designed handle: the
+        SDK exposes no pid accessor, so the transport's process object is read directly, and a
+        transport that has none is said loudly — the session then runs unleased and the boot reaper
+        judges it by parentage, as before leases)."""
+        pid = None
+        try:
+            pid = client._transport._process.pid
+        except AttributeError:
+            pid = None
+        if not pid:
+            self._log("lease (%s): the SDK transport exposes no CLI pid; the session runs unleased and a boot "
+                      "judges it by parentage" % sess.name, problem=True)
+            return
+        start = proc_start(int(pid))
+        if start is None:
+            self._log("lease (%s): CLI pid %d has no readable start time; the session runs unleased" % (sess.name, pid),
+                      problem=True)
+            return
+        now = time.time()
+        lease = {"sid": str(sess.sid), "fsid": str(sess.resume_sid or sess.sid), "name": str(sess.name),
+                 "pid": int(pid), "start": start, "holder": self._lease_holder(), "version": self.code_version,
+                 "spawnedAt": int(now), "t": now}
+        with self._lock:
+            self._leases[str(sess.sid)] = (sess, lease)
+            if self._lease_thread is None or not self._lease_thread.is_alive():
+                # started UNDER the lock: an unstarted thread reads as not alive, so a second session
+                # connecting in the first's write window would otherwise adopt it too and both would call
+                # start() on one Thread (RuntimeError out of the connect; the review of T305, 2026-09-10)
+                self._lease_thread = threading.Thread(target=self._lease_beat_loop, name="sdk-lease-beat", daemon=True)
+                self._lease_thread.start()
+        try:
+            write_lease(self.state_dir, lease)
+        except Exception as e:
+            self._log("lease (%s): write failed: %s" % (sess.name, e), problem=True)
+
+    def _lease_close(self, sess) -> None:
+        """The CLI is gone or being ended on purpose (the session's client closed, a drain reap): drop
+        the lease. Idempotent; a session that never held one is a no-op."""
+        with self._lock:
+            self._leases.pop(str(sess.sid), None)
+        remove_lease(self.state_dir, sess.sid)
+
+    def _lease_beat_once(self, now: float | None = None) -> int:
+        """Refresh every held lease's heartbeat (and its conversation id, which a /clear or a fork
+        moves). Returns how many were held."""
+        now = time.time() if now is None else now
+        with self._lock:
+            items = list(self._leases.values())
+        for sess, lease in items:
+            err = None
+            with self._lock:
+                held = self._leases.get(str(sess.sid))
+                if held is None or held[1] is not lease:
+                    continue          # closed since the snapshot: its file is gone and must stay gone (a rewrite
+                #                       would file a false no-live-process row at the next boot; the T305 review)
+                lease["t"] = now
+                lease["fsid"] = str(sess.resume_sid or sess.sid)
+                try:                  # the write sits under the lock so a close can never slip between the
+                    write_lease(self.state_dir, lease)   # membership check and the file landing
+                except Exception as e:
+                    err = e
+            if err is not None:
+                self._log("lease (%s): heartbeat write failed: %s" % (sess.name, err), problem=True)
+        return len(items)
+
+    def _lease_beat_loop(self) -> None:
+        """The heartbeat thread: one beat every LEASE_HEARTBEAT_S while any lease is held; exits when
+        none is (the next _lease_open starts a new one)."""
+        while True:
+            time.sleep(LEASE_HEARTBEAT_S)
+            if self._lease_beat_once() == 0:
+                with self._lock:
+                    if not self._leases:
+                        self._lease_thread = None
+                        return
+
+    def _lease_problem(self, prob: dict, sid_of: dict) -> None:
+        """File one lease_census anomaly as a problem row (the ring, the kernel log, the ledger)."""
+        sid = prob.get("sid") or sid_of.get(str(prob.get("fsid") or ""))
+        problem_row(self.state_dir, prob.get("text") or prob.get("kind"), prob["kind"], sid=sid, log=self._log,
+                    cliPid=prob.get("cliPid"), fsid=prob.get("fsid"))
+
     def _session_cli_pid(self, session) -> int | None:
-        """The live CLI pid for `session` — a child of THIS kernel resuming its sid (or lastSid, the
-        fork-tracking twin) — for the interrupt escalation's signal. ps-scan through the pure
-        find_session_cli matcher, so the signal can only ever land on our own child. None (logged by
+        """The live CLI pid for `session` — its LEASED CLI when the lease's pid is still that process
+        (T305: a re-parented CLI is reachable), else a child of THIS kernel resuming its sid (or lastSid,
+        the fork-tracking twin) — for the interrupt escalation's signal. ps-scan through the pure
+        find_session_cli matcher, so the signal can only ever land on our own CLI. None (logged by
         the caller) when no such process exists."""
         try:
             ps = subprocess.run(PS_ARGV, capture_output=True, text=True, timeout=10)
             reg = read_reg(self.state_dir, session.sid) or {}
             sids = [session.sid, str(reg.get("lastSid") or "")]
-            return find_session_cli(ps.stdout.splitlines(), sids, os.getpid())
+            return find_session_cli(ps.stdout.splitlines(), sids, os.getpid(), lease=read_lease(self.state_dir, session.sid))
         except Exception as e:
             self._log("session cli pid (%s): %s" % (session.name, e))
             return None
@@ -10162,8 +11124,10 @@ class SdkBackend:
         forced = signal_all(signal.SIGKILL, True) if any(alive(p) for p in targets) else 0
         return {"scope": unit if stopped else None, "signaled": signaled, "forced": forced, "tree": len(targets) - 1}
 
-    def _stop_leftover_scopes(self, lastsids: list[str], run=None) -> int:
-        """Stop the session scopes of OUR sessions whose CLI is not a live child of this kernel (T276):
+    def _stop_leftover_scopes(self, lastsids: list[str], run=None, owned=()) -> int:
+        """Stop the session scopes of OUR sessions whose CLI is not OWNED — `owned` is lease_census's
+        set of owned pids (a valid lease, or a live kernel's child; T305) — and not a live child of this
+        kernel (T276):
         a scope outlives its CLI when a tool's setsid children keep running — exactly the loops the
         pid-only reap left behind once their shells had died and re-parented. Every process in the
         scope belongs to that session by construction. A unit whose pid is this kernel's own child
@@ -10180,11 +11144,18 @@ class SdkBackend:
         stopped = 0
         for unit in session_scope_units(listing.splitlines(), lastsids):
             sp = scope_pid(unit)
-            if sp is not None and (sp == os.getpid() or (self._pid_alive(sp) and _read_ppid(sp) == os.getpid())):
-                continue            # this kernel's live session
+            if sp is not None and (sp in owned or sp == os.getpid()
+                                   or (self._pid_alive(sp) and _read_ppid(sp) == os.getpid())):
+                continue            # an owned CLI's scope, or this kernel's live session
             try:
                 run(["systemctl", "--user", "stop", unit], capture_output=True, text=True, timeout=SCOPE_STOP_TIMEOUT)
                 stopped += 1
+                m = _SESSION_SCOPE_RE.match(unit)
+                problem_row(self.state_dir,
+                            "boot: stopped the leftover session scope %s (its CLI was gone; processes it left "
+                            "behind were still running)" % unit,
+                            "reconcile.scope-stopped", log=self._log, unit=unit,
+                            sid8=(m.group(1).lower() if m else ""), cliPid=sp)
             except Exception as e:
                 self._log("cut-turn reap: stopping leftover %s failed: %s" % (unit, e))
         return stopped
@@ -10213,25 +11184,74 @@ class SdkBackend:
                     self._log("boot reconcile: cwdPending heal for %s failed: %s"
                               % (r.get("sid"), traceback.format_exc()))
         try:
+            t_boot0 = time.time()
             alive = [r for r in regs if r.get("alive") and r.get("sid")]
             reaped = 0
             scopes_stopped = 0
             lastsids = [str(r.get("lastSid") or "") for r in alive if r.get("lastSid")]
+            by_fsid = {str(r.get("lastSid")): r for r in alive if r.get("lastSid")}   # conversation id -> its reg
             if lastsids:
                 try:
                     ps = subprocess.run(PS_ARGV, capture_output=True, text=True, timeout=10).stdout
                     ps_lines = ps.splitlines()
-                    for pid in find_orphan_clis(ps_lines, lastsids, os.getpid()):
+                    cmd_of: dict[int, str] = {}
+                    for ln in ps_lines:
+                        parts = ln.strip().split(None, 2)
+                        if len(parts) == 3 and parts[0].isdigit():
+                            cmd_of[int(parts[0])] = parts[2]
+                    # T304: two CLIs holding ONE conversation, as the listing stands before the reap — the
+                    # two-writers hazard itself, recorded even though the reap below usually resolves it
+                    for fsid, pids in duplicate_clis(ps_lines, lastsids).items():
+                        r0 = by_fsid.get(fsid) or {}
+                        problem_row(self.state_dir,
+                                    "boot: %d claude processes were holding session %s's conversation at once "
+                                    "(pids %s); the orphans are being ended" % (len(pids), r0.get("name") or fsid[:8],
+                                                                                 ", ".join(str(p) for p in pids)),
+                                    "reconcile.duplicate-cli", log=self._log, sid=r0.get("sid"), name=r0.get("name"),
+                                    fsid=fsid, pids=",".join(str(p) for p in pids), n=len(pids))
+                    # Ownership by lease (T305): a CLI with a valid lease is owned whatever its parent; every
+                    # anomaly is a problem row (lease_census documents the rules and the kinds)
+                    leases = list_leases(self.state_dir)
+                    census = lease_census(ps_lines, lastsids, os.getpid(), leases, version=self.code_version)
+                    sid_of = {str(r.get("lastSid")): str(r.get("sid")) for r in alive if r.get("lastSid")}
+                    for prob in census["problems"]:
+                        self._lease_problem(prob, sid_of)
+                    lease_by_pid = {}
+                    for lease in leases:
+                        try:
+                            lease_by_pid.setdefault(int(lease.get("pid")), lease)
+                        except (TypeError, ValueError):
+                            pass
+                    for pid in census["orphans"]:
                         if pid == os.getpid():
                             continue
                         # the CLI AND its tree (T276): its scope unit, then every process still under it
                         try:
-                            self._end_cli_tree(pid, ps_lines)
+                            res = self._end_cli_tree(pid, ps_lines)
                             reaped += 1
+                            fsid = cli_sid_of(cmd_of.get(pid, ""), lastsids) or ""
+                            r0 = by_fsid.get(fsid) or {}
+                            res = res if isinstance(res, dict) else {}
+                            problem_row(self.state_dir,
+                                        "boot: ended an orphaned claude process (pid %d) still holding session %s's "
+                                        "conversation from before the restart%s" % (
+                                            pid, r0.get("name") or fsid[:8] or "?",
+                                            ", with its scope %s" % res["scope"] if res.get("scope") else ""),
+                                        "reconcile.orphan-reaped", log=self._log, sid=r0.get("sid"), name=r0.get("name"),
+                                        cliPid=pid, fsid=fsid, scope=res.get("scope") or "",
+                                        signaled=res.get("signaled"), forced=res.get("forced"), tree=res.get("tree"))
                         except (ProcessLookupError, PermissionError):
                             pass
-                    # …and the scopes whose CLI already died but whose children live on
-                    scopes_stopped = self._stop_leftover_scopes(lastsids)
+                        if pid in lease_by_pid:            # the lease that did not hold goes with its CLI
+                            remove_lease(self.state_dir, lease_by_pid[pid]["sid"])
+                    for sid in census["dead_leases"]:      # a lease naming no live CLI is nobody's claim
+                        remove_lease(self.state_dir, sid)
+                    # …and the scopes whose CLI already died but whose children live on (an owned CLI's stays)
+                    scopes_stopped = self._stop_leftover_scopes(lastsids, owned=set(census["owned"]))
+                    if census["owned"] or census["problems"]:
+                        by_lease = sum(1 for why in census["owned"].values() if why == "lease")
+                        self._log("boot reconcile: %d CLI(s) owned (%d by lease), %d lease anomaly(ies) filed"
+                                  % (len(census["owned"]), by_lease, len(census["problems"])))
                 except Exception:
                     self._log("boot reconcile: orphan reap failed: %s" % traceback.format_exc())
             resumed, restored, notified = 0, 0, 0
@@ -10284,8 +11304,7 @@ class SdkBackend:
                     # record read as the user's Esc (INTERRUPT_BLOCK_WHY) and nothing ever resumed
                     # the session. "permission"/"picker" stay excluded: those turns were already
                     # waiting on the user, so blocked-on-you is the truth there.
-                    tail = last_state_record(self.state_dir, sid)
-                    cut = str(tail.get("state") or "") in MACHINE_ACTIVE_STATES
+                    cut = last_state_value(self.state_dir, sid) in MACHINE_ACTIVE_STATES
                     # a turn `romp down` cut hears so, with the stop and start times. The `down` audit
                     # row must be no older than the START of the cut turn (cut_turn_start), not its
                     # newest mark: a mark written in the stop window between the row and the SIGTERM
@@ -10340,6 +11359,14 @@ class SdkBackend:
                           "process trees, stopped %d leftover session scope(s)"
                           % (resumed, restored, notified, reaped, scopes_stopped))
                 self._poke()
+            # T304: the sweep's summary row, every boot that had a session to reconcile (a boot that
+            # recovered nothing is the baseline the restart monitors compare against; a boot with no
+            # sessions at all measures nothing and writes nothing, so a read-only route's lazy backend
+            # build leaves the state directory untouched); `resumed` counts the continuation notices queued
+            if alive:
+                append_session_event(self.state_dir, "reconcile.boot", sessions=len(alive), resumed=resumed,
+                                     restored=restored, notified=notified, reaped=reaped, scopesStopped=scopes_stopped,
+                                     toStart=len(to_start), durationS=round(time.time() - t_boot0, 3))
             # STAGGERED spawn (see BOOT_RESUME_CONCURRENCY): every reg above is already fixed —
             # queues persisted, heals applied — so even a death mid-stagger loses nothing (the next
             # boot's sweep picks the rest up). Spawns hold a slot on the backend-wide _spawn_sem —
@@ -10370,6 +11397,21 @@ class SdkBackend:
                               % (sid, traceback.format_exc()))
         except Exception:
             self._log("boot reconcile failed: %s" % traceback.format_exc())
+        # Dead-owner test roots (see sweep_dead_test_roots) — LAST, and off this thread: the reap and
+        # the resumes above close the two-writers window and re-deliver cut sessions' queues, and a
+        # dead pile of roots is minutes of rmtree that must never sit in front of them. Budgeted per
+        # boot; the remainder waits for the next boot. Daemon: a kernel shutdown does not wait on it.
+        self._start_test_root_sweep()
+
+    def _start_test_root_sweep(self) -> None:
+        def run():
+            try:
+                n = sweep_dead_test_roots(tempfile.gettempdir(), self._log)
+                if n:
+                    self._log("boot reconcile: swept %d dead test root(s) from %s" % (n, tempfile.gettempdir()))
+            except Exception:
+                self._log("boot reconcile: test-root sweep failed: %s" % traceback.format_exc())
+        threading.Thread(target=run, name="test-root-sweep", daemon=True).start()
 
     def drive_idle_queue(self, cands, wait: bool = False) -> None:
         """Deliver wake signals stuck in a STUCK-regime session's CLI queue (the user 2026-08-18; the
@@ -10586,6 +11628,7 @@ class SdkBackend:
                 s.thread.join(max(0.05, deadline - time.time()))
         unjoined = [s for s in sessions if s.thread is not None and s.thread.is_alive()]
         reaped = []
+        reaped_sids = set()
         for s in unjoined:
             try:
                 pid = self._session_cli_pid(s)
@@ -10601,10 +11644,16 @@ class SdkBackend:
                 else:
                     kill(pid, signal.SIGKILL)            # a wedged CLI still never outlives us
                 reaped.append("%s(pid %d)" % (s.name, pid))
+                reaped_sids.add(s.sid)
+                self._lease_close(s)                     # ended on purpose: the lease goes with it
             except ProcessLookupError:
                 pass                                     # exited between the join and the reap — fine
             except Exception:
                 self._log("drain: reap failed for %s: %s" % (s.name, traceback.format_exc()))
+        for s in unjoined:   # T304: the sessions the bound left closing, one ledger row each (the cut row's
+            #                 `unjoined` is the count alone); the process is exiting, so the ring is not asked
+            append_session_event(self.state_dir, "drain.unjoined", sid=s.sid, name=s.name,
+                                 inflight=int(bool(getattr(s, "inflight", 0))), reaped=(s.sid in reaped_sids))
         if sessions:
             names = [s.name for s in unjoined]
             self._log("drain: stopped %d session(s), %d in-flight turn(s) interrupted%s%s"
@@ -10631,8 +11680,8 @@ class SdkBackend:
         REQUEST time. The one source every refusing surface consults: the session card (launch_error)
         and the kernel's creation refusal (_sdk_setup_hint) read this function, so a rebuild while the
         kernel runs moves both to "restart romp" together instead of one saying "isn't installed" while
-        the other says mismatch (review 2026-09-06). Cached on the venv's on-disk fingerprint, so a
-        card render costs a few stats and the interpreter probe runs once per disk state."""
+        the other says mismatch. Cached on the venv's on-disk fingerprint, so a card render costs a few
+        stats and the interpreter probe runs once per disk state."""
         fp = sdk_venv_fingerprint(self.state_dir)
         cached = self._venv_verdict_cache
         if cached is not None and cached[0] == fp:
@@ -10781,9 +11830,9 @@ class SdkBackend:
                 self._drain_hold_rang = False
             t = self._drain_wake_timer
             # the wake fires when the HOLD lapses, whichever lease set it: inside a `romp down`
-            # quiesce the hold is the longer going-down one, and a 12.5s timer here would fire
-            # under a still-held lease and then never again, leaving held fresh turns waiting on an
-            # unrelated event once the quiesce lapsed with no stop (review find, 2026-09-06)
+            # quiesce the hold is the longer going-down one, and a timer armed for this lease's own
+            # TTL would fire under a still-held lease and then never again, leaving held fresh turns
+            # waiting on an unrelated event once the quiesce lapsed with no stop
             self._drain_wake_timer = threading.Timer(self._drain_hold_until - now + 0.5, self._drain_wake_fired)
             self._drain_wake_timer.daemon = True
             nt = self._drain_wake_timer
@@ -10807,13 +11856,13 @@ class SdkBackend:
         with self._lock:
             return self._drain_hold_until > time.time()
 
-    # ── going down (`romp down`, 2026-09-06) ─────────────────────────────────
+    # ── going down (`romp down`) ─────────────────────────────────────────────
     # `romp down` stops this kernel through its supervisor, and before it does it asks the kernel to
     # QUIESCE (POST /down): hold new turn starts so the in-flight count can only fall, refuse new
     # session creates (a session born now would die with the kernel seconds later), and give the
     # turns in flight a bounded wait to reach a turn boundary. The hold rides the SAME lease the
     # deploy drain uses (drain_holding is the one gate inputs() consults), extended to cover the
-    # wait plus the stop that follows — and it stays a LEASE: if the stop never comes (the CLI died
+    # wait plus the stop that follows, and it stays a LEASE: if the stop never comes (the CLI died
     # between /down and the supervisor call), the hold lapses on its own and the kernel carries on.
     # Runtime-only like the deploy lease: a fresh boot starts clear by construction.
     def quiesce(self, ttl: float) -> None:
@@ -10826,10 +11875,9 @@ class SdkBackend:
                 self._drain_hold_rang = False
             # never SHORTEN either lease, and arm the wake for the HOLD's lapse: a second, shorter
             # quiesce inside a longer one (a `romp down --wait 300` abandoned mid-wait, then a
-            # `romp down --wait 30` abandoned too) used to reopen the create doors at its own lapse
-            # while turn starts stayed held to the longer one, with the only wake fired under the
-            # hold and none at its end, so held fresh turns waited on an unrelated event (review
-            # find, round 2, 2026-09-06; the defect refresh_drain_hold had, one function up)
+            # `romp down --wait 30` abandoned too) must not reopen the create doors at its own lapse
+            # while turn starts stay held to the longer one, with the only wake fired under the hold
+            # and none at its end (the defect refresh_drain_hold had, one function up)
             self._quiesce_until = max(self._quiesce_until, now + ttl)
             self._drain_hold_until = max(self._drain_hold_until, now + ttl)
             hold_s = self._drain_hold_until - now
@@ -10874,8 +11922,7 @@ class SdkBackend:
         """The lease's wake timer fired. Held inputs are woken only once the hold has LAPSED: a timer
         that fires under a hold still in force (armed for a lease a later quiesce or poll extended)
         re-arms for what remains, so the lapse always has a wake and no held fresh turn waits on an
-        unrelated event (review find, round 2, 2026-09-06). A fire with no hold left wakes now and
-        arms nothing."""
+        unrelated event. A fire with no hold left wakes now and arms nothing."""
         now = time.time()
         with self._lock:
             remaining = self._drain_hold_until - now
@@ -11314,7 +12361,7 @@ class SdkBackend:
     # ---- logging / wakeups ----
     PROBLEM_RING = 100        # how many backend problems are kept for the dashboard (oldest dropped)
 
-    def _log(self, m, problem=None, key=None):
+    def _log(self, m, problem=None, key=None, ring_text=None):
         """Every backend line goes to the kernel log; the ones that report a FAILURE also land in a ring
         the dashboard's error center reads, so an SDK problem shows up where the user is looking instead
         of only in a file nobody tails (the user 2026-07-28, who could tell exceptions were happening and
@@ -11333,13 +12380,16 @@ class SdkBackend:
         key whose entry the ring has since dropped enters again as new."""
         if problem is None:
             problem = sys.exc_info()[0] is not None
+        # ring_text (T304): the ring's readable text when the LOG line carries more than prose — a
+        # `;; problem-row {json}` tail (problem_row) belongs in the log a reader parses, not in the bell
+        rt = str(m if ring_text is None else ring_text)
         if problem:
             with self._problem_lock:
                 hit = None
                 if key is not None:
-                    for row in reversed(self._problems):
-                        if row.get("key") == key:
-                            hit = row
+                    for entry in reversed(self._problems):
+                        if entry.get("key") == key:
+                            hit = entry
                             break
                 if hit is not None:
                     hit["count"] = int(hit.get("count") or 1) + 1
@@ -11349,9 +12399,9 @@ class SdkBackend:
                         hit.get("first", hit["text"]), reps, "" if reps == 1 else "s")
                 else:
                     self._problem_seq += 1
-                    row = {"seq": self._problem_seq, "t": time.time(), "text": str(m)}
+                    row = {"seq": self._problem_seq, "t": time.time(), "text": rt}
                     if key is not None:
-                        row.update(key=key, first=str(m), count=1)
+                        row.update(key=key, first=rt, count=1)
                     self._problems.append(row)
                     if len(self._problems) > self.PROBLEM_RING:
                         del self._problems[:-self.PROBLEM_RING]
@@ -12095,6 +13145,39 @@ class SdkBackend:
         a no-op if already running."""
         return self._ensure(sid) is not None
 
+    def pending_queued_meta(self, sid: str):
+        """pending_queued's copies WITH their identities: [{"md", "qid", "qts"}] aligned with pending_queued —
+        the live session's, or, when it is not running, the persisted mirror's (reg['queue'] + reg['queueMeta'],
+        the ids the copies carried when the kernel died; an older mirror carries none and the chat reads those
+        copies by text) — or None when the live identities cannot be trusted (T252c)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s:
+            return s.pending_meta()
+        reg = read_reg(self.state_dir, sid) or {}
+        texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
+        return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts")}
+                for t, m in zip(texts, queue_meta_from_reg(reg))]
+
+    def qid_for_landing(self, sid: str, uuid_: str, text: str, t=None):
+        """The id of the fed copy this landed user record carries, or None (see SdkSession.qids_for_landing)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        return s.qid_for_landing(uuid_, text, t) if s else None
+
+    def qids_for_landing(self, sid: str, uuid_: str, texts, t=None):
+        """One id (or None) per text block of a landed record (see SdkSession.qids_for_landing)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        return s.qids_for_landing(uuid_, texts, t) if s else [None] * len(texts)
+
+    def forget_fed(self, sid: str, qid: str):
+        """A fed copy dropped for good leaves the session's fed ledger (see SdkSession.forget_fed)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s:
+            s.forget_fed(qid)
+
     def pending_queued(self, sid: str) -> list[str]:
         """Queued-but-not-yet-started user turns for an SDK session (oldest first), or [] if the
         session isn't SDK-backed / not running. The kernel calls this to build the chat's
@@ -12117,42 +13200,78 @@ class SdkBackend:
             return []
         return _queue_texts(q) if isinstance(q, list) else []
 
-    def unqueue(self, sid: str, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
+    def unqueue(self, sid: str, idx: int, expect: str | None = None, qid: str | None = None) -> str | None:
         """Cancel the queued turn at `idx` for an SDK session (the kernel's cancelQueued route). Returns
         its text, or None on a MISS — the message already left the queue (handed to the CLI, no recall
         exists), and the caller must surface that loudly rather than show a fake delete (the user
         2026-07-20). tmux has no equivalent (its queue lives in Claude Code), so only SDK sessions
         expose this — the kernel gates the chat's cancel affordance on the backend having `unqueue`.
-        `expect` (the exact queued text the click meant) is re-verified under the session lock;
-        `send_id` (the client's id for the send, on the entry) names it exactly (SdkSession.unqueue).
+        `expect` (the exact queued text the click meant) is re-verified under the session lock; `qid`
+        (the copy's identity) names the entry exactly and wins over both (SdkSession.unqueue).
 
         ALSO drops the message's optimistic echo from the live tail: send() adds a blue 'you' bubble that
         normally prunes when the real user atom lands in the transcript — but a CANCELED message never
         lands, so without this the echo lingered and the canceled message kept rendering as 'sent' even
-        though it wasn't (the user 2026-06-27)."""
+        though it wasn't (the user 2026-06-27). The echo is keyed by the copy's id (send() mints one key
+        for both), so a cancel by id drops the cancelled copy's own echo and no other: an echo already gone
+        (retired ahead of its copy) leaves the text match unrun, since by text the first echo wearing the
+        words may be another same-text copy's, and that copy then read as never sent."""
         with self._lock:
             s = self.sessions.get(sid)
         if not s:
             return None
-        text = s.unqueue(idx, expect, send_id) if send_id else s.unqueue(idx, expect)
+        text = s.unqueue(idx, expect, qid=qid)
         if text is not None:
-            # the canceled ENTRY's echo: by its send id when it carries one (two queued sends can wear the
-            # same words, and the first echo with the text may be the other send's), else by text
-            sid_id = getattr(text, "send_id", "")
             with self._live_lock:                          # find + pop + the sid-level pop, one step
                 live = self._live.get(sid) or {}
-                hits = [k for k, a in live.items() if a.get("_echo_text")
-                        and ((sid_id and a.get("_send_id") == sid_id) or (not sid_id and a.get("_echo_text") == text))]
-                if not hits and sid_id:
-                    hits = [k for k, a in live.items() if a.get("_echo_text") == text and not a.get("_send_id")]
-                if hits:
-                    live.pop(hits[0], None)                # one echo per canceled message
-                    self._touch_live(sid)
+                popped = False
+                if qid:
+                    popped = live.pop(qid, None) is not None   # the cancelled copy's own echo, by the shared key; already gone: nothing else
+                else:
+                    for k, a in list(live.items()):
+                        if a.get("_echo_text") == text:
+                            popped = live.pop(k, None) is not None   # one echo per canceled message
+                            break
+                if popped:
+                    self._touch_live(sid)                  # the tail changed: the chat signature's live component
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too
             self._wake_push_live(sid)                      # repaint without the echo so it stops reading as sent
         return text
+
+    def edit_queued(self, sid: str, idx: int, text: str, expect: str | None = None) -> str | None:
+        """Edit the queued turn at `idx` in place for an SDK session (the kernel's editQueued route) —
+        unqueue's twin: returns the OLD text, or None on a miss the caller surfaces loudly. The message's
+        optimistic echo (send()'s blue 'you' bubble, matched by its exact old text like unqueue does) is
+        re-worded too, so the live tail shows the edited message and the landing scan matches the record
+        the transcript will write. The kernel gates the chat's ✎ on the backend having `edit_queued`."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if not s:
+            return None
+        old = s.replace_queued(idx, text, expect)
+        if old is not None:
+            with self._live_lock:
+                for a in (self._live.get(sid) or {}).values():
+                    if a.get("_echo_text") != old:
+                        continue
+                    a["_echo_text"] = text
+                    m = a.get("message")
+                    if isinstance(m, dict):
+                        c = m.get("content")
+                        if isinstance(c, list):
+                            for b in c:
+                                if isinstance(b, dict) and b.get("type") == "text":
+                                    b["text"] = text
+                                    break
+                        elif isinstance(c, str):
+                            m["content"] = text
+                    self._touch_live(sid)                  # the reworded echo is a change to the tail (see _touch_live)
+                    break                                  # one echo per edited message
+            self._persist_echoes(sid)                      # the restart mirror carries the new words
+            self._wake_push()                              # repaint with them
+        return old
 
     def queue_recallable(self, sid: str) -> bool:
         """Can a ✕ on this session's queued bubble still win? False while a turn is running UN-HELD:
@@ -12175,18 +13294,21 @@ class SdkBackend:
                         or getattr(s, "_untaken", None) is not None   # held behind a fed text the CLI has not taken
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str, user_todo: str | None = None, send_id: str | None = None) -> bool:
+    def send(self, sid: str, text: str, user_todo: str | None = None, qid: str | None = None) -> bool:
         """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
         it rides the queue entry (_QueueText) and the echo below, so the recall and the loss
         machinery can reopen exactly that ask — the id travels with the message end to end.
-        `send_id` is the id the CLIENT minted for this send at the press (2026-09-08): it rides the
-        same entry and the echo (and, once the record lands, the chat stamps it on that record —
-        kernel._note_send_landings), so the client's "sending…" bubble is matched to THIS send by
-        id — its queued copy, its echo, its landing, its ✕ — never to the first copy of the same
-        words. Empty for sends with no client identity (an agent's `romp send`, a nudge)."""
+        `qid` is the copy's identity when the client minted one at the press (T252c; the kernel's
+        _send_with_id hands it over when the backend's send takes it): the echo key below, so the
+        queued copy, its echo and, through the fed ledger, the landed atom share one id."""
         s = self._ensure(sid)
         if not s:
             return False
+        # The copy's IDENTITY (T252c): the echo key, minted BEFORE the enqueue so the queued copy, the
+        # optimistic echo and — through the fed ledger — the landed atom share one id; a parked send hands
+        # in the id it minted at park time. Synthetic uuid; the echo is pruned by text once the transcript
+        # writes the real user atom.
+        key = qid or "echo:" + uuid.uuid4().hex
         sent_t = sent_off = sent_fsid = None
 
         def attempt(s):
@@ -12207,16 +13329,15 @@ class SdkBackend:
             # again on every attempt: a re-resolved send is a new chance for the CLI to see the text.
             sent_t = int(time.time())
             sent_off, sent_fsid = self._transcript_mark(sid)
-            if send_id:
-                return s.enqueue(text, todo=user_todo or "", send_id=str(send_id))
-            return s.enqueue(text, todo=user_todo or "")     # the two-argument shape every session double answers
+            try:
+                return s.enqueue(text, qid=key, qts=int(time.time() * 1000), todo=user_todo or "")
+            except TypeError:                                # a stand-in session that takes the text alone: an id-less copy
+                return s.enqueue(text)
         s = self._enqueue_resolving(sid, s, attempt, "send")   # a queue the crash heal closed under the send: the replacement
         if not s:
             return False
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
-        # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
-        # transcript writes the real user atom.
-        key = "echo:" + uuid.uuid4().hex
+        # stream has it yet at send time — only we know the text).
         # AUTHOR the echo from the romp markers, exactly as the event model authors the REAL atom — else a
         # romp-injected nudge/auto-nudge sent through send() echoed as a BLUE HUMAN bubble (a "Follow-up"),
         # not the GRAY "from romp" auto-nudge it is, until the transcript atom replaced it (the user
@@ -12225,6 +13346,11 @@ class SdkBackend:
         # substring also matched CONTENT that merely mentions the marker — a typed follow-up quoting a
         # card summary about romp-injected echoed as a GRAY romp card.
         injected = "<!-- romp-injected -->" in text
+        # No `command` flag, even for a typed slash command: that flag marks the CLI's OWN feedback atoms
+        # (msg_to_atom's streamed wrapper and stdout, _ack_cmd_chip's picker chip), which owe no landing,
+        # are retired by the human floor, never mirrored across a restart, never flagged lost or
+        # re-delivered. A typed slash send is a message the CLI takes and records (as its wrapper), so its
+        # echo keeps the full lifecycle and lands under command_text_key; flagging it would hide its loss.
         echo = {
             "type": "user", "uuid": key, "session_id": sid, "t": sent_t, "parentUuid": None,
             "author": "romp" if injected else "human", "_echo_text": text,
@@ -12233,8 +13359,6 @@ class SdkBackend:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
         if user_todo:
             echo["_todo"] = str(user_todo)                   # the answer's ask, for the loss-reopen seam
-        if send_id:
-            echo["_send_id"] = str(send_id)                  # the client's id: the bubble's exact match
         if sent_off is not None:
             echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._stash_live(sid, key, echo)
@@ -12284,10 +13408,11 @@ class SdkBackend:
                     continue
                 e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
                      "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
+                if isinstance(a.get("uuid"), str) and a["uuid"].startswith("echo:"):
+                    e["uuid"] = a["uuid"]          # the copy's identity (T252c): the reseed keeps it, so a chat that
+                    #                                latched it before the restart finds it on the reseeded echo
                 if a.get("_todo"):
                     e["todo"] = str(a["_todo"])   # a user-todo ANSWER's echo keeps its ask's id across restarts
-                if a.get("_send_id"):
-                    e["sendId"] = str(a["_send_id"])   # …and the client's send id, for the bubble still open there
                 if a.get("_echo_off") is not None:
                     e["off"] = int(a["_echo_off"])                 # the send-time transcript mark (_transcript_mark)
                     e["fsid"] = str(a.get("_echo_fsid") or "")
@@ -12313,26 +13438,31 @@ class SdkBackend:
                 text = e.get("text")
                 if not isinstance(text, str) or not text:
                     continue
-                key = "echo:" + uuid.uuid4().hex
+                kept = isinstance(e.get("uuid"), str) and e["uuid"].startswith("echo:")
+                key = e["uuid"] if kept else "echo:" + uuid.uuid4().hex
                 atom = {"type": "user", "uuid": key, "session_id": reg["sid"],
                         "t": int(e.get("t") or 0) or int(time.time()), "parentUuid": None,
                         "author": e.get("author") or "human", "_echo_text": text,
                         "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+                if not kept:
+                    atom["_echo_reminted"] = True    # an older mirror carried no uuid: this echo is judged by text
                 if e.get("rompAuto"):
                     atom["rompAuto"] = True
                 if e.get("dropped"):
                     atom["dropped"] = True
+                    if hasattr(self, "forget_fed"):      # a stand-in backend in tests borrows this method without the ledger
+                        self.forget_fed(reg["sid"], atom.get("uuid"))   # its landing will never come (T252c)
                 if e.get("todo"):
                     atom["_todo"] = str(e["todo"])   # the loss-reopen seam survives the restart too
-                if e.get("sendId"):
-                    atom["_send_id"] = str(e["sendId"])
                 if isinstance(e.get("off"), int) and not isinstance(e.get("off"), bool):
                     atom["_echo_off"], atom["_echo_fsid"] = e["off"], str(e.get("fsid") or "")
                 if e.get("landed"):
                     atom["_landed"] = True           # already adjudicated landed: never re-scanned, never flagged
                 self._stash_live(reg["sid"], key, atom)
             if self._live.get(reg["sid"]):
-                self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
+                _texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
+                self._mark_dropped_echoes(reg["sid"], [{"md": t, "qid": (m or {}).get("qid")}
+                                                       for t, m in zip(_texts, queue_meta_from_reg(reg))])
 
     def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
@@ -12354,12 +13484,12 @@ class SdkBackend:
         exactly the duplicate that branch refuses by design. The loss still surfaces in full (the dropped
         flag, the todo-reopen seam); only the queue re-add is withheld. Boot and dead-spawn callers keep
         the default: no client survived there to be writing anything."""
-        # The surviving queue, by identity where both sides have one (upstream's T252c third review, re-expressed
-        # on the fork's send id: _echo_queued_in): `queued_texts` is the queue's entries as the in-memory queue
-        # holds them (plain texts, or _QueueText entries carrying the client's send id). An echo whose send id a
-        # queued entry wears is queued; an echo whose text is queued only under OTHER send ids is not: by text
-        # alone, the second of two identical sends hid the loss of the first, which was neither re-delivered nor
-        # flagged. An echo or an entry without a send id keeps the text reading, so an upgrade mid-flight never
+        # The surviving queue, by identity where it has one (T252c, third review): `queued_texts` is the queue's
+        # copies as {"md", "qid"} (a caller with texts alone gives id-less copies). An echo whose uuid a queued
+        # copy wears is queued; an echo whose text is queued only under OTHER ids is not — by text alone, the
+        # second of two identical sends hid the loss of the first, which was neither re-delivered nor flagged.
+        # A copy without an id (an older kernel's mirror, a notice the backend queued) and an echo the reseed
+        # re-minted (an older mirror carried no uuid) keep the text reading, so an upgrade mid-flight never
         # re-delivers a copy that is in fact queued.
         _queued = lambda a: _echo_queued_in(a, queued_texts)
         # The selection is under the live-tail lock; everything after it (the transcript scan, the
@@ -12407,9 +13537,8 @@ class SdkBackend:
                 elif seen:
                     a["_landed"] = True                    # the verdict, for prune_live and the next boot
                     landed.add(a["_echo_text"])
-        if landed:
-            with self._live_lock:                          # the flag writes above changed stashed atoms
-                self._touch_live(sid)
+                    with self._live_lock:
+                        self._touch_live(sid)              # a flag write outside the lock: still a change to the tail
         if redeliver:
             # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
             # own queue: there the in-memory _pending is authoritative and its very next
@@ -12423,7 +13552,7 @@ class SdkBackend:
                 with self._lock:
                     s = sess_map.get(sid)
             if s is not None:
-                have = {str(t) for t in s.pending()}
+                have = set(s.pending())
                 for a in redeliver:                        # already in send order (sorted above)
                     if a["_echo_text"] in have:
                         continue                           # already back in the queue — never duplicate
@@ -12431,40 +13560,37 @@ class SdkBackend:
                         s._compacting = True               # same enqueue-time semantics as send()
                     if _is_clear_cmd(a["_echo_text"]):
                         s._clearing = True
-                    # `todo`: a redelivered user-todo ANSWER keeps the id its echo carries (_TodoText
-                    # through enqueue), so a recall or a later loss can still reopen exactly that ask;
-                    # `send_id`: a send keeps its client id the same way (its bubble is still open there),
-                    # as the reg arm below does; the live arm dropped it (2026-09-08 review)
-                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""),
-                              send_id=str(a.get("_send_id") or ""))
+                    # under the echo's own id (T252c); `todo`: a redelivered user-todo ANSWER keeps the id its
+                    # echo carries (_TodoText through enqueue), so a recall or a later loss can still reopen
+                    # exactly that ask, as the reg arm below does
+                    _enqueue_with_id(s, a["_echo_text"], a.get("uuid"), a.get("t"), todo=str(a.get("_todo") or ""))
                     self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
                               % (sid[:8], a["_echo_text"]))
             else:
                 with self._reg_lock:
                     reg = read_reg(self.state_dir, sid)
                     if reg is not None:
-                        # Dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22): the
-                        # strings-only filter this replaces silently ERASED a persisted user-todo
-                        # answer's {"text","todo"} entry — the todo stayed 'answered', the answer
-                        # never delivered, and nothing reopened the ask. _queue_texts keeps every
-                        # well-formed entry (id-carrying included); _queue_wire writes them back.
+                        # Dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22): a strings-only
+                        # filter here silently ERASED a persisted user-todo answer's {"text","todo"} entry
+                        # (the todo stayed 'answered', the answer never delivered, nothing reopened the ask);
+                        # _queue_texts keeps every well-formed entry and _queue_wire writes them back
                         have = _queue_texts(reg.get("queue"))
-                        add = []
-                        for a in redeliver:
-                            # already queued, by the same identity reading as the selection above (by text alone, the
-                            # lost first of two identical sends was never re-added behind its queued twin)
-                            if _echo_queued_in(a, have):
-                                continue
-                            todo = str(a.get("_todo") or "")   # a redelivered ANSWER keeps its ask's id
-                            send_id = str(a.get("_send_id") or "")   # …and a send its client id (its bubble is still open there)
-                            add.append(_QueueText(a["_echo_text"], todo, send_id) if (todo or send_id) else a["_echo_text"])
+                        # already queued, by the same identity reading as the selection above (by text alone, the
+                        # lost first of two identical sends was never re-added behind its queued twin)
+                        _have = [{"md": t, "qid": (m or {}).get("qid")} for t, m in zip(have, queue_meta_from_reg(reg))]
+                        adds = [a for a in redeliver if not _echo_queued_in(a, _have)]
+                        add = [_QueueText(a["_echo_text"], str(a["_todo"])) if a.get("_todo") else a["_echo_text"]
+                               for a in adds]              # a redelivered ANSWER keeps its ask's id
                         if add:
-                            # behind the surviving queue: original send order
-                            reg["queue"] = [_queue_wire(t) for t in have + add]
+                            reg["queue"] = [_queue_wire(t) for t in have + add]   # behind the surviving queue: original send order
+                            # each re-delivered copy keeps the echo's uuid as its id (T252c): the seed restores it
+                            reg["queueMeta"] = [m for m in (reg.get("queueMeta") or []) if isinstance(m, dict)] + [
+                                {"text": a["_echo_text"], "qid": a["uuid"], "qts": int(a.get("t") or 0) * 1000 or None}
+                                for a in adds if isinstance(a.get("uuid"), str) and a["uuid"].startswith("echo:")]
                             write_reg(self.state_dir, sid, reg)
-                            for t in add:
+                            for a in adds:
                                 self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
-                                          % (sid[:8], str(t)))
+                                          % (sid[:8], a["_echo_text"]))
         rekeyed = {a["_echo_text"] for a in redeliver}
         for a in newly:
             if a["_echo_text"] in rekeyed:
@@ -12472,6 +13598,10 @@ class SdkBackend:
             if a["_echo_text"] in landed:
                 continue                                   # landed, un-pruned → the next build's prune_live
             a["dropped"] = True
+            if hasattr(self, "forget_fed"):
+                self.forget_fed(sid, a.get("uuid"))   # its landing will never come (T252c)
+            with self._live_lock:
+                self._touch_live(sid)                  # a flag write outside the lock: still a change to the tail
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
             if a.get("_todo"):
@@ -12480,9 +13610,6 @@ class SdkBackend:
                 # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
                 # echo at kernel death is COMMON and means delivered, not lost.
                 self._todo_lost(sid, a["_todo"], a["_echo_text"])
-        if any(a.get("dropped") for a in newly):           # `newly` held no dropped echo before this loop
-            with self._live_lock:
-                self._touch_live(sid)
         self._persist_echoes(sid)
         self._wake_push_live(sid)
 
@@ -12505,7 +13632,11 @@ class SdkBackend:
         echo_text_key's, the same rule the kernel's _atom_user_texts keys prune_live's by-text retire
         with, so a found echo is always one the prune can retire: the joined text or any one text block
         EQUAL to the send — never a substring, or a found-but-never-pruned echo would ride the tail
-        forever. `off` / `fsid` are the echo's send-time transcript mark (_transcript_mark): the file's
+        forever. A slash send is matched under command_text_key as well (its words; the kernel keys the
+        parsed command atom the same way): its own record is the CLI's wrapper, which _landed_texts reads
+        as the "/name args" the event model shows, never as the typed text, so until 2026-09-10 a typed
+        "/name" followed by a newline and its arguments read as never landed here and was re-delivered at
+        the next spawn, running the command twice. `off` / `fsid` are the echo's send-time transcript mark (_transcript_mark): the file's
         byte size when the send was made, and the fsid it was measured on. The scan starts THERE — every
         record that can land this send is at or after it, however much the session wrote afterwards —
         rather than at a fixed distance from EOF, which read a landed send whose record sat more than
@@ -12525,7 +13656,9 @@ class SdkBackend:
             reg = read_reg(self.state_dir, sid) or {}
             cur = str(reg.get("lastSid") or sid)
             path = transcript_path(reg.get("cwd") or "", cur)
-            want = echo_text_key(text)
+            # the plain key and, for a slash send, its words (echo_keys): the send's own record is the
+            # CLI's wrapper, which _landed_texts reads as "/name args" the way the kernel's prune does
+            want = set(echo_keys(text))
             floor = int(t or 0)
             size = os.path.getsize(path)
             start = 0
@@ -12550,7 +13683,7 @@ class SdkBackend:
                             rec = json.loads(raw.decode(errors="replace"))
                         except ValueError:
                             continue
-                        if not isinstance(rec, dict) or want not in _landed_texts(rec):
+                        if not isinstance(rec, dict) or not (want & _landed_texts(rec)):
                             continue
                         ts = _record_epoch(rec.get("timestamp"))
                         if floor and ts is not None and ts < floor:
@@ -12892,9 +14025,6 @@ class SdkBackend:
     # _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
     # capability, and hands the plain two-argument send to any backend without it (tmux, fakes).
     queue_carries_todos = True
-    # send() can carry the CLIENT's id for a send the same way (send's send_id → _QueueText.send_id, the
-    # echo's _send_id): the kernel's _backend_send probes this before passing it (2026-09-08).
-    queue_carries_send_ids = True
 
     def _todo_lost(self, sid: str, tid: str, text: str) -> None:
         """Hand a possibly-undelivered user-todo ANSWER to the kernel's todo_lost seam — fired at
@@ -12949,12 +14079,20 @@ class SdkBackend:
         return s._clearing
 
     def kill(self, sid: str) -> bool:
-        with self._reg_lock:                       # the alive flip must not lose to an RMW snapshot
-            reg = self._reg_for_flip(sid)
-            if reg:
-                reg["alive"] = False
-                write_reg(self.state_dir, sid, reg)
-        s = self.sessions.pop(sid, None)
+        # The flip and the pop run under _lock, the lock _ensure holds from its alive read through the
+        # insert and start, so a kill that lands mid-revive waits for the session being built and then
+        # pops THAT one. Outside it (review find, 2026-09-10), a kill arriving while _ensure was
+        # constructing popped nothing, and _ensure then inserted and started a CLI for a reg the flip
+        # had just marked dead: a running claude process with no tab, no listing and nothing left that
+        # could stop it (a cron-armed session the producer revives at the instant of a Kill). Lock
+        # order is _ensure's own, _lock → _reg_lock; shutdown runs outside the lock, conserve_close's shape.
+        with self._lock:
+            with self._reg_lock:                   # the alive flip must not lose to an RMW snapshot
+                reg = self._reg_for_flip(sid)
+                if reg:
+                    reg["alive"] = False
+                    write_reg(self.state_dir, sid, reg)
+            s = self.sessions.pop(sid, None)
         if s:
             s.shutdown()
         self._poke()
@@ -14688,11 +15826,25 @@ class SdkBackend:
             self._touch_live(sess.sid)           # the add and any eviction, one revision
         if vanished:
             self._note_live_tail_race("_evict_live_overflow")
+        # A user atom the CLI streams WHILE IDLE, wearing an injected provenance stamp, is a turn the CLI
+        # opened by itself — a background task's notification, a scheduled prompt, a peer's channel
+        # message — never the composer's words: a fed text is not replayed on the stream
+        # (replay-user-messages stays off, see _options), so its opener was noted at the feeder's pop.
+        # Only the CLI's own stamp says so (atom["origin"], msg_to_atom); a stamp-less user atom (a tool
+        # result) or a "human" stamp says nothing. Judged BEFORE the working re-assert below, and only
+        # while nothing is in flight: the same stamp arriving mid-turn is a splice into the running turn,
+        # which keeps its opener (see SdkSession._note_turn_opener).
+        okind = (atom.get("origin") or {}).get("kind") if atom.get("type") == "user" else None
+        if okind and okind != "human" and not getattr(sess, "inflight", 0) and not sess._cli_working:
+            sess._note_turn_opener("injected", True)
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
         # output — not an input echo, not a /model-style command line) means the CLI is producing RIGHT
         # NOW, so re-assert 'working' if a prior state write settled ahead of it (e.g. a separate turn
         # queued in the CLI that started streaming after the previous turn's Result). Only on the
         # transition, so it never spams the log. This is what makes the signal self-heal without a count.
+        if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
+                and getattr(sess, "_first_out_t", None) is None and getattr(sess, "inflight", 0):
+            sess._first_out_t = time.time()   # the turn's FIRST streamed work atom — turns.jsonl's firstOutT (T304)
         if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
                 and not sess._cli_working:
             sess._mark("working")   # (an isApiError settle is the turn DYING, not producing — never 'working')
@@ -14739,20 +15891,22 @@ class SdkBackend:
 
     def _touch_live(self, sid: str) -> None:
         """Record that `sid`'s live tail changed: advance its revision (`_live_rev[sid]`), the integer the
-        kernel's chat-build signature folds for the tail (Sessions.live_rev; 2026-09-03, the complete
-        per-session key since round-4 plan P4, 2026-09-07): a tab whose in-memory tail changed rebuilds
-        because this moved, and one whose tail did not is served from its cache without anyone hashing
-        the atoms. Called with `_live_lock` HELD, AFTER the change it records: the write first, then the
-        revision, so a reader that took the revision before its read and stored it misses on its next
-        check (the _node_anchor_rev ordering); the other order could pair a new revision with the old
-        atoms and never heal. Every site that adds, replaces, pops or flags an atom in `_live` calls this
-        — _stash_live, _forward (its eviction included), unqueue, dismiss_echo, prune_live,
-        retire_live_work, and the two flag writes _mark_dropped_echoes makes outside the lock (it takes
-        the lock for the bump); tests/test_live_tail_rev.py pins the set. Only a CHANGE bumps, once per
-        call: a prune that retired nothing leaves the revision where it was, since the chat build itself
-        prunes on every merge and a bump per call would make every build's own signature move under it.
-        A bare __new__ backend (tests drive prune_live on one) has no counters yet: mint them rather
-        than raise."""
+        kernel's chat-build signature folds for the tail (Sessions.live_rev). A tab whose in-memory tail
+        changed rebuilds because this moved, and one whose tail did not is served from its cache without
+        anyone hashing the atoms. Called with `_live_lock` HELD, AFTER the change it records: the write
+        first, then the revision, so a reader that took the revision before its read and stored it misses
+        on its next check; the other order could pair a new revision with the old atoms and never heal.
+
+        THE RULE: every site that adds, replaces, pops, flags or REWORDS an atom in `_live` calls this,
+        once per call that changed something: _stash_live, _forward (its eviction included), unqueue (the
+        cancelled copy's echo), edit_queued (the echo's new words), dismiss_echo, prune_live,
+        retire_live_work, and the two flag writes _mark_dropped_echoes makes outside the lock (each takes
+        the lock for its bump). tests/test_live_tail_rev.py pins the set by source, so a new queue or echo
+        mutator that touches `_live` fails that census until it bumps. Only a CHANGE bumps: a prune that
+        retired nothing, a settle over echoes already marked, a queue miss and every read leave the
+        revision where it was. The chat build itself prunes on every merge, so a bump per CALL would move
+        every build's own signature under it. A bare __new__ backend (tests drive prune_live on one) has
+        no counters yet: mint them rather than raise."""
         revs = getattr(self, "_live_rev", None)
         if revs is None:
             revs = self._live_rev = {}
@@ -14766,9 +15920,8 @@ class SdkBackend:
         return sorted(vals, key=lambda a: a.get("t", 0))
 
     def live_rev(self, sid: str) -> int:
-        """The sid's live-tail revision (see _touch_live): 0 until the tail first changes, then one more
-        per change — equality means nothing moved. Read under the live-tail lock, like the atoms it
-        counts. The kernel's chat-build signature reads it (Sessions.live_rev)."""
+        """The sid's live-tail revision (see _touch_live): 0 until the tail first changes, then one more per
+        change. Equality means nothing moved. Read under the live-tail lock, like the atoms it counts."""
         with self._live_lock:
             return (getattr(self, "_live_rev", None) or {}).get(sid, 0)
 
@@ -14801,7 +15954,11 @@ class SdkBackend:
         The by-text comparison is keyed by echo_text_key on BOTH sides (2026-09-06): the kernel builds
         `tx_user_texts` from _atom_user_texts, and the echo's text is keyed the same way here — before,
         the raw text was compared against stripped keys, so an echo whose text carried a trailing
-        newline never retired. An echo the boot/spawn scan already FOUND (`_landed`, recorded by
+        newline never retired. A slash send is compared under command_text_key too (2026-09-10): the CLI
+        records it as a wrapper whose parsed atom reads "/name args" with one space, whatever the sender
+        typed between the name and the arguments, and the kernel keys that atom both ways; without this a
+        typed echo whose whitespace differed from that form (a newline before the arguments) never
+        retired, though its turn ran. An echo the boot/spawn scan already FOUND (`_landed`, recorded by
         _mark_dropped_echoes from a direct read of the transcript and mirrored to the reg) retires
         without the comparison at all: that is its exit when the two texts cannot meet, since a found
         echo is neither flagged nor dismissable.
@@ -14819,15 +15976,17 @@ class SdkBackend:
         # held. A plain set (older callers) keeps the unfloored match.
         text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
         def _by_text(a, et):
-            key = echo_text_key(et)
-            if not key:
+            # the plain key and, for a slash send, its words (echo_keys): the CLI records the send as a
+            # wrapper whose parsed atom reads "/name args", and the kernel keys that atom both ways
+            keys = echo_keys(et)
+            if not keys:
                 return False
             if text_t is None:
-                return key in tx_user_texts
-            return key in text_t and float(text_t[key] or 0) >= float(a.get("t") or 0)
+                return any(k in tx_user_texts for k in keys)
+            return any(k in text_t and float(text_t[k] or 0) >= float(a.get("t") or 0) for k in keys)
         echo_removed = False
         vanished = 0
-        popped = False
+        changed = False
         with self._live_lock:
             d = self._live.get(sid)
             if not d:
@@ -14845,11 +16004,11 @@ class SdkBackend:
                     if d.pop(k, None) is None:
                         vanished += 1
                     else:
-                        popped = True
+                        changed = True
+            if changed:
+                self._touch_live(sid)      # once per call that retired something (see _touch_live)
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
-            if popped:
-                self._touch_live(sid)      # a change only: a prune that retired nothing is not one
         if vanished:
             self._note_live_tail_race("prune_live")
         if echo_removed:
@@ -14904,15 +16063,14 @@ class SdkBackend:
                     except Exception:
                         self._log("orphan-reply persist failed: %s" % traceback.format_exc())
         with self._live_lock:
-            popped = False
+            changed = False
             for k, _a in work:
-                if d.pop(k, None) is not None:
-                    popped = True
+                changed = (d.pop(k, None) is not None) or changed
+            if changed:
+                self._touch_live(sid)      # once per settle that retired something (see _touch_live)
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
-            if popped:
-                self._touch_live(sid)
-        if popped:
+        if changed:
             # the tail changed (the work atoms are gone; the chip can read ready) and the three callers wake only
             # through the plain _poke; the ResultMessage forwarded after a settle yields no atom, so without this
             # a watched tab's turn-end repaint waited out the pusher's minimum interval (review 2026-09-08)
@@ -14995,7 +16153,8 @@ class SdkBackend:
         # its pre-turn record, the very fold this gate guards. The note is spent only AFTER the
         # ping is provably queued; a kernel death between the two re-pings at a later settle
         # (a repeat of a true fact) instead of losing the note.
-        if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note):
+        if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note
+                                  + "<!-- romp-gist: renamed to '%s' -->" % note):
             return False                   # a queued turn would share the pre-turn window — hold the note
         self._update_reg(s.sid, renameNote=None)
         return True
@@ -15050,15 +16209,14 @@ class SdkBackend:
         broken, the queue is simply parked until the window resets (kernel _limit_hold), and the message
         they typed is still there. Anything else is a real failure and gets the plain error card."""
         # A missing dependency gets the REMEDY as its text, not the raw ModuleNotFoundError: "No module
-        # named 'claude_agent_sdk'" tells a user nothing about what to run.
+        # named 'claude_agent_sdk'" tells a user nothing about what to run. The remedy is the venv
+        # verdict's, read from the disk now (a venv for another python is named as such, not as a
+        # missing install); a venv for this python in a process that HAD the SDK at construction is not
+        # a late build but a broken import, so `started_missing` carries the construction-time check.
         dep = isinstance(exc, ImportError)
         # A provider failure happened before a new CLI existed. The previous
         # connection's stderr must not replace it or turn it into a quota hold.
         tail = "" if dep or isinstance(exc, _cred.CredentialError) else sess.stderr_tail()
-        # read the disk NOW, not a construction-time verdict: this path is the import that failed after
-        # the check passed, and the venv may have been rebuilt or the interpreter changed since. A venv
-        # for this python that is present is not "built after start" here (the SDK WAS importable at
-        # construction): the import itself broke, and the install text's rebuild is the remedy.
         text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
                                      started_missing=self._sdk_missing)
                 if dep else launch_failure_text(exc, tail))
@@ -15095,7 +16253,8 @@ class SdkBackend:
         it for the chat's error card and for the usage-limit queue hold (see SessionBackend.launch_error).
 
         A MISSING SDK outranks any per-session record: it is true of every session immediately, needs no
-        session to have died to be known, and it is the actionable one."""
+        session to have died to be known, and it is the actionable one. Its text is the venv verdict's,
+        read at request time (unavailable_text), so a venv rebuilt while the kernel runs says restart."""
         if self._sdk_missing:
             return {"text": self.unavailable_text(), "at": 0, "limit": False, "dep": True}
         try:
@@ -15276,7 +16435,7 @@ class SdkBackend:
             if parked:
                 line += ("; %d queued text(s) wait until the next start (a later send or the boot reconcile runs them "
                          "in order)" % len(parked))
-            self._log(line)
+            problem_row(self.state_dir, line, "crash.loop", log=self._log, sid=sid, name=sess.name, attempt=attempts + 1)
             return
         # The cause, when the dead CLI's own scope still says so: the OOM killer took a process in it,
         # named in the log with the evidence and in the notice the session reads, instead of a bare exit
@@ -15284,16 +16443,17 @@ class SdkBackend:
         # notice of its own that does not say out of memory (round 3). A contained child kill the CLI
         # outlived is named in the log but resumes plainly.
         if named:
-            self._log("session %s: claude process died mid-turn; the OOM killer took a process in its scope %s (%s); "
-                      "resuming with history intact" % (sess.name, named[0], named[2]))
+            line = ("session %s: claude process died mid-turn; the OOM killer took a process in its scope %s (%s); "
+                    "resuming with history intact" % (sess.name, named[0], named[2]))
         elif kind == "sigkill":
-            self._log("session %s: claude process died mid-turn; %s (scope %s); resuming with history intact"
-                      % (sess.name, oom[2], oom[0]))
+            line = ("session %s: claude process died mid-turn; %s (scope %s); resuming with history intact"
+                    % (sess.name, oom[2], oom[0]))
         elif kind == "contained":
-            self._log("session %s: claude process died mid-turn; %s; resuming with history intact"
-                      % (sess.name, oom[2]))
+            line = ("session %s: claude process died mid-turn; %s; resuming with history intact"
+                    % (sess.name, oom[2]))
         else:
-            self._log("session %s: claude process died mid-turn; resuming with history intact" % sess.name)
+            line = "session %s: claude process died mid-turn; resuming with history intact" % sess.name
+        problem_row(self.state_dir, line, "crash.heal", log=self._log, sid=sid, name=sess.name, attempt=attempts + 1)
         nudge = CRASH_RESUME_NUDGE_OOM if named else CRASH_RESUME_NUDGE_KILLED if kind == "sigkill" else CRASH_RESUME_NUDGE
         try:
             with self._lock:
@@ -15341,15 +16501,25 @@ class SdkBackend:
                 with sess._lock:
                     sess._queue_closed = True
                     pend = list(sess._pending)
+                    metas = list(sess._pending_meta)
                     if reg is None:
                         if _reg_path(self.state_dir, sess.sid).exists():
                             raise OSError("reg %s unreadable: skipping the sealed queue write rather than gutting the "
                                           "reg (%d pending text(s) did not reach it)" % (sess.sid[:8], len(pend)))
                         reg = {"sid": sess.sid}
-                    queue = [_queue_wire(t) for t in pend if not (nudge and is_crash_resume_nudge(t))]
+                    # the copies' identities (_pending_meta) ride the sealed write beside the texts, in the shape
+                    # _persist_queue mirrors them (one queueMeta entry per position), so the replacement session's
+                    # seed (queue_meta_from_reg) finds the same ids on the same copies
+                    keep = [(t, m) for t, m in zip(pend, metas + [None] * max(0, len(pend) - len(metas)))
+                            if not (nudge and is_crash_resume_nudge(t))]
+                    queue = [_queue_wire(t) for t, _m in keep]
+                    qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts")} if isinstance(m, dict) and m.get("qid") else {"text": t}
+                             for t, m in keep]
                     if nudge:
                         queue = [nudge] + queue
+                        qmeta = [{"text": nudge}] + qmeta
                     reg["queue"] = queue
+                    reg["queueMeta"] = qmeta
                     write_reg(self.state_dir, sess.sid, reg)
         return queue
 

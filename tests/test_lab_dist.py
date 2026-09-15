@@ -2219,9 +2219,21 @@ _ESBUILD_TEXT_READERS = {
     # there, the argv the kernel passes to a recording fake matched); neither reads the real file past build_mode,
     # neither runs it
     "test_bundle_build_mode.py", "test_kernel_bundle_vendor_inputs.py",
+    # upstream's copy primitive and its guard, called by no fork class, kept side by side so later folds of both
+    # merge clean (the fold that brought them, 2026-09-15; the header above): dist_copy.py's docstring names esbuild.js,
+    # test_dist_copy_staging.py's docstrings and its synthetic shapes do; neither runs a build
+    "dist_copy.py", "test_dist_copy_staging.py",
+    # test_landing_bundles_built.py (upstream's, the same fold) requires ./esbuild.js under node and builds IN MEMORY
+    # (write: false) to compare the emitted basenames with the landing html's tags: nothing is written to dist and
+    # nothing is copied, so it is a reader of the config, not a served lab
+    "test_landing_bundles_built.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
-                 "test_perf_bench.py"}                                  # upstream's copies kernel/ into a scratch checkout, never dist
+                 "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
+                 # upstream's copy primitive and its guard (the same entry as above): dist_copy.py IS a copytree over
+                 # dist for upstream's own labs, called by none of the fork's; test_dist_copy_staging.py copies a
+                 # scratch tree to prove the staging names are skipped, never the extension's dist
+                 "dist_copy.py", "test_dist_copy_staging.py"}
 _KEY_READERS = {"test_kernel_bundle_staleness.py",                     # imports lab_dist for the input parity pin
                 "test_kernel_bundle_vendor_inputs.py"}                 # and for the BUILD_TIMEOUT pin; neither serves
 

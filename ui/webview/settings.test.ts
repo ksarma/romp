@@ -8,7 +8,7 @@ const store: Record<string, string> = {};
   setItem: (k: string, v: string) => { store[k] = v; },
   removeItem: (k: string) => { delete store[k]; },
 };
-import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT, figureHosts, figureHostName } from "./settings";
+import { loadSettings, saveSettings, DEFAULT_SETTINGS, FIGURE_HOSTS_DEFAULT, figureHosts, figureHostName, fileLinkPane } from "./settings";
 
 test("loadSettings returns defaults when nothing is stored", () => {
   delete store["romp:settings"];
@@ -153,15 +153,38 @@ test("figureHosts reads every entry down to the host name the gate compares: an 
   delete store["romp:settings"];
 });
 
-// Compact tabs and agents (the user 2026-09-08, whose phone showed about three lines of transcript
-// between the tab strip and the box of background work): OFF by default, so the desktop strip and box
-// render exactly as before the setting existed until the gear opts in. Distinct from `compact`, the
-// transcript's own fold. The class it drives is dense-chrome.test.ts's subject.
-test("Compact tabs and agents defaults OFF (the user 2026-09-08); the opt-in round-trips", () => {
+// Compact tabs and agents (the user 2026-09-08: on a phone, the tab strip and the background-work panel
+// left about three lines of transcript in view): OFF by default, so the strip and the panel render exactly
+// as before the setting existed until the gear opts in. Distinct from `compact`, the transcript's own
+// tidy-up (tool runs collapsed, thinking hidden). The class it drives is dense-chrome.test.ts's subject.
+test("Compact tabs and agents defaults OFF (the user 2026-09-08); the opt-in round-trips, and a store from before the key reads as off", () => {
   assert.equal(DEFAULT_SETTINGS.denseChrome, false);
   delete store["romp:settings"];
-  assert.equal(loadSettings().denseChrome, false, "a fresh install is undensified");
+  assert.equal(loadSettings().denseChrome, false, "a fresh install reads off");
   saveSettings({ denseChrome: true });
   assert.equal(loadSettings().denseChrome, true, "the opt-in survives a reload (localStorage)");
+  store["romp:settings"] = JSON.stringify({ compact: true });
+  assert.equal(loadSettings().denseChrome, false, "a store written before the key reads as off");
+  delete store["romp:settings"];
+});
+
+// Where a chat file-link click opens on the web (the Files pane, a column of its own, or the viewer over
+// the pane you clicked): OFF by default, so a dashboard that never turns it on changes nothing. Only the
+// literal "pane" opts in; anything else a store might hold reads as the default, so a corrupt entry may
+// cost the preference, never the click (tabCtxMode's normalization idiom). Read at click time
+// (render.ts openPath through file-route.ts fileLinkRoute).
+test("File links open in defaults to the pane you clicked; the Files pane opt-in round-trips, and a foreign value reads as the default", () => {
+  assert.equal(DEFAULT_SETTINGS.fileLinkPane, "chat");
+  delete store["romp:settings"];
+  assert.equal(loadSettings().fileLinkPane, "chat", "a fresh install opens in place");
+  saveSettings({ fileLinkPane: "pane" });
+  assert.equal(loadSettings().fileLinkPane, "pane", "the opt-in survives a reload (localStorage)");
+  store["romp:settings"] = JSON.stringify({ compact: true });
+  assert.equal(loadSettings().fileLinkPane, "chat", "a store written before the key reads as the default");
+  store["romp:settings"] = JSON.stringify({ fileLinkPane: "purple" });
+  assert.equal(loadSettings().fileLinkPane, "chat", "a foreign stored value normalizes to the default");
+  assert.equal(fileLinkPane("pane"), "pane");
+  assert.equal(fileLinkPane("feed"), "feed", "the feed route is a target here (F3): this fork keeps three values, and its own test above round-trips it");
+  assert.equal(fileLinkPane(undefined), "chat");
   delete store["romp:settings"];
 });

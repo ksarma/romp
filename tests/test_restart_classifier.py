@@ -11,9 +11,9 @@ Every verdict below is driven through a REAL throwaway git repo — the exact di
 dispatch names — never a mocked file list. Synthetic content only; hermetic state."""
 import json
 import os
-import subprocess
 import tempfile
 import unittest
+from git_fixture import GIT_C, GIT_NO_BACKGROUND, git, init_repo
 from romp_load import load_source
 from pathlib import Path
 
@@ -29,8 +29,13 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 km = load_source("romp_kernel_rclass", os.path.join(BIN, "romp-kernel"))
 
 
-def _git(repo, *args):
-    r = subprocess.run(["git", "-C", str(repo)] + list(args), capture_output=True, text=True)
+# T298/T299: every git the fixture runs forbids BACKGROUND work, through the suite's shared runner
+# (tests/git_fixture.py, which explains why: `git commit` spawns `git maintenance run --auto`, which on recent
+# git detaches and can still be writing into .git while tearDownClass removes the temp repo — the CI flake
+# "Directory not empty: '.git'" from TemporaryDirectory.cleanup's rmtree, the Python 3.10 job, 2026-09-10).
+# init_repo writes the same keys into the repo's own config, so a git the KERNEL runs against it obeys them too.
+def _git(repo, *args, env=None):
+    r = git(repo, *args, env=env, check=False)
     assert r.returncode == 0, r.stderr
     return r.stdout.strip()
 
@@ -45,7 +50,7 @@ class RealDiffShapes(unittest.TestCase):
         cls.repo = repo
         for sub in ("kernel", "bin", "postal", "cli", "docs", "tests", "ui/webview"):
             (repo / sub).mkdir(parents=True)
-        _git(repo, "init", "-q")
+        init_repo(repo, "-q")   # T298: the no-background keys land in the repo too, for any git run against it
         _git(repo, "config", "user.email", "t@TESTHOST")
         _git(repo, "config", "user.name", "t")
         (repo / "kernel/mod.py").write_text('def f():\n    """doc."""\n    return 1  # one\n')
@@ -192,6 +197,27 @@ class RealDiffShapes(unittest.TestCase):
         changed, cc = self._verdict(self.base, sha)
         self.assertTrue(changed, "the running kernel LOSES a module it loaded — restart")
         self.assertIn("kernel/mod.py", cc["kernel"])
+
+    def test_the_fixture_forbids_background_git_work(self):
+        # T298: the repo's config and every helper invocation forbid auto maintenance, gc and its detach, and
+        # the fsmonitor daemon, so no git child outlives the command that spawned it (see GIT_NO_BACKGROUND).
+        # Pinned at the source and by behaviour: git's own trace names every child it runs, and a commit
+        # through the helper spawns none.
+        for k, v in GIT_NO_BACKGROUND.items():
+            # --default: a missing key reaches this assertion and its message, not the runner's exit check
+            self.assertEqual(_git(self.repo, "config", "--local", "--get", "--default", "", k), v, "the repo's config carries " + k)
+            self.assertIn("%s=%s" % (k, v), GIT_C, "…and so does every runner invocation")
+        self._reset()
+        (self.repo / "docs/a.md").write_text("# docs, traced\n")
+        with tempfile.NamedTemporaryFile("r", suffix=".log") as trace:
+            env = dict(os.environ, GIT_TRACE=trace.name)
+            _git(self.repo, "add", "-A", env=env)
+            _git(self.repo, "commit", "-qm", "maintenance-traced", env=env)
+            t = trace.read()
+        self.assertIn("built-in: git commit", t, "the trace is on")
+        self.assertIn("maintenance-traced", t, "the trace names the commit's argv: the pin below cannot be a bare substring")
+        self.assertNotIn("run_command: git maintenance", t, "no auto-maintenance child is spawned:\n" + t)
+        self.assertNotIn("run_command: git gc", t, "no gc child is spawned")
 
     def test_unknown_shas_and_git_failure_restart(self):
         self.assertTrue(km._kernel_code_changed("", "abc"), "unknown shas: restart")

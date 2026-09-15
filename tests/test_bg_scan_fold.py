@@ -405,7 +405,7 @@ class FoldTailSafety(unittest.TestCase):
         em._read_jsonl_incremental(self.p)                                    # B advances the shared entry
         real, calls = em._read_jsonl_incremental, []
 
-        def stale_once(path, on_fail=None):                                                 # A's first read is the stale one…
+        def stale_once(path, on_fail=None):                                   # A's first read is the stale one…
             calls.append(path)
             return recs_a if len(calls) == 1 else real(path)
         with mock.patch.object(em, "_read_jsonl_incremental", stale_once):

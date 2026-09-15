@@ -559,8 +559,8 @@ class MachineCutStampWiring(unittest.TestCase):
 
     def test_boot_reconcile_stamps_the_restart_cut(self):
         src = Path(BIN, "romp_sdk_backend.py").read_text()
-        # the queued text is BOOT_RESUME_NUDGE or its `romp down` variant (2026-09-06), both carrying
-        # the lead sentence INTR_RESTART_SIG matches; the stamp must still follow the queueing
+        # the queued text is BOOT_RESUME_NUDGE or its `romp down` variant, both carrying the lead
+        # sentence INTR_RESTART_SIG matches; the stamp must still follow the queueing
         pick = src.index("nudge = down_resume_nudge(stop_t, boot_t) if stop_t is not None else BOOT_RESUME_NUDGE")
         cut = src.index("prepend = ([nudge] if cut else [])", pick)
         self.assertIn('append_machine_cut(self.state_dir, sid, "restart")', src[cut:cut + 2000],

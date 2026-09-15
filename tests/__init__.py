@@ -68,19 +68,14 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
 # thread method ends a hung run that way), so a hung run leaves this dir beside the root.
 STATE_DIR = os.environ["XDG_STATE_HOME"]
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-
-# No test may reach a REAL manager control port or the REAL kernel (the twin of conftest.py's port
-# floors, 2026-09-06): a shell of a romp session inherits ROMP_MANAGER_PORT, ROMP_KERNEL_PORT and
-# ROMP_SERVE_PORT from the live deployment, and a test kernel that dials "the manager" through the
-# inherited value restarts the actual one, while postal_service.py's KERNEL_BASE and kernel.py's
-# PORT resolve the kernel port at import time. POISONED to a dead port, never popped: an absent
-# variable maps to the default, which is the live port, so only a dead value is safe for every
-# consumer. Tests that need a kernel start their own on an ephemeral port and pass it explicitly.
+# No unittest run may reach a REAL manager or kernel either: the same three ports conftest.py poisons
+# for pytest (its comment has the readers and the incident). Set to a dead port, never popped: every
+# reader maps an absent variable to the default port, which on a machine running romp is the live one.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 os.environ["ROMP_KERNEL_PORT"] = "1"
 os.environ["ROMP_SERVE_PORT"] = "1"
 
-# `from romp_load import load_source` in every test module (tests/romp_load.py): under pytest and
+# `from romp_load import load_source` in a test module (tests/romp_load.py): under pytest and
 # `python -m unittest tests.test_x` the test modules are imported as members of this package, so the
 # bare name resolves only because it is registered here; a direct script run finds the file on
 # sys.path itself. One module object either way.
@@ -96,3 +91,8 @@ sys.modules.setdefault("lab_dist", _lab_dist)
 # packages a checkout without the extension's node_modules lacks) resolves the same way.
 from . import lab_dist_stub as _lab_dist_stub  # noqa: E402
 sys.modules.setdefault("lab_dist_stub", _lab_dist_stub)
+
+# `from git_fixture import git, init_repo` (tests/git_fixture.py, T299): the throwaway-repo fixtures' one git
+# runner, registered the same way for the same reason.
+from . import git_fixture as _git_fixture  # noqa: E402
+sys.modules.setdefault("git_fixture", _git_fixture)

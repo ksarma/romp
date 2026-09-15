@@ -4257,6 +4257,39 @@ class PendingQueue(unittest.TestCase):
         self.assertIsNone(self.be.unqueue("qx2", 0, "already forwarded"))
         self.assertEqual(s.pending(), ["survivor"], "a miss never pops a different message")
 
+    def test_replace_queued_edits_in_place_and_keeps_order(self):
+        # the chat's ✎ on a queued message (the user 2026-09-08): new words, same slot — the queue drains
+        # front-first, so the edited message still goes exactly where it would have
+        s = self._sess("qed1")
+        s.enqueue("alpha"); s.enqueue("beta"); s.enqueue("gamma")
+        self.assertEqual(self.be.edit_queued("qed1", 1, "beta, revised"), "beta", "the OLD text comes back")
+        self.assertEqual(s.pending(), ["alpha", "beta, revised", "gamma"])
+        self.assertEqual(self.be.pending_queued("qed1"), ["alpha", "beta, revised", "gamma"])
+        self.assertIsNone(self.be.edit_queued("qed1", 9, "x"), "out-of-range idx is a safe no-op")
+        self.assertIsNone(self.be.edit_queued("no-such-sid", 0, "x"), "unknown session → None")
+
+    def test_edit_queued_expect_relocates_under_the_lock_and_a_miss_touches_nothing(self):
+        s = self._sess("qed2")
+        s.enqueue("alpha"); s.enqueue("beta")
+        s.unqueue(0)                                     # the queue shifts after the caller's snapshot
+        self.assertEqual(self.be.edit_queued("qed2", 1, "beta 2", "beta"), "beta", "stale idx 1 re-locates to 'beta'")
+        self.assertEqual(s.pending(), ["beta 2"])
+        self.assertIsNone(self.be.edit_queued("qed2", 0, "late words", "already forwarded"), "a miss is None…")
+        self.assertEqual(s.pending(), ["beta 2"], "…and rewrites nothing else")
+
+    def test_edit_queued_rewords_the_optimistic_echo(self):
+        # unqueue drops the echo of a cancelled message; an edit re-words it, so the live tail shows the
+        # edited message and the landing scan matches the record the transcript will write
+        sid = "qed3"
+        s = self._sess(sid)
+        s.enqueue("first draft")
+        self.be._live.setdefault(sid, {})["echo:x"] = {"type": "user", "_echo_text": "first draft",
+            "message": {"role": "user", "content": [{"type": "text", "text": "first draft"}]}}
+        self.assertEqual(self.be.edit_queued(sid, 0, "second draft"), "first draft")
+        a = self.be._live[sid]["echo:x"]
+        self.assertEqual(a["_echo_text"], "second draft")
+        self.assertEqual(a["message"]["content"][0]["text"], "second draft")
+
     def test_queue_recallable_only_while_a_recall_can_win(self):
         # the ✕ affordance gate (the user 2026-07-20): during a running UN-HELD turn the input
         # generator forwards a queued send into the CLI within milliseconds — a cancel there can only
@@ -10434,6 +10467,87 @@ class SettleBeforePoke(unittest.TestCase):
                         "the increment sits inside the lock block that popped the item")
         self.assertLess(body.index("self.inflight += 1"), body.index("self._persist_queue()"),
                         "…before the registry write that used to separate them")
+
+
+class KillDuringRevive(unittest.TestCase):
+    """A Kill that lands while _ensure is reviving the same sid (the producer waking a cron-armed
+    session at the instant the user clicks Kill) must end the session the revive builds, not miss it.
+    _ensure reads alive, constructs, inserts and starts under the backend lock; kill used to flip the
+    reg under _reg_lock and pop the session under no lock, so a kill arriving mid-construction popped
+    nothing, and the revive then inserted and started a CLI for a reg the flip had just marked dead: a
+    running claude process with no tab, no listing and nothing that could stop it. Event-ordered, no
+    sleeps: the session under construction parks the revive inside the lock until the test lets it go,
+    and the kill thread signals the moment it commits to its path — on main by completing its pop
+    (finding nothing) while the revive is parked; with the fix by queueing on the backend lock — and
+    only then is the revive released. Either way the kill then has to take effect on the session the
+    revive built."""
+
+    def test_kill_during_revive_ends_the_revived_session(self):
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = be.spawn("alpha", d)
+        Real = sb.SdkSession
+        constructing, release, committed = threading.Event(), threading.Event(), threading.Event()
+        built = []
+        self.addCleanup(lambda: [s.shutdown() for s in built])   # never leave a parked stand-in behind
+
+        class Parked(Real):
+            def __init__(self, backend, reg):
+                super().__init__(backend, reg)
+                self._stopped = threading.Event()
+                built.append(self)
+                constructing.set()
+                release.wait(10)
+
+            def _run(self):                          # the CLI stand-in: alive until shutdown says stop
+                self._stopped.wait(10)
+
+            def shutdown(self):
+                super().shutdown()
+                self._stopped.set()
+
+        class PopSpy(dict):                          # main's kill commits by popping under no lock
+            def pop(self, key, *default):
+                r = super().pop(key, *default)
+                if threading.current_thread() is killer:
+                    committed.set()
+                return r
+
+        class LockSpy:                               # the fixed kill commits by queueing on the lock
+            def __init__(self, real):
+                self._real = real
+
+            def __enter__(self):
+                if threading.current_thread() is killer:
+                    committed.set()
+                return self._real.__enter__()
+
+            def __exit__(self, *a):
+                return self._real.__exit__(*a)
+
+        be.sessions = PopSpy(be.sessions)
+        be._lock = LockSpy(be._lock)
+        revived = []
+        reviver = threading.Thread(target=lambda: revived.append(be._ensure(sid)))
+        killer = threading.Thread(target=lambda: be.kill(sid))
+        with mock.patch.object(sb, "SdkSession", Parked):
+            reviver.start()
+            self.assertTrue(constructing.wait(10), "the revive never reached construction")
+            killer.start()
+            self.assertTrue(committed.wait(10), "the kill never committed to a path")
+            release.set()
+            reviver.join(10)
+            killer.join(10)
+        self.assertFalse(reviver.is_alive() or killer.is_alive(), "a thread never finished")
+        self.assertEqual(len(built), 1, "the revive built exactly one session")
+        s = built[0]
+        self.assertIs(revived[0], s, "the revive returned the session it built")
+        self.assertFalse(sb.read_reg(d, sid)["alive"], "the kill flipped the reg dead")
+        self.assertNotIn(sid, be.sessions,
+                         "the revived session outlived the kill: a running CLI whose reg says dead")
+        self.assertTrue(s.ended, "the revived session was never shut down")
+        s.thread.join(10)
+        self.assertFalse(s.thread.is_alive(), "the stand-in CLI thread kept running after the kill")
 
 
 if __name__ == "__main__":

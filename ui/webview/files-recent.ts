@@ -1,14 +1,14 @@
-// The Files pane's recent-files list (files.ts): the pure half, importable by the tests. When nothing
-// is open the pane lists the files most recently open there as re-open links, so a thread dropped
-// yesterday costs one click to pick up. Stored per browser (localStorage), most recent first, one row
-// per path + session, capped; the identity a row carries is whatever the shell's relay handed over when
-// the file was opened, so the row's session chip re-renders without a session list of the pane's own.
+// The Files pane's recent-files list (files.ts): the pure half, importable by the tests. When nothing is
+// open the pane lists the files most recently open there as re-open links, so a thread dropped yesterday
+// costs one click to pick up. Stored per browser (localStorage), most recent first, one row per path and
+// session, capped; the identity a row carries is whatever the shell's relay handed over when the file was
+// opened, so the row's session chip re-renders without a session list of the pane's own.
 // Since Slice 6 of plans/markdown-viewer.md a row also carries the reader's PLACE in the file, the record
 // the viewer hands its host when the file is left (file-view.ts RememberedPlace, through initFileView's
 // `onLeave`): the top block's source span and pixel offset, the view, the file's mtime, the numeric
 // scrollTop and, for a Rendered read, the open folds by ordinal, never a word of the file. The pane hands it back
 // on every open of the FILE here, the row's click or any other (files.ts openHere, openFileView's `place`), so the note
-// returns to where it was read: the rows are per path + session, the file a row names is the viewer's rule (latestPlace,
+// returns to where it was read: the rows are per path and session, the file a row names is the viewer's rule (latestPlace,
 // below), and of the rows for one file the later record seats. The place is used, never shown: the row looks as it did.
 export interface RecentIdentity { name: string; color: { bg: string; fg: string } | null }
 /** The viewer's RememberedPlace (file-view.ts), spelled here so the pane's pure half imports nothing of the viewer:
@@ -73,7 +73,7 @@ export function parseRecent(raw: string | null): RecentFile[] {
   } catch { return []; }
 }
 
-/** Most recent first, one row per path + session (a re-open moves the row up and refreshes its identity), capped.
+/** Most recent first, one row per path and session (a re-open moves the row up and refreshes its identity), capped.
  *  A re-open that brings no place keeps the row's: the viewer hands the pane the place of the file it LEAVES (onLeave)
  *  before the re-open's own row is written, so an entry built with none must not erase what was just stored (an open
  *  of the same file over itself, the shell's relay for a path already in the list). An entry that brings one wins. */
@@ -91,7 +91,7 @@ export function placeRecent(list: RecentFile[], path: string, sid: string | null
 }
 
 /** The record to seat at an open: the LATEST (by `t`) among the rows `sameFile` admits, null when none of them holds one.
- *  The rows are per path + session while the viewer's in-page memory is per FILE (file-view.ts placeKey: an absolute or `~`
+ *  The rows are per path and session while the viewer's in-page memory is per FILE (file-view.ts placeKey: an absolute or `~`
  *  path is one file for every session of this kernel that names it, a session attached from another kernel, whose sid
  *  carries its host, reads that kernel's disk, so its key carries the host too and the two kernels' files are two files (the
  *  PR review's round 1); a relative path one per session, since the kernel resolves it against the session's cwd), so

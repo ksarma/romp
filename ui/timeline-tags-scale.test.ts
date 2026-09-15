@@ -8,26 +8,48 @@
 // document and closing when its dot moves (a scroll under it, a resize) or when focus leaves it (Tab,
 // focusout), the current swatch marked apart from the focus ring, the table's scroll surviving a repaint,
 // a drag past the table's edge landing only on a visible row, the folded summary naming only tags that
-// exist, [+ New tag] under the table rather than inside its scroll, a held dot taking no click, and the
-// pick re-resolving its tag by union key. EXECUTED over the house fake-DOM shim with the real
+// exist, [+ New tag] under the table rather than inside its scroll, a held dot taking no click, the
+// pick re-resolving its tag by union key, a repaint that holds the popover's dot closing the popover, and
+// the popover placed untranslated in the dialog's own document when the view runs in a frame. EXECUTED
+// over the house fake-DOM shim with the real
 // TimelinePanel: the dialog is opened, the dot clicked, a swatch picked, and the posted write is the one
 // the inline swatches posted. Synthetic ids and names only.
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { inspect } from "node:util";
-import { nodeFactory, hideEdges } from "./test-dom-shim";
+import { nodeFactory, hideEdges, defineHidden } from "./test-dom-shim";
 
 // The fake DOM is ui/test-dom-shim.ts, shared with the other timeline tests. A node INSPECTS AS ITS OWN PROJECTION
 // (its primitives), never as the tree: on 2026-09-09 the review's mutation runs of this file grew to 100 GB five
 // times before earlyoom killed them, because a failing strict assertion with a node on one side dumps both sides at
 // depth 1000 with getters on and then diffs the dumps with node's Myers algorithm, whose Int32Array trace costs
-// 8N^2 bytes outside the V8 heap (the module's header has the full account). The first test below pins the
-// projection over the dialog at scale. Still compare node identity with `same(a, b, msg)`: a deepEqual of two
-// nodes compares projections, not trees, and a short message beats a projection diff.
-const makeNode = nodeFactory();
+// 8N^2 bytes outside the V8 heap (the module's header has the full account). The projection test at the end of this
+// file pins the projection over the dialog at scale. Still compare node identity with `same(a, b, msg)`: a deepEqual
+// of two nodes compares projections, not trees, and a short message beats a projection diff.
+// ADOPTION is this file's own layer over the shim: a node appended under another document's node is ADOPTED with its
+// subtree, as a browser adopts it: its ownerDocument is the new parent's (the dialog is appended to the host document
+// before it is built, and _menuHost reads the anchor's document to skip the frame translation for a node already
+// living there). The shim has no document model, so the layer lives here, over the shim's factory: _ownerDoc and the
+// ownerDocument accessor are defined non-enumerable (the projection holds), appendChild and insertBefore adopt, and
+// createEl routes the children through the layered factory. No node factory of this file's own: the nodes are the shim's.
+function adopt(n: any, doc: any) { n._ownerDoc = doc; for (const c of n.children || []) adopt(c, doc); }
+function adopting(base: (tag: string) => any): (tag: string) => any {
+  const make = (tag: string): any => {
+    const n: any = base(tag);
+    defineHidden(n, "_ownerDoc", null);
+    Object.defineProperty(n, "ownerDocument", { get() { return n._ownerDoc || g.document; }, set(d: any) { n._ownerDoc = d; }, enumerable: false, configurable: true });
+    const append = n.appendChild, insert = n.insertBefore;
+    n.appendChild = (c: any) => { append(c); if (c.ownerDocument !== n.ownerDocument) adopt(c, n.ownerDocument); return c; };
+    n.insertBefore = (c: any, ref: any) => { insert(c, ref); if (c.ownerDocument !== n.ownerDocument) adopt(c, n.ownerDocument); return c; };
+    n.createEl = (t: string, o: any) => { const e = make(t); if (o && o.cls) e.classList.add(o.cls); if (o && o.text) e.textContent = o.text; n.appendChild(e); return e; };
+    return n;
+  };
+  return make;
+}
+const makeNode = adopting(nodeFactory());
 const g: any = global;
 g.document = {
   createElement(t: string) { return t === "canvas" ? { getContext() { return { font: "", measureText(s: string) { return { width: (s ? s.length : 0) * 6 }; } }; } } : makeNode(t); },
@@ -131,53 +153,25 @@ function openDialog(views: any = THREE, sessions: any[] = THREE_SESSIONS) {
   return panel;
 }
 
-// node's assert inspects the two sides of a failed strict assertion with these options
-// (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
-const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
-// the edges a dump would walk: the shared shim's, and the two members upstream's copy of the shim adds
-const EDGE_NAMES = ["parentNode", "children", "firstChild", "ownerDocument", "_ownerDoc"];
-test("executed: a shim node inspects as its own projection, never as the tree, so a failing assertion's diff stays small (the 100 GB runs of 2026-09-09)", () => {
-  const panel = openDialog(THIRTY, FORTY_SESSIONS);
-  try {
-    dotFor(panel, "g1")._listeners.click();
-    const pop = panel._tagColorPop;
-    assert.ok(pop, "the popover is open, the shape the review's mutations failed in");
-    // the swatch is taken explicitly and focus checked against it, so a focus regression fails here instead of
-    // handing the projection leg a null that inspects in one line (review round 1)
-    const sw = swatches(pop).find((s) => s._attrs["aria-checked"] === "true");
-    assert.ok(sw, "the current swatch");
-    same(g.document.activeElement, sw, "the popover focused the current swatch on open");
-    // upstream's variant of the shim (their copy of this file): every node carries an enumerable _ownerDoc and an
-    // ownerDocument accessor, which a key list of edges missed and the structural rule hides. Built here on a
-    // shared node, hung in the card with a child of its own, and shown to drag the document into its dump BEFORE
-    // the rule runs, so the leg below is known to bite
-    const up: any = makeNode("div");
-    Object.defineProperty(up, "_ownerDoc", { value: null, writable: true, enumerable: true, configurable: true });
-    Object.defineProperty(up, "ownerDocument", { get() { return this._ownerDoc || g.document; }, set(d: any) { this._ownerDoc = d; }, enumerable: true, configurable: true });
-    cardOf(panel).appendChild(up); up.ownerDocument = g.document; up.appendChild(makeNode("span"));
-    const raw = inspect(up, ASSERT_INSPECT);
-    assert.ok(raw.includes("ownerDocument") && raw.includes("_ownerDoc") && raw.includes("createElement"), "before the rule, the variant's members put the document in its dump: " + raw.split("\n").length + " lines");
-    hideEdges(up);
-    // the projection: a few lines, no edge, whatever the node's place in the tree (the dialog root would
-    // otherwise carry every row; a dot would climb to the body and back down through every row)
-    for (const [what, n] of [["a dot", dotFor(panel, "g1")], ["the dialog", panel._viewsDialog], ["the card", cardOf(panel)], ["the body", g.document.body], ["a swatch", sw], ["upstream's variant node", up]] as const) {
-      assert.ok(n && typeof n === "object", what + " is a node");
-      const dump = inspect(n, ASSERT_INSPECT);
-      const lines = dump.split("\n").length;
-      assert.ok(lines <= 60, what + " inspects in " + lines + " lines; the dump must not walk the tree: " + dump.slice(0, 300));
-      for (const e of EDGE_NAMES) assert.ok(!dump.includes(e), what + "'s dump names no edge, found " + e);
-    }
-    // and node's own failing diff, the two shapes the review's mutations produced (a node against null, the
-    // focused swatch against a dot): a short message, at once. Before the projection each was a 40 GB allocation.
-    const failing = (a: any, b: any) => { try { assert.equal(a, b, "the shape of a failing mutation"); } catch (e: any) { return String(e.message); } return ""; };
-    const m1 = failing(pop, null);
-    assert.ok(m1 && m1.split("\n").length <= 400, "node against null: a short diff, got " + m1.split("\n").length + " lines");
-    const m2 = failing(sw, dotFor(panel, "g2"));
-    assert.ok(m2 && m2.split("\n").length <= 120, "swatch against dot: a short diff, got " + m2.split("\n").length + " lines");
-  } finally {
-    panel._closeViewsDialog();   // takes the popover with it: the body is shared, and the next test expects it empty
-  }
-  assert.equal(popsInBody().length, 0, "the popover left with the dialog");
+// one failure must not take the tests after it down with it (review find, 2026-09-09: a popover a failed
+// assertion left in the shared body failed three later tests on popsInBody()): before every test the body is
+// emptied, the window's listeners, the feed row's echo, the geometry hooks, the remote bridge, the frame
+// stand-ins and the recorded posts are reset, and the pane filters' page-lifetime fold is put back to folded
+// through a throwaway dialog (the module variable has no other door)
+beforeEach(() => {
+  for (const c of g.document.body.children) c.parentNode = null;
+  g.document.body.children.length = 0;
+  g.document.activeElement = null;
+  for (const k of Object.keys(winListeners)) delete winListeners[k];
+  delete stored["romp:feedTags-set"];
+  g.__rectOf = null; g.__scrollMax = undefined;
+  delete g.__rompTimelineEditTag;
+  delete g.frameElement; delete g.parent;
+  posted.length = 0;
+  const p = drawnPanel(THREE, THREE_SESSIONS);
+  p._openViewsDialog(null);
+  if (caption(p).textContent.endsWith(" \u25BE")) caption(p)._listeners.click();
+  p._closeViewsDialog();
 });
 
 test("executed: lensSummary says what a pane shows, in the user's tag order, only tags that exist, cut with a count when long", () => {
@@ -213,7 +207,7 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
   }
   assert.equal(walk(panel._viewsDialog).filter((n) => n._attrs.role === "radio").length, 0, "no swatch in any row");
   assert.equal(popsInBody().length, 0, "...and no popover until a dot is clicked");
-  // the row still drags to reorder (the pill cell keeps its handle) and still offers delete and rename
+  // the row still drags to reorder (the pill cell keeps its handle) and still carries delete and rename
   const cells = walk(panel._viewsDialog).filter((n) => n._tname);
   assert.deepEqual(cells.map((c) => c._tname), ["alpha", "beta", "gamma"]);
   assert.ok(cells.every((c) => c._listeners.pointerdown), "the reorder drag stays on the pill");
@@ -226,7 +220,7 @@ test("executed: a tag row is one line: the pill, delete, rename and ONE colour d
   const tgrid = tgridOf(panel);
   assert.ok(tgrid, "the tag table");
   assert.ok(styleOf(tgrid).includes("padding:4px 0 4px 4px;margin:-2px 0 2px -4px;"), "room inside the scroll clip for the pills' and dots' rings, the layout unmoved");
-  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:30vh;overflow-y:auto;overflow-anchor:none;"), "capped at 30vh, scrolling within, three rows never shrinking, and out of scroll anchoring (round 4: the drag's cue lift moves 2px of content the browser must not scroll to follow; the browser legs drive the case, this pins the token where CI runs): " + styleOf(tgrid));
+  assert.ok(styleOf(tgrid).includes("flex:0 0 auto;max-height:30vh;overflow-y:auto;overflow-anchor:none;"), "capped at 30vh, scrolling within, three rows never shrinking, and out of scroll anchoring (the drag's cue lift moves 2px of content the browser must not scroll to follow; the browser legs drive the case, this pins the token where CI runs): " + styleOf(tgrid));
   assert.ok(!styleOf(tgrid).includes("min-height"), "three rows need no floor under them: their natural height is the floor");
   assert.ok(tgrid._listeners.scroll, "the table's scroll is listened to (it closes the popover when the dot moves)");
   const gridBox = walk(panel._viewsDialog).find((n) => styleOf(n).startsWith("flex:1 1000 auto;min-height:") && styleOf(n).endsWith("px;overflow-y:auto;"));
@@ -253,12 +247,12 @@ const gridBoxOf = (panel: any) => gridOf(panel).parentNode;
 // rebuild replaces
 const rowIdx = (n: any, lead: string) => { let k = 0; for (const c of n.parentNode.children) { if (c[lead]) k++; if (c === n) break; } return k - 1; };
 // a tag row placed by its index: 24px tall at a 28px pitch (row-gap 4), every cell of the row in its track.
-// Review round 4: one rect for every cell of the table let a floor measured off the WHOLE table (a thirty-row
+// A later review find: one rect for every cell of the table let a floor measured off the WHOLE table (a thirty-row
 // floor, the table never shrinking) pass here, with only the browser legs, which skip on CI, to catch it
 const tagRect = (i: number) => ({ left: 0, top: 100 + 28 * i, right: 200, bottom: 124 + 28 * i, width: 200, height: 24 });
 
 test("executed: the floors are measured off the rendered rows: a table of at most three rows keeps its natural height, a taller one three rows' worth; the sessions box min(live, 4) rows, by the live count and not the search hits", () => {
-  // review round 2 (2026-09-09): a constant per row (22px, 24px) is not the row height, which is the font's:
+  // review find, 2026-09-09: a constant per row (22px, 24px) is not the row height, which is the font's:
   // one tag showed 6px of blank under its row, three rows at the floor lost 7px of the third, one live
   // session sat in a 96px box. GEOMETRY IS A TEST INPUT here: tag rows lay out 24px tall (row-gap 4), placed
   // by their index (tagRect), session rows 18px (row-gap 3), every cell of a row seated in its track
@@ -306,7 +300,7 @@ test("executed: the floors are measured off the rendered rows: a table of at mos
     const p0 = openDialog(none);
     assert.ok(styleOf(tgridOf(p0)).includes("padding:0;margin:0;flex:0 0 auto;"), "no tags: no padding, so no empty box between the caption and New tag: " + styleOf(tgridOf(p0)));
     assert.equal(walk(p0._viewsDialog).filter((n) => n._tname).length, 0);
-    assert.ok(walk(p0._viewsDialog).some((n) => n.textContent === "+ New tag"), "New tag is still offered");
+    assert.ok(walk(p0._viewsDialog).some((n) => n.textContent === "+ New tag"), "New tag is still shown");
     p0._closeViewsDialog();
     // the sessions floor by the live count: none live, one, three, four, five
     const live = (k: number, total = k) => Array.from({ length: total }, (_, i) => Object.assign(sess("s" + (i + 1), "job-" + (i + 1), PALETTE[i]), { live: i < k }));
@@ -320,6 +314,12 @@ test("executed: the floors are measured off the rendered rows: a table of at mos
     const pd = openDialog(THREE, live(0, 2));
     assert.equal(styleOf(gridBoxOf(pd)), "flex:1 1000 auto;min-height:0px;overflow-y:auto;", "two sessions, none live: no row, no floor");
     pd._closeViewsDialog();
+    // live beside dead: the floor counts the LIVE sessions, two rows' worth for two live of six (a floor by
+    // every session would hold four rows over two, 2 x 18 + 3 here, not 4 x 18 + 9)
+    const pm = openDialog(THREE, live(2, 6));
+    assert.equal(styleOf(gridBoxOf(pm)), "flex:1 1000 auto;min-height:39px;overflow-y:auto;", "two live of six: two rows' worth, not four");
+    assert.equal(walk(pm._viewsDialog).filter((n) => n._sid).length, 2, "two live of six: the two rows");
+    pm._closeViewsDialog();
   } finally { g.__rectOf = null; }
 });
 
@@ -648,6 +648,73 @@ test("executed: a repaint keeps the popover on its row, re-placed under the rebu
   panel._closeViewsDialog();
 });
 
+test("executed: a repaint that turns the popover's dot HELD (a remote half landed, no bridge to reach it) closes the popover rather than hang it on the last build's dot", () => {
+  // review find, 2026-09-09: the held branch drew a dot with no opener and never re-pointed the anchor, so the
+  // popover kept the detached dot of the last build, whose rect is all zeros; the re-place read those zeros
+  // against the table's box and, with the card scrolled so the box straddled y 0, put the popover at the
+  // viewport's corner. A pick from it could only be refused (the remote half is unreachable), so it closes
+  assert.equal(typeof g.__rompTimelineEditTag, "undefined", "no bridge on this window");
+  const panel = openDialog();
+  const dot = dotFor(panel, "g2");
+  dot._listeners.click();
+  assert.ok(panel._tagColorPop, "beta's popover is open");
+  const F = copy(THREE); F.seq = 1001; F.remoteTags = [copy(REMOTE_BETA)];   // beta gains a remote half
+  panel.update({ now, sessions: THREE_SESSIONS, views: F });
+  panel._viewsDialogBuild();
+  const held = dotFor(panel, "g2");
+  assert.ok(held && held !== dot, "the row was rebuilt");
+  assert.equal(held._attrs["aria-disabled"], "true", "...with a held dot");
+  same(panel._tagColorPop, null, "no live dot to hang on: the popover closed");
+  same(panel._tagColorAnchor, null, "...and nothing is kept of the last build's dot");
+  assert.equal(popsInBody().length, 0, "...and it left the document");
+  assert.equal(tagOps().length, 0, "nothing was written");
+  dotFor(panel, "g1")._listeners.click();
+  assert.deepEqual(popKeys(), ["g1"], "alpha's dot, local only, still opens");
+  panel._closeViewsDialog();
+});
+
+test("executed: in a framed shell the popover lives in the dialog's own document and is placed by the dot's rect there, untranslated; its resize closer is that window's", () => {
+  // review find, 2026-09-09: the dialog is adopted into the top same-origin document when it opens, so its
+  // dot already measures in that document's coordinates; _menuHost translating the rect a second time (the
+  // frame walk every menu opened from the pane needs) put the popover an iframe offset from its dot, below
+  // the viewport in a 200px band at the page's foot. Here the view runs in a frame offset 300x400 into the
+  // host page: the frame walk WOULD translate (window.frameElement is set, its parent the host window), and
+  // the popover must not be
+  const hostWin: any = { innerWidth: 1600, innerHeight: 1300, _listeners: {} as Record<string, any[]>,
+    addEventListener(t: string, fn: any) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
+    removeEventListener(t: string, fn: any) { const a = this._listeners[t] || []; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } };
+  const hostDoc: any = { body: makeNode("body"), defaultView: hostWin, addEventListener() {}, removeEventListener() {}, activeElement: null };
+  hostDoc.body.ownerDocument = hostDoc;
+  hostWin.document = hostDoc;
+  const panel = drawnPanel(THREE, THREE_SESSIONS);
+  panel._tipWin = hostWin;   // the topmost same-origin window, as the tooltip host resolves it
+  g.frameElement = { getBoundingClientRect: () => ({ left: 300, top: 400, right: 1300, bottom: 1000, width: 1000, height: 600 }) };
+  g.parent = hostWin;
+  try {
+    panel._openViewsDialog(null);
+    same(panel._viewsDialog.parentNode, hostDoc.body, "the dialog hangs in the host document");
+    const dot = dotFor(panel, "g2");
+    same(dot.ownerDocument, hostDoc, "...and its dot was adopted there with it");
+    dot._listeners.click();
+    const pop = panel._tagColorPop;
+    assert.ok(pop, "the popover is open");
+    same(pop.parentNode, hostDoc.body, "it lives in the dialog's document, beside the dialog");
+    assert.equal(popsInBody().length, 0, "...not in the pane's");
+    assert.equal(pop.style.left, "6px", "placed by the dot's rect as measured, not the rect plus the frame's 300px offset");
+    assert.equal(pop.style.top, "24px", "...under the dot at its 20px bottom plus 4, not 400px lower");
+    assert.deepEqual(pop._anchorAt, { left: 0, top: 0 });
+    // the dot's window is the host's: the resize closer hangs there and comes down with the popover
+    const closers = hostWin._listeners.resize || [];
+    assert.equal(closers.length, 1, "one resize closer on the host window");
+    closers[0]();
+    same(panel._tagColorPop, null, "the host window's resize closed the popover");
+    assert.equal((hostWin._listeners.resize || []).length, 0, "...and took the closer down");
+    assert.equal(hostDoc.body.children.length, 1, "the dialog alone is left in the host body");
+    panel._closeViewsDialog();
+    assert.equal(hostDoc.body.children.length, 0, "closed, the dialog left the host document");
+  } finally { delete g.frameElement; delete g.parent; }
+});
+
 test("executed: the tag table's scroll survives a repaint, and is dropped when the table no longer scrolls", () => {
   const panel = openDialog(THIRTY, FORTY_SESSIONS);
   const tgrid = tgridOf(panel);
@@ -676,10 +743,10 @@ test("executed: the tag table's scroll survives a repaint, and is dropped when t
 test("executed: a tag dragged past the table's edge drops on the last WHOLE row: a row cut by the clip, or without room for its cue, takes neither the cue nor the drop; a wheel mid-drag re-ranks", () => {
   // the drop math ranks rows by their live rects, and only rows whose whole box plus the 2px cue lies inside
   // the table's box are candidates (review 2026-09-09: the cue was drawn where the user could not see it and
-  // the drop wrote it; round 2, with real pointer events: the centre rule still let a row whose bottom edge
+  // the drop wrote it; then, with real pointer events: the centre rule still let a row whose bottom edge
   // was under the clip take the cue, which painted under the clip). Rows 24px tall at a 28px pitch (row i at
   // 28i..28i+24, centre 28i+12, i the row's place in the table as drawn), scrolled by `scroll`; the table's
-  // box runs 0..`boxBottom`. THE CUE GROWS THE ROWS as the grid does (round 3, measured in both browsers): the
+  // box runs 0..`boxBottom`. THE CUE GROWS THE ROWS as the grid does (measured in both browsers): the
   // cue is a 2px border on the cued cell's edge, and the pill cell is the tallest of its row, so a cue on
   // EITHER edge grows that cell 2px at the BOTTOM and pushes every later row 2px down.
   const panel = openDialog(THIRTY, FORTY_SESSIONS);
@@ -771,7 +838,7 @@ test("executed: a tag dragged past the table's edge drops on the last WHOLE row:
     // a grab and a release with no move and no scroll writes nothing (a click on the pill)
     drag("t05", []);
     assert.equal(writes().length, 6, "no move, no scroll: no write");
-    // THE CUE COMES OFF FOR THE MEASUREMENT (round 3, real pointer events in both browsers). Box 0..194: row 6
+    // THE CUE COMES OFF FOR THE MEASUREMENT (real pointer events in both browsers). Box 0..194: row 6
     // (168..192, its cue to 194) is the last whole row, with exactly 2px of room. A stepped drag far below puts
     // the cue on row 4 first (the row under the pointer at 100), which pushes row 6 to 170..194; measured with
     // that cue drawn, row 6 had no room for its own and the cue and the drop landed one row short
@@ -811,9 +878,9 @@ test("executed: a tag dragged past the table's edge drops on the last WHOLE row:
 });
 
 test("executed: the floors' sources: four of the SMALLEST session rows when the first wraps, both floors kept through a build without layout, the first build in the host document", () => {
-  // review round 3 (2026-09-09). Session rows placed by their index (rowIdx: a cell's row is the count of name
+  // review find, 2026-09-09. Session rows placed by their index (rowIdx: a cell's row is the count of name
   // cells up to it in the grid); row 0 is 46.8px (its chips wrapped onto a second line), the rest 22.2px, 3px
-  // gaps. Tag rows by their index too (round 4), 24px at a 28px pitch
+  // gaps. Tag rows by their index too, 24px at a 28px pitch
   const sessRect = (i: number) => { const top = i === 0 ? 300 : 300 + 46.8 + 3 + (i - 1) * 25.2, h = i === 0 ? 46.8 : 22.2; return { left: 0, top, right: 200, bottom: top + h, width: 200, height: h }; };
   g.__rectOf = (n: any) => {
     const par = n.parentNode ? styleOf(n.parentNode) : "";
@@ -982,6 +1049,56 @@ test("executed: thirty tags and forty sessions: every row, every chip and the se
   swatches(panel._tagColorPop)[0]._listeners.click();
   assert.deepEqual([tagOps()[0].op, tagOps()[0].tid, tagOps()[0].color], ["recolor", "g30", PALETTE[0]]);
   panel._closeViewsDialog();
+});
+
+// node's assert inspects the two sides of a failed strict assertion with these options
+// (lib/internal/assert/assertion_error.js, inspectValue) before it diffs them line by line
+const ASSERT_INSPECT = { compact: false, customInspect: false, depth: 1000, maxArrayLength: Infinity, showHidden: false, showProxy: false, sorted: true, getters: true };
+// the edges a dump would walk: the shared shim's, and the two members upstream's copy of the shim adds
+const EDGE_NAMES = ["parentNode", "children", "firstChild", "ownerDocument", "_ownerDoc"];
+test("executed: a shim node inspects as its own projection, never as the tree, so a failing assertion's diff stays small (the 100 GB runs of 2026-09-09)", () => {
+  const panel = openDialog(THIRTY, FORTY_SESSIONS);
+  try {
+    dotFor(panel, "g1")._listeners.click();
+    const pop = panel._tagColorPop;
+    assert.ok(pop, "the popover is open, the shape the review's mutations failed in");
+    // the swatch is taken explicitly and focus checked against it, so a focus regression fails here instead of
+    // handing the projection leg a null that inspects in one line (review round 1)
+    const sw = swatches(pop).find((s) => s._attrs["aria-checked"] === "true");
+    assert.ok(sw, "the current swatch");
+    same(g.document.activeElement, sw, "the popover focused the current swatch on open");
+    // upstream's variant of the shim (their copy of this file): every node carries an enumerable _ownerDoc and an
+    // ownerDocument accessor, which a key list of edges missed and the structural rule hides (this file's own adoption
+    // layer defines both non-enumerable; the variant is built enumerable on purpose). Built here on a
+    // shared node, hung in the card with a child of its own, and shown to drag the document into its dump BEFORE
+    // the rule runs, so the leg below is known to bite
+    const up: any = makeNode("div");
+    Object.defineProperty(up, "_ownerDoc", { value: null, writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(up, "ownerDocument", { get() { return this._ownerDoc || g.document; }, set(d: any) { this._ownerDoc = d; }, enumerable: true, configurable: true });
+    cardOf(panel).appendChild(up); up.ownerDocument = g.document; up.appendChild(makeNode("span"));
+    const raw = inspect(up, ASSERT_INSPECT);
+    assert.ok(raw.includes("ownerDocument") && raw.includes("_ownerDoc") && raw.includes("createElement"), "before the rule, the variant's members put the document in its dump: " + raw.split("\n").length + " lines");
+    hideEdges(up);
+    // the projection: a few lines, no edge, whatever the node's place in the tree (the dialog root would
+    // otherwise carry every row; a dot would climb to the body and back down through every row)
+    for (const [what, n] of [["a dot", dotFor(panel, "g1")], ["the dialog", panel._viewsDialog], ["the card", cardOf(panel)], ["the body", g.document.body], ["a swatch", sw], ["upstream's variant node", up]] as const) {
+      assert.ok(n && typeof n === "object", what + " is a node");
+      const dump = inspect(n, ASSERT_INSPECT);
+      const lines = dump.split("\n").length;
+      assert.ok(lines <= 60, what + " inspects in " + lines + " lines; the dump must not walk the tree: " + dump.slice(0, 300));
+      for (const e of EDGE_NAMES) assert.ok(!dump.includes(e), what + "'s dump names no edge, found " + e);
+    }
+    // and node's own failing diff, the two shapes the review's mutations produced (a node against null, the
+    // focused swatch against a dot): a short message, at once. Before the projection each was a 40 GB allocation.
+    const failing = (a: any, b: any) => { try { assert.equal(a, b, "the shape of a failing mutation"); } catch (e: any) { return String(e.message); } return ""; };
+    const m1 = failing(pop, null);
+    assert.ok(m1 && m1.split("\n").length <= 400, "node against null: a short diff, got " + m1.split("\n").length + " lines");
+    const m2 = failing(sw, dotFor(panel, "g2"));
+    assert.ok(m2 && m2.split("\n").length <= 120, "swatch against dot: a short diff, got " + m2.split("\n").length + " lines");
+  } finally {
+    panel._closeViewsDialog();   // takes the popover with it: the body is shared, and the next test expects it empty
+  }
+  assert.equal(popsInBody().length, 0, "the popover left with the dialog");
 });
 
 // ── the runner cap: a source pin on vscode-extension/package.json's test script and CONTRIBUTING.md's passage ────

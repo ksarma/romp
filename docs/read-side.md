@@ -36,7 +36,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   or, on a machine without one, runs `romp-manager` in the foreground (like
   `jupyter lab`; `romp up --foreground` forces that for watching it work).
   `romp refresh` restarts the kernel(s), `romp down` stops them through the
-  service and keeps them stopped until `romp up`, `romp status` reports them. The kernel binds loopback only; tailnet/phone reach is
+  service and keeps them stopped until `romp up`, `romp status` reports them.
+  The kernel binds loopback only; tailnet/phone reach is
   `tailscale serve` proxying to `127.0.0.1:29855` (there is no `0.0.0.0` opt-in
   door; the tailscale proxy carries the phone path). The UI itself is just a URL
   the kernel serves.
@@ -144,13 +145,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   for a reload or a tab the browser discarded; a `resent: true` copy of the
   `return` row means the kept socket proved dead and the row was re-filed onto
   the redial.
-  A redial declares itself (`reconnect=1` on the `/ws` URL) once the bundle's ready
-  has left on a socket; before that, or with the ready still queued, it dials as
-  a fresh page. The kernel then sends the active tab in full and lists every
-  other session as a `skeleton` on the tab strip with one small `status` frame
-  each, and the chat pane loads a skeleton on click or one at a time in idle,
-  never while the tab is hidden; one `skeleton` client-diag row (count, active)
-  records the regime.
+  A redial declares itself (`reconnect=1` on the `/ws` URL) once the bundle's
+  ready has left on a socket; before that, or with the ready still queued, it
+  dials as a fresh page. The kernel then sends the active tab in full and lists
+  every other session as a `skeleton` on the tab strip with one small `status`
+  frame each, and the chat pane loads a skeleton on click or one at a time in
+  idle, never while the tab is hidden; one `skeleton` client-diag row (count,
+  active) records the regime.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
@@ -287,101 +288,72 @@ user atom in the backend's live store, mirrored to the registry so a restart can
 lose it) from `send()` until the transcript carries the same text. For a message fed
 into a running turn that record is the `queued_command` attachment the CLI writes
 when it splices the message in at its next tool boundary. On the SDK route no floor
-retires an echo: it retires only when its text lands in a record stamped at or after
-the send (a user record or that attachment), or when the CLI dies holding it
-(`dropped`: the echo is flagged `undelivered`, and the chat shows it as never
-delivered, with copy-to-composer and dismiss). The client keeps its own pending
-bubble (dashed, "sending…") from the press until the kernel's payload accounts for
-the text (`ui/webview/send-pending.ts`). The bubble has no lifetime either: it ends
-on the same events, read from the events after the send (a landing of the text, the
-kernel's never-delivered verdict, or the user's ✕). At the press the bubble is
-anchored to the last stable kernel event, and the user events that already carry
-its text are recorded as background. Only a user atom that lands after that anchor,
-with exactly the sent text, ends the bubble, and a record the CLI wrote from several
-back-to-back sends retires one bubble per text block (`blocks` on the user event);
-the scan runs from the anchor to the end of the resident events, never over a fixed
-number of tail events, so an absorbed atom placed a hundred events above the tail
-still ends it. One landing ends one bubble: two identical sends in flight end in
-send order, and a landing of "test the continue button" leaves a pending "test"
-alone. The `undelivered` verdict ends the bubble on the same terms, so resending a
-never-delivered message is not ended by the old bubble's verdict. The kernel's echo
-atom or queued copy is attributed per send, as a landing is: the k-th copy of the
-text after the anchor (an echo no earlier bubble claimed, or a queued copy beyond
-the count the press saw) hides the k-th bubble with that text for that push and
-proves the kernel received that one send. A claimed echo is background for every
-later bubble with the text, so one echo confirms one send. The id the press mints
-(`sendId`, carried on the echo and on the landed event) tells identical texts apart;
-a copy that carries no id goes by send order, as a landing does. A connection drop
-relabels the bubble "not confirmed" until a copy attributed to it appears or the
-message lands. The label is per bubble, so a group holding one dropped send and one
-in flight reads "not confirmed · sending…". ✕ removes the bubble it sits on: the
-entry's send id rides the button as `data-qsid` and its press time as `data-qts`,
-and `dropPending` removes that entry rather than the first entry with the same text.
-The chat repaints only when a bubble's state changed (a redial loop while the kernel
-is down repaints nothing). A send pressed while its tab is still a
-placeholder, with no resident frame, is stamped at the first frame instead. That
-stamp reads the events' own kernel stamps: only an event stamped before the press's
-second is the anchor or background, so the frame's copy of this send (its echo, or
-its landed atom when the CLI was idle) is read as the send's own and not as an
-older message. The comparison assumes that the client's clock and the kernel host's
-agree to the second; `stampBase` states the assumption. The kernel's queued bubble
-carries no stamp, so a late stamp presumes that the frame's newest queued copy of
-the text is this send's own (one copy per identical send pressed against the same
-placeholder frame); without that, a send into a busy or held queue whose first
-frame already listed it sat as a second bubble beside the kernel's copy for the
-whole wait, and its ✕ would have cancelled the real queued send. The presumption
-misreads one case, stated in `stampBase`: an older identical message already in the
-queue, with this send not yet received when the frame was built, is read as this
-send's copy. A press-time stamp reads no stamp, since its frame predates the press.
-An absorbed atom is placed where the model READ it: its event carries `absorbed`,
-its `t` is the landing time, the moment the CLI took the message off its queue (the
-repaired timestamp of the attachment's file-order predecessor, the boundary record
-the splice waited for, clamped to the send time when it would be earlier), and the
-send time rides along as `sentAt` (T252d, the user 2026-09-08). Their reasoning: the
-pane used to draw the message at its send position, above the steps that ran while
-it waited, while the model read it only after them, so the order on screen
-contradicted the order the model saw; the read position is the one that matches.
-The landing time is never before the send, with no tolerance window: real
-transcripts invert only by clock granularity, and anything larger is a shape the CLI
-does not write. Each clamp is counted as `landedT-clamp` in the event model's
-assembly stats, served beside `ts-repair` in the version route's `parse` dict. So
-the chat's pending bubble sits at the TAIL while pending, below every streaming
-step, and the landed atom appears in that same tail position, so nothing moves on
-landing; `sentAt` feeds the bubble's hover ("sent at HH:MM", shown once landed when
-it differs from the landing by more than a minute). No header, no cue. This
-supersedes the in-place-at-send-position rule of T252/T252b; the press-minted
-`sendId` still decides landing, cover and hiding. The CLI extracts no image paths on
-the stream-json route (its only image-path test belongs to the interactive composer's
-paste handler), so an image path in an SDK send lands as typed and the echo's text
-matches. `_path_bearing` and the extension set it tests (png, jpe?g, gif, webp,
-case-insensitive: the CLI bundle's single image-path test, pinned equal between kernel
-and backend) remain for the tmux settle path only, where the paste hook does run and
-rewrites the path to `[Image #N]`. The chat's own image previews (`_user_images`) use
-a separate set, built from the served MIME table (`_IMG_MIME`, svg and bmp included),
-so a preview is never proposed for a file the image route cannot serve.
+retires an echo: it retires when its text lands in a record stamped at or after the
+send (a user record or that attachment), or when the CLI dies holding it (`dropped`,
+which the chat shows as never delivered, with restore and dismiss). The chat's own
+pending bubble, painted at the press, has no lifetime either: it ends on the same
+events, read from the events after the send (a landing of the text, the kernel's
+never-delivered verdict, or the user's ✕), and a record the CLI wrote from several
+back-to-back sends retires one bubble per text block (`blocks` on the user event).
+While the socket is down the bubble is labelled "not confirmed", until a kernel
+copy of the send clears the label. A send that landed mid-turn (`absorbed` on the
+user chat event) is placed where the model READ it: at its landing time, the
+moment the CLI took it off its queue, below the steps that ran while it waited
+(T252d, the user 2026-09-08). Their reasoning: the pane used to draw the message
+at its send position, above those steps, while the model read it only after them,
+so the order on screen contradicted the order the model saw; the read position is
+the one that matches. So the chat's pending bubble sits at the TAIL while pending,
+below every streaming step, and the landed atom appears in that same tail
+position, so nothing moves on landing; the send time rides along as `sentAt` for
+the bubble's hover ("sent at HH:MM", shown once landed when it differs from the
+landing by more than a minute). No header, no cue. This supersedes the
+in-place-at-send-position rule of T252/T252b; the kernel's per-copy identities
+(T252c) stay and decide landing, cover and hiding. The identity exists from the
+press: the client mints the copy's id (`qid`, in the kernel's echo form) and posts
+it with the send, the kernel parks the copy under it (the parked op's fourth slot)
+or queues it under it, and the ✕ names it, so the kernel cancels exactly the copy
+the bubble stands for, never a same-text neighbour by index or body. That holds
+wherever the copy carries the id: a parked send on any backend, and the SDK
+route's queue. A copy whose ✕ names no id (an op the kernel parked itself, such
+as a nudge or a re-delivery; a ✕ from an older client) is still cancelled by
+index and body. The tmux route's queue, which the CLI holds, has no ✕ at all:
+`TmuxBackend` has no `unqueue`, so `build_session` ships those copies
+`cancelable: false` and the chat draws no ✕ for them. Every copy the kernel
+queues itself (mail, a nudge, a re-delivery) is still minted an id where it
+enters the backend's queue. The CLI extracts
+no image paths on the stream-json route (its only image-path test belongs to the
+interactive composer's paste handler), so an image path in an SDK send lands as
+typed and the echo's text matches. `_path_bearing` and the extension set it tests
+(png, jpe?g, gif, webp, case-insensitive: the CLI bundle's single image-path test,
+pinned equal between kernel and backend) remain for the tmux settle path only, where
+the paste hook does run and rewrites the path to `[Image #N]`. The chat's own image
+previews (`_user_images`) use a separate set, built from the served MIME table
+(`_IMG_MIME`, svg and bmp included), so a preview is never proposed for a file the
+image route cannot serve.
 
 **A kernel restart does not re-run a mid-turn send.** The boot duplicate guard
 (`_text_landed`) reads the `queued_command` attachment too, and it scans from the
-transcript's byte size at the moment of the send (recorded on the echo as `_echo_off`
-with the file id `_echo_fsid`, mirrored in the registry as `off` and `fsid`) to the end
-of the file, so a landed send is neither re-queued nor flagged as undelivered however
-much the session wrote afterwards. A mark from another file (a /clear or a fork
-since), a mark past the end of the file, or an echo with no mark reads the whole file.
-The guard used to read a fixed 2 MB tail, which suits the lost verdict and not the
-landed one: an attachment further back read as never landed, and the resumed CLI ran
-the send again. The found verdict is recorded on the echo (`_landed`), and
-`prune_live` and the chat merge retire the echo on it without a text match, so a found
-echo always has an exit and a later boot never re-scans it. Every by-text comparison
-of an echo against a record, the guard's scan, `prune_live`'s retire on every backend
-(`SdkBackend`, `CodexBackend`, the tmux backend's), the Codex backend's own retire of
-an echo by the user record it just wrote (`CodexBackend._append`, one echo per landed
-text block, whose `_rec_texts` keys the record side), the kernel's `_atom_user_texts`
-and its folds, the tmux echo's prune (`_tmux_echo_prune`) and the user-todo answer's
-landed check (`_paste_landed_texts`, the match set `_user_todo_answer_lost` reads),
-uses one key, `echo_text_key` in `session_backend.py` (outer whitespace stripped,
-nothing else). The scan used to collapse inner whitespace while the prune compared raw
-text against stripped keys, so a send with a trailing newline was found, hence neither
-re-fed nor flagged, and yet never pruned or dismissable.
+transcript's byte size at the moment of the send (recorded on the echo as
+`_echo_off` with the file id `_echo_fsid`, mirrored in the registry as `off` and
+`fsid`) to the end of the file, so a landed send is neither re-queued nor flagged as
+undelivered however much the session wrote afterwards. A mark from another file (a
+/clear or a fork since), a mark past the end of the file, or an echo with no mark
+reads the whole file. The found verdict is recorded on the echo (`_landed`), and
+`prune_live` and the chat merge retire the echo on it without a text match, so a
+found echo always has an exit and a later boot never re-scans it. Every by-text
+comparison of an echo against a record (the guard's scan, `prune_live`'s retire on every
+backend (`SdkBackend`, `CodexBackend`, the tmux backend's), the Codex backend's own retire
+of an echo by the user record it just wrote (`CodexBackend._append`, one echo per landed
+text block, whose `_rec_texts` keys the record side), the kernel's `_atom_user_texts` and
+its folds, the fed-copy pairing `qids_for_landing`, the tmux echo's prune
+`_tmux_echo_prune` and the user-todo answer's landed check (`_paste_landed_texts`, the
+match set `_user_todo_answer_lost` reads)) uses the two keys in `session_backend.py`:
+`echo_text_key` (outer whitespace stripped, nothing else) and, for a slash send,
+`command_text_key` (the tokens joined by single spaces). The second exists because the
+CLI records a slash or skill command as its `<command-name>` wrapper, which parses to
+`/name args` with one space whatever the sender typed between the name and the
+arguments; both sides key a slash-shaped text both ways, so the scan and the prune
+agree on the same records.
 
 **The ledger is a table of contents** (pure projection of captions + archive):
 - top: the archiver's one-sentence headline for the session,
@@ -813,9 +785,14 @@ The Python kernel (`kernel/kernel.py`) closes it.
   the cookie, and `X-Romp-Token` (CLI/hooks/daemons, read from the file). The
   token is baked into how the kernel launches (env/autostart), never a manual
   per-launch flag; a bare browser open of `/` gets a paste-the-token login page
-  (bare `romp` prints the link + opens a browser). Only the no-side-effect liveness
-  probes are exempt (`/healthz`, `/version`, `/busy`; bus `/ping`) so liveness
-  never breaks token-less monitors. `tailscale serve` traffic needs the token
+  (bare `romp` prints the link + opens a browser). Two kinds of route are exempt:
+  the no-side-effect liveness probes (`/healthz`, `/version`, `/busy`; bus
+  `/ping`) so liveness never breaks token-less monitors, and the install files
+  (`/manifest.webmanifest`, plus three icon names under `/media/`, an allowlist
+  rather than a prefix) because a browser fetches a manifest and its icons with
+  credentials omitted, so a gated manifest 403s the moment "Add to Home Screen"
+  consults it. The install files are static (a JSON literal, three PNG files)
+  and read no session state. `tailscale serve` traffic needs the token
   once per device like any browser — and funnel (public internet through the
   same proxy) must still never be enabled for this port, since the token would
   then be the only gate with no device identity in front of it.

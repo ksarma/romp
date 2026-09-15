@@ -3,22 +3,9 @@
 // layout each time (about 40% of the shared main thread on an IDLE dashboard), rebuilt the whole SVG once
 // the edge had crept 0.15 px, and inside each rebuild compared every turn against every message. The chat pane's tab clicks share
 // that thread, so every one of these landed on the user as click lag. Like the other timeline tests,
-// the wiring is pinned at the source level, and the pure helper is run.
-//
-// The live tick as a transform write (2026-09-06). While the timeline follows the live edge, a rAF loop
-// (_tickLive) advanced the clock by wiping and rebuilding the whole svg every time the edge moved 0.15 px:
-// about 30 ms a draw, twice a second at a one-hour window and up to sixteen times a second at ten minutes
-// (the pane's largest cost while visible, and invisible to every handler bracket). draw() now puts every
-// time-positioned element in one plot group, and the tick writes one translate on that group plus a width on
-// each element whose right edge rides the live now (an open bar, an open awaiting or compacting span, an
-// open judging run); a full draw() stays only for what a translate cannot express. Headless, on the shared fake
-// DOM, ui/test-dom-shim.ts; the test's document counts element creation, so a rebuild is observable.
-//
-// Merged 2026-09-07: both mechanisms ship. With a plot handle the tick translates on every animation frame
-// (TICK_MIN_PX guards the sub-pixel move); with none (a glyph rides the live edge) the rebuild is paced as
-// above: a draw once the edge has moved LIVE_MIN_PX, then a sleep of _liveWaitMs(). The first group of tests
-// pins the pacing at the source and runs the pure helpers; the second drives a panel on the DOM shim.
-
+// the wiring is pinned at the source level, and the pure helpers are run. The look is a translate now
+// (timeline-transform-tick.test.ts executes it): a look with a plot group sleeps only until the edge could have moved
+// TICK_MIN_PX (_tickWaitMs, within a frame at a narrow window), and the look that must rebuild keeps the whole pixel.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -28,11 +15,12 @@ import { nodeFactory } from "./test-dom-shim";
 
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
 
-test("the live tick sleeps until the edge has moved a whole pixel, instead of waking every frame", () => {
+test("the rebuild look sleeps until the edge has moved a whole pixel; a translate look sleeps until it has moved TICK_MIN_PX", () => {
   assert.match(SRC, /const LIVE_MIN_PX = 1;/);
+  assert.match(SRC, /const TICK_MIN_PX = 0.15;/);
   assert.match(SRC, /_liveWaitMs\(\) \{[\s\S]*?const pxPerSec = g\.plotW \/ g\.winSec;/);
   assert.match(SRC, /_sleep\(ms\) \{\n\s*this\._liveTO = setTimeout\(\(\) => \{ this\._liveTO = null; this\._liveRAF = requestAnimationFrame\(\(\) => this\._tickLive\(\)\); \}, ms\);/);
-  assert.match(SRC, /this\._sleep\(this\._liveWaitMs\(\)\);/);
+  assert.match(SRC, /this\._sleep\(this\._tickPlot \? this\._tickWaitMs\(\) : this\._liveWaitMs\(\)\);/, "a plot group to translate: TICK_MIN_PX's worth; none: the whole pixel's");
   assert.match(SRC, /_stopLiveTick\(\) \{[\s\S]*?clearTimeout\(this\._liveTO\)/, "stopping the loop clears the sleep too");
   assert.match(SRC, /_startLiveTick\(\) \{[\s\S]*?if \(this\._liveRAF != null\) return;[\s\S]*?if \(this\._liveTO != null\) \{ clearTimeout\(this\._liveTO\); this\._liveTO = null; \}/,
     "a restart re-paces a pending sleep (a zoom or a frame changed the geometry) but never doubles an imminent look");
@@ -48,6 +36,24 @@ test("the live wait is bounded and scales with the zoom", () => {
   assert.equal(at(600, 900), 667, "a ten-minute window over 900 px: two thirds of a second");
   assert.equal(at(60, 1800), 100, "zoomed right in: never faster than ten looks a second");
   assert.equal(fn.call({ _geom: null }), 1000, "no geometry yet: a plain second");
+});
+
+test("the translate's wait is TICK_MIN_PX's worth: within a frame at a narrow window, a short sleep at a wide one, the rebuild's inside a trailing gap", () => {
+  const m = /  _tickWaitMs\(\) \{([\s\S]*?)\n  \}/.exec(SRC);
+  assert.ok(m, "the translate's pacing helper exists");
+  const TICK_MIN_PX = 0.15, MAX_INTERP_AHEAD = 150, NOW_MS = 1_000_000;
+  const fn = new Function("TICK_MIN_PX", "MAX_INTERP_AHEAD", "perfNow", "return function(){" + m![1] + "}")(TICK_MIN_PX, MAX_INTERP_AHEAD, () => NOW_MS) as () => number;
+  const at = (winSec: number, plotW: number, trailing = false, sinceFrameMs = 0) =>
+    fn.call({ _geom: { winSec, plotW }, _tickPlot: { trailing }, _nowBaseMs: NOW_MS - sinceFrameMs, _liveWaitMs: () => 777 });
+  assert.equal(at(60, 1300), 7, "a one-minute window over 1300 px: 7 ms, under a frame, so the next animation frame");
+  assert.equal(at(600, 1300), 69, "a ten-minute window: about 70 ms, a dozen moves a second");
+  assert.equal(at(3600, 1300), 415, "a one-hour window: about twice a second");
+  assert.equal(at(43200, 450), 2000, "zoomed right out: capped at two seconds, like the rebuild's wait");
+  assert.equal(at(600, 1300, true), 777, "inside a collapsed trailing gap the edge does not move: the rebuild's wait");
+  assert.equal(at(600, 1300, false, 149_000), 69, "a kernel quiet for 149 s: the edge still glides toward the cap");
+  assert.equal(at(600, 1300, false, 150_000), 777, "at the interpolation cap (150 s) the edge stands still: the rebuild's wait");
+  assert.equal(at(60, 1300, false, 400_000), 777, "and stays so however narrow the window, until the next frame re-anchors the clock");
+  assert.equal(fn.call({ _geom: null, _tickPlot: null, _liveWaitMs: () => 777 }), 777, "no geometry yet: the rebuild's wait");
 });
 
 // (A skeleton and its bars frame are two draws: update()/applyBars() draw synchronously while the pane can be

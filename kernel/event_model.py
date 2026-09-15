@@ -592,9 +592,10 @@ def _scan_jsonl_bytes(data, base_offset):
 def _read_jsonl_incremental(path, on_fail=None):
     """The parsed records of `path` (a list, NOT a generator), served append-incrementally per the cache
     contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl. `on_fail`,
-    when given, is called with the exception for a stat, open or read that failed on a file that EXISTS (any
+    when given, is called with the exception for a stat, open or read that raised on a file that EXISTS (any
     OSError but FileNotFoundError): an absent file is a state and answers [] quietly, an unreadable one is a
-    failure the caller may count and log (fold_records passes it through as on("fail"), 2026-09-07)."""
+    failure the caller may count and log (fold_records passes it through as on("fail")). The answer is []
+    either way."""
     path = str(path)
     try:
         st = os.stat(path)
@@ -652,32 +653,33 @@ def fold_records(cache, path, init, step, on=None):
     cached state is deep-copied before folding onto it, so a state a caller was handed never changes
     under it). Returns the state; [] records (a missing or unreadable file) fold to init().
 
-    `on`, when given, is called once per call with which path the fold took: "hit" (the records are the
+    `on`, when given, is called once per call with the path the fold took: "hit" (the records are the
     cached ones; nothing stepped), "append" (only the records past the cached prefix stepped), "refold"
     (every record stepped: a rewrite, a shrink, or the first fold of this file) or "fail" (the file exists
     and its stat, open or read raised: the answer is init(), the cache entry for the path is dropped and
     nothing is memoized, so the next call reads again; an ABSENT file is not a failure and folds to init()
-    through the normal path). A caller's /perf counters ride it (kernel `_states_awaiting_overlay`,
-    2026-09-07); the fold itself keeps no counters, since one cache dict serves many readers and the
-    kernel's counters are locked per reader.
+    through the normal path). A caller's counters ride it (the kernel's `_states_awaiting_overlay`); the
+    fold itself keeps no counters, since one cache dict serves many readers and a caller's counters are
+    locked per reader.
 
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
     key = str(path)
-    failed = []
-    recs = _read_jsonl_incremental(path, on_fail=failed.append)
-    if failed:
-        cache.pop(key, None)                              # a failed read is never memoized: the next call reads again
+    failed = []                                           # the reader's failures: a stat, open or read that raised on a
+    recs = _read_jsonl_incremental(path, on_fail=failed.append)   # file that exists (an absent file is [] and no failure)
+    ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
+    if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
+        del failed[:]                                     # past our records before we look at its tail, and a newer tail
+        recs = _read_jsonl_incremental(path, on_fail=failed.append)   # folded onto an older prefix would skip the
+        ent = _pinned_entry(key, recs)                    # records between. A lost pin re-reads once: the newer entry
+        if ent is _UNPINNED:                              # pins cleanly, so the answer is current, not a poll behind;
+            ent = None                                    # lost twice, the fold answers without the tail, never with
+    if failed:                                            # the wrong one. The re-read's verdict is the one that counts.
+        cache.pop(key, None)                              # A failed read is never memoized: the next call reads again
         if on is not None:
             on("fail")
         return init()
-    ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
-    if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
-        recs = _read_jsonl_incremental(path)              # past our records before we look at its tail, and a newer tail
-        ent = _pinned_entry(key, recs)                    # folded onto an older prefix would skip the records between. A
-        if ent is _UNPINNED:                              # lost pin re-reads once — the newer entry pins cleanly, so the
-            ent = None                                    # answer is current, not a poll behind; lost twice, the fold
-    hit = cache.get(key)                                  # answers without the tail, never with the wrong one
+    hit = cache.get(key)
     if hit is not None:
         n0, last0, state0 = hit
         if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):

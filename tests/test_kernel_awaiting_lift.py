@@ -14,13 +14,12 @@ when the goal itself dispatched background work by stamp time and all of it came
 a CI run, a scheduled check-back or a peer handoff owns no such dispatches, never matches, and keeps its
 stamp (those remain the 6h backstop's job, the one case a timer is the only tool for).
 
-Since performance plan 4 (P16) the tick reads in two phases: every rule is decided on the shared
-read-only store (jd.load_goals_shared) and written nowhere; the writer's copy (jd.load_goals) is loaded
-only when that decision found a lift due, decided on again, and only that second decision is filed. The
-LiftGate class counts the two loaders apart. Since the 2026-09-08 fold both phases read through the
-per-session boundary (jd.load_goals_shared_or_fault, jd.load_goals_or_fault): a store that exists and
-cannot be read answers (None, fault), and the tick forgets its inputs gate for the session and retries
-next cycle instead of ruling on an empty store.
+The tick reads in two phases: every rule is decided on the shared read-only store (jd.load_goals_shared,
+through the per-session boundary jd.load_goals_shared_or_fault) and written nowhere; the writer's copy
+(jd.load_goals, through jd.load_goals_or_fault) is loaded only when that decision found a lift due, decided
+on again, and only that second decision is filed. The LiftGate class counts the two loaders apart. Both
+boundaries answer (None, fault) for a store that exists and cannot be read, and the tick then forgets its
+inputs gate for the session and retries next cycle instead of ruling on an empty store.
 
 SYNTHETIC fixtures only: placeholder UUIDs, invented task descriptions.
 """
@@ -72,7 +71,7 @@ def _notification(tid, t):
 
 
 def _dispatch(tid, t):
-    """The assistant tool_use block that DISPATCHED a background agent — the record _seg_of_tool_uses
+    """The assistant tool_use block that DISPATCHED a background agent: the record _seg_of_tool_uses
     resolves a launch's segment from (the ack and the notification alone name no segment)."""
     return {"type": "assistant", "timestamp": _iso(t), "uuid": "d" + tid, "parentUuid": None,
             "message": {"role": "assistant", "content": [
@@ -750,7 +749,7 @@ class LiftHorizonJournaled(_HorizonBase):
         self.assertEqual(self._lifts()[-1].get("endEv"), BACK, "the respawn is the ending it cites")
         # the task/job shape (2026-09-05): every launch placed on a sibling top, the world emptied
         # after the stamp — the horizon is the newest terminal record
-        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}   # the lift hands its store
+        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}
         self.spawn = STAMP - 50
         self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])
         self._seed("job")
@@ -965,16 +964,13 @@ class LiftStandsDown(unittest.TestCase):
 
 
 class LiftGate(unittest.TestCase):
-    """The inputs gate in front of the lift's store read (perf plan 2, P6a; 2026-09-07 upstream fold: upstream's
-    _sid_inputs_fp / _lift_seen fingerprint adopted over the fork's _LIFT_GATE identity key, with the
-    fork's intents layered on: upstream's gate also skips a stamped session whose inputs are unchanged, a
-    skip the fork's never made) and the two-phase read behind it (perf plan 4, P16). The ruling reads the
-    store, the override journal, the goals-archive (a `restore` row re-inserts a node only when neither
-    holds it), the transcript, the postal log and the SDK reg, plus two live facts (the registry's task ids
-    and subagent count, and whether each running dispatch's deadline has passed), so a session whose
-    fingerprint is unchanged since the last ruling is skipped before the parse, stamped or not. Every
-    writer moves an input (rename publishes, journal appends, transcript records), so a lift happens on
-    exactly the events it did before.
+    """The inputs gate in front of the lift's store read (_sid_inputs_fp / _lift_seen) and the two-phase
+    read behind it. The ruling reads the store, the override journal, the goals-archive (a `restore` row
+    re-inserts a node only when neither holds it), the transcript, the postal log and the SDK reg, plus
+    two live facts (the registry's task ids and subagent count, and whether each running dispatch's
+    deadline has passed), so a session whose fingerprint is unchanged since the last ruling is skipped
+    before the parse, stamped or not. Every writer moves an input (rename publishes, journal appends,
+    transcript records), so a lift happens on exactly the events it did before.
 
     Behind the gate, phase 1 PROBES the shared read-only view (jd.load_goals_shared) and decides on it;
     phase 2 loads the WRITER's copy (jd.load_goals) only when that decision found a lift due, decides again
@@ -1074,13 +1070,17 @@ class LiftGate(unittest.TestCase):
 
     def test_a_missing_store_is_gated_until_it_appears(self):
         self._returned_dispatch()
+        before = dict(km._lift_gate_stats)
         self.assertEqual(self._tick(), 1)               # no file: the shared loader hands the read to
         self.assertEqual(self.last_probes, 1)           #   load_goals, which answers a fresh empty store
+        after = km._lift_gate_stats
+        self.assertEqual((after["load"] - before["load"], after["shared"] - before["shared"]), (1, 0),
+                         "the read is counted; the shared cache did not answer it (load_goals' own store)")
         self.assertEqual(self._tick(), 0, "still no file: the absent identity is a stable key")
         self.assertEqual(self.last_probes, 0)
         self._seed()                                     # the store is born stamped (a rename in production)
         self.assertEqual(self._tick(), 1, "the store appeared: probed, a lift is due, one writer load")
-        self.assertIsNone(self._stamp(), "…and the lift proceeded exactly as without the gate")
+        self.assertIsNone(self._stamp(), "...and the lift proceeded exactly as without the gate")
 
     # ---- every writer moves the key ----
     def test_a_save_goals_publish_reloads(self):
@@ -1101,14 +1101,14 @@ class LiftGate(unittest.TestCase):
             {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
         self.assertEqual((self._tick(), self.last_probes), (0, 1))
         self.assertEqual((self._tick(), self.last_probes), (0, 0))
-        # an undo-clear restore rides the journal with its node payload — a stamped node can come back
+        # an undo-clear restore rides the journal with its node payload: a stamped node can come back
         # through the replay alone, with the store file untouched
         km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
         self.assertEqual(self._tick(), 1, "the journal grew: probed, the restored stamp is due, one writer load")
         self.assertEqual(self.last_probes, 1)
         nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
         self.assertIn(self.gid, nodes, "the restored node was saved back")
-        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…and its stamp lifted on the return")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "...and its stamp lifted on the return")
 
     def test_a_journal_block_row_reloads(self):
         self._returned_dispatch()
@@ -1135,7 +1135,7 @@ class LiftGate(unittest.TestCase):
         (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
         # the node sits in the archive, so the journal's restore row does NOT re-insert it (replay
-        # defers to a later re-clear) — the archive's contents decide the replay's outcome
+        # defers to a later re-clear): the archive's contents decide the replay's outcome
         km.jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {self.gid: self._stamped_node()}, "status": {}})
         km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
         self.assertEqual((self._tick(), self.last_probes), (0, 1))
@@ -1145,7 +1145,7 @@ class LiftGate(unittest.TestCase):
         self.assertEqual(self._tick(), 1, "the archive changed: probed, the restored stamp is due, one writer load")
         nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
         self.assertIn(self.gid, nodes, "the restore now re-inserted the node")
-        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…and the lift proceeded")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "and the lift proceeded")
 
     def test_a_same_size_in_place_rewrite_reloads(self):
         """st_mtime_ns is in the key: a rewrite that keeps the inode AND the byte count (the store's own
@@ -1186,10 +1186,8 @@ class LiftGate(unittest.TestCase):
         self.assertEqual(self._tick(), 1, "the inode alone moved the identity: probed, a lift due, one writer load")
         self.assertIsNone(self._stamp())
 
-    # ---- a stamped store is gated on the same terms (2026-09-07 upstream fold, upstream's gate adopted: the
-    #      fork's _LIFT_GATE re-loaded a stamped store every tick; upstream's fingerprint gate skips it
-    #      until an input moves, and the return that ends the wait is itself a transcript write), and the
-    #      tick that does read it decides on the shared view alone (perf plan 4, P16) ----
+    # ---- a stamped store is gated on the same terms, and the tick that does read it decides on the
+    #      shared view alone ----
     def test_a_stamped_store_with_unchanged_inputs_is_skipped_too(self):
         self._transcript([_launch("t1", LAUNCH)])       # still out: the stamp stands
         self._seed()
@@ -1203,8 +1201,8 @@ class LiftGate(unittest.TestCase):
         self.assertIsNotNone(self._stamp(), "the stamp stands through the skipped ticks")
         after = km._lift_gate_stats
         self.assertEqual(after["load"] - before["load"], 1, "one session-cycle read the store")
-        self.assertEqual(after["shared"] - before["shared"], 1, "…answered by the shared cache")
-        self.assertEqual(after["writer"] - before["writer"], 0, "…and none loaded the writer's copy")
+        self.assertEqual(after["shared"] - before["shared"], 1, "...answered by the shared cache")
+        self.assertEqual(after["writer"] - before["writer"], 0, "...and none loaded the writer's copy")
         self.assertEqual(after["noop"] - before["noop"], 0)
         self.assertIn(SID, km._lift_seen)
         self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])   # the return lands: an input moved
@@ -1224,14 +1222,14 @@ class LiftGate(unittest.TestCase):
         before = dict(km._lift_gate_stats)
         self.assertEqual(self._tick(), 1, "the probe found the lift due: exactly one writer load")
         self.assertEqual(self.last_probes, 1)
-        self.assertIsNone(self._stamp(), "…and it lifted")
+        self.assertIsNone(self._stamp(), "...and it lifted")
         self.assertEqual(len(self._lift_rows()), 1, "one lift row, filed on the writer's copy")
         self.assertNotIn(self.gid, km._auto_nudge_data().get("nudged", {}), "the spent nudge record dropped once")
         after = km._lift_gate_stats
         self.assertEqual((after["writer"] - before["writer"], after["noop"] - before["noop"]), (1, 0))
         self.assertEqual((self._tick(), self.last_probes), (0, 1),
                          "the save moved the key: probed once more, nothing stamped, no writer load")
-        self.assertEqual((self._tick(), self.last_probes), (0, 0), "…then gated")
+        self.assertEqual((self._tick(), self.last_probes), (0, 0), "...then gated")
         self.assertEqual(len(self._lift_rows()), 1, "the lift was filed exactly once")
 
     def test_a_node_keyed_apart_from_its_id_field_still_lifts(self):
@@ -1258,7 +1256,7 @@ class LiftGate(unittest.TestCase):
         self.assertEqual((self._tick(), self.last_probes), (1, 1), "the frozen stamp is due: one writer load")
         self.assertEqual(len(self._lift_rows()), 1)
         self.assertEqual((self._tick(), self.last_probes), (0, 1), "diary-guarded: probed, nothing due")
-        self.assertEqual((self._tick(), self.last_probes), (0, 0), "…and no candidate, so gated")
+        self.assertEqual((self._tick(), self.last_probes), (0, 0), "...and no candidate, so gated")
 
     def test_the_peer_superseded_arm_lifts_with_one_writer_load(self):
         self._transcript([])
@@ -1290,8 +1288,8 @@ class LiftGate(unittest.TestCase):
 
     def test_a_writer_racing_between_the_probe_and_the_load_costs_a_reload_never_a_wrong_lift(self):
         """Phase 1 decides on the shared view; phase 2 decides AGAIN on the writer's copy and files only
-        that. A closer publishing between the two — here, placing the deciding launch under ANOTHER card,
-        which makes it not this goal's dispatch — must not have its verdict overridden by the probe's
+        that. A closer publishing between the two (here, placing the deciding launch under ANOTHER card,
+        which makes it not this goal's dispatch) must not have its verdict overridden by the probe's
         stale decision: the writer load decides nothing (`noop`), the stamp stands, and the next tick's
         probe (on the moved store) agrees."""
         # chained through parentUuid: the parse walks the transcript graph from its leaf, so only a chained
@@ -1329,6 +1327,68 @@ class LiftGate(unittest.TestCase):
                          "the publish moved the key: probed on the moved store, nothing due, no writer load")
         self.assertIsNotNone(self._stamp(), "the other card's dispatch never retires this wait")
 
+    # ---- the verdict gate, read in phase 1: a lift record_verdict would refuse is decided nowhere ----
+    def _set_floor(self, t):
+        """A user follow-up on the card at `t` (followupAt): the verdict gate's evidence floor. A lift's
+        evidence time is the stamp's anchor (_lift_ev_t), so a floor past the anchor makes record_verdict
+        refuse the lift; phase 1 asks the same gate (jd.may_apply) and must decide nothing, so the writer's
+        copy is never loaded for a lift that would not file."""
+        gp = km.jd.GOALDIR / (SID + ".json")
+        store = json.loads(gp.read_text())
+        store["nodes"][self.gid]["followupAt"] = t
+        gp.write_text(json.dumps(store))
+
+    def _assert_refused_on_the_shared_view(self, snap=None):
+        before = dict(km._lift_gate_stats)
+        self.assertEqual((self._tick(snap=snap), self.last_probes), (0, 1),
+                         "the gate refuses the lift on the shared view: one probe, no writer load")
+        self.assertIsNotNone(self._stamp(), "the stamp stands")
+        self.assertEqual(self._lift_rows(), [], "nothing filed")
+        after = km._lift_gate_stats
+        self.assertEqual((after["writer"] - before["writer"], after["noop"] - before["noop"]), (0, 0),
+                         "no writer load, so no noop either: the refusal cost the probe alone")
+        self.assertEqual((self._tick(snap=snap), self.last_probes), (0, 0), "...and the session is gated")
+        # the two gates agree: record_verdict on the writer's copy refuses what phase 1 did not decide
+        w = km.jd.load_goals(SID)
+        nd = w["nodes"][self.gid]
+        self.assertFalse(km.jd.record_verdict(w, nd, "romp", "awaiting", km._lift_ev_t(nd, BACK + 100), lift=True))
+
+    def test_a_floor_refused_return_lift_is_decided_on_the_shared_view_and_costs_no_writer_load(self):
+        self._returned_dispatch()                        # the cited-return arm: the dispatch is back...
+        self._seed()
+        self._set_floor(STAMP + 10)                      # ...but the user followed up after the stamp
+        self._assert_refused_on_the_shared_view()
+
+    def test_a_floor_refused_rolled_up_lift_costs_no_writer_load(self):
+        self._transcript([])
+        why = "a wait the roll-down froze"
+        nd = dict(self._stamped_node(why), nodeComplete=True, rolledUp=True, followupAt=STAMP + 10)
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}))
+        self._assert_refused_on_the_shared_view()
+
+    def test_a_floor_refused_peer_superseded_lift_costs_no_writer_load(self):
+        self._transcript([])
+        self._seed(why="waiting on the peer's answer", kind="peer")
+        self._set_floor(STAMP + 10)
+        saved = km._peer_answered
+        km._peer_answered = lambda sid: (BACK, {})       # the peer replied after the stamp was written
+        try:
+            self._assert_refused_on_the_shared_view()
+        finally:
+            km._peer_answered = saved
+
+    def test_a_floor_refused_empty_registry_lift_costs_no_writer_load(self):
+        self._transcript([])
+        self._seed(why="workers still building the pieces; merges when they report", kind="agents")
+        self._set_floor(STAMP + 10)
+        saved = km._sdk_spawned_at
+        km._sdk_spawned_at = lambda sid: BACK             # the backend respawned after the stamp
+        try:
+            self._assert_refused_on_the_shared_view(snap={"state": "", "bgTasks": []})
+        finally:
+            km._sdk_spawned_at = saved
+
     def test_a_dormant_session_is_not_gated_or_recorded(self):
         self._seed_unstamped()
         before = len(self.calls)
@@ -1337,7 +1397,6 @@ class LiftGate(unittest.TestCase):
         self.assertNotIn(SID, km._lift_seen, "dormant: skipped before the gate, nothing remembered")
 
     def test_a_failed_probe_records_no_skip(self):
-        import contextlib, io
         self._returned_dispatch()
         self._seed_unstamped()
         probed = km.jd.load_goals_shared
@@ -1358,11 +1417,10 @@ class LiftGate(unittest.TestCase):
         meets) and every later read is real: jd._disk_read, the shared loader's descriptor read (of the
         store, or of the journal through _journal_read); and Path.read_text, load_goals' store read and
         _replay_overrides' journal read. A STORE fault raises out of either loader (load_goals never answers
-        an empty store for a file it could not read, 2026-09-07) and the lift's boundary answers (None,
-        fault); a JOURNAL fault is handed from the shared loader to load_goals, whose replay skips the
-        journal, `_unread`-marked. Returns the counters of raised reads (`fired` in total, `disk` and
-        `text` apart)."""
-        import errno
+        an empty store for a file it could not read) and the lift's boundary answers (None, fault); a
+        JOURNAL fault is handed from the shared loader to load_goals, whose replay skips the journal,
+        `_unread`-marked. Returns the counters of raised reads (`fired` in total, `disk` and `text`
+        apart)."""
         real = Path.read_text
         real_disk = km.jd._disk_read
         state = {"fired": 0, "text": 0, "disk": 0}
@@ -1383,7 +1441,6 @@ class LiftGate(unittest.TestCase):
         return state
 
     def test_a_faulting_store_read_is_not_cached_as_nothing_to_lift(self):
-        import contextlib, io
         self._returned_dispatch()
         self._seed()                                     # stamped, its dispatch returned: a lift is due
         km.jd._STORE_FAULTS.pop(SID, None)
@@ -1400,11 +1457,10 @@ class LiftGate(unittest.TestCase):
         self.assertNotIn(SID, km._lift_seen, "a fault is not the files' content: no entry")
         self.assertEqual((self._tick(), self.last_probes), (1, 1),
                          "the file reads fine now and is unchanged: probed anyway, the lift is due, one writer load")
-        self.assertIsNone(self._stamp(), "…and the stamp lifts one cycle late, not never")
+        self.assertIsNone(self._stamp(), "...and the stamp lifts one cycle late, not never")
         self.assertNotIn(SID, km.jd._STORE_FAULTS, "the successful read ended the fault episode")
 
     def test_a_swallowed_journal_read_failure_is_not_cached_as_nothing_to_lift(self):
-        import contextlib, io
         self._returned_dispatch()
         (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {}}))
@@ -1420,7 +1476,7 @@ class LiftGate(unittest.TestCase):
                          "the journal reads now, unchanged: probed anyway, the restored stamp is due, one writer load")
         nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
         self.assertIn(self.gid, nodes, "the restore replayed and the node was saved back")
-        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "…with its stamp lifted")
+        self.assertIsNone(nodes[self.gid].get("awaitingWhy") or None, "...with its stamp lifted")
 
     def test_entries_for_sids_that_left_the_alive_set_are_dropped(self):
         self._seed_unstamped()
@@ -1454,12 +1510,12 @@ class LiftGate(unittest.TestCase):
         self.assertIn(SID, km._lift_seen, "the entry is keyed on the pre-write files")
         km.jd.load_goals_shared = probed
         self.assertEqual((self._tick(), self.last_probes), (1, 1), "tick 2: the files moved under the read, so it probes, and the lift is due")
-        self.assertIsNone(self._stamp(), "…and lifts the stamp one cycle late, never never")
+        self.assertIsNone(self._stamp(), "...and lifts the stamp one cycle late, never never")
 
     def test_perf_reports_the_gate(self):
         self._seed_unstamped()
         self._tick(); self._tick()
-        lg = km._PERF_STATS.snapshot()["memos"]["lift_gate"]
+        lg = km._PERF_STATS.snapshot()["memos"]["liftGate"]
         for k in ("skip", "load", "shared", "writer", "noop"):
             self.assertEqual(lg[k], km._lift_gate_stats[k], k)
         self.assertEqual(lg["entries"], len(km._lift_seen))
@@ -1531,7 +1587,7 @@ class InHarnessWaitLift(unittest.TestCase):
         self.spawn = STAMP - 50                       # default: the CLI predates the stamp — no respawn story
         self.gid, self.other = self.PSID + ":g1", self.PSID + ":g2"
         # the planner placed every launch on the SIBLING top: this goal owns no dispatch
-        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}   # the lift hands its store
+        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}
         self._saved_watches = list(km._pr_watches)
         km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
 

@@ -46,7 +46,7 @@ class SettingsSectionsTest(unittest.TestCase):
                     "id=rs-conserve", "id=rs-thinksum", "id=rs-usertodos", "id=rs-fileedit"):
             self.assertTrue(h.index(">Sessions<") < h.index(rid) < h.index(">Chat<"), rid)
         # Chat: transcript prefs AND the comment defaults (comments are part of the chat)
-        for rid in ("id=rs-compact", "id=rs-branch", "id=rs-cmtmodel", "id=rs-cmtfast"):
+        for rid in ("id=rs-compact", "id=rs-dense", "id=rs-branch", "id=rs-striprows", "id=rs-filelink", "id=rs-cmtmodel", "id=rs-cmtfast"):
             self.assertTrue(h.index(">Chat<") < h.index(rid) < h.index(">Sessions pane<"), rid)
         # Sessions pane, then Feed, then Colors
         self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Feed<"))
@@ -56,6 +56,8 @@ class SettingsSectionsTest(unittest.TestCase):
         # Judges sit low: the six dropdowns between Judges and the bottom group
         self.assertTrue(h.index(">Judges<") < h.index("id=rs-judgemodel") < h.index(">Updates & debug<"))
         self.assertTrue(h.index(">Judges<") < h.index("id=rs-indexeffort") < h.index(">Updates & debug<"))
+        # Fast mode for the judges: a checkbox on the Triage model row, in the Judges section like the knobs it rides with
+        self.assertTrue(h.index(">Judges<") < h.index("id=rs-judgefast") < h.index(">Updates & debug<"))
         self.assertNotIn("rs-oldest", h)
         # Updates & debug (the very bottom): auto-updates, the judge-SHOW toggles, analytics, version
         self.assertLess(h.index(">Updates & debug<"), h.index("id=rs-updates"))
@@ -111,22 +113,44 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertIn("id=rs-backend-note", h, "the sub-line that says a saved tmux default is set aside")
 
     def test_judge_rows_are_one_line_label_plus_picker(self):
-        # label + picker share the line (the user 2026-07-12): ten .rs-jrow rows — six judge
-        # selects since the distilling tier split out of triage (the user 2026-08-14), each label
-        # carrying the hidden mixed-state marker (the settings-sync work, same day); the judge
-        # concurrency select (T277), marked like them; the fork's Fast judging checkbox (the user
-        # 2026-08-09), which has no marker because it does not propagate across kernels; plus the
-        # default-comment model/effort pair (the user 2026-08-29), which reuses the same one-line
-        # layout — the control right after the hover sub, no full-width control stacked under the
-        # label; the flex CSS carries the layout
+        # label + picker share the line (the user 2026-07-12): nine .rs-jrow rows — six judge rows
+        # since the distilling tier split out of triage (the user 2026-08-14), the judge concurrency
+        # select (T277), plus the default-comment
+        # model/effort pair (the user 2026-08-29), which reuses the same one-line layout — the select
+        # right after the hover sub, no full-width select stacked under the label; the flex CSS
+        # carries the layout. Each label carries the hidden mixed-state marker (the settings-sync work).
         h = _gear_src()
-        self.assertEqual(h.count("rs-jrow"), 10)
+        self.assertEqual(h.count("rs-jrow"), 9)
         for sel in ("rs-judgemodel", "rs-judgeeffort", "rs-distillmodel", "rs-distilleffort",
                     "rs-indexmodel", "rs-indexeffort", "rs-judgeconc"):
             self.assertRegex(h, r"rs-jrow'><b>[^<]+<span class=rs-mixed hidden></span></b>"
                                 r"<span class=rs-sub>[^<]*</span><select id=" + sel)
-        self.assertRegex(h, r"rs-jrow'><b>[^<]+</b><span class=rs-sub>[^<]*</span><input type=checkbox id=rs-judgefast")
         self.assertIn("#rsettings .rs-jrow select {", _gear_css_src())
+
+    def test_fast_mode_for_the_judges_sits_on_the_triage_model_row(self):
+        # The user 2026-09-10: the box says Fast mode (the chat statusline's own word for it) and sits
+        # with the model, after the Triage model picker, not on a row of its own under a paragraph. Its
+        # label carries its own mixed mark; the row count above stays at nine (no .rs-jrow added).
+        h = _gear_src()
+        self.assertNotIn("Fast judging", h)
+        row = h[h.index("<b>Triage model "):]
+        row = row[:row.index("<b>Triage effort ")]
+        self.assertIn("<select id=rs-judgemodel></select>", row)
+        self.assertIn("<label class=rs-fastin id=rs-judgefast-wrap><input type=checkbox id=rs-judgefast>Fast mode"
+                      "<span class=rs-mixed hidden></span>", row)
+        self.assertLess(row.index("id=rs-judgemodel"), row.index("id=rs-judgefast"), "the box follows the picker")
+        self.assertIn("<span class=rs-sub id=rs-judgefast-sub>", row, "a row hint like its neighbours', swapped by the gate")
+        self.assertEqual(row.count("</div>"), 1, "one row: the box closes inside the Triage model row")
+        # the one-line hint: the Opus-only condition and the premium, and where the pick goes
+        hint = h[h.index("var JUDGEFAST_SUB = "):]
+        hint = hint[:hint.index(";\n")]
+        self.assertIn("Opus-only", hint)
+        self.assertIn("premium", hint)
+        self.assertIn("connected machine's kernel", hint, "the copy says the pick follows to the other machines")
+        # greyed with the reason while no judge tier is on Opus (the box is inert then: the opt-in rides only Opus calls)
+        self.assertIn("function judgeFastGate", h)
+        self.assertIn("var JUDGEFAST_SUB_OFF = \"Fast mode is Opus-only, and no judge tier is on Opus.", h)
+        self.assertIn("#rsettings .rs-fastin.rs-off {", _gear_css_src())
 
     def test_collapse_gaps_is_wired_to_the_shared_collapseGaps_setting(self):
         # the gear JS persists/loads romp:settings.collapseGaps; the timeline reads it (see romp-timeline-view.js)
@@ -141,6 +165,20 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertIn("activeOnly: true", _gear_src())
         self.assertIn("s.activeOnly = ao.checked", _gear_src())
         self.assertIn("ao.checked = s.activeOnly !== false", _gear_src())
+
+    def test_one_group_per_row_is_wired_to_the_shared_stripGroupRows_setting(self):
+        # "One tag group per row in the tab strip": a Chat-section checkbox persisted as romp:settings.stripGroupRows.
+        # render.ts is the reader: the strip's row breaks and the trail's boundary read it, and it rides the strip's
+        # rebuild signature so a flip repaints at once. On the fork the setting is OFF by default (the user
+        # 2026-09-08, whose strip of eleven tag groups became eleven rows): the box renders unchecked, both of
+        # load()'s default literals say false, and the fill line reads the stored value as an opt-in.
+        self.assertIn("<input type=checkbox id=rs-striprows>", _gear_src(), "unchecked: the per-row layout is the opt-in")
+        self.assertNotIn("id=rs-striprows checked", _gear_src())
+        self.assertIn("One tag group per row in the tab strip", _gear_src())
+        self.assertEqual(_gear_src().count("stripGroupRows: false"), 2, "off in both of load()'s default literals")
+        self.assertEqual(_gear_src().count("stripGroupRows: true"), 0)
+        self.assertIn("s.stripGroupRows = sr.checked", _gear_src())
+        self.assertIn("sr.checked = s.stripGroupRows === true", _gear_src())
 
     def test_section_header_styling_exists(self):
         self.assertIn("#rsettings .rs-sec {", _gear_css_src())

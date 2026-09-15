@@ -77,6 +77,11 @@ function fileCommentsText(base, host, others) {
 }
 var AUTONUDGE_SUB = "When a session goes idle but its goal still shows working (not blocked, not awaiting agents or a job "
   + "you), automatically nudge it once for a status update. Applies to every connected machine's kernel.";
+// Fast mode's one-line hint, in a var because judgeFastGate() swaps it for the greyed-out reason when no
+// judge tier is on Opus (the opt-in rides only a call whose model is Opus, so the box is inert then).
+var JUDGEFAST_SUB = "Judge calls on Opus run in Claude Code's fast mode (an Opus-only research preview, billed at a premium). "
+  + "Off by default. Follows to every connected machine's kernel.";
+var JUDGEFAST_SUB_OFF = "Fast mode is Opus-only, and no judge tier is on Opus. Pick Opus for triage, distilling or indexing to use it.";
 
 // The modal markup — ported verbatim from the kernel's _gear_html; the model/
 // effort selects start empty and are filled from /models (see fill()).
@@ -137,11 +142,11 @@ var GEAR_HTML =
   '<span><b>Compact transcript</b>' +
   '<span class=rs-sub>Collapse each run of tool uses into one line and hide thinking blocks in the chat.</span>' +
   '</span></label>' +
-  // compact tabs and agents (the user 2026-09-08, whose phone showed about three lines of transcript between the
-  // strip and the box of background work): density only, a body class render.ts applies (dense-chrome.ts)
+  // compact tabs and agents (the user 2026-09-08: on a phone, the strip and the background-work panel left about
+  // three lines of transcript in view): density only, a body class render.ts applies (dense-chrome.ts)
   '<label class=rs-row><input type=checkbox id=rs-dense>' +
   '<span><b>Compact tabs and agents</b>' +
-  '<span class=rs-sub>Keeps more of the transcript in view: smaller text and tighter rows in the box of background work under the transcript, with its list capped at about four rows that scroll (the cap lifts while a row is open). Where the tab strip is showing (a desktop-width screen, or a tablet wide enough for it) the tabs and group headers shrink too; on a phone the session picker stands in for the strip, so there the setting tightens the box. Off by default.</span>' +
+  '<span class=rs-sub>Keeps more of the transcript in view: tighter rows in the background-work panel under the transcript, which shows about four rows and scrolls for the rest, and smaller tabs and group headers in the tab strip. On a phone the session picker stands in for the strip, so there only the panel changes. Off by default.</span>' +
   '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-branch>' +
   '<span><b>Show git branch</b>' +
@@ -149,7 +154,7 @@ var GEAR_HTML =
   '</span></label>' +
   '<label class=rs-row><input type=checkbox id=rs-striprows>' +
   '<span><b>One tag group per row in the tab strip</b>' +
-  '<span class=rs-sub>With the tabs grouped by tag, start every group on its own row, the tag at the left edge. Off, the groups follow one another across the strip and wrap as they need.</span>' +
+  '<span class=rs-sub>With the tabs grouped by tag, each group starts on its own row with its tag at the left edge. Off, the groups follow one another across the strip and wrap as they need, so many tags do not mean many rows.</span>' +
   '</span></label>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Context gauge in tabs</b>" +
   "<span class=rs-sub>A slim vertical bar beside each session's name in the tab strip, filling as its context fills — the same colors as the context battery, no number. By default it appears only once a session is half full, so quiet tabs stay clean.</span>" +
@@ -158,10 +163,12 @@ var GEAR_HTML =
   '</select>' +
   "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>File links open in</b>" +
+  // where a file or folder clicked in the chat opens (render.ts openPath and openBrowse through file-route.ts):
+  // the hidden select is
+  // the value holder, selectPick below dresses it as a house menu like the other selects
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>File links open in</b>" +
   '<span class=rs-sub>Where a file or folder clicked in the chat opens. While the Files pane is open, both open there. When it is closed, a file opens over the chat itself, in the Feed pane so the transcript stays readable while the file is up, or in the Files pane, its own column that stays open until you close the file. A folder’s listing follows the same choice, except that it never covers the chat: with the first option it opens in the Feed pane. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no other pane to use.</span>' +
-  "<select id=rs-filelink style='margin-top:5px;width:100%;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
-  "border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-filelink style='display:none'>" +
   '<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
   '</select>' +
   '</span></div>' +
@@ -229,9 +236,13 @@ var GEAR_HTML =
   '<div id=rs-pal-list hidden></div></div></span></div>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Judges</div>' +
-  "<div class='rs-row rs-jrow'><b>Triage model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the triage judges use — planner, grouper, closer, courier (the judgment-heavy tier). Applies on the judges' next pass; no restart. A pick here follows to every connected machine's kernel.</span><select id=rs-judgemodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Triage model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the triage judges use — planner, grouper, closer, courier (the judgment-heavy tier). Applies on the judges' next pass; no restart. A pick here follows to every connected machine's kernel.</span><select id=rs-judgemodel></select>" +
+  // Fast mode sits with the model (the user 2026-09-10, who wanted the setting to speak the chat's own words
+  // and sit with the model): the chat's statusline badge and docs/reference.md call it fast mode, so this
+  // does too. The box keeps its id and message (setJudgeFast, judgeFast): the kernel side is untouched.
+  "<label class=rs-fastin id=rs-judgefast-wrap><input type=checkbox id=rs-judgefast>Fast mode<span class=rs-mixed hidden></span>" +
+  "<span class=rs-sub id=rs-judgefast-sub>" + JUDGEFAST_SUB + "</span></label></div>" +
   "<div class='rs-row rs-jrow'><b>Triage effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the triage judges. Default = no effort flag (the judges' standard behavior). Not every model accepts every level. Follows to every connected machine's kernel.</span><select id=rs-judgeeffort></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Fast judging</b><span class=rs-sub>Run judge calls in fast mode (an Opus-only research preview). Only engages when the judge model is Opus; costs 2x Opus rates and draws on fast mode's own rate limits — the same pool your sessions' fast toggles use. Applies on the judges' next pass.</span><input type=checkbox id=rs-judgefast></div>" +
   "<div class='rs-row rs-jrow'><b>Distilling model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model for the judges that write the prose you read on cards — distiller, briefer, staller. Follow triage (the default) keeps them on the triage pick; pinning a model here lets the copy you read run richer than the placement judges. Follows to every connected machine's kernel.</span><select id=rs-distillmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
@@ -316,12 +327,12 @@ function initGear(post) {
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
-    jf = document.getElementById('rs-judgefast'),
     ie = document.getElementById('rs-indexeffort'), upm = document.getElementById('rs-updates'),
     jc = document.getElementById('rs-judgeconc'),
     dm = document.getElementById('rs-distillmodel'), de = document.getElementById('rs-distilleffort'),
     cmm = document.getElementById('rs-cmtmodel'), cme = document.getElementById('rs-cmteffort'),
     cmf = document.getElementById('rs-cmtfast'),
+    jf = document.getElementById('rs-judgefast'),
     tb = document.getElementById('rs-tmuxbackend'), bkn = document.getElementById('rs-backend-note'),
     fe = document.getElementById('rs-fileedit'),
     ths = document.getElementById('rs-thinksum'),
@@ -565,6 +576,7 @@ function initGear(post) {
   }
   selectPick(upm, 'margin-top:5px');
   selectPick(bk, 'margin-top:5px');
+  selectPick(fl, 'margin-top:5px');
   selectPick(je, 'flex:0 0 auto;width:45%');
   selectPick(ie, 'flex:0 0 auto;width:45%');
   selectPick(jc, 'flex:0 0 auto;width:45%');   // T277: the concurrency select wears the same facade as the effort picks
@@ -836,13 +848,12 @@ function initGear(post) {
     versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
                       { value: 'default', label: 'Default', versions: [] }]);
   });
-  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: gclock.stamp('judge-model') }); });
-  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: gclock.stamp('index-model') }); });
+  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: gclock.stamp('judge-model') }); judgeFastGate(); });
+  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: gclock.stamp('index-model') }); judgeFastGate(); });
   if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: gclock.stamp('judge-effort') }); });
-  if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', on: jf.checked }); });
   if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: gclock.stamp('index-effort') }); });
   if (jc) jc.addEventListener('change', function () { post({ type: 'setJudgeConcurrency', value: jc.value, gt: gclock.stamp('judge-concurrency') }); });
-  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: gclock.stamp('distill-model') }); });
+  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: gclock.stamp('distill-model') }); judgeFastGate(); });
   if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: gclock.stamp('distill-effort') }); });
   // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
   // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
@@ -865,6 +876,26 @@ function initGear(post) {
   // the tmux backend's offer (T288): a kernel setting like the judge knobs (stamped, propagated); the Default
   // backend list repaints at once so the pick and the offer never disagree in the same modal
   if (tb) tb.addEventListener('change', function () { post({ type: 'setTmuxBackend', enabled: tb.checked, gt: gclock.stamp('tmux-backend') }); paintBackendOffer(tb.checked); });
+  // Fast mode for the judges: a kernel setting like the judge knobs (stamped, propagated); the judges read it per call
+  if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', enabled: jf.checked, gt: gclock.stamp('judge-fast') }); });
+  // Fast mode is an Opus-only research preview (render.ts fastAvailable and cmtFastGate above, the same rule),
+  // and the judges' opt-in rides only a call whose model is Opus: with no tier on Opus the box is inert, so it
+  // greys and its hint says why (a review finding on the setting's first cut: with the default tiers the box
+  // did nothing and the gear did not say so). The stored value is left alone, unlike cmtFastGate's uncheck:
+  // nothing fires or toasts while it is inert, and a tier pinned to Opus later brings it back without a
+  // second click. Distilling on Follow triage resolves to the triage pick; a tier whose value has not
+  // loaded is unknown, never a refusal (the benefit of the doubt fastAvailable gives an unknown model).
+  function judgeFastGate() {
+    if (!jf) return;
+    var wrap = document.getElementById('rs-judgefast-wrap'), sub = document.getElementById('rs-judgefast-sub');
+    var tri = jm ? (jm.value || '') : '', dis = dm ? (dm.value || '') : '', idx = im ? (im.value || '') : '';
+    if (dis === 'triage') dis = tri;
+    var picks = [tri, dis, idx].filter(function (v) { return !!v; });
+    var can = !picks.length || picks.some(function (v) { return v.toLowerCase().indexOf('opus') !== -1; });
+    jf.disabled = !can;
+    if (wrap) wrap.classList.toggle('rs-off', !can);
+    if (sub) sub.textContent = can ? JUDGEFAST_SUB : JUDGEFAST_SUB_OFF;
+  }
   // "Claude Code (tmux)" is in the Default backend list only while the setting is on; a saved default of tmux
   // while it is off is set aside (the select shows Claude Code and the note says so), never erased: it returns
   // with the setting. The option is removed rather than hidden: the facade paints from sel.options.
@@ -942,8 +973,8 @@ function initGear(post) {
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort', 'judge-concurrency': 'Judge concurrency',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
     'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
-    'comment-fast': 'Fast comment threads', 'tmux-backend': 'Claude Code tmux backend', 'thinking-summaries': 'Thinking summaries',
-    'user-todos': 'User todos' };
+    'comment-fast': 'Fast comment threads', 'tmux-backend': 'Claude Code tmux backend', 'judge-fast': 'Fast mode (judges)',
+    'thinking-summaries': 'Thinking summaries', 'user-todos': 'User todos' };
   // store name → the message type that sets it: the whitelist for the toast's Apply anyway (a frame
   // may re-issue the one setting it names, nothing else) and the completeness pin's map
   // (gear.test.ts checks every emitter stamps through the clock under its own store name)
@@ -954,7 +985,7 @@ function initGear(post) {
     'index-model': 'setIndexModel', 'index-effort': 'setIndexEffort', 'judge-concurrency': 'setJudgeConcurrency',
     'distill-model': 'setDistillModel', 'distill-effort': 'setDistillEffort',
     'comment-model': 'setCommentModel', 'comment-effort': 'setCommentEffort', 'comment-fast': 'setCommentFast',
-    'tmux-backend': 'setTmuxBackend' };
+    'tmux-backend': 'setTmuxBackend', 'judge-fast': 'setJudgeFast' };
   // store name → the words its select shows for the sentinel options whose value is not the word. The
   // effort selects' Default is the EMPTY value (no effort flag), which read as no value at all, so a
   // refused Default pick drew the value-less copy and a plain Apply anyway — in the frozen-tab case, the
@@ -1228,10 +1259,13 @@ function initGear(post) {
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
      ['indexEffort', ie], ['judgeConcurrency', jc], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
      ['compactSuggest', csg],
-     ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf], ['tmuxBackend', tb]].forEach(function (pair) {
+     ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf], ['tmuxBackend', tb],
+     ['judgeFast', jf]].forEach(function (pair) {
       var key = pair[0], el = pair[1];
       if (!el) return;
-      var row = el.closest ? el.closest('.rs-row') : null;
+      // the mark nearest the control: a checkbox's own <label> (the fast-mode box shares the Triage model
+      // row, whose first mark belongs to the picker), else the row
+      var row = el.closest ? (el.closest('label') || el.closest('.rs-row')) : null;
       var mark = row ? row.querySelector('.rs-mixed') : null;
       if (mark) { mark.hidden = true; mark.textContent = ''; mark.removeAttribute('title'); }
       if (!mine || typeof mine[key] === 'undefined' || !mark) return;
@@ -1281,7 +1315,6 @@ function initGear(post) {
     if (typeof v.judgeModel === 'string') setShow(jm, v.judgeModel);   // the judge's ACTUAL current model/effort per tier is authoritative
     if (typeof v.indexModel === 'string') setShow(im, v.indexModel);
     if (typeof v.judgeEffort === 'string') setShow(je, v.judgeEffort);
-    if (jf) jf.checked = !!v.judgeFast;   // server-side toggle: the kernel's state is authoritative
     if (typeof v.indexEffort === 'string') setShow(ie, v.indexEffort);
     if (typeof v.judgeConcurrency === 'string') setShow(jc, v.judgeConcurrency);   // RAW: "" selects Default (the variable, else 6)
     if (typeof v.distillModel === 'string') setShow(dm, v.distillModel);   // RAW: "triage" selects the Follow-triage option
@@ -1290,7 +1323,9 @@ function initGear(post) {
     if (typeof v.commentEffort === 'string') setShow(cme, v.commentEffort);
     if (cmf && typeof v.commentFast === 'string') cmf.checked = v.commentFast === 'on';
     if (tb && typeof v.tmuxBackend === 'string') { tb.checked = v.tmuxBackend === 'on'; paintBackendOffer(tb.checked); }   // T288: the offer, then the list follows it
+    if (jf && typeof v.judgeFast === 'string') jf.checked = v.judgeFast === 'on';   // RAW on/off: the kernel's persisted answer
     cmtFastGate(false);
+    judgeFastGate();   // the tiers are set above; the box follows them
     // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no
     // filesystem paths. It comes from the gated /defaults now — a separate fetch, so a kernel that
     // does not serve it yet leaves the field on its stored value rather than blanking it.

@@ -1116,12 +1116,10 @@ class Lifecycle(unittest.TestCase):
         sid = be.spawn("web", "/TESTDIR")
         self.assertTrue(be.kill(sid))       # child backends load it without starting queue workers
         code = r'''
-import importlib.util, os, sys
-# the repo's file-path importer, by path: a child process has no tests/ on sys.path (romp_load is the
-# test modules' door to the same helper)
-_spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(os.path.dirname(sys.argv[1]), "loadsource.py"))
-_ls = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ls)
-cb = _ls.load_source("codex_child", sys.argv[1])
+import sys
+sys.path.insert(0, sys.argv[5])          # the tests dir, where romp_load lives
+from romp_load import load_source
+cb = load_source("codex_child", sys.argv[1])
 be = cb.CodexBackend(sys.argv[2], client_factory=lambda: None, log=lambda message: None)
 s = be._session(sys.argv[3])
 for i in range(20):
@@ -1129,7 +1127,7 @@ for i in range(20):
     be._save_registry(s, queue_append={"id": "child-" + text, "text": text})
 '''
         backend_path = str(Path(ROOT) / "kernel" / "codex_backend.py")
-        procs = [subprocess.Popen([sys.executable, "-c", code, backend_path, tmp, sid, str(n)])
+        procs = [subprocess.Popen([sys.executable, "-c", code, backend_path, tmp, sid, str(n), HERE])
                  for n in range(4)]
         for p in procs:
             self.assertEqual(p.wait(timeout=15), 0)
@@ -1908,12 +1906,14 @@ class EnsureCodexSdk(unittest.TestCase):
     this process runs (the twin of the SDK venv's rule, tests/test_sdk_venv_abi.py). Every
     codexvenv/lib/python3.* used to join sys.path[0] whatever the interpreter, so a codexvenv built with a
     newer python failed deep inside the import under the kernel's python and shadowed shared
-    dependencies for every later import (review round 2). find_spec is stubbed so the outcome does not
-    depend on whether this machine has openai_codex installed."""
+    dependencies for every later import. find_spec is stubbed so the outcome does not depend on
+    whether this machine has openai_codex installed."""
+
+    # The tag venv names this interpreter's lib directory with, from sys itself (not the code under test).
+    TAG = "%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else "")
 
     def setUp(self):
         import io
-        import tempfile
         self.state = tempfile.mkdtemp()
         self.venv = Path(self.state) / "codexvenv"
         self.path_before = list(sys.path)
@@ -1932,14 +1932,14 @@ class EnsureCodexSdk(unittest.TestCase):
 
     def _run(self, importable_from=None):
         import importlib.util
+        real_find_spec = importlib.util.find_spec
 
         def fake_find_spec(name, *a, **k):
             if name != "openai_codex":
-                return fake_find_spec.__wrapped__(name, *a, **k)
+                return real_find_spec(name, *a, **k)
             if importable_from and any(p.startswith(importable_from) for p in sys.path):
                 return SimpleNamespace(name=name)
             return None
-        fake_find_spec.__wrapped__ = importlib.util.find_spec
         with mock.patch.object(importlib.util, "find_spec", fake_find_spec), \
              mock.patch.object(sys, "stderr", self.err):
             return cb.ensure_codex_sdk(self.state)
@@ -1947,24 +1947,25 @@ class EnsureCodexSdk(unittest.TestCase):
     def test_a_venv_for_another_python_is_not_added_and_is_named(self):
         sp = self._site("python3.99")
         self.assertFalse(self._run(importable_from=sp))
-        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a %s process" % cb._running_python_tag())
+        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a python%s process" % self.TAG)
         line = self.err.getvalue()
         self.assertIn("built for python 3.99", line)
-        self.assertIn("runs " + cb._running_python_tag(), line)
+        self.assertIn("runs " + self.TAG, line)
         self.assertIn("romp-codex-setup", line, "the remedy, named")
         self.assertEqual(cb._CODEX_VENV_BUILT_FOR, ["3.99"])
         self.assertFalse(self._run(importable_from=sp))
         self.assertEqual(self.err.getvalue(), line, "one line per verdict, not one per launch")
 
     def test_a_matching_venv_is_added_and_the_sdk_imports(self):
-        sp = self._site("python" + cb._running_python_tag())
+        self.assertEqual(cb._running_python_tag(), self.TAG)
+        sp = self._site("python" + self.TAG)
         self.assertTrue(self._run(importable_from=sp))
         self.assertIn(sp, sys.path)
         self.assertEqual(self.err.getvalue(), "", "nothing to say when the venv matches")
 
     def test_only_the_matching_directory_joins_when_both_exist(self):
         old = self._site("python3.99")
-        new = self._site("python" + cb._running_python_tag())
+        new = self._site("python" + self.TAG)
         self.assertTrue(self._run(importable_from=new))
         self.assertIn(new, sys.path)
         self.assertNotIn(old, sys.path)

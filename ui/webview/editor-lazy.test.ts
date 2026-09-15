@@ -194,6 +194,8 @@ test("exactly one copy of @codemirror/state (and commands, view) ends up in the 
 });
 
 test("file-view loads the chunk from its own bundle's URL (same dir, same ?v= token), latch cleared on failure", () => {
+  // the three bundles that host the viewer: render.js (chat), feed.js (feed), files.js (the Files pane); a page
+  // whose bundle the pattern misses sends every Edit to the textarea with the raw "no bundle script tag" error
   assert.match(VIEW, /\.find\(\(u\) => \/\\\/\(render\|feed\|files\)\\\.js\/\.test\(u\)\)/);
   assert.match(VIEW, /sc\.src = self\.replace\(\/\\\/\(render\|feed\|files\)\\\.js\/, "\/editor-chunk\.js"\);/);
   assert.match(VIEW, /sc\.onerror = \(\) => \{ edChunk = null; rej\(/,

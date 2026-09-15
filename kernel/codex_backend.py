@@ -199,9 +199,8 @@ def ensure_codex_sdk(state_dir):
     codexvenv/lib/python3.*/site-packages used to be inserted at sys.path[0] whatever the interpreter,
     so a codexvenv built with a newer python (the picker before 2026-09-06 took the newest on PATH)
     failed deep inside the import under the kernel's python, with an error naming a module rather than
-    the venv, and shadowed shared dependencies for every later lazy import in the process (review
-    round 2). A venv for another tag adds nothing and is named on stderr once, with the remedy. True
-    when importable."""
+    the venv, and shadowed shared dependencies for every later lazy import in the process. A venv for
+    another tag adds nothing and is named on stderr once, with the remedy. True when importable."""
     import importlib.util
     import glob
     global _CODEX_VENV_BUILT_FOR

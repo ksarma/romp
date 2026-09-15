@@ -5,8 +5,9 @@ session-flags "notify") and a per-card bell (feed card right-click → notify-ca
 notifications, resolved most-specific-wins (card > session > master) — so the master on means every
 task notifies and the per-item bells read as mutes. Fired when an armed card ENTERS needs_input
 (blocked on you) or completed. Detection diffs each fresh feed build against the previous one — the
-exact event the columns move on — and the first build after a kernel start is a silent baseline
-(existing state is status, not news). Synthetic ids/names only."""
+exact event the columns move on — against a snapshot that persists across kernel lives
+(tests/test_notify_prev_persist.py): an install's very first build is a silent baseline (existing
+state is status, not news), and a restart re-announces nothing. Synthetic ids/names only."""
 import json
 import os
 import sys
@@ -137,16 +138,21 @@ class FeedNotifications(unittest.TestCase):
     def test_the_first_build_is_a_silent_baseline(self):
         km._set_session_flag("TESTSID", "notify", True)
         out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
-        self.assertEqual(out, [], "existing state on start is status, not news (freshNeedsYou policy)")
+        self.assertEqual(out, [], "an install's first build, no snapshot yet: status, not news (freshNeedsYou policy)")
 
     def test_a_session_armed_card_entering_needs_input_notifies(self):
         km._set_session_flag("TESTSID", "notify", True)
         km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))
         out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0][0], "romp: web")
+        # ONE title rule (the user 2026-09-09, whose phone found the notifications too busy): a card
+        # entering needs_input wears "Romp needs you: <session>"; everything else "Romp: <session>".
+        # Decided from the card's COLUMN, the authoritative state — never from the body text. Was
+        # "romp: web" for every kind, which read as a subtitle and left the kind to the body.
+        self.assertEqual(out[0][0], "Romp needs you: web")
         self.assertTrue(out[0][1].startswith("Needs you: "), out[0][1])
         self.assertIn("Fix the login flow", out[0][1])
+        self.assertNotIn(":", out[0][0].split(": ", 1)[1], "the session name alone — no host, no sid")
         # the sid rides every notification so a push tap can land ON the session that fired
         # (the user 2026-08-08 — their first real push opened the app on a different session)
         self.assertEqual(out[0][2], "TESTSID")
@@ -161,7 +167,18 @@ class FeedNotifications(unittest.TestCase):
         km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))
         out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "completed")))
         self.assertEqual(len(out), 1)
+        self.assertEqual(out[0][0], "Romp: web", "a completion is not a needs-you: the plain title")
         self.assertTrue(out[0][1].startswith("Completed: "), out[0][1])
+
+    def test_the_body_is_the_events_own_and_nothing_more(self):
+        # the user 2026-09-09: the body stays what the event already says — no extra lines, no
+        # host/sid prefixes, no decorations; the title alone carries the kind
+        km._set_session_flag("TESTSID", "notify", True)
+        km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))
+        out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
+        self.assertEqual(out[0][1], "Needs you: Fix the login flow")
+        self.assertEqual(out[0][1].count("\n"), 0)
+        self.assertNotIn("TESTSID", out[0][0] + out[0][1])
 
     def test_holding_a_column_does_not_refire(self):
         km._set_session_flag("TESTSID", "notify", True)
@@ -170,13 +187,18 @@ class FeedNotifications(unittest.TestCase):
         out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
         self.assertEqual(out, [], "still blocked is not news — only the ENTRY event notifies")
 
-    def test_reblocking_after_an_answer_notifies_again(self):
+    def test_reblocking_without_a_gesture_on_the_card_is_one_announcement(self):
+        # 2026-09-10: a card that leaves needs_input and comes back is not news unless something of
+        # the user's happened on the card in between (a journaled gesture — tests/test_notify_prev_persist.py
+        # has the exception) or the other column was announced since; the judges re-filing a block at
+        # every turn end of a busy session pushed one card twelve times
         km._set_session_flag("TESTSID", "notify", True)
         km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))
-        km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
-        km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))     # answered
+        first = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
+        km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "working")))     # the judges lifted it
         out = km._feed_notifications(_feed(_card("TESTSID:g1", "TESTSID", "needs_input")))
-        self.assertEqual(len(out), 1, "a NEW block after the answer is a new event")
+        self.assertEqual(len(first), 1)
+        self.assertEqual(out, [], "the same card in the same column, told already: silent")
 
     def test_a_card_appearing_already_blocked_notifies(self):
         km._set_session_flag("TESTSID", "notify", True)
@@ -235,6 +257,43 @@ class FeedNotifications(unittest.TestCase):
         self.assertEqual(len(out), 1)
 
 
+class NotifyTitle(unittest.TestCase):
+    """The ONE title builder (the user 2026-09-09, whose phone found the notifications too busy —
+    "romp: web" over a body that had to carry the kind read like a subtitle). Two shapes and no
+    third: a needs-you event is "Romp needs you: <session>", everything else "Romp: <session>".
+    The body is untouched; the session name stands alone (never host:sid, never a "romp: host:"
+    decoration — the tap carries the routing in `data`, the host is not the user's concern)."""
+
+    def test_needs_you_and_everything_else(self):
+        self.assertEqual(km._notify_title("web", needs_you=True), "Romp needs you: web")
+        self.assertEqual(km._notify_title("web", needs_you=False), "Romp: web")
+        self.assertEqual(km._notify_title("web"), "Romp: web", "needs-you is the exception, not the default")
+
+    def test_a_missing_name_still_reads_as_romp(self):
+        self.assertEqual(km._notify_title(""), "Romp")
+        self.assertEqual(km._notify_title(None), "Romp")
+        self.assertEqual(km._notify_title("", needs_you=True), "Romp needs you")
+
+    def test_the_name_is_worn_as_given(self):
+        # the builder never decorates: what the caller hands it is what the lock screen shows
+        self.assertEqual(km._notify_title("  api "), "Romp: api")
+        self.assertEqual(km._notify_title(42), "Romp: 42")
+
+    def test_every_producer_composes_its_title_through_the_builder(self):
+        # the rule holds by construction: the card leg, the turn leg and the test push all call
+        # _notify_title; no producer composes a "romp: …" title of its own, and the relay no longer
+        # rewrites the title it is handed (it used to graft "romp: <origin>:" onto it)
+        import inspect
+        # the card leg's body lives in _feed_notifications_diff (the wrapper only takes the snapshot's lock)
+        for fn in (km._feed_notifications_diff, km._turn_notify_tick, km._push_test):
+            self.assertIn("_notify_title(", inspect.getsource(fn), fn.__name__)
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertNotIn('"romp: %s"', src, "no producer composes a title of its own")
+        self.assertNotIn('t.startswith("romp: ")', src, "the relay passes the title through as composed")
+        self.assertNotIn('"romp: %s:%s" % (origin', src)
+        self.assertNotIn('_push_payload("romp"', src, "the test push wears the same builder")
+
+
 class SystemNotify(unittest.TestCase):
     def test_darwin_shells_out_to_osascript_with_escaped_strings(self):
         calls = []
@@ -242,14 +301,14 @@ class SystemNotify(unittest.TestCase):
         km.subprocess.Popen = lambda cmd, **kw: calls.append(cmd)
         sys.platform = "darwin"
         try:
-            km._system_notify('romp: web', 'Needs you: fix the "login" flow')
+            km._system_notify('Romp needs you: web', 'Needs you: fix the "login" flow')
         finally:
             km.subprocess.Popen = saved_popen
             sys.platform = saved_platform
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "osascript")
         self.assertEqual(calls[0][1], "-e")
-        self.assertIn('with title "romp: web"', calls[0][2])
+        self.assertIn('with title "Romp needs you: web"', calls[0][2])
         self.assertIn('\\"login\\"', calls[0][2], "quotes are escaped into the AppleScript string")
 
     def test_a_missing_binary_never_raises(self):

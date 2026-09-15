@@ -44,5 +44,5 @@ kernel's own environment), naming variable names and paths only. See
 `docs/reference.md` for setup and rotation.
 
 Everything here is loaded by file path (`loadsource.load_source`, the
-`spec_from_loader` + `exec_module` idiom), not installed as a package; the repo runs straight from a git clone. Python tests live in
-`tests/test_*.py`.
+`spec_from_loader` + `exec_module` idiom), not installed as a package; the repo
+runs straight from a git clone. Python tests live in `tests/test_*.py`.

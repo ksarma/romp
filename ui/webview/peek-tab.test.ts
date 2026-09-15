@@ -19,8 +19,8 @@ test("peek OPEN: every activation routes the peek decision — setActive derives
   // the window between the derivation and the early return widened on 2026-09-05: the subagent viewer's
   // two lines sit there (pruneSubViews — an activation is the event that closes an unpinned viewer — and the
   // reopen of a viewer id whose tab is gone), both BEFORE the return by design, see plans/subagent-transcripts.md;
-  // and the already-active branch is a block, not a bare return, since a session pick also ends the
-  // section snapshot (the user 2026-09-06) and puts the transcript back when it was leaving one
+  // the section-at-a-glance view's clear and the folded-away tab's unfold sit there too, and the early return
+  // grew a body (a pick of the tab already active puts its transcript back over the view: tab-snapshot-pane.test.ts)
   assert.match(RENDER, /function setActive\(id: string[\s\S]{0,500}?assertPeekFor\(id\);[\s\S]{0,900}?if \(activeId === id && anchor == null && anchorT == null\) \{/);
   // the derivation: in-view → no peek; out-of-view → THIS session is the peek
   assert.match(RENDER, /const next = chatVisible\(id\) \? null : id;\s*\n\s*if \(next !== peekId\) \{ peekId = next; renderTabs\(\); \}/);

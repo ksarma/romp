@@ -83,6 +83,7 @@
   --check-ring: rgba(30, 161, 235, 0.55);
   --surface-raised: #252526;  /* the transient-notice vocabulary — mirrors styles.css */
   --radius-toast: 8px;
+  --radius-card: 6px;   /* the boxed notice / card radius — mirrors styles.css */
   --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.45);
   --radius-modal: 10px;  /* the centered-modal vocabulary (CLAUDE.md) — mirrors styles.css */
   --shadow-modal: 0 12px 36px #000000aa;
@@ -129,6 +130,7 @@
      tokens of their own): the awaiting green and the compacting teal here, inks of the light theme's own in its block. */
   --callout-tip: #54B204;
   --callout-important: #14b8a6;
+  --st-retrying-bg: #e67e22; --st-retrying-fg: #2a1500;   /* the RETRYING amber — mirrors styles.css (tokenised 2026-09-08) */
 
   /* Card background + border are set inline per card (the hawaii recency tint).
      These neutral tokens are for the chrome that frames them (header, detail box,
@@ -204,14 +206,16 @@ body.theme-light {
   --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
   --dim-on-white: #5D574E;    /* the white sheet's dim is the same in both themes — the light theme's own --dim */
   --accent-on-white: #C2410C; /* the white sheet's accent is the same in both themes — the light theme's own --accent */
-  --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
+  /* working gold + compacting teal re-inked for cream (the user 2026-09-08) — mirrors styles.css, same numbers */
+  --st-working-bg: #8B6914; --st-working-fg: #ffffff;
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
   --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
-  --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
+  --st-compacting-bg: #0F766E; --st-compacting-fg: #ffffff;
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
   --callout-tip: #3E7D0E;         /* the light --green: 4.25:1 on the page (the awaiting green reads at 2.27:1 there) */
   --callout-important: #0F766E;   /* a teal at 4.59:1 on the page (the compacting teal reads at 2.09:1 there) */
+  --st-retrying-bg: #9C4A0C; --st-retrying-fg: #ffffff;
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
   --menu-bg: #FBF6EF;
@@ -222,6 +226,7 @@ body.theme-light {
   --check-ring: rgba(194, 65, 12, 0.55);
   --surface-raised: #FAF5EE;
   --radius-toast: 8px;
+  --radius-card: 6px;   /* the boxed notice / card radius — mirrors styles.css */
   --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
   --radius-modal: 10px;
   --shadow-modal: 0 12px 36px rgba(31, 26, 20, 0.22);
@@ -677,6 +682,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    .fmodal-warn-cap vocabulary, shown only when more than one group is on the card */
 .ftask-group { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 4px 0 1px; }
 .ftask-group:first-child { margin-top: 1px; }
+/* NESTED rows (2026-09-10): what an awaited agent is itself waiting on, indented under its row; the first
+   led by a small dim "waiting on" (the .ftask-group rung), the rest by its blank twin so the marks align;
+   a nested row's own deeper waits are counted in .ftask-deeper (dim, same size as the text). */
+.fcheck.ftask-sub { padding-left: 1.2em; }
+.ftask-waits-on { flex: 0 0 auto; width: 5.4em; text-align: right; font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); white-space: nowrap; align-self: center; }
+.ftask-deeper { color: var(--dim); }
 
 /* "Followed up" — optimistic reopen pending the judge's re-file (judges delegation, 2026-06-17); blue pill */
 .fask-followedup { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
@@ -1673,9 +1684,10 @@ a.fileview-gh-note { border-style: dashed; }
    that turns solid on hover; nothing else in the view changes. A Markdown link whose target is a file keeps the
    link ink the other Markdown links wear. Neither is draggable (-webkit-user-drag: none, with draggable=false on the
    anchor) and both are selectable (user-select: text; Chromium starts no selection inside a link without it), so a
-   press-drag that starts on a link selects the text under it, as on plain text, instead of starting the browser's link
-   drag; the click that ends such a drag finds the selection open, and the viewer's delegate and the chat's opener both
-   yield to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
+   press-drag inside a path link selects its text as on plain text, a press held on a URL anchor and then dragged
+   selects too (Chromium's rule for a link: an immediate drag on one selects nothing), and neither starts the browser's
+   link drag; a click that arrives with the selection open finds the viewer's listener and the chat's opener yielding
+   to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
 .fileview-body .file-uri-link, .fileview-body .fv-url { color: inherit; cursor: pointer; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; -webkit-user-drag: none; user-select: text; }
 .fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover { text-decoration: underline; text-decoration-color: currentColor; }
 .fileview-md a.file-uri-link { color: var(--link); text-decoration: none; }

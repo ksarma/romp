@@ -3,65 +3,26 @@
 # identifier or a credential.
 #
 # The repo may go public and history is permanent, so both scans read the
-# COMMITS BEING PUSHED — not the working tree, which is not what gets published
-# and which hides a leak buried in an intermediate commit whose tip is clean.
-# Two scanners, because they catch opposite kinds of thing:
+# COMMITS BEING PUSHED (not the working tree). Two scanners, because they catch
+# opposite kinds of thing:
 #
 #   identifiers   strings only YOU can enumerate (names, hostnames, vault
-#                 names), read from ~/.config/romp/private-strings.txt.
-#   credentials   strings NOBODY can enumerate in advance — a token's text is
-#                 unknown until it leaks — matched by gitleaks' rules, tuned by
-#                 the repo's .gitleaks.toml.
+#                 names), read from ~/.config/romp/private-strings.txt: one
+#                 banned string per line, `#` comments and blank lines ignored,
+#                 matched case-insensitively. With no such file the scan stays
+#                 out of your way, so on a clone that never set one up (any
+#                 contributor's machine) it is a no-op.
+#   credentials   strings NOBODY can enumerate in advance (a token's text is
+#                 unknown until it leaks), matched by gitleaks' rules, tuned by
+#                 the repo's .gitleaks.toml. With no gitleaks binary the scan
+#                 prints a notice and stands down; CI runs the same scan over
+#                 the full history, so nothing goes unscanned for long.
 #
-# Both stay out of the way when unconfigured: no denylist file, no identifier
-# scan; no gitleaks binary, a one-line notice and no credential scan (CI runs
-# the same scan over the full history, so nothing goes unscanned for long). The
-# hook is symlinked into the SHARED git hooks dir by install.sh, so it fires
-# from every worktree, and reading its inputs from $HOME and $PATH rather than
-# from the tree arms every worktree equally.
-#
-# Env: ROMP_PRIVATE_STRINGS (denylist path), ROMP_GITLEAKS (binary path),
-# ROMP_NO_GITLEAKS=1 (skip the credential scan and its notice).
-# Bypass everything for one push with `git push --no-verify`.
-set -euo pipefail
-
-# git feeds the ref list on stdin and both scans need it, so read it once.
-refs="$(cat)"
-zero=0000000000000000000000000000000000000000
-blocked_ids=0
-blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
-blocked_messages=0      # likewise: a subset of blocked_ids, with a remedy of its own
-blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
-blocked_creds=0
-
-# The commits THIS push publishes for one ref: what no remote already has.
-# "Already has" means reachable from the remote ref's current value or from ANY
-# remote-tracking ref this clone holds (refs/remotes/*, as last fetched) — every
-# remote's, not only the pushed-to remote's or the ref being pushed. The
-# difference from the ref's plain update range is a branch that merged main: its
-# range holds main's commits, every one of them published already through main.
-# Scanning those refuses the push over a string that main itself published, and a
-# string already on a remote is fixed FORWARD, on main (redact, push main) — not
-# by blocking every branch that merged main before the redaction. Every remote
-# counts because that remedy exists only for a commit no remote has yet: in a
-# clone with a fork and the project it forked from, a clean branch cut from the
-# project's main is pushed to the fork as a new ref, and an exclusion scoped to
-# the fork left the project's own commits in the range — one named as adding a
-# string the project had since redacted, which no rewrite of the branch could
-# fix (the #968 review). With no remote-tracking refs at all (never fetched) the
-# exclusion matches nothing and the range falls back to everything the remote
-# ref lacks — for a new ref, the whole history.
-rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
-    local args="$1 --not --remotes"
-    [ "$2" = "$zero" ] || args="$args $2"
-    printf '%s' "$args"
-}
-
-# ── identifiers ───────────────────────────────────────────────────────────
-# Four checks per pushed ref, all about what THIS push changes on the remote:
+# The identifier scan makes four checks per pushed ref, all about what THIS
+# push changes on the remote:
 #
 #   the tip's tree    the content the push exposes. A banned string anywhere in
-#                     it — a regular file, or a symlink's target — refuses the
+#                     it, in a regular file or a symlink's target, refuses the
 #                     push.
 #   each new commit   the lines it ADDS: against its parent, or for a merge the
 #                     lines in none of its parents. A string introduced in an
@@ -116,6 +77,55 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 #                     this sha would not be updating the ref, and one holding it
 #                     at another sha is receiving a new object. A tag of a tag
 #                     is peeled one object at a time.
+#
+# The credential scan reads the same new commits, each merge by its
+# first-parent diff, and refuses the push on a hit. A range this clone cannot
+# resolve (a force-push over a remote tip nobody fetched) sends both scans over
+# everything the pushed tip reaches.
+#
+# Why pushed commits rather than a working-tree scan: the hook is symlinked into
+# the SHARED git hooks dir (by install.sh), so it fires from every worktree —
+# but a working-tree scan is only as good as the tree you happen to push from,
+# and an untracked scanner script exists in only one worktree. Reading the
+# denylist from $HOME and reading the pushed shas arms every worktree equally.
+#
+# Env: ROMP_PRIVATE_STRINGS (denylist path), ROMP_GITLEAKS (scanner binary),
+# ROMP_NO_GITLEAKS=1 (skip the credential scan and its notice).
+# Bypass a false positive from either scan with `git push --no-verify`.
+set -euo pipefail
+
+# git feeds the ref list on stdin and both scans need it, so read it once.
+refs="$(cat)"
+zero=0000000000000000000000000000000000000000
+blocked_ids=0
+blocked_addresses=0     # a subset of blocked_ids, with a remedy of its own
+blocked_messages=0      # likewise: a subset of blocked_ids, with a remedy of its own
+blocked_tags=0          # an annotated tag's own tagger or message: one of the two above, with a remedy of its own
+blocked_creds=0
+failed_scan=0
+
+# The commits THIS push publishes for one ref: what no remote already has.
+# "Already has" means reachable from the remote ref's current value or from ANY
+# remote-tracking ref this clone holds (refs/remotes/*, as last fetched) — every
+# remote's, not only the pushed-to remote's or the ref being pushed. The
+# difference from the ref's plain update range is a branch that merged main: its
+# range holds main's commits, every one of them published already through main.
+# Scanning those refuses the push over a string that main itself published, and a
+# string already on a remote is fixed FORWARD, on main (redact, push main) — not
+# by blocking every branch that merged main before the redaction. Every remote
+# counts because that remedy exists only for a commit no remote has yet: in a
+# clone with a fork and the project it forked from, a clean branch cut from the
+# project's main is pushed to the fork as a new ref, and an exclusion scoped to
+# the fork left the project's own commits in the range — one named as adding a
+# string the project had since redacted, which no rewrite of the branch could
+# fix (the #968 review). With no remote-tracking refs at all (never fetched) the
+# exclusion matches nothing and the range falls back to everything the remote
+# ref lacks — for a new ref, the whole history.
+rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
+    local args="$1 --not --remotes"
+    [ "$2" = "$zero" ] || args="$args $2"
+    printf '%s' "$args"
+}
 
 # The lines a commit adds, one per line as "<path>\t<text>". A commit with one
 # parent: its diff against that parent (a root commit, against the empty tree).
@@ -127,11 +137,12 @@ rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
 # was clean (the #968 review). In a combined diff every content line carries one
 # column per parent, and a line in no parent has a `+` in each; -c also omits a
 # file that matches any parent outright, which holds no such line. -M keeps a
-# rename from re-adding every line of the file. The path comes from the
-# `+++ b/<path>` header, read only between a `diff --git` or `diff --combined`
-# line and the first hunk: inside a hunk, a line that begins with `+++ ` is added
-# content (`++ b/x` as written) and belongs to the current file. A new symlink
-# shows up here too — a link's target is its blob content, so it is an added line.
+# rename from re-adding every line of the file. A new symlink shows up here too:
+# a link's target is its blob content, so it is an added line. The path comes
+# from the `+++ b/<path>` header, read only between a `diff --git` or
+# `diff --combined` line and the first hunk: inside a hunk, a line that begins
+# with `+++ ` is added content (`++ b/x` as written) and belongs to the current
+# file.
 added_lines() {   # <rev>
     local n
     n=$(git rev-list --parents -n 1 "$1" | awk '{ print NF - 1 }')
@@ -177,13 +188,15 @@ tag_message() {   # <tag_sha>
     git cat-file -p "$1" | awk 'BEGIN { hdr = 1 } hdr && !NF { hdr = 0; next } !hdr { print }'
 }
 
+# ── identifiers ───────────────────────────────────────────────────────────
 scan_identifiers() {
-    local strings_file line lines rev revs hits local_ref local_sha remote_sha role email obj tagger chosen
+    local strings_file line grep_args local_ref local_sha _remote_ref remote_sha lines role email obj tagger chosen
+    local hits links link blob link_path target revs rev
     strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
     [ -f "$strings_file" ] || return 0
 
     # Banned strings: strip comments and surrounding whitespace, drop blanks.
-    local grep_args=()
+    grep_args=()
     while IFS= read -r line; do
         line="${line%%#*}"
         line="${line#"${line%%[![:space:]]*}"}"
@@ -194,7 +207,7 @@ scan_identifiers() {
 
     while read -r local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
-        [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
+        [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref pushes nothing
 
         # The tip's tree. -I skips binaries; -l lists files.
         if hits=$(git grep -i -I -l -F "${grep_args[@]}" "$local_sha" -- 2>/dev/null) && [ -n "$hits" ]; then
@@ -202,21 +215,24 @@ scan_identifiers() {
             echo "$hits" | sed "s/^$local_sha:/  /" >&2
             blocked_ids=1
         fi
-        # SYMLINKS are invisible to git grep — it searches regular-file blobs only, so a link
-        # whose TARGET is a home path sails straight through the scan above. That is not
-        # hypothetical: a `node_modules -> /home/<user>/code/romp/...` link created to run the
-        # extension tests in a worktree was swept up by `git add -A` and pushed to a public
-        # branch, and the upstream maintainer found it, not this hook (2026-08-13). A symlink's
-        # target IS its content once committed, so scan those blobs directly.
+
+        # The tip's symlinks. git grep reads regular-file blobs only, so a link whose
+        # TARGET holds a string is invisible to the grep above. A committed link's
+        # target is its blob content, so read each 120000 entry's blob itself. Not
+        # hypothetical: a `node_modules -> /home/<user>/code/romp/...` link, made to
+        # run the extension tests in a worktree and swept up by a broad `git add`,
+        # reached a public branch past a git grep of its tree, and a reviewer found
+        # it, not the hook. An ls-tree line is "<mode> <type> <sha>\t<path>". A blob
+        # that cannot be read counts as empty: under set -e a failed substitution
+        # would end the hook with no message, before its verdict on everything else.
         if links=$(git ls-tree -r "$local_sha" 2>/dev/null | grep '^120000 '); then
             while IFS= read -r link; do
-                [ -n "$link" ] || continue
-                lsha=${link#* * }; lsha=${lsha%%[[:space:]]*}
-                lpath=${link#*$'\t'}
-                ltarget=$(git cat-file -p "$lsha" 2>/dev/null)
-                if printf '%s' "$ltarget" | grep -qi -F "${grep_args[@]}"; then
+                blob=${link#* * }; blob=${blob%%[[:space:]]*}
+                link_path=${link#*$'\t'}
+                target=$(git cat-file -p "$blob" 2>/dev/null) || target=""
+                if printf '%s' "$target" | grep -qi -F "${grep_args[@]}"; then
                     echo "romp pre-push: the tip of $local_ref (${local_sha:0:10}) would publish a personal identifier" >&2
-                    echo "  in the SYMLINK TARGET of $lpath -> $ltarget" >&2
+                    echo "  in the SYMLINK TARGET of $link_path -> $target" >&2
                     blocked_ids=1
                 fi
             done <<< "$links"
@@ -301,56 +317,86 @@ scan_identifiers() {
 }
 
 # ── credentials ───────────────────────────────────────────────────────────
+# gitleaks (ROMP_GITLEAKS, else the first on PATH) over the commits this push
+# publishes: the same range per ref as the identifier scan, so a secret that is
+# already on a remote does not refuse every later push, and a secret in an
+# intermediate commit whose tip is clean is still caught.
 scan_credentials() {
     [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0
 
-    local gl root cfg range
+    local gl root cfg range rc _local_ref local_sha _remote_ref remote_sha
     gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
     if [ -z "$gl" ] || [ ! -x "$gl" ]; then
         # Loud rather than silent, but not a blocker: requiring an install to
         # push would break every clone that never wanted the scanner, and CI
         # scans the full history regardless.
-        echo "romp pre-push: gitleaks not installed — pushing WITHOUT a secret scan." >&2
-        echo "  Install it (brew install gitleaks / see .github/workflows/ci.yml) or set ROMP_NO_GITLEAKS=1." >&2
+        echo "romp pre-push: gitleaks not installed, pushing WITHOUT a secret scan." >&2
+        echo "  Install it (brew install gitleaks, or the release .github/workflows/ci.yml pins)." >&2
+        echo "  ROMP_GITLEAKS names a binary that is not on PATH; ROMP_NO_GITLEAKS=1 silences this." >&2
         return 0
     fi
 
     root="$(git rev-parse --show-toplevel)"
+    # The repo's rules, named explicitly: without --config gitleaks reads a
+    # GITLEAKS_CONFIG from the environment before the source root, so a
+    # developer's own config (for a pre-commit hook of theirs, say) would
+    # replace the repo's. A tree without the file scans under the default rules.
     cfg=()
     [ -f "$root/.gitleaks.toml" ] && cfg=(--config "$root/.gitleaks.toml")
 
     while read -r _local_ref local_sha _remote_ref remote_sha; do
         [ -n "${local_sha:-}" ] || continue
-        [ "$local_sha" = "$zero" ] && continue
+        [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
+        # The range has to resolve in THIS clone before gitleaks sees it: handed
+        # a sha git cannot find (a force-push over a remote tip nobody fetched),
+        # gitleaks logs git's error, scans no commits and exits 0, and the push
+        # would go out unscanned. The identifier scan falls back to everything
+        # the pushed tip reaches; so does this one.
         range="$(rev_range "$local_sha" "$remote_sha")"
-        # -v is what prints the file, line and rule; without it gitleaks reports
-        # only a COUNT, which tells you a push was refused but not what to fix.
-        # --redact keeps the secret itself out of terminal scrollback — the
-        # location is what a fix needs, and the value has to be rotated anyway.
-        # --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which shows
-        # NO diff for a merge commit by default, so a secret introduced during a
-        # conflict resolution (present in neither parent, only the merge tree) is
-        # scanned by nothing. The first-parent diff of each merge surfaces exactly
-        # that content; non-merges are unaffected (found on re-review 2026-08-06).
-        if ! "$gl" git "$root" --no-banner --redact -v --exit-code 1 \
-                "${cfg[@]}" --log-opts="$range --diff-merges=first-parent" >&2; then
-            blocked_creds=1
-        fi
+        # shellcheck disable=SC2086  # the range is deliberately word-split
+        git rev-list $range >/dev/null 2>&1 || range="$local_sha"
+        # -v prints the file, line and rule; without it gitleaks reports only a
+        # COUNT, which says a push was refused but not what to fix. --redact
+        # keeps the secret itself out of terminal scrollback: the location is
+        # what a fix needs, and the value has to be rotated anyway.
+        # --exit-code 2 tells a finding apart from gitleaks failing (exit 1: an
+        # unreadable config, say). Both refuse the push, with different advice.
+        # --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which
+        # shows NO diff for a merge commit by default, so a secret introduced
+        # during a conflict resolution (in neither parent, only the merge tree)
+        # would be scanned by nothing. The first-parent diff of each merge
+        # surfaces exactly that content; non-merges are unaffected.
+        # ${cfg[@]+...}: an empty array expands to nothing under set -u in
+        # every bash, the 3.2 that macOS ships included.
+        rc=0
+        "$gl" git "$root" --no-banner --redact -v --exit-code 2 ${cfg[@]+"${cfg[@]}"} \
+            --log-opts="$range --diff-merges=first-parent" >&2 || rc=$?
+        case $rc in
+            0) ;;
+            2) blocked_creds=1 ;;
+            *) failed_scan=1 ;;
+        esac
     done <<< "$refs"
 
     if [ "$blocked_creds" -ne 0 ]; then
         echo "" >&2
-        echo "romp pre-push: BLOCKED — gitleaks found a credential in a pushed commit." >&2
+        echo "romp pre-push: BLOCKED. gitleaks found a credential in a pushed commit." >&2
         echo "  Treat it as compromised the moment it exists in a commit: ROTATE it, then remove it." >&2
-        echo "  Removing it in a NEW commit is not enough — the old commit still carries it." >&2
+        echo "  Removing it in a NEW commit is not enough; the old commit still carries it." >&2
         echo "  A false positive belongs in .gitleaks.toml, narrowly, with a reason." >&2
+    fi
+    if [ "$failed_scan" -ne 0 ]; then
+        echo "" >&2
+        echo "romp pre-push: BLOCKED. gitleaks could not scan; its error is above." >&2
+        echo "  The push is refused rather than published unscanned. Fix the scanner or its config, or set ROMP_NO_GITLEAKS=1 for one push." >&2
     fi
 }
 
 scan_identifiers
 scan_credentials
 
-if [ "$blocked_ids" -ne 0 ] || [ "$blocked_creds" -ne 0 ]; then
+# Both scans have reported; one bypass line, then the verdict.
+if [ "$blocked_ids" -ne 0 ] || [ "$blocked_creds" -ne 0 ] || [ "$failed_scan" -ne 0 ]; then
     echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
     exit 1
 fi

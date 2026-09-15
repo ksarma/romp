@@ -43,8 +43,8 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
-from pathlib import Path
 from romp_load import load_source
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")

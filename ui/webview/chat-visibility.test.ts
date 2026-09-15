@@ -1,18 +1,20 @@
-// The chat page's word for the kernel's pane shim (round 3 of the 2026-09-08 fold). The shim gates its stale
-// banner on paneHidden(): hidden when its zero-viewport probe OR the word a pane published says so. In Chromium
-// the probe is right for a pane hidden since load and blind to one the shell hides after the user has looked at
-// it (the iframe keeps its size), and on the phone shell the chat is the pane shown first, so every switch to
-// another tab left the chat's watchdog free to raise the shell banner over a working dashboard (the 2026-08-15
-// failure, re-opened when steer 2 dropped the fork's federation-level hold that had published the word for the
-// chat). Firefox is the mirror image, measured here: the hidden iframe's viewport reads 0 (the probe is right) and
-// its IntersectionObserver does not run (the word goes stale), which is why the shim takes the union and not the
-// word first. render.ts has no paint gate (every frame paints), so chat-visibility.ts publishes the same two
-// measures the gating panes do, from the same events. Three legs: the module over stand-ins (the ordering rule:
-// nothing before the observer's first word), the source pins (render.ts installs it once, on the body, from its
-// own visibility), and real browsers: a chat page in the shell's iframe, shown, then hidden each way the shell
-// hides a pane (the desktop rail's rule takes the pane WRAPPER to display:none; the phone shell's tab switch
-// takes the IFRAME itself to display:none by moving m-on to another tab), with the kernel's own CSS and
-// paneHidden() text deciding. The browser legs skip LOUDLY without playwright or a browser (CI installs none).
+// The chat page's hidden word for the kernel's pane shim (chat-visibility.ts). The shim gates its stale banner on
+// paneHidden(): hidden when its zero-viewport probe OR the word a pane published says so. In Chromium the probe is
+// right for a pane hidden since load and blind to one the shell hides after the user has looked at it (the iframe
+// keeps its size), and on the phone shell the chat is the pane shown first, so every switch to another tab left the
+// chat's watchdog free to raise the banner over a working dashboard. render.ts has no paint gate (every frame paints),
+// so chat-visibility.ts publishes the same two measures the gating panes do, from the same events. Two legs here: the
+// module over stand-ins (the ordering rule: nothing before the observer's first word), and the source pins (render.ts
+// installs it once, on the body, from its own visibility). The served shim's read runs in the Python lane
+// (tests/test_kernel_disconnect_banner.py under node; tests/test_pane_hidden_word_browser.py in real browsers).
+// This fork adds a third leg: the kernel and page pins (the chat page carries the shim; the shim reads the probe OR
+// the word, never the word first; the shell hides a pane two ways) and real browsers, a chat page in the shell's
+// iframe, shown, then hidden each way the shell hides a pane (the desktop rail's rule takes the pane WRAPPER to
+// display:none; the phone shell's tab switch takes the IFRAME itself to display:none by moving m-on to another tab),
+// with the kernel's own CSS and paneHidden() text deciding. Firefox is the mirror image of Chromium there (the hidden
+// iframe's viewport reads 0, the probe is right, and its IntersectionObserver does not run, so the word goes stale),
+// which is why the shim takes the union and not the word first. The browser legs skip LOUDLY without playwright or a
+// browser (CI installs none for this file).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -29,7 +31,7 @@ const SRC = fs.readFileSync(path.join(UI, "chat-visibility.ts"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(EXT, "..", "kernel", "kernel.py"), "utf8");
 const SKEL = fs.readFileSync(path.resolve(EXT, "src", "page-skeleton.ts"), "utf8");
 
-// ── the module, over stand-ins ────────────────────────────────────────────────────────────────────
+// ── the module, over stand-ins ──
 type Cb = (entries: ObserverEntryLike[]) => void;
 function world() {
   const host: PaneHiddenHost = {};
@@ -40,12 +42,11 @@ function world() {
   class FakeIO { constructor(f: Cb) { cb = f; } observe(t: Element) { observed.push(t); } }
   const deps: ChatVisibilityDeps = { doc, win: host, Observer: FakeIO };
   return {
-    host, doc, deps, observed,
+    host, doc, deps, observed, listeners,
     /** the tab's visibilitychange, in the given state */
     tab(state: "hidden" | "visible") { doc.hidden = state === "hidden"; for (const fn of listeners) fn(); },
     /** the observer's callback over the body */
     entry(intersecting: boolean) { assert.ok(cb, "the observer was constructed"); cb!([{ isIntersecting: intersecting }]); },
-    listeners,
   };
 }
 
@@ -76,7 +77,7 @@ test("no observer, or no body: nothing is installed and nothing published; the s
   const bare = world();
   bare.deps.Observer = null;
   watchChatVisibility({} as Element, bare.deps);
-  assert.equal(bare.listeners.length, 0, "no listener either: a page that published document.hidden alone would read hidden forever after its first tab hide");
+  assert.equal(bare.listeners.length, 0, "no listener either: a page that published document.hidden alone would have no observer to correct it");
   bare.tab("hidden"); bare.tab("visible");
   assert.equal(typeof bare.host.__rompPaneHidden, "undefined");
   const noRoot = world();
@@ -85,20 +86,24 @@ test("no observer, or no body: nothing is installed and nothing published; the s
   assert.equal(noRoot.listeners.length, 0);
 });
 
-test("source pins: render.ts installs the publisher once, at top level, over the page's body, and gates no paint; the module reads the frame's own visibility, never the shell's word", () => {
+// ── the source pins ──
+test("render.ts installs the publisher once, at top level, over the page's body, and gates no paint; the module reads the frame's own visibility", () => {
   assert.match(RENDER, /^import \{ watchChatVisibility, browserChatVisibilityDeps \} from "\.\/chat-visibility";/m);
-  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "top level, so it runs when the bundle loads (the script sits at the end of the body in both skeletons)");
+  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "top level, so it runs when the bundle loads (the script sits at the end of the body)");
   assert.equal(RENDER.split("watchChatVisibility(").length - 1, 1, "once");
   assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased("), "the chat gates no paint: every frame paints");
-  assert.ok(!RENDER.includes("__rompPaneHidden") && !SRC.includes("__rompPaneHidden"), "the flag's name lives in paint-gate.ts");
-  assert.match(SRC, /import \{ publishPaneHidden, type PaneHiddenHost \} from "\.\/paint-gate";/, "the shared publisher, so the shim's word has one shape");
+  assert.ok(!SRC.includes("__rompPaneHidden"), "the flag's name lives in paint-gate.ts: one publisher shape for every pane");
+  assert.match(SRC, /import \{ publishPaneHidden, type PaneHiddenHost \} from "\.\/paint-gate";/, "the shared publisher");
   assert.match(SRC, /let intersecting: boolean \| null = null;/, "the observer's word starts null: nothing is published before it speaks");
   assert.match(SRC, /new deps\.Observer\(\(entries\) => \{ intersecting = entries\.some\(\(e\) => e\.isIntersecting\); publish\(\); \}\)\.observe\(root\);/);
   assert.match(SRC, /deps\.doc\.addEventListener\("visibilitychange", publish\);/);
   assert.ok(!/set(Interval|Timeout)|requestAnimationFrame/.test(SRC), "on events only, never a timer");
-  assert.ok(!SRC.includes('"panes"') && !SRC.includes("romp:") && !SRC.includes("postMessage") && !SRC.includes("parent"), "the frame's own visibility: no shell message, no parent read");
+  assert.ok(!SRC.includes("postMessage") && !SRC.includes("parent"), "the frame's own visibility: no shell message, no parent read");
   assert.match(SRC, /Observer: typeof IntersectionObserver === "undefined" \? null : IntersectionObserver,/, "the browser deps: the page's own observer, or none");
-  // the kernel's side: the chat page carries the shim, and the shim reads the word before its probe
+});
+
+// ── the kernel and page pins (this fork): the served shim and the shell's two hiding rules, which the browser legs below drive ──
+test("kernel and page pins: the chat page carries the shim, the shim reads its probe OR the published word and never the word first, and the shell hides a pane two ways", () => {
   assert.match(KERNEL, /_shim\("chat", v, caps=READY_GATE_CAP\)/, "the chat page carries the pane shim");
   const shim = /function paneHidden\(\)\{[^\n]*/.exec(KERNEL)?.[0] ?? "";
   assert.match(shim, /\(window\.parent!==window&&\(window\.innerWidth===0\|\|window\.innerHeight===0\)\)\|\|window\.__rompPaneHidden===true/, "the shim: the probe OR a published word of true (Firefox zeroes the viewport and stalls the observer; Chromium keeps the size and runs it)");

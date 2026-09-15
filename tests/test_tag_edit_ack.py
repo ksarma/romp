@@ -20,36 +20,25 @@ Two changes at the kernel's door, both pinned here through the real WS dispatche
 The whole-blob `setTimelineViews` stays for lens and order edits, with the guard unchanged (its
 stderr and sync-notice paths still fire) plus the ack. Frames pushed to other clients are unchanged.
 Synthetic sids only."""
-import abc
 import contextlib
 import errno
-import functools
-import inspect
 import io
 import json
 import os
 import shutil
-import sys
 import tempfile
 import threading
 import time
-import traceback
 import unittest
-from pathlib import Path
 from romp_load import load_source
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 
-# Hermetic state BEFORE the loads, which resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state). This is
-# the loads' floor only: every test runs under a state root of its own (_own_state below), and
-# OwnStateRoot's roster walk enforces that by running the setUp of every unittest.TestCase subclass in the
-# module's namespace (what pytest collects from it, defined here or imported), not by reading two of them.
-# Convention: a test in this module is a method on a _Wire subclass, or on a TestCase whose setUp calls
-# _own_state itself. Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level
-# test* callable) is refused by the walk whether or not pytest would run it: a test of that shape would run
-# with no state root at all, and a helper of that shape is misnamed.
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+# That is the loads' import-time floor only: every test runs under a state root of its own (_own_state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
@@ -57,7 +46,6 @@ load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_tagack", os.path.join(BIN, "romp-kernel"))
-FLOOR = km.jd.STATE    # the import-time root (XDG_STATE_HOME/romp); the roster walk asserts no setUp leaves jd.STATE here
 
 SID1 = "11111111-2222-3333-4444-555555555501"
 SID2 = "11111111-2222-3333-4444-555555555502"
@@ -70,22 +58,18 @@ def store_tag(name):
 
 
 def _own_state(test):
-    """A state root of the test's own for its duration: made here, bound into the judge for the test,
-    put back and removed when the test ends (a cleanup, so it runs after tearDown). The judge is ONE
-    module object per process (load_source re-executes into it), so jd.STATE is shared with every
-    module the xdist worker collected, and a neighbour's fixture that rebinds it to a temp dir it removes
-    without putting the prior root back (tests/test_episode_boundary.py's setUp/tearDown does) leaves the
-    shared root pointing at a removed directory. The exposure is per test, not per class: _atomic_write
-    recreates the parent, so a test whose first touch of the views file went through it (a seed(), a setter
-    call) recreated the directory, and a test whose first touch is a direct write_text (a legacy, torn,
-    over-cap or foreign fixture written before any seed) failed with FileNotFoundError on
-    timeline-views.json when it was the first tag-edit test on a worker after such a polluter. Verified on
-    the base, polluter module first and one class at a time: LegacyStoreStampedOnce,
+    """A state root of the test's own, bound into the judge here and put back and removed by a cleanup on
+    the same test (a cleanup, so it runs after tearDown). The judge is ONE module object per process (a
+    SourceFileLoader load of a name already in sys.modules re-executes into that object), so jd.STATE is
+    shared with every module an xdist worker collected, and a fixture elsewhere that left it bound to a
+    removed directory reached this module: _atomic_write recreates the parent and a direct write_text does
+    not, so a test whose first touch of the views file is a write_text (a fixture written before any seed)
+    failed with FileNotFoundError when it ran first after such a fixture (LegacyStoreStampedOnce,
     LegacyTagsStampedOnFirstRead, MigrationStampsTheArchivedTag, ReaderRestampKeepsTheDiskCap and
-    ReaderRestampUnwritableNamesTheDrop fail as classes; ReaderRestampUnwritable passes as a class (its
-    first test seeds first) and its read-only test fails when it runs first; the other 18 classes pass. A
-    root per test covers every class, whichever of its tests runs first. The path-keyed caches are cleared
-    of this root's entries with it. OwnStateRoot below pins this without the external polluter."""
+    ReaderRestampUnwritableNamesTheDrop as classes, ReaderRestampUnwritable's read-only test alone). The
+    suite's shared-state check (tests/conftest.py, _shared_state_restored) fails the test that leaves such
+    a binding; a root per test makes this module independent of that check and of test order, and the
+    cleanup drops this root's entries from the two path-keyed caches. OwnStateRoot pins the shape."""
     saved = km.jd.STATE
     root = tempfile.mkdtemp()
     km.jd._rebind_state(Path(root))
@@ -156,11 +140,14 @@ class _Wire(unittest.TestCase):
 
 
 class OwnStateRoot(_Wire):
-    """_own_state: the binding a preceding test left behind decides nothing about where this module's
+    """_own_state: the binding an earlier test left behind decides nothing about where this module's
     tests write, and comes back untouched afterwards. setUp leaves jd.STATE the way a neighbour's
-    tearDown does (bound to a temp root that has been removed, the prior root not put back) BEFORE
-    _Wire.setUp runs, so the fixture is all that stands between a direct write_text and
-    FileNotFoundError; without _own_state the first test here fails as the legacy-fixture classes did."""
+    tearDown can (bound to a temp root that has been removed, the prior root not put back) BEFORE
+    _Wire.setUp runs, so the helper is all that stands between a direct write_text and
+    FileNotFoundError; without it the test here fails as the legacy-fixture classes did. The root the
+    class found is registered as the FIRST cleanup, so it runs last and the class leaves jd.STATE as it
+    found it: the dangling binding is made inside the test and undone by it, which is what the suite's
+    shared-state check (tests/conftest.py, _shared_state_restored) requires of every test."""
 
     def setUp(self):
         found = km.jd.STATE
@@ -168,226 +155,17 @@ class OwnStateRoot(_Wire):
                                                         # comes back after _own_state's own restore has run
         gone = Path(tempfile.mkdtemp())
         gone.rmdir()
-        km.jd._rebind_state(gone)                       # the polluter's shape: a temp root, removed, never put back
+        km.jd._rebind_state(gone)                       # a temp root, removed, never put back
         self.gone = gone
         super().setUp()
 
     def test_a_dangling_binding_left_by_an_earlier_test_is_not_inherited_by_a_direct_write(self):
         p = km._views_path()
-        p.write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))   # a legacy fixture: write_text before any seed;
-                                                                            # FileNotFoundError under the dangling root
+        p.write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))   # a legacy fixture: write_text before any
+                                                                            # seed; FileNotFoundError under a dangling root
         self.assertNotEqual(p.parent, self.gone, "the write landed under a root of this test's own, not the dangling one")
         self.assertTrue(p.parent.is_dir(), "and that root exists")
         self.assertIsNotNone(store_tag("web"), "and the reader reads the file back from it")
-
-    def test_a_cleanup_puts_the_prior_root_back_and_drops_the_views_path_from_the_caches(self):
-        case = unittest.TestCase()
-        before = km.jd.STATE
-        root = _own_state(case)
-        views = str(km._views_path())
-        self.assertEqual(km.jd.STATE, root)
-        self.assertNotEqual(root, before)
-        km._views_path().write_text(json.dumps({"active": "all", "tags": [dict(WEB)]}))
-        store_tag("web")                                # a read: caches the blob and raises the floor under this path
-        self.assertIn(views, km._flags_cache)
-        self.assertIn(views, km._VIEWS_SEQ_FLOOR)
-        case.doCleanups()
-        self.assertEqual(km.jd.STATE, before, "the binding _own_state found comes back")
-        self.assertFalse(root.exists(), "and the root it made is gone")
-        self.assertNotIn(views, km._flags_cache)
-        self.assertNotIn(views, km._VIEWS_SEQ_FLOOR)
-
-    # A TestCase that needs no state root of its own is listed here with its reason and the walk skips it.
-    # Empty: every TestCase with tests binds a root (WebBootWiring derives from _Wire for this). Either set can
-    # only name a class defined above this one (a later or deleted name is a NameError at import); an entry for
-    # a class moved out of the module, or no longer a TestCase, fails the roster check in the walk by name.
-    EXEMPT = frozenset()
-    # The base: setUp and the socket helpers, no tests of its own; every subclass runs its setUp below.
-    BASES = frozenset({_Wire})
-
-    # The kernel globals a walked setUp assigns (grep the module's setUps for `km.`): the walk must leave the
-    # process exactly as it found it, so each is read before the walk, compared after every class, and put back
-    # in a finally. A setUp that resets one of these registers the restore on the same test (Capability for
-    # _UNKNOWN_OPS_SEEN, the two ReaderRestampUnwritable classes for _VIEWS_RESTAMP_ERR[0], _Wire's and
-    # SetterReturnsRefusals's tearDown for _sync_notice). A setUp that gains a `km.` assignment is listed here too.
-    @staticmethod
-    def _kernel_globals():
-        return {"_UNKNOWN_OPS_SEEN": set(km._UNKNOWN_OPS_SEEN),
-                "_VIEWS_RESTAMP_ERR[0]": km._VIEWS_RESTAMP_ERR[0],
-                "_sync_notice": km._sync_notice}
-
-    @staticmethod
-    def _restore_kernel_globals(snapshot):
-        km._UNKNOWN_OPS_SEEN.clear()
-        km._UNKNOWN_OPS_SEEN.update(snapshot["_UNKNOWN_OPS_SEEN"])
-        km._VIEWS_RESTAMP_ERR[0] = snapshot["_VIEWS_RESTAMP_ERR[0]"]
-        km._sync_notice = snapshot["_sync_notice"]
-
-    # Everything else bound in the module is judged by NAME, and deliberately STRICTER than pytest's collection
-    # (_pytest/python.py with its default python_classes and python_functions; the repo sets neither): refused
-    # is anything pytest-shaped, a class named Test* that is no TestCase or a module-level callable named test*,
-    # or either opting in with __test__ = True, minus abstract classes and anything opting out with
-    # __test__ = False. That is a superset of what pytest collects: it also refuses a Test* class that defines
-    # or inherits __init__ or __new__ (pytest warns and skips it), a test*-named callable that is not a function
-    # (pytest warns and skips it too), and a Test* class with no test-prefixed method (pytest yields nothing
-    # from it). Refusing the superset means a helper never has to be argued about: a pytest-shaped name here is
-    # either a test with no state root or a misnamed helper, and either is fixed at its name. A helper class
-    # with a test-named method is not pytest-shaped, so it is not refused. Kept as a function of the namespace so
-    # the rule is pinned on a namespace built in a test (the walk itself refuses one bound at module level).
-    @staticmethod
-    def _pytest_shaped(namespace):
-        def shaped(name, obj, prefix):
-            return ((name.startswith(prefix) or getattr(obj, "__test__", False) is True)
-                    and bool(getattr(obj, "__test__", True)))
-        return sorted(
-            name for name, obj in namespace.items()
-            if (inspect.isclass(obj) and not issubclass(obj, unittest.TestCase) and not inspect.isabstract(obj)
-                and shaped(name, obj, "Test"))
-            or (not inspect.isclass(obj) and callable(obj) and shaped(name, obj, "test")))
-
-    def test_the_guard_refuses_by_name_and_is_stricter_than_pytests_collection(self):
-        """The rule the walk applies, on a namespace built here. Refused: what pytest collects (a Test* class
-        with a test method, a test* function, a class opting in with __test__ = True, and a test*-named
-        functools.partial, which pytest unwraps and runs) and the three shapes pytest warns about or collects
-        nothing from (a Test* class with an __init__ or __new__, own or inherited; a test*-named callable that
-        is not a function; a Test* class with no test-prefixed method). Not refused: a TestCase (the roster
-        covers it), a helper class with a test-named method, a mixin, a name opting out with __test__ = False,
-        an abstract Test* class and a non-callable test* binding."""
-        class TestBare:
-            def test_x(self): pass
-        def test_bare_fn(): pass
-        class Plain:
-            __test__ = True
-            def test_x(self): pass
-        class TestWithInit:
-            def __init__(self): pass
-            def test_x(self): pass
-        class TestWithNew:
-            def __new__(cls): return object.__new__(cls)
-            def test_x(self): pass
-        class _HasInit:
-            def __init__(self): pass
-        class TestInheritedInit(_HasInit):
-            def test_x(self): pass
-        class _Callable:
-            def __call__(self): pass
-        class TestNoMethods:
-            def check(self): pass
-        class TestCased(_Wire):
-            def test_x(self): pass
-        class HelperThing:
-            def test_x(self): pass
-        class SharedChecks:
-            def test_shared(self): pass
-        class TestOff:
-            __test__ = False
-            def test_x(self): pass
-        def test_off_fn(): pass
-        test_off_fn.__test__ = False
-        class TestAbstract(abc.ABC):
-            @abc.abstractmethod
-            def test_x(self): pass
-        namespace = {
-            "TestBare": TestBare, "test_bare_fn": test_bare_fn, "Plain": Plain,
-            "test_partial_fn": functools.partial(test_bare_fn),
-            "TestWithInit": TestWithInit, "TestWithNew": TestWithNew, "TestInheritedInit": TestInheritedInit,
-            "test_callable_obj": _Callable(), "TestNoMethods": TestNoMethods,
-            "TestCased": TestCased, "HelperThing": HelperThing, "SharedChecks": SharedChecks,
-            "TestOff": TestOff, "test_off_fn": test_off_fn, "TestAbstract": TestAbstract, "test_data": 3,
-        }
-        self.assertEqual(self._pytest_shaped(namespace),
-                         ["Plain", "TestBare", "TestInheritedInit", "TestNoMethods", "TestWithInit", "TestWithNew",
-                          "test_bare_fn", "test_callable_obj", "test_partial_fn"])
-
-    def test_every_class_in_the_module_binds_its_own_root(self):
-        """Executed, not read from source: every unittest.TestCase subclass in this module's namespace (what
-        pytest collects from it, defined here or imported) gets an instance built on one of its test names,
-        and its setUp must move jd.STATE to a new directory under the run's temp root (not the import-time
-        floor, not the binding the walk found); its tearDown and cleanups must put that binding back, remove
-        the root, and leave the kernel globals a setUp assigns as the walk found them. A class whose setUp
-        stopped calling _own_state writes under the shared root again, the shape this module failed in
-        after tests/test_episode_boundary.py, and fails here by name. Roots are distinct across the walk.
-        Anything else pytest-shaped by name (a Test* class that is no TestCase, a module-level test* callable,
-        or either opting in with __test__ = True; not a helper class with a test-named method, and not a name
-        opting out with __test__ = False) is refused, naming it. That guard is deliberately stricter than
-        pytest's collection: it refuses the shapes pytest would warn about or collect nothing from too, so a
-        helper never has to be argued about (_pytest_shaped above)."""
-        module = sys.modules[__name__]
-        namespace = vars(module)
-        # pytest collects every TestCase subclass bound in the module, imported names included, and skips
-        # abstract ones and any hidden with __test__ = False (_pytest/unittest.py; the attribute is inherited,
-        # so a subclass of a hidden helper sets __test__ = True to be collected); the roster is that set, so
-        # nothing pytest runs from here escapes the walk and nothing it skips is refused.
-        roster = [cls for _, cls in inspect.getmembers(module, inspect.isclass)
-                  if issubclass(cls, unittest.TestCase) and cls is not unittest.TestCase
-                  and not inspect.isabstract(cls) and getattr(cls, "__test__", True)]
-
-        pytest_shaped = self._pytest_shaped(namespace)
-        self.assertFalse(pytest_shaped, "pytest-shaped by name (a Test* class that is no TestCase, or a test* "
-                         "callable): a test of that shape runs here with no state root, and a helper of that "
-                         "shape is misnamed; rename it so it is not pytest-shaped, or make it a _Wire subclass: "
-                         "%s" % pytest_shaped)
-        stale = (self.EXEMPT | self.BASES) - set(roster)
-        self.assertFalse(stale, "EXEMPT and BASES name TestCases in this module's namespace; not here (moved out of "
-                         "the module, or no longer a TestCase): %s" % sorted(c.__name__ for c in stale))
-        loader = unittest.TestLoader()
-        found = km.jd.STATE
-        tmp_root = Path(tempfile.gettempdir()).resolve()
-        snapshot = self._kernel_globals()
-        roots = []
-        try:
-            for cls in roster:
-                names = loader.getTestCaseNames(cls)
-                if cls in self.BASES:
-                    self.assertEqual(names, [], "%s is listed as a base but has tests of its own" % cls.__name__)
-                    continue
-                self.assertTrue(names, "%s has no tests and is not a listed base" % cls.__name__)
-                if cls in self.EXEMPT:
-                    continue
-                case = cls(names[0])
-                set_up = False
-                made = None
-                raised = []
-                try:
-                    case.setUp()
-                    set_up = True
-                    made = km.jd.STATE
-                    self.assertNotEqual(made, found, "%s binds no state root of its own: its tests write under the shared root again" % cls.__name__)
-                    self.assertNotEqual(made, FLOOR, "%s left jd.STATE on the import-time floor" % cls.__name__)
-                    self.assertTrue(made.is_dir(), "%s's root exists: %s" % (cls.__name__, made))
-                    self.assertIn(tmp_root, made.resolve().parents, "%s's root lies under the run's temp root: %s" % (cls.__name__, made))
-                finally:
-                    try:
-                        if set_up:
-                            case.tearDown()
-                    finally:
-                        # The instance's cleanups, run here and not through doCleanups: that files a raising
-                        # cleanup on the instance's _Outcome, and where it lands differs by version (3.10 keeps
-                        # it on the outcome, 3.11 onward hands it to the TestResult), so a walk reading one
-                        # place showed an empty message on the other. The same order as doCleanups (LIFO, and
-                        # every cleanup runs after one raises), from the list addCleanup appends to, the one
-                        # private attribute touched here, unchanged from 3.10 to 3.14t; each exception is kept
-                        # as its traceback, so the failure below reads the same on every interpreter.
-                        while case._cleanups:
-                            function, args, kwargs = case._cleanups.pop()
-                            try:
-                                function(*args, **kwargs)
-                            except Exception:
-                                raised.append(traceback.format_exc())
-                if raised:
-                    self.fail("%s's cleanups raised:\n%s" % (cls.__name__, "\n".join(raised)))
-                self.assertEqual(km.jd.STATE, found, "%s's cleanup put the binding the walk found back" % cls.__name__)
-                self.assertFalse(made.exists(), "%s's cleanup removed its root: %s" % (cls.__name__, made))
-                for name, value in self._kernel_globals().items():
-                    self.assertEqual(value, snapshot[name],
-                                     "%s's setUp changed km.%s and nothing put it back" % (cls.__name__, name))
-                roots.append(made)
-        finally:
-            self._restore_kernel_globals(snapshot)
-        for name, value in self._kernel_globals().items():
-            self.assertEqual(value, snapshot[name], "the walk left km.%s as it found it" % name)
-        self.assertEqual(len(roots), len(roster) - len(self.BASES) - len(self.EXEMPT), "every class was walked")
-        self.assertEqual(len(set(roots)), len(roots), "every class got a root of its own")
 
 
 class TargetedTagEdits(_Wire):
@@ -1106,11 +884,13 @@ class Capability(_Wire):
         types = [m["type"] for m in self.sent]
         self.assertIn("caps", types)
         self.assertLess(types.index("_pushed"), types.index("caps"),
-                        "after the pushes: the shim's stale banner clears on the first real frame after a "
-                        "reconnect, which must stay the resync frame itself")
+                        "the caps frame follows the push: the shim's stale banner clears on the first real frame "
+                        "after a reconnect, which must stay the resync frame itself")
+        self.assertNotIn("tabOrder", types, "no strip from the handler itself: the connect push is the one source")
         caps = next(m for m in self.sent if m["type"] == "caps")
         self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"], "viewsSeq": None},
-                         "the stubbed push served no views blob: viewsSeq is null, the key always present")
+                         "no store exists yet: the stubbed push carried no seq and the store has none; viewsSeq is null, "
+                         "the key always present")
         # a RE-SENT ready (the shim, on a reconnected socket) gets the caps again — the event a page
         # with writes in flight across the drop keys on
         n = len(self.sent)
@@ -1172,10 +952,10 @@ class Capability(_Wire):
         self.handler._push_one = push
         caps = self._ready()
         s1 = km._views_client()["seq"]
-        self.assertGreater(s1, s0, "the write moved the store on")
-        pushed = next(m for m in self.sent if m["type"] == "tabOrder")
-        self.assertEqual(pushed["views"]["seq"], s0)
-        self.assertEqual(caps["viewsSeq"], s0, "the connect push's blob, not the store's current seq")
+        self.assertGreater(s1, s0, "the write moved the store on after the frame the push served")
+        seqs = [m["views"]["seq"] for m in self.sent if m["type"] == "tabOrder"]
+        self.assertEqual(seqs, [s0], "one strip, the connect push's, under the seq it was built with")
+        self.assertEqual(caps["viewsSeq"], s0, "the seq the push served, not the store's current seq")
         self.assertEqual([m["type"] for m in self.sent if m["type"] in ("tabOrder", "caps")], ["tabOrder", "caps"])
 
     def test_a_pusher_thread_frame_enqueued_between_the_push_and_the_caps_is_not_what_the_caps_names(self):
@@ -1195,7 +975,7 @@ class Capability(_Wire):
         self.handler._push_one = push
         caps = self._ready()
         seqs = [m["views"]["seq"] for m in self.sent if m["type"] == "tabOrder"]
-        self.assertEqual(seqs, [s_new, served["seq"]], "the stale frame went out after the connect push's")
+        self.assertEqual(seqs, [s_new, served["seq"]], "the stale frame went out after the connect push's, before the caps")
         self.assertEqual(caps["viewsSeq"], s_new, "the caps names the connect push's seq, never the pusher thread's")
         self.assertNotEqual(caps["viewsSeq"], served["seq"])
 
@@ -1207,7 +987,7 @@ class Capability(_Wire):
         self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
         self.assertEqual(self._ready()["viewsSeq"], s0,
                          "a push that served no views blob: the store's current seq, the one the next push serves "
-                         "(null left a page's gate armed at a pre-restore seq)")
+                         "(null here left a page's gate armed at a pre-restore seq)")
         km._views_path().unlink()
         km._flags_cache.clear()
         self.assertIsNone(self._ready()["viewsSeq"], "no store at all: nothing has a seq, null")
@@ -1238,8 +1018,8 @@ class Capability(_Wire):
             self.client["sent"] = {}
             caps = self._ready()
             tab = [m for m in self.sent if m["type"] == "tabOrder"]
-            self.assertEqual(len(tab), 1, "the real connect push sent one tabOrder frame")
-            self.assertEqual(tab[0]["views"]["seq"], s0)
+            self.assertEqual(len(tab), 1, "the real connect push's tabOrder frame, the one strip a ready produces")
+            self.assertEqual([t["views"]["seq"] for t in tab], [s0])
             self.assertEqual(caps["viewsSeq"], s0)
             types = [m["type"] for m in self.sent]
             self.assertLess(types.index("tabOrder"), types.index("caps"))
@@ -1250,6 +1030,81 @@ class Capability(_Wire):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);', src)
         self.assertIn('else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);', src)
+
+
+class ReadyStripSource(_Wire):
+    """The tab strip a chat page receives at `ready` comes from the connect push alone: _push lists
+    _chat_tab_sessions (every living session plus the dead ones the user reopened read-only) through the
+    ("taborder",) dedup slot. The ready arm used to send a second strip of its own, built from a second
+    liveness read (living sessions only). The client tears down every tab a later frame omits unless that
+    frame affirms it live (render.ts applyTabOrder, tab-order.ts), so the second strip
+    closed every kept-open tab the first had just listed, at every ready. And once that second strip went
+    through the same slot, a renderer whose socket was served a strip before its listener existed (the
+    pusher fires from accept) received NO strip at `ready` while the strip was unchanged: the connect push's
+    frame deduped against the pre-listener one, and so did the ready arm's own. `ready` now clears the slot
+    with the chat slots (_client_reset_chat_base), so the connect push's frame goes out. Synthetic sids."""
+
+    LIVE = "11111111-2222-3333-4444-555555555511"
+    DEAD = "11111111-2222-3333-4444-555555555512"
+
+    def setUp(self):
+        super().setUp()
+        self.client["app"] = "chat"                  # _push sends the strip to chat clients only
+        self.seed()                                  # a stamped store: every frame's views blob carries a seq
+        # the liveness reads a strip built at ready would make: pinned, so should such a strip return, these
+        # tests fail the same way with or without tmux on this machine
+        saved = (km._tmux_sessions, km._alive_sessions)
+        km._tmux_sessions = lambda: {self.LIVE: {}}
+        km._alive_sessions = lambda now, tmux: [{"sid": self.LIVE, "name": "web", "path": "/nonexistent/live.jsonl"}]
+        self.addCleanup(lambda: setattr(km, "_tmux_sessions", saved[0]))
+        self.addCleanup(lambda: setattr(km, "_alive_sessions", saved[1]))
+
+    def _connect_push(self, order):
+        """The connect push's strip for `order`, the shape _push builds: the listed tabs' meta, LIVE affirmed."""
+        meta = [{"id": sid, "name": "web" if sid == self.LIVE else "api", "color": None} for sid in order]
+        return km._tab_order_frame(order, meta, {self.LIVE})
+
+    def _strips(self):
+        return [m for m in self.sent if m["type"] == "tabOrder"]
+
+    @staticmethod
+    def _torn_down(frames):
+        """The ids the client dismisses across `frames`, by applyTabOrder's rule: an id an earlier frame
+        listed that a later frame's order omits without affirming it live."""
+        listed, torn = set(), []
+        for fr in frames:
+            torn += sorted(listed - set(fr["order"]) - set(fr.get("live") or []))
+            listed |= set(fr["order"])
+        return torn
+
+    def test_a_kept_open_tab_the_connect_push_lists_is_never_omitted_by_a_frame_at_ready(self):
+        frame = self._connect_push([self.LIVE, self.DEAD])
+        self.handler._push_one = lambda c: km._send_client(c, ("taborder",), frame)
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        strips = self._strips()
+        self.assertTrue(strips, "the connect push's strip went out")
+        for fr in strips:
+            self.assertIn(self.DEAD, fr["order"], "every strip at ready lists the kept-open tab: %r" % (fr["order"],))
+        self.assertEqual(self._torn_down(strips), [], "no frame at ready closes a tab the connect push listed")
+
+    def test_ready_clears_the_tab_order_slot_so_the_connect_pushs_frame_goes_out(self):
+        frame = self._connect_push([self.LIVE, self.DEAD])
+        # the pusher fires from accept: this socket was served the strip before the bundle's listener existed
+        self.client["sent"] = {("taborder",): (km._dedup_sig(frame, json.dumps(frame)), time.time())}
+        self.handler._push_one = lambda c: km._send_client(c, ("taborder",), frame)
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        self.assertEqual(self._strips(), [frame],
+                         "exactly one strip, the connect push's, kept-open tab included: the slot was cleared at ready")
+
+    def test_an_unchanged_strip_still_reaches_a_renderer_served_before_its_listener_existed(self):
+        # no kept-open tab: a strip built from the kernel's own liveness read at ready would be identical to
+        # the connect push's, so with the slot armed neither frame went out and the page had no strip at all
+        frame = self._connect_push([self.LIVE])
+        self.client["sent"] = {("taborder",): (km._dedup_sig(frame, json.dumps(frame)), time.time())}
+        self.handler._push_one = lambda c: km._send_client(c, ("taborder",), frame)
+        km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
+        self.assertEqual(self._strips(), [frame],
+                         "the renderer holds nothing: the strip goes out although this socket was sent the same bytes")
 
 
 class SetterReturnsRefusals(unittest.TestCase):
@@ -2645,20 +2500,92 @@ class AckErrorNamesThePostersRefusalFirst(_Wire):
         self.assertTrue(ack(quiet + [mine], []).startswith('"tag-name-00"'))
 
 
-class SentinelConnectPushCaps(_Wire):
-    """The 2026-09-05 review: a chat page's connect push sends no tabOrder frame on a sentinel
-    cycle (_tab_list_tmux returned None — a boot-time tmux collapse with nothing to carry), so the caps
-    frame named null. After a restart over a store restored from an older copy nothing then re-armed the
-    page's gate: the next pusher tabOrder (the store's older seq) was rejected and kept, and no second
-    caps frame ever came. The caps frame now carries the STORE's current seq when the push served no
-    blob — the seq the next push serves — so the client adopts that push."""
+class BlobLessConnectPushCaps(_Wire):
+    """A connect push that serves NO views blob (a pane whose push carries none) leaves the caps frame
+    nothing to name from the served frames. It then carries the STORE's current seq, the seq the
+    next push serves, and is null only with no store at all: with null, after a restart over a store
+    restored from an older copy, nothing re-armed the page's gate — the next pusher tabOrder (the
+    store's older seq) was rejected and kept, and no second caps frame ever came."""
 
     def _ready(self):
-        self.client["ready"] = False
         km.Handler._dispatch_ws(self.handler, {"type": "ready"}, self.client)
         return next(m for m in reversed(self.sent) if m["type"] == "caps")
 
+    def test_a_blob_less_connect_push_names_the_stores_seq_and_the_pushers_next_frame_carries_it(self):
+        import tempfile as _tf
+        from pathlib import Path as _P
+        s0 = self.seed()["seq"]
+        self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
+        n = len(self.sent)                                             # the seed's own ack sits before this
+        caps = self._ready()
+        self.assertEqual([m for m in self.sent[n:] if km._views_seq_of(m) is not None], [],
+                         "no frame of the connect push carried a views blob")
+        self.assertEqual(caps["viewsSeq"], s0, "the store's current seq: the one the next push serves")
+        # the pusher's next tabOrder carries the store's blob under that very seq, which the client's gate
+        # adopts because the caps frame named it (the real pusher, through the test_tab_meta_push.py stubs)
+        tmp = _tf.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        names = _P(tmp) / "names"
+        names.mkdir()
+        (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
+        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
+        try:
+            km.NAMES = names
+            km._tmux_sessions = lambda: {}
+            km._mark_views_dirty = lambda: None
+            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
+                                                         "anchor": SID1}]
+            km._cached_feed = lambda *a, **k: None
+            self.client["app"] = "chat"
+            self.client["sent"] = {}
+            km._push([self.client])
+        finally:
+            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
+        tab = [m for m in self.sent if m["type"] == "tabOrder"]
+        self.assertEqual(len(tab), 1)
+        self.assertEqual(tab[0]["views"]["seq"], s0)
+        self.assertEqual([m["type"] for m in self.sent if m["type"] == "caps"], ["caps"], "no second caps frame: none is needed")
+
+    def test_a_write_between_a_blob_less_push_and_the_caps_frame_moves_what_the_caps_names(self):
+        """With no blob served there is no served blob to name: the caps frame names the store as of the
+        caps frame — the post-write seq, which is what the next push carries (Capability pins the
+        served-blob case, where a write after the last served frame is NOT what the caps names)."""
+        s0 = self.seed()["seq"]
+
+        def push(c):
+            km._send_client(c, ("working",), {"type": "working", "names": []})
+            self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
+        self.handler._push_one = push
+        caps = self._ready()
+        s1 = km._views_client()["seq"]
+        self.assertGreater(s1, s0, "the write moved the store on")
+        self.assertEqual(caps["viewsSeq"], s1)
+
+    def test_a_restored_older_store_after_a_restart_is_what_the_caps_names(self):
+        """The failure's shape end to end on the kernel side: the page holds a seq from before the restore,
+        the restarted kernel (a cold cache, no floor) serves the restored file under its old seq, the
+        connect push carries no blob — and the caps frame names that old seq, which the next pusher frame
+        carries, so the client's rule (adopt a later frame whose seq equals viewsSeq even below the held
+        one) has the event it needs."""
+        s_page = self.seed()["seq"]
+        p = km._views_path()
+        older = json.loads(p.read_text())
+        older["seq"] = s_page - 1000
+        p.write_text(json.dumps(older))
+        km._flags_cache.clear()
+        km._VIEWS_SEQ_FLOOR.clear()                                    # a fresh process: nothing served, no floor
+        self.assertEqual(km._timeline_views()["seq"], s_page - 1000, "served under its old seq, no re-stamp")
+        self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
+        caps = self._ready()
+        self.assertEqual(caps["viewsSeq"], s_page - 1000)
+        self.assertEqual(self.notices, [])
+
     def test_a_sentinel_connect_push_sends_no_views_blob_and_the_caps_frame_names_the_stores_seq(self):
+        """The fork's liveness-collapse guard (_tab_list_tmux, kept beside upstream's text): on a sentinel cycle
+        (_tab_list_tmux returned None, a boot-time tmux collapse with nothing trustworthy to carry) a chat page's
+        connect push sends NO tabOrder frame (an omitted tab is a teardown), so the push serves no views blob and
+        the caps frame names the store's current seq, the seq the next push serves; once the guard recovers the
+        pusher's next tabOrder carries the store's blob under that very seq and no second caps frame is needed."""
         import tempfile as _tf
         from pathlib import Path as _P
         s0 = self.seed()["seq"]
@@ -2684,7 +2611,7 @@ class SentinelConnectPushCaps(_Wire):
             self.assertEqual([m["type"] for m in self.sent[n:] if m["type"] == "tabOrder"], [],
                              "a sentinel cycle sends no tabOrder frame (an omitted tab is a teardown)")
             self.assertEqual([m for m in self.sent[n:] if km._views_seq_of(m) is not None], [],
-                             "…and no other frame of the connect push carried a views blob")
+                             "and no other frame of the connect push carried a views blob")
             self.assertEqual(caps["viewsSeq"], s0, "the store's current seq: the one the next push serves")
             # the guard recovers: the pusher's next tabOrder carries the store's blob under that very seq,
             # which the client's gate adopts because the caps frame named it
@@ -2698,46 +2625,12 @@ class SentinelConnectPushCaps(_Wire):
         finally:
             (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed, km._tab_list_tmux) = saved
 
-    def test_a_write_between_a_blob_less_push_and_the_caps_frame_moves_what_the_caps_names(self):
-        """With no blob served there is no served blob to name: the caps frame names the store as of the
-        caps frame — the post-write seq, which is what the next push carries (Capability pins the
-        served-blob case, where a write after the connect push's own blob is NOT what the caps names)."""
-        s0 = self.seed()["seq"]
-
-        def push(c):
-            km._send_client(c, ("working",), {"type": "working", "names": []})
-            self.assertIsNone(km._edit_tag(tid="gA", add=[SID2])[1])
-        self.handler._push_one = push
-        caps = self._ready()
-        s1 = km._views_client()["seq"]
-        self.assertGreater(s1, s0, "the write moved the store on")
-        self.assertEqual(caps["viewsSeq"], s1)
-
-    def test_a_restored_older_store_after_a_restart_is_what_the_caps_names(self):
-        """The failure's shape end to end on the kernel side: the page holds a seq from before the restore,
-        the restarted kernel (a cold cache, no floor) serves the restored file under its old seq, the
-        sentinel connect push carries no blob — and the caps frame names that old seq, which the next
-        pusher frame carries, so the client's rule (adopt a later frame whose seq equals viewsSeq even
-        below the held one) has the event it needs."""
-        s_page = self.seed()["seq"]
-        p = km._views_path()
-        older = json.loads(p.read_text())
-        older["seq"] = s_page - 1000
-        p.write_text(json.dumps(older))
-        km._flags_cache.clear()
-        km._VIEWS_SEQ_FLOOR.clear()                                    # a fresh process: nothing served, no floor
-        self.assertEqual(km._timeline_views()["seq"], s_page - 1000, "served under its old seq, no re-stamp")
-        self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
-        caps = self._ready()
-        self.assertEqual(caps["viewsSeq"], s_page - 1000)
-        self.assertEqual(self.notices, [])
-
 
 class WebBootWiring(_Wire):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two
     bridge sets equal). Reads the kernel's source only; a _Wire so it runs under a state root of its
-    own like every class here, which keeps OwnStateRoot's exemption set empty."""
+    own like every other class in the module."""
 
     def test_the_bridge_and_the_ack_dispatch(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()

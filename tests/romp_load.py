@@ -1,13 +1,13 @@
 """The test suite's file-path importer: `from romp_load import load_source`.
 
-Every test module loads the code under test by path through the stable bin/ names
-(`load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))`). Until 2026-09 that was
-`SourceFileLoader(...).load_module()`, which Python 3.15 removes; the replacement is
-kernel/loadsource.py, and this module is how a test reaches it without a package import. It is
-importable under every way the suite runs: pytest and `python -m unittest tests.test_x` import
-the tests package first, whose __init__ registers this module under the bare name; a direct
-`python tests/test_x.py` (or `cd tests && python -m unittest test_x`) has this directory on
-sys.path already.
+A test module loads the code under test by path through the stable bin/ names
+(`load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))`). The older form,
+`SourceFileLoader(...).load_module()`, emits a DeprecationWarning on Python 3.10 and later and its
+removal is documented for 3.15; the replacement is kernel/loadsource.py, and this module is how a
+test reaches it without a package import. It is importable under every way the suite runs: pytest
+and `python -m unittest tests.test_x` import the tests package first, whose __init__ registers this
+module under the bare name; a direct `python tests/test_x.py` (or `cd tests && python -m unittest
+test_x`) has this directory on sys.path already.
 
 The semantics a test may lean on are load_module()'s, kept on purpose: a name already in
 sys.modules is re-executed into the SAME module object, so a test that loads `romp_judge` and then

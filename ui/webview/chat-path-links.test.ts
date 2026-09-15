@@ -7,16 +7,16 @@
 // every shape gate it had and merely requires map membership; the map's value is what a click opens,
 // so a unique `sub/deep.py` mention opens the real kernel/sub/deep.py and hover shows that target.
 // Zero or several candidates → absent from the map → prose (a silently-wrong link is worse than no
-// link — the user's call). render.ts has no jsdom harness → source pins + an executed tokenizer
-// parity check over the shared fixture (the kernel side runs the same fixture in
-// tests/test_path_links.py).
+// link). The matcher lives in path-links.ts (lifted out of render.ts, which binds the click per span); neither
+// has a jsdom harness → source pins + an executed tokenizer parity check over the shared fixture (the kernel
+// side runs the same fixture in tests/test_path_links.py; the walk itself runs in path-links.test.ts).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher, lifted out of render.ts
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
 
@@ -40,16 +40,20 @@ test("membership in pathLinks gates the link, and the map's value is the OPEN ta
   assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks, walkOpts\)/);
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
-  // (a surface with its own place, the file viewer, hands the walk a `resolve` for the token or the fixed target; the chat passes none)
-  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(opts && opts\.resolve \? opts\.resolve\(fixed \?\? tok\) : \(fixed \?\? tok\)\);/);
-  assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
+  // (a surface with its own place, the file viewer, hands the walk a `resolve` for the target, a URI's decoded path and the fixed token alike; the chat passes none)
+  assert.match(LINKS, /const target = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);\n\s*const open = opts && opts\.resolve \? opts\.resolve\(target\) : target;/, "the chat passes no resolve: a URI\'s own path, the fixed target or the token, as before");
+  assert.match(LINKS, /const link = openPathLink\(tok, open, !isUri, sid\);/, "a URI is not a relative path; everything else is; the link carries the session (data-sid)");
   assert.match(LINKS, /list\.push\(\{ start, end: last, el: link \}\);/);   // the link takes the token's place in its node (rewriteSpan)
   assert.match(LINKS, /a\.setAttribute\("title", "Open " \+ open\);/);
+  // …and the chat binds the click per span, off the span's own data (the walk marks; render.ts acts: openLinkedPath reads the
+  // path, the rel bit and the session the span names; the walk takes the session and the todo surfaces' options)
+  assert.match(RENDER, /const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
+  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts\)\) \{\n\s*bind\(link\);/);
 });
 
 test("file:// URIs are explicit absolute paths — never gated on the map", () => {
   // both guards above test !isUri first, so a file:// token can't be dropped by the map…
-  assert.match(LINKS, /const isUri = isFileUri\(tok\);/);   // a LOCAL URI (an empty authority, or localhost); file://host/path is prose (2026-09-07)
+  assert.match(LINKS, /const isUri = isFileUri\(tok\);/);   // a LOCAL file:// URI (an empty authority or localhost); file://host/x is prose
   // …and the kernel never puts file:// tokens in it
   assert.ok(KERNEL.includes('if not t.lower().startswith("file://")'), "kernel skips file:// tokens");
 });

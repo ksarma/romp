@@ -3724,8 +3724,7 @@ class NamesSnapshotMemoRace(unittest.TestCase):
 
 
 class CodexRuntimeSelection(unittest.TestCase):
-    # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
-    # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (a standing fork ruling): patch that.
+    # The kernel loads codex_backend.py through load_source (kernel/loadsource.py): patch that.
     def test_path_codex_does_not_override_managed_runtime(self):
         fake_mod = mock.Mock()
         with mock.patch.object(km, "_codex_backend", None), \

@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher, lifted out of render.ts
 
 test("the linkifier matches file:// URIs AND bare paths, and gates each token kind", () => {
   // one finder covers the file: scheme, the slashed-path alternative, and the bare-filename alternative
@@ -22,7 +22,7 @@ test("the linkifier matches file:// URIs AND bare paths, and gates each token ki
   assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(span\.inCode && looksLikeBareFileName\(tok\)\)\) continue;/);   // inCode is the node's the token lies in (textUnits)
   // the kernel's pathLinks verdict then narrows further, and its value is the OPEN target — pinned
   // in chat-path-links.test.ts; here we pin that the link opens `open`, whatever chose it
-  assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
+  assert.match(LINKS, /const link = openPathLink\(tok, open, !isUri, sid\);/);   // a URI is not a relative path; everything else is, and the link carries the session (data-sid)
   assert.match(LINKS, /list\.push\(\{ start, end: last, el: link \}\);/);   // the link takes the token's place in its node (rewriteSpan)
 });
 

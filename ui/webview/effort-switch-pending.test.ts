@@ -33,35 +33,41 @@ test("a live reconnect has its own ChatEvent kind, dispatched to renderReconnect
   assert.ok(recon > 0 && compact > 0 && recon < compact);
 });
 
-test("renderReconnecting draws the accent loader dots + a 'Reloading session' line naming the effort", () => {
+test("renderReconnecting is a slim live SESSION notice: the accent loader dots in its glyph slot, naming the effort", () => {
+  // 2026-09-08 (the notice-vocabulary pass): the ONE builder, romp severity (accent) for an in-flight romp operation
   assert.match(RENDER, /function renderReconnecting\(ev: Extract<ChatEvent, \{ kind: "reconnecting" \}>\)/);
-  assert.match(RENDER, /el\("div", "turn turn-reconnecting"\)/);
-  assert.match(RENDER, /line\.appendChild\(metaDots\(\)\);/);   // the SAME pulsing accent dots as the badge
-  assert.match(RENDER, /Reloading session: applying \$\{ev\.effort\} effort…/);   // a colon, not an em dash (review round 10)
+  assert.match(RENDER, /notice\(\{ src: "session", glyph: noticeLiveGlyph\(metaDots\(\)\), sev: "romp", gist: reconnectingGist\(ev\.effort\), live: true,/);
+  assert.match(RENDER, /Reloading session — applying \$\{effort\} effort…/);
   assert.match(RENDER, /"Reloading session…"/);                // effort-less fallback
-  assert.match(CSS, /\.turn-reconnecting \.dot \{[^}]*background: var\(--accent\)/);   // accent (loading), not a status color
+  assert.match(CSS, /\.notice-sev-romp\s+\{ --notice-rail: var\(--accent\)/);   // accent (loading), not a status color
 });
 
 test("a pick HELD for live work renders a waiting line, not the reloading animation", () => {
   // the kernel holds a pick while the session's subagents and background tasks run (the reload would
-  // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the element then
+  // kill them) and carries the hold on the event (`held`) and the status (`pickHeld`); the notice then
   // says which pick waits and on what, with no loader dots. The words come from pick-held.ts (executed
   // in pick-held.test.ts, per kind and per state); render.ts is pinned to take them from there
   assert.match(RENDER, /import \{ pickHeldLine, pickHeldTitle, badgeHeldTip, heldRowValue, heldMenuMarks, reloadingTitle, switchingTitle, RUNNING_TAG, type PickHeld \} from "\.\/pick-held";/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null;/);
   assert.match(RENDER, /effortPending\?: boolean; pickHeld\?: PickHeld \| null;/);
-  assert.match(RENDER, /if \(ev\.held\) \{/);
-  assert.match(RENDER, /txt\.textContent = pickHeldLine\(ev\.held\);/);
-  assert.match(RENDER, /line\.title = pickHeldTitle\(ev\.held\);/);
-  assert.doesNotMatch(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/,
-    "the round-1 copy named the effort for every held kind");
-  // the dots and the reloading words live in the else branch: a hold shows neither
+  // the held state is its own notice() exit (the notice-vocabulary shape, 2026-09-08): a still glyph and no `live`
+  // mark, the hold's words as the gist and the tip, the held class kept as the sheet's hook
   const start = RENDER.indexOf("function renderReconnecting(");
   const fn = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 1));   // this function alone
-  const held = fn.indexOf("if (ev.held) {"), els = fn.indexOf("} else {");
-  assert.ok(held > 0 && els > held);
-  assert.ok(fn.indexOf("line.appendChild(metaDots());") > els, "no loader dots while held");
-  assert.ok(fn.indexOf("Reloading session") > els, "no reload claim while held");
+  const heldCall = fn.match(/if \(ev\.held\) return notice\(\{([\s\S]*?)\}\);/);
+  assert.ok(heldCall, "the held branch is a notice() exit of its own");
+  assert.match(heldCall![1], /glyph: "session"/, "a still glyph: no loader dots while held");
+  assert.match(heldCall![1], /gist: pickHeldLine\(ev\.held\)/);
+  assert.match(heldCall![1], /tip: pickHeldTitle\(ev\.held\)/);
+  assert.match(heldCall![1], /cls: "turn-reconnecting turn-reconnecting-held"/);
+  assert.doesNotMatch(heldCall![1], /live: true|noticeLiveGlyph|metaDots|Reloading session/, "no reload claim and no dots while held");
+  assert.doesNotMatch(RENDER, /Applying \$\{ev\.effort\} effort when the background work finishes/,
+    "the round-1 copy named the effort for every held kind");
+  // the dots and the reloading words live in the exits after the held one: a hold shows neither
+  const held = fn.indexOf("if (ev.held) return notice(");
+  assert.ok(held > 0);
+  assert.ok(fn.indexOf("noticeLiveGlyph(metaDots())") > held, "no loader dots while held");
+  assert.ok(fn.indexOf("reconnectingGist(ev.effort)") > held, "no reload claim while held");
 });
 
 test("a held kind's badge shows the running value with a pending mark: no loader dots, no dim pulse", () => {
@@ -229,54 +235,65 @@ test("executed: a FakeEl inspects as its own projection: the edges (children, pa
   assert.equal(root.firstElementChild, kid); assert.equal(root.querySelector(".kid"), kid);
 });
 
-test("executed: the reloading line's hover title names the change the reload applies, per kind", () => {
-  // round 7's gate emits the reloading element for a fast or mode reload too, and its title said "applying the effort
+test("executed: the reloading notice's tip names the change the reload applies, per kind; the held and switching states keep their own words", () => {
+  // round 7's gate emits the reloading notice for a fast or mode reload too, and its title said "applying the effort
   // change" for all of them (review round 9, correctness-2 and ui-2). The kernel's event carries the pending kinds
   // (picks: effort, mode, fast) and pick-held.ts words the title from them (reloadingTitle, executed per kind in
-  // pick-held.test.ts); renderReconnecting is lifted here and run against one event per variant
+  // pick-held.test.ts); renderReconnecting is lifted here with reconnectingGist (its gist) and run against one event
+  // per variant over a notice() stub that records the spec each exit hands it (the notice-vocabulary shape, 2026-09-08)
   const requireCjs = createRequire(__filename);
   const start = RENDER.indexOf("function renderReconnecting(");
   const end = RENDER.indexOf("\n}\n", start) + 3;
-  assert.ok(start > 0 && end > start, "the slice anchors moved; re-anchor");
-  const js = requireCjs("esbuild").transformSync(RENDER.slice(start, end), { loader: "ts" }).code;
-  const mk = (tag: string, cls?: string) => new FakeEl(tag, cls);
-  const render = new Function("el", "dot", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", "switchingTitle", js + "\nreturn renderReconnecting;")(
-    mk, () => mk("span", "dot"), () => mk("span", "meta-dots"), pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle);
-  const line = (ev: object) => render(ev).querySelector(".reconnecting-line") as FakeEl & { title?: string };
+  const gistLine = RENDER.match(/^function reconnectingGist\(effort\?: string\): string \{.*\}$/m);
+  assert.ok(start > 0 && end > start && gistLine, "the slice anchors moved; re-anchor");
+  const js = requireCjs("esbuild").transformSync(gistLine![0] + "\n" + RENDER.slice(start, end), { loader: "ts" }).code;
+  type Spec = { src: string; glyph: string | FakeEl; sev: string; gist: string; live?: boolean; cls?: string; tip?: string };
+  const specs: Spec[] = [];
+  const notice = (sp: Spec) => { specs.push(sp); return new FakeEl("div", "turn turn-notice " + (sp.cls || "")); };
+  const render = new Function("notice", "noticeLiveGlyph", "metaDots", "pickHeldLine", "pickHeldTitle", "reloadingTitle", "switchingTitle", js + "\nreturn renderReconnecting;")(
+    notice, (inner: FakeEl) => new FakeEl("span", "notice-glyph notice-glyph-live").appendChild(inner).parent!, () => new FakeEl("span", "meta-dots"),
+    pickHeldLine, pickHeldTitle, reloadingTitle, switchingTitle);
+  const spec = (ev: object): Spec => { render(ev); return specs[specs.length - 1]; };
+  const dots = (sp: Spec) => typeof sp.glyph !== "string" && !!sp.glyph.querySelector(".meta-dots");
   const tail = ": reloading the session (it re-reads the transcript); any message you send lands once it's back";
-  const effort = line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
-  assert.equal(effort.title, "applying the effort change" + tail);
-  assert.equal(effort.textContent, "Reloading session: applying max effort\u2026");   // the visible text, pinned above (a colon since round 10)
-  const fast = line({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
-  assert.equal(fast.title, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
-  assert.equal(fast.textContent, "Reloading session…");
-  const mode = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"] });
-  assert.equal(mode.title, "applying the permission mode change" + tail, "a mode reload names the permission mode");
-  assert.equal(line({ kind: "reconnecting", effort: "max", held: null, picks: ["effort", "fast"] }).title,
+  const effort = spec({ kind: "reconnecting", effort: "max", held: null, picks: ["effort"] });
+  assert.equal(effort.tip, "applying the effort change" + tail);
+  assert.equal(effort.gist, "Reloading session \u2014 applying max effort\u2026");   // the visible text, pinned above (upstream's reconnectingGist)
+  assert.equal(effort.live, true); assert.ok(dots(effort), "the dots: romp is working");
+  assert.equal(effort.cls, "turn-reconnecting");
+  const fast = spec({ kind: "reconnecting", effort: "", held: null, picks: ["fast"] });
+  assert.equal(fast.tip, "applying the fast mode change" + tail, "a fast reload names fast mode, not effort");
+  assert.equal(fast.gist, "Reloading session\u2026");
+  const mode = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"] });
+  assert.equal(mode.tip, "applying the permission mode change" + tail, "a mode reload names the permission mode");
+  assert.equal(spec({ kind: "reconnecting", effort: "max", held: null, picks: ["effort", "fast"] }).tip,
     "applying the effort and fast mode changes" + tail, "two picks riding one reload");
   // an older kernel's event carries no picks: its effort text still names effort; otherwise the change is unnamed
-  assert.equal(line({ kind: "reconnecting", effort: "max", held: null }).title, "applying the effort change" + tail);
-  assert.equal(line({ kind: "reconnecting", effort: "", held: null }).title, "applying the settings change" + tail);
-  // held: the hold's own words, no reload claim
+  assert.equal(spec({ kind: "reconnecting", effort: "max", held: null }).tip, "applying the effort change" + tail);
+  assert.equal(spec({ kind: "reconnecting", effort: "", held: null }).tip, "applying the settings change" + tail);
+  // held: the hold's own words, no reload claim, a still glyph and no live mark
   const hold = { surfaces: ["fast"], subagents: 1, tasks: 0 };
-  const held = line({ kind: "reconnecting", effort: "", held: hold, picks: [] });
-  assert.equal(held.title, pickHeldTitle(hold));
-  assert.equal(held.textContent, pickHeldLine(hold));
-  assert.doesNotMatch(held.title!, /reloading the session/);
+  const held = spec({ kind: "reconnecting", effort: "", held: hold, picks: [] });
+  assert.equal(held.tip, pickHeldTitle(hold));
+  assert.equal(held.gist, pickHeldLine(hold));
+  assert.doesNotMatch(held.tip!, /reloading the session/);
+  assert.equal(held.glyph, "session", "a still glyph, not the loader dots");
+  assert.ok(!held.live, "no live mark while held");
+  assert.equal(held.cls, "turn-reconnecting turn-reconnecting-held");
   // the landing's live switch in flight (the event's `switching`; review round 10): the mode change is being applied and
-  // nothing reloads, so the line says so, with the dots, and the title names the reload that follows for the other picks
-  const sw = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: true });
-  assert.equal(sw.textContent, "Applying the permission mode change…");
-  assert.equal(sw.title, switchingTitle(["mode"]));
-  assert.doesNotMatch(sw.title!, /reloading the session/, "nothing reloads during the switch alone");
-  assert.ok(sw.querySelector(".meta-dots"), "the dots: romp is working");
-  const sw2 = line({ kind: "reconnecting", effort: "", held: null, picks: ["mode", "fast"], switching: true });
-  assert.equal(sw2.textContent, "Applying the permission mode change…");
-  assert.match(sw2.title!, /then reloading the session for the fast mode change/);
-  assert.equal(line({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: false }).textContent, "Reloading session…",
-    "a mode reload with no switch in flight keeps the reloading line");
-  assert.match(RENDER, /line\.title = reloadingTitle\(ev\.picks, ev\.effort\);/);
-  assert.match(RENDER, /line\.title = switchingTitle\(ev\.picks\);/);
+  // nothing reloads, so the gist says so, with the dots, and the tip names the reload that follows for the other picks
+  const sw = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: true });
+  assert.equal(sw.gist, "Applying the permission mode change\u2026");
+  assert.equal(sw.tip, switchingTitle(["mode"]));
+  assert.doesNotMatch(sw.tip!, /reloading the session/, "nothing reloads during the switch alone");
+  assert.equal(sw.live, true); assert.ok(dots(sw), "the dots: romp is working");
+  const sw2 = spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode", "fast"], switching: true });
+  assert.equal(sw2.gist, "Applying the permission mode change\u2026");
+  assert.match(sw2.tip!, /then reloading the session for the fast mode change/);
+  assert.equal(spec({ kind: "reconnecting", effort: "", held: null, picks: ["mode"], switching: false }).gist, "Reloading session\u2026",
+    "a mode reload with no switch in flight keeps the reloading notice");
+  assert.match(RENDER, /tip: reloadingTitle\(ev\.picks, ev\.effort\)/);
+  assert.match(RENDER, /tip: switchingTitle\(ev\.picks\)/);
   assert.match(RENDER, /kind: "reconnecting"; effort\?: string; held\?: PickHeld \| null; picks\?: string\[\]; switching\?: boolean;/);
   assert.doesNotMatch(RENDER, /applying the effort change \u2014 reloading/, "the round-8 title, one sentence for every kind");
 });

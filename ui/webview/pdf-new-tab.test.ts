@@ -106,17 +106,16 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
     "the middle PRESS is cancelled: autoscroll (Firefox, Edge) starts on mousedown and would swallow the auxclick");
   assert.match(pf, /box\.onauxclick = \(ev\) => \{ if \(ev\.button !== 1\) return; ev\.stopPropagation\(\); openPdf\(path, sid, ev\); \};/,
     "a middle-click reaches the card as auxclick, never as click");
-  // the opener itself: the kind check is its own; the tab is openFileTab's, the ONE window.open behind every own-tab gesture
-  // (the viewer's links hand it any file; file-view-links.test.ts executes it) — synchronous, two-argument, the gesture and
-  // the handle both matter
-  const opener = PREVIEW.slice(PREVIEW.indexOf("export function openPdfTab"), PREVIEW.indexOf("export function openPdf("));
-  assert.match(opener, /if \(previewKind\(path\) !== "pdf"\) return false;\n\s*return openFileTab\(path, sid\);/, "the kind check is the opener's own; the tab is the shared opener's");
-  const tab = PREVIEW.slice(PREVIEW.indexOf("export function openFileTab"), PREVIEW.indexOf("// LOADING CUE"));
-  assert.match(tab, /if \(!canPreview\(\)\) return false;/, "the VS Code webview has no tabs and no kernel origin");
-  assert.match(tab, /const w = window\.open\(fileUrl\(path, sid\), "_blank"\);/);
-  assert.doesNotMatch(tab, /"noopener/, "the noopener FEATURE makes window.open return null on success — the block signal would be lost");
-  assert.match(tab, /if \(!w\) return false;[^\n]*\n\s+try \{ w\.opener = null; \}/, "…so the link is severed on the handle instead, before anything else");
-  assert.doesNotMatch(opener + tab, /await|\.then\(/, "the open happens inside the click gesture, never after a fetch");
+  // the opener itself: synchronous, two-argument window.open — the gesture and the handle both matter. The tab is openFileTab's
+  // (any file, off the kernel's /file route; the viewer's links go through it too), and openPdfTab puts the kind check in front
+  const pdf = PREVIEW.slice(PREVIEW.indexOf("export function openPdfTab"), PREVIEW.indexOf("export function openPdf("));
+  assert.match(pdf, /if \(previewKind\(path\) !== "pdf"\) return false;\n\s*return openFileTab\(path, sid\);/, "the kind check is the PDF opener's own; the tab is the file opener's");
+  const opener = PREVIEW.slice(PREVIEW.indexOf("export function openFileTab"), PREVIEW.indexOf("export function openPdfTab"));
+  assert.match(opener, /if \(!canPreview\(\)\) return false;/, "the web-only gate");
+  assert.match(opener, /const w = window\.open\(fileUrl\(path, sid\), "_blank"\);/);
+  assert.doesNotMatch(opener, /"noopener/, "the noopener FEATURE makes window.open return null on success — the block signal would be lost");
+  assert.match(opener, /if \(!w\) return false;[^\n]*\n\s+try \{ w\.opener = null; \}/, "…so the link is severed on the handle instead, before anything else");
+  assert.doesNotMatch(opener, /await|\.then\(/, "the open happens inside the click gesture, never after a fetch");
   // the viewer: the ONE place a clicked file's gesture is read — openFileClick — and the plain open below it
   // never opens a tab (a relayed viewFile, a Reload: no gesture, the viewer)
   // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
@@ -138,7 +137,7 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
     "the middle PRESS on a file row is cancelled so autoscroll cannot swallow the auxclick");
   assert.match(BROWSE, /list\.addEventListener\("auxclick", \(ev\) => \{[\s\S]*?if \(ev\.button !== 1\) return;[\s\S]*?const row = fileRowOf\(ev\);[\s\S]*?onAct\(row, ev\);/);
   assert.match(BROWSE, /if \(active\) \{ e\.preventDefault\(\); onAct\(active, e\); \}/, "Enter on a row carries its modifiers: Cmd/Ctrl+Enter on a PDF → its own tab");
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \?\? undefined\); return; \}/);   // the host's open, when it has one, sits UNDER the gesture (browse-route.test.ts)
   // the chat's click site reads the gesture BEFORE any relay, on every route: the shell relay (a click the fork routes
   // to the Files or feed pane) is handed to openFileClick as the plain click's opener, so a modified click on a PDF
   // is the tab whichever pane the route names (executed below)

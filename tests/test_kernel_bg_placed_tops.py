@@ -1,29 +1,29 @@
-"""The placed-launch memo behind the awaiting lift and the feed's background-task classification
-(performance plan 4, P16 Part B): _bg_placed_tops answers {launch tool_use id: owning top} from the
-transcript segment holding the launch and the goal store's placement for it.
+"""The placed-launch memo behind the awaiting lift and the feed's background-task classification:
+_bg_placed_tops answers {launch tool_use id: owning top} from the transcript segment holding the launch
+and the goal store's placement for it.
 
 The memo is keyed on OBJECT identity, not on a stat: _parse returns one object per transcript version and
 jd.load_goals_shared one FrozenStore per store version, so (parse object, store object) IS the version pair,
 and a per-sid map answers every launch id asked so far under that pair (the lift asks with every task id,
 the feed with the live ids, often none: one map answers both, and the feed's empty ask never evicts the
-lift's fill). Placements are read through a per-store index
-(_placement_index) that gives exactly what jd._placement_of's scan gives, for the four suffixes the walk
-tried. A store that is not the shared cache's FrozenStore (a writer's private copy, no file, the cache off) is
-computed on and never published. Entries are evicted when a session with no live ids asks after its
-transcript was re-parsed (the pinned parse is stale) and when its sid leaves the alive set. SYNTHETIC
-fixtures only: placeholder sids, invented goal text and prompts."""
+lift's fill). Placements are read through a per-store index (_placement_index) that gives exactly what
+jd._placement_of's scan gives, for the four suffixes the walk tried. A store that is not the shared cache's
+FrozenStore (a writer's private copy, no file, the cache off) is computed on and never published. Entries
+are evicted when a session with no live ids asks after its transcript was re-parsed (the pinned parse is
+stale) and when its sid leaves the alive set. SYNTHETIC fixtures only: placeholder sids, invented goal text
+and prompts."""
 import json
 import os
 import tempfile
 import unittest
-from pathlib import Path
 from romp_load import load_source
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# Hermetic state BEFORE the loads: they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
@@ -125,8 +125,16 @@ class PlacedTops(unittest.TestCase):
     def _delta(self, block, key):
         return self._stats()[block][key] - self.s0[block][key]
 
+    def _spy(self, name):
+        """Count the calls of jd.<name> for the rest of the test; the real function still runs."""
+        calls, real = [], getattr(jd, name)
+        setattr(jd, name, lambda fsid: (calls.append(fsid), real(fsid))[1])
+        self.addCleanup(setattr, jd, name, real)
+        return calls
+
     # ---- one map for the lift's all-ids ask and the feed's live-ids ask ----
     def test_the_lifts_all_ids_and_the_feeds_live_ids_share_one_read_and_one_walk(self):
+        writer = self._spy("load_goals")
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2", "t3"]),
                          {"t1": TOP_A, "t2": TOP_B, "t3": TOP_B}, "sub-goal placement resolves to its top")
         self.assertEqual((self._delta("bg", "miss"), self._delta("bg", "walk"), self._delta("bg", "idx_build"),
@@ -136,10 +144,38 @@ class PlacedTops(unittest.TestCase):
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2", "t3"]), {"t1": TOP_A, "t2": TOP_B, "t3": TOP_B})
         self.assertEqual((self._delta("bg", "hit"), self._delta("bg", "walk"), self._delta("bg", "idx_build")), (2, 1, 1),
                          "both later asks were answered from the map: no second walk, no second index")
-        self.assertEqual(self._delta("sh", "hit"), 2, "…and the two shared reads were cache hits")
+        self.assertEqual(self._delta("sh", "hit"), 2, "...and the two shared reads were cache hits")
+        self.assertEqual(writer, [], "the writer's loader was never asked")
         self.assertEqual(self._delta("io", "loads"), 0, "no writer-style load anywhere")
         self.assertEqual(km._bg_tops_report()["entries"], 1)
         self.assertIsInstance(km._BG_TOPS_CACHE[SID][1], jd.FrozenStore, "the entry is keyed on the shared view")
+
+    def test_the_feeds_live_ids_ask_then_the_lifts_all_ids_ask_fill_one_map_incrementally(self):
+        # the other order: the feed asks first with the live ids, then the lift with every id the
+        # transcript records. The lift's ask resolves only the ids the map does not hold yet, under
+        # the same (parse, store) pair, and the feed's next ask is a hit on the widened map
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t2"]), {"t2": TOP_B})
+        self.assertEqual((self._delta("bg", "miss"), self._delta("bg", "resolve"), self._delta("bg", "walk")), (1, 1, 1))
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2", "t3"]), {"t1": TOP_A, "t2": TOP_B, "t3": TOP_B})
+        self.assertEqual((self._delta("bg", "miss"), self._delta("bg", "resolve"), self._delta("bg", "walk")), (2, 3, 2),
+                         "only the two ids the map lacked were resolved, with one walk for them")
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t2"]), {"t2": TOP_B})
+        self.assertEqual(self._delta("bg", "hit"), 1, "the feed's next ask is answered from the widened map")
+        self.assertEqual(km._bg_tops_report()["entries"], 1)
+
+    def test_a_fill_publishes_a_new_tuple_and_never_writes_into_the_old_map(self):
+        # the pusher and the handler threads both run this: a reader holding the entry it read keeps a
+        # consistent (parse, store, map), so a fill that widens the map copies it and publishes a new
+        # tuple under the same pair, and the old tuple is left as its holder read it
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1"]), {"t1": TOP_A})
+        ent1 = km._BG_TOPS_CACHE[SID]
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2"]), {"t1": TOP_A, "t2": TOP_B})
+        ent2 = km._BG_TOPS_CACHE[SID]
+        self.assertIsNot(ent2, ent1, "a fill publishes a new tuple")
+        self.assertIsNot(ent2[2], ent1[2], "...holding a new map")
+        self.assertEqual(set(ent1[2]), {"t1"}, "the old map is as its holder read it")
+        self.assertEqual(set(ent2[2]), {"t1", "t2"})
+        self.assertTrue(ent2[0] is ent1[0] and ent2[1] is ent1[1], "the same (parse, store) pair")
 
     def test_an_unresolvable_launch_is_absent_and_the_walk_is_counted_negative(self):
         out = km._bg_placed_tops(SID, self.path, ["t1", "t-never-dispatched"])
@@ -154,12 +190,13 @@ class PlacedTops(unittest.TestCase):
         placements = {"u:100:h1": "n1",                    # plain
                       "u:200:h2#live": "n2",               # a live-twin key
                       "u:300:h3#p": None,                  # a RETIRED planned placement (None-valued)
-                      "u:301:h3#d": "n3",                  # …and its decision-phase twin
+                      "u:301:h3#d": "n3",                  # ...and its decision-phase twin
                       "u:400:h4": None, "u:401:h4": "n4",  # two drifted ids for one segment: first wins
                       "odd-key": "n5",                     # a non-conforming id passes through _seg_key
                       "u:500:h6#d": "n6"}
         idx = km._placement_index(placements)
         probes = ["u:100:h1", "u:150:h1", "u:200:h2", "u:250:h2", "u:300:h3", "u:350:h3", "u:400:h4",
+                  "u:401:h4",                           # the exact key that is NOT first in seg-key order
                   "u:402:h4", "odd-key", "u:500:h6", "u:600:none", "u:300:h3#p", "u:301:h3#d"]
         for seg in probes:
             for suf in ("", "#live", "#p", "#d"):
@@ -175,7 +212,7 @@ class PlacedTops(unittest.TestCase):
                     break
             self.assertEqual(via, scan, "%s: the first truthy suffix match, as the walk picked it" % seg)
         self.assertEqual(idx["u:h4"], None, "setdefault: the first drifted key's value stands, None included")
-        self.assertEqual(jd._placement_of(placements, "u:402:h4"), None, "…exactly as the scan answers")
+        self.assertEqual(jd._placement_of(placements, "u:402:h4"), None, "...exactly as the scan answers")
 
     # ---- versions: publishes, journal appends, a new parse ----
     def test_a_save_goals_publish_moves_the_version_and_rebuilds_the_index_once(self):
@@ -202,15 +239,15 @@ class PlacedTops(unittest.TestCase):
             f.write(json.dumps(_prompt("p3", T0 + 200, "one more thing")) + "\n")
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1"]), {"t1": TOP_A})
         self.assertEqual(self._delta("bg", "miss"), 2, "the parse moved: recomputed under the new pair")
-        self.assertEqual(self._delta("bg", "idx_build"), 1, "…on the same store object: the index stands")
+        self.assertEqual(self._delta("bg", "idx_build"), 1, "...on the same store object: the index stands")
         self.assertEqual(km._bg_tops_report()["entries"], 1)
 
-    # ---- the amendment's two races: identity, not a stat ----
+    # ---- the two races a stat key loses: identity, not a stat ----
     def test_a_publish_between_a_read_and_the_ask_is_served_for_the_object_in_hand_then_fresh(self):
-        """The stat-keyed design recorded the version on disk AFTER the read: a publish between the two
-        filed the new version's identity with the old placements, served until the store next moved (and
-        the lift's time window then claimed another card's launch as its own). Keyed on the object, the
-        answer is the object's, and the next real read is a new object."""
+        """A stat key taken after the read would file, for a publish landing between the two, the new
+        version's identity with the old placements, served until the store next moves (and the lift's
+        time window then claims another card's launch as its own). Keyed on the object, the answer is
+        the object's, and the next real read is a new object."""
         f1 = jd.load_goals_shared(SID)                     # V1: t1's segment under SUB_A (top TOP_A)
         self._save({_drift(self.seg1): TOP_B, _drift(self.seg2): TOP_B})   # V2 published under it
         saved = jd.load_goals_shared
@@ -246,7 +283,7 @@ class PlacedTops(unittest.TestCase):
         w = jd.load_goals(SID)
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2"], store=w), {"t1": TOP_A, "t2": TOP_B})
         self.assertEqual(km._bg_tops_report()["entries"], 0, "a private copy is not a version: no entry")
-        self.assertNotIn(SID, km._PLACEMENT_IDX, "…and no index keyed on it")
+        self.assertNotIn(SID, km._PLACEMENT_IDX, "...and no index keyed on it")
         self.assertEqual(self._delta("bg", "idx_build"), 1, "the index was built for the call")
         self.assertEqual(self._delta("sh", "miss") + self._delta("sh", "hit"), 0, "the caller's store: no shared read")
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1"]), {"t1": TOP_A})
@@ -255,13 +292,14 @@ class PlacedTops(unittest.TestCase):
 
     def test_no_store_file_answers_nothing_and_publishes_nothing(self):
         # a session with live tasks and no goal store yet (a new session, every render): one presence
-        # check, as on main, and neither a parse nor the shared loader's fallback load
+        # check, and neither a parse nor a load of either kind (the shared loader hands an absent file to
+        # load_goals, so reaching it would cost a fresh-store build per call)
         os.unlink(jd.GOALDIR / (SID + ".json"))
         km._parse_cache.pop(self.path, None)
+        writer, shared = self._spy("load_goals"), self._spy("load_goals_shared")
         self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1"]), {})
         self.assertEqual(km._bg_tops_report()["entries"], 0)
-        self.assertEqual((self._delta("io", "loads"), self._delta("io", "loads_shared"), self._delta("sh", "absent")), (0, 0, 0),
-                         "no load of any kind")
+        self.assertEqual((writer, shared, self._delta("sh", "absent")), ([], [], 0), "no load of any kind")
         self.assertNotIn(self.path, km._parse_cache, "no parse either")
         self.assertEqual(self._delta("bg", "miss"), 0)
 
@@ -294,7 +332,7 @@ class PlacedTops(unittest.TestCase):
         self.assertEqual((km._bg_tops_report()["entries"], SID in km._PLACEMENT_IDX), (0, False),
                          "no live launches and a stale pinned parse: the parse and index are released")
 
-    def test_the_lifts_sweep_evicts_a_sid_that_left_the_alive_set(self):
+    def test_the_lifts_end_of_tick_prune_evicts_a_sid_that_left_the_alive_set(self):
         km._bg_placed_tops(SID, self.path, ["t1"])
         self.assertEqual(km._bg_tops_report()["entries"], 1)
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": self.path}]
@@ -309,7 +347,7 @@ class PlacedTops(unittest.TestCase):
     def test_perf_reports_the_memo(self):
         km._bg_placed_tops(SID, self.path, ["t1"])
         km._bg_placed_tops(SID, self.path, ["t1"])
-        rep = km._PERF_STATS.snapshot()["memos"]["bg_tops"]
+        rep = km._PERF_STATS.snapshot()["memos"]["bgTops"]
         self.assertEqual(set(rep), {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"})
         self.assertEqual(rep["entries"], 1)
         for k in ("hit", "miss", "resolve", "walk", "idx_build"):

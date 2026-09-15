@@ -64,11 +64,11 @@ This repo may go public; assume every commit is permanent and world-readable.
   `notes-api` with `web`/`api`/`tests` sessions) rather than inventing per-test
   worlds.
 - Two machine-local backstops enforce this, neither a substitute for the rule:
-  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus, for
-  every commit new to every fetched remote, the lines it ADDS, its message, and
-  the domain of any author or committer address the clone is not configured to
-  use (`user.email` in any scope, or the environment's), and an annotated tag's
-  own tagger and message, for the strings in
+  the `.githooks/pre-push` hook greps each pushed ref's TIP tree (regular files
+  and symlink targets), plus, for every commit new to every fetched remote, the
+  lines it ADDS, its message, and the domain of any author or committer address
+  the clone is not configured to use (`user.email` in any scope, or the
+  environment's), and an annotated tag's own tagger and message, for the strings in
   `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
@@ -88,32 +88,36 @@ This repo may go public; assume every commit is permanent and world-readable.
   text only, so screenshots and recordings under `docs/assets/` must be
   eyeballed for on-screen session content before release.
 
-### Credentials — gitleaks scans every pushed commit and all of history (user rule, 2026-08-05)
+### Credentials: gitleaks scans every pushed commit and all of history (user rule, 2026-08-05)
 The rule above is about identifiers a human can enumerate. Credentials are the
 other half and cannot work that way: nobody knows a token's text until it leaks,
 so there is no list to write. **gitleaks** covers them, in two places:
-- **`.githooks/pre-push`** runs it over the commits a push would publish, and
-  refuses the push on a hit. No gitleaks on the machine → a loud one-line notice
-  and no scan (requiring an install to push would break every clone that never
-  asked for it); `ROMP_NO_GITLEAKS=1` silences it, `ROMP_GITLEAKS` points at a
-  binary. This is the same hook as the identifier scan and both report before it
-  refuses, so one push tells you about both.
-- **CI's `secrets` job** scans all of history on every push and PR, from a
-  pinned, checksummed binary. It needs `fetch-depth: 0` — a default checkout
+- **`.githooks/pre-push`** runs it over the commits a push would publish (a
+  merge by its first-parent diff, so a secret typed into a conflict resolution
+  is read too) and refuses the push on a hit. No gitleaks on the machine means a
+  loud notice and no scan (requiring an install to push would break every clone
+  that never asked for it); a gitleaks that fails to run refuses the push and
+  says so. `ROMP_NO_GITLEAKS=1` skips the scan, `ROMP_GITLEAKS` points at a
+  binary. This is the same hook as the identifier scan and both report before
+  it refuses, so one push tells you about both.
+- **CI's `Secret scan (gitleaks)` job** scans all of history, every branch and
+  tag the checkout brings, on every PR and every push to `main`, from a
+  pinned, checksummed binary. It needs `fetch-depth: 0`: a default checkout
   scans one commit and reports clean.
-Two things follow for anyone touching this:
+
+Three things follow for anyone touching this:
 - **A hit means rotate, not amend.** A credential that reached a commit is
   compromised from that moment; removing it in a later commit leaves it in the
   old one, and on a repo that may go public that is a published secret. Rotate
   first, then clean the history.
-- **Excuse a false positive narrowly, in `.gitleaks.toml`, with a reason** — an
+- **Excuse a false positive narrowly, in `.gitleaks.toml`, with a reason**: an
   exact value, never a path. A path exclusion silences the scanner for every
   future line in that file. There is one entry today (RFC 6455's published
   example WebSocket key, which the kernel's handshake tests use), allowlisted by
   value so a real key on the same line is still caught.
 - **Do not write a credential-shaped literal into a test fixture.** The scanner
   reads this repo too, so a longhand fake token flags the very test that proves
-  the scanner works — assemble probes at run time, as
+  the scanner works; assemble probes at run time, as
   `tests/gitleaks-config.bats` does.
 
 ## This clone is a fork — everything ships to the fork (user rule, 2026-08-05)
@@ -379,5 +383,6 @@ that justifies the move; if the trigger can flap between builds without new
 information, it is the wrong trigger.
 
 ### UI design rules live in `ui/CLAUDE.md`
-Progressive disclosure, font sizes, the accent color, loading/waiting states, and
-click-safe buttons are covered there; it loads whenever you work under `ui/`.
+Progressive disclosure, centered panels, font sizes, the menu vocabulary, the accent
+color, loading/waiting states, click-safe buttons, and layouts for many tags and
+sessions are covered there; it loads whenever you work under `ui/`.

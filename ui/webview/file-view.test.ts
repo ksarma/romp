@@ -211,7 +211,10 @@ test("mobile: closing a relay-opened viewer returns the phone to the Chat tab", 
 // stayed green — review 2026-08-20; the anchor asserts below fail loudly if the arms move instead.)
 test("shell flag algebra: both handoff routes restore once, a lost viewFile arms nothing", () => {
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  const start = KERNEL.indexOf("if(m.romp==='browseFiles')");
+  // the viewer's pane arm leads the files arms since the 2026-09-15 pull-in (#1305 as landed, with this fork's feed route
+  // as its else branch), so the slice starts there; upstream's own pane arm and the filesViewerClosed arm ride along and
+  // stay idle under these messages (none names a pane)
+  const start = KERNEL.indexOf("if(m.romp==='viewFile'&&m.pane==='pane')");
   const stop = KERNEL.indexOf("// The dashboard's one id", start);   // the comment after the listener's close (2026-09-09 fold)
   assert.ok(start >= 0 && stop > start, "arm anchors not found — the landing shell moved; re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();
@@ -1591,4 +1594,33 @@ test("source: an empty file's line (Slice 7 of plans/markdown-viewer.md, item 6)
   assert.match(VIEW, /\n {3}\*  An empty file answers "" \(never null: the body shows the EMPTY_FILE line above its empty root, and that is the content\) \*\//, "text()'s doc says so");
   assert.doesNotMatch(VIEW, /emptyFileLine\(\)[^\n]*fv-cl|"fileview-err fv-cl"/, "the line is never a row");
   assert.doesNotMatch(VIEW, /text\.length === 0|text\.trim\(\) === ""|!text\.length/, "keyed on the text the landing applied being the empty string, never a trim or a timer (the byte count decides only WHICH words the empty text gets)");
+});
+
+// executed: openFileView's verdict, the head of the function lifted from file-view.ts (plain JS up to the guard's
+// reset) and run over a document that does or does not hold a viewer and a close guard that does or does not
+// veto. The Files pane's recent list records an open only when this answers true (files.ts openHere), so a
+// dirty-edit veto that answered true would list a file that never opened.
+test("openFileView answers false when the dirty-edit guard keeps the previous viewer, and falls through otherwise", () => {
+  const at = VIEW.indexOf("export function openFileView(");
+  const head = VIEW.slice(VIEW.indexOf("): boolean {", at) + "): boolean {".length, VIEW.indexOf("closeGuard = null;", at) + "closeGuard = null;".length);
+  assert.match(head, /if \(document\.getElementById\("romp-fileview"\) && closeGuard && !closeGuard\(\)\) return false;/);
+  const run = (viewerUp: boolean, guard: (() => boolean) | null) => {
+    let asked = 0;
+    const document = { getElementById: (id: string) => (viewerUp && id === "romp-fileview" ? {} : null) };
+    const closeGuard = guard ? () => { asked++; return guard(); } : null;
+    const out = (new Function("document", "closeGuard", "return (function () {" + head + " return { through: true, guard: closeGuard }; })();") as
+      (d: unknown, g: unknown) => false | { through: true; guard: unknown })(document, closeGuard);
+    return { out, asked };
+  };
+  const veto = run(true, () => false);
+  assert.equal(veto.out, false, "a viewer up whose guard refuses: the open did not happen");
+  assert.equal(veto.asked, 1, "the guard was asked once");
+  const ok = run(true, () => true);
+  assert.deepEqual(ok.out, { through: true, guard: null }, "the guard allowed it: the head falls through and the guard is dropped for the new viewer");
+  const none = run(false, () => false);
+  assert.deepEqual(none.out, { through: true, guard: null }, "no viewer up: nothing to ask, the guard is not consulted");
+  assert.equal(none.asked, 0);
+  assert.deepEqual(run(true, null).out, { through: true, guard: null }, "a viewer with no guard (nothing edited) is replaced");
+  // and the other end of the function: a completed open answers true
+  assert.match(VIEW, /\n  fetchFile\(\);\n  return true;\n\}/, "openFileView ends by answering true (this fork's open ends in the fetch, after the changed-on-disk probe's install)");
 });

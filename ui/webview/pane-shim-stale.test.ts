@@ -17,8 +17,8 @@
 // the cap on queued breadcrumbs, the reconnect's `ready` re-send — only once the BUNDLE has sent its own (the
 // 2026-09-03 review: a redial that completed before feed.js had loaded said `ready` for it, the kernel
 // served the frame to a page with no listener, and the bundle's own `ready` was then deduped against it) —
-// and the Files pane's opt-out of the arm (NO_STALE_CAP, at the end). The caps (readyGate, feedDelta,
-// noStale) are the fork's shim; upstream's shim dials without them, and this file pins both the dial
+// and the Files pane's opt-out of the arm (the kernel's no_stale keyword, at the end). The caps (readyGate,
+// feedDelta) are the fork's shim; upstream's shim dials without them, and this file pins both the dial
 // upstream expects and the caps the fork adds to it.
 // Synthetic only (TESTHOST, no session data).
 import { test } from "node:test";
@@ -29,21 +29,17 @@ import * as vm from "node:vm";
 
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-// the cap a page with no kernel-pushed view announces (the Files pane): the template bakes the constant's
-// value into the shim's CAPS check, so the test reads it from the kernel source rather than restating it
-const NO_STALE_CAP = (KERNEL.match(/^NO_STALE_CAP = "(\w+)"$/m) || [])[1] || "";
-
-function shimJs(app: string, caps: string): string {
-  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\"):");
-  assert.ok(def > 0, "the shim renderer exists with its caps parameter");
+function shimJs(app: string, caps = "", noStale = false): string {
+  const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\", no_stale=False):");
+  assert.ok(def > 0, "the shim renderer exists with its caps parameter (this fork's) and its stale opt-out");
   const start = KERNEL.indexOf('return """', def) + 'return """'.length;
   // the tuple's first slot is the reload core (T265, its own executed test in tests/test_dashboard_auto_reload.py);
-  // an empty core here leaves window.__rompReload undefined, so the shim's raise takes its fallback path; the
-  // caps and the no-stale cap constant are the fork's slots (the Files pane's opt-out, at the end)
-  const end = KERNEL.indexOf('""" % (_reload_core(v), app, int(v), caps, NO_STALE_CAP, app, app)', start);
+  // an empty core here leaves window.__rompReload undefined, so the shim's raise takes its fallback path. The
+  // fourth slot is the page's caps (this fork's: the Files pane announces readyGate alone) and the fifth the stale
+  // opt-out the Files page renders with (no_stale=True): a JS boolean literal, no longer a cap.
+  const end = KERNEL.indexOf('""" % (_reload_core(v), app, int(v), caps, "true" if no_stale else "false", app, app)', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
-  assert.ok(NO_STALE_CAP, "the no-stale cap constant exists");
-  const args = ["", app, "5", caps, NO_STALE_CAP, app, app];
+  const args = ["", app, "5", caps, noStale ? "true" : "false", app, app];
   let i = 0;
   return KERNEL.slice(start, end).replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }
@@ -451,63 +447,35 @@ test("queued breadcrumbs are capped while the socket is down; other queued messa
   assert.equal(h.sent.length, 21);
 });
 
-// ── the Files pane: a page with NO live kernel-pushed view opts out of the arm ──────────────────────
-// app=files (2026-09-03) is a viewer, not a feed consumer: its file comes over HTTP on demand and its socket
-// carries keepalives and request/response replies only, so the kernel sends it NOTHING on a connect. The
-// "first non-keepalive frame" that retires every other pane's arm never comes, and the arm's second
-// keepalive raised the shell's shared "connection lost — what you see may be stale" banner dashboard-wide
-// after every unannounced reconnect (the 2026-09-03 review), for a file a dropped socket cannot make stale.
-// The page announces NO_STALE_CAP; the shim reads it from CAPS and neither arms nor retires. Run, not
-// grepped, against the same harness — and the contrast (the same page shape WITHOUT the cap) still raises.
-const FILES = (caps: string) => new Harness(shimJs("files", caps));
-
-test("the cap is the kernel's NO_STALE_CAP, announced by the Files page alone, read off CAPS by the shim", () => {
-  assert.equal(NO_STALE_CAP, "noStale");
-  assert.match(KERNEL, /_shim\("files", v, caps=READY_GATE_CAP \+ "," \+ NO_STALE_CAP\)/);
-  assert.equal(KERNEL.match(/_shim\("\w+", v, caps=[^)]*NO_STALE_CAP/g)!.length, 1, "no other pane page passes it");
-  assert.ok(shimJs("files", "readyGate,noStale").includes('var NOSTALE=CAPS.split(",").indexOf("noStale")>=0;'));
-});
-
-test("a page announcing the no-stale cap never arms: no keepalive count, no close, no foreground path raises, nothing is retired", () => {
-  const h = FILES("readyGate," + NO_STALE_CAP);
-  assert.match(h.ws.url, /\/ws\?app=files.*&caps=readyGate%2CnoStale/, "the cap rides the ws URL like the others");
-  h.ws.open(); h.bundleReady();                    // no connect-time frame: the kernel builds nothing for this page
-  h.ws.close(); h.runTimers(); h.ws.open();        // an UNANNOUNCED reconnect
-  assert.equal(h.sockets.length, 2);
-  assert.equal(h.readys(), 2, "the ready re-send is untouched: the hold still lifts on a reconnect");
+// The Files pane's page (kernel.py _files_page) is served with the opt-out: nothing is pushed to app=files
+// (the viewer is request/response, so the kernel builds no frame for it), and without the opt-out the
+// reconnect arm would never be retired by a resync that never comes, so the second keepalive raised the
+// dashboard-wide "may be stale" prompt after every unannounced reconnect, for a file fetched over HTTP on
+// demand, which a dropped socket cannot make stale. With it, neither the arm nor the retire runs: the
+// page's own op replies (a GitHub-link answer) must not clear a prompt another pane raised either.
+test("a page served with the stale opt-out never arms the prompt after a reconnect, and never retires one", () => {
+  assert.match(KERNEL, /_shim\("files", v, caps=READY_GATE_CAP, no_stale=True\)/, "the Files page is the one served with the opt-out, beside its ready-hold cap (this fork's caps slot; upstream's page passes no caps)");
+  assert.equal(KERNEL.match(/no_stale=True/g)!.length, 1, "no other page opts out");
+  const h = new Harness(shimJs("files", "readyGate", true));
+  assert.match(h.ws.url, /^ws:\/\/TESTHOST:29855\/ws\?app=files&delta=1&iid=/, "the same dial as every pane");
+  assert.match(h.ws.url, /&caps=readyGate(&|$)/, "the ready-hold cap rides the URL as on every pane (this fork's); the opt-out does not: it is the kernel's keyword, baked into the shim");
+  h.ws.open(); h.bundleReady();
+  h.ws.close(); h.runTimers();
+  assert.equal(h.sockets.length, 2, "the close redialed");
+  h.ws.open();
   h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
-  assert.equal(h.stale(), 0, "keepalives with no resync between them are not the event here: no resync was ever coming");
-  assert.equal(h.diags("stale-raise").length, 0);
-  h.ws.msg({ type: "fileSaved", reqId: 1, mtimeNs: "1" });   // an op reply: request/response, not a resync
-  assert.equal(h.toBundle.filter((m) => m.type === "fileSaved").length, 1, "replies still reach the bundle");
-  assert.equal(h.fresh(), 0, "…and retire nothing: the page never armed, and a peer pane's prompt is not its to retract");
-  h.ws.close();                                    // the reconnected socket dying before any frame
-  assert.equal(h.stale(), 0, "the close rule needs an arm too");
+  assert.equal(h.stale(), 0, "three keepalives with no resync: nothing is raised");
+  assert.equal(h.diags("stale-raise").length, 0, "and no raise breadcrumb");
+  h.ws.msg({ type: "fileGitLink", reqId: 1, url: "" });   // an op reply, the only non-keepalive frame this page sees
+  assert.equal(h.fresh(), 0, "an op reply retires nothing: wsFresh would clear a prompt another pane raised");
+  assert.equal(h.toBundle.filter((m) => m.type === "fileGitLink").length, 1, "the reply still reaches the bundle");
+  h.ws.close();
+  assert.equal(h.stale(), 0, "the reconnected socket closing raises nothing either");
   h.runTimers(); h.ws.open();
-  // the foreground fast-path: a quiet socket is closed by the pane and the reconnect it forces would arm with
-  // why=foreground on any other page
-  h.ws.msg({ type: "fileSaved", reqId: 2, mtimeNs: "2" });
-  h.now += 31_000;
-  for (const f of h.visibility) f();
-  h.runTimers(); h.ws.open();
-  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
-  assert.equal(h.stale(), 0);
-  assert.equal(h.fresh(), 0);
-  // BUILD drift is a separate raise and still stands: new code is not delivered by any frame, only a reload.
-  // Since T265 (upstream 2026-09-08, taken as written) the raise is a request to the reload core, which forwards
-  // to the shell or reloads the page itself, not a wsStale post; the cap leaves it alone either way
-  h.ws.msg({ type: "ka", dv: 9 });
-  assert.equal(h.builds().length, 1, "the newer-build request is untouched");
-  assert.equal(h.posted.filter((m) => m.romp === "wsStale").length, 0, "…and it is the reload core's raise, not the connection prompt");
   h.settles(0);
-  // the contrast: the same page shape WITHOUT the cap, the same sequence — raised on the second keepalive.
-  // The opt-out is the cap the page announces, not its app name.
-  const g = FILES("readyGate");
-  g.ws.open(); g.bundleReady(); g.ws.close(); g.runTimers(); g.ws.open();
-  g.ws.msg({ type: "ka", dv: 0 });
-  assert.equal(g.stale(), 0);
-  g.ws.msg({ type: "ka", dv: 0 });
-  assert.equal(g.stale(), 1, "without the cap the arm and its second-keepalive raise are exactly the feed's");
-  assert.equal(g.diags("stale-raise")[0].data.why, "reconnect");
-  g.settles(1);
+  // the control: the same script without the opt-out raises on the second keepalive (the rule the cases above run)
+  const g = new Harness(shimJs("files", "readyGate"));
+  g.reconnected();
+  g.ws.msg({ type: "ka", dv: 0 }); g.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(g.stale(), 1, "the opt-out is the difference, not the app name");
 });

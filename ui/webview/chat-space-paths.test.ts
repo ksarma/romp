@@ -50,7 +50,7 @@ test("the whole-span pass runs BEFORE the token walk, so the new link is skipped
   // skips anything already inside a .file-uri-link, so the spaced pass must have made its spans first
   const fn = RENDER.slice(RENDER.indexOf("function linkifyFileUris("), RENDER.indexOf("function renderEvent("));
   const spanPass = fn.indexOf('root.querySelectorAll("code")');
-  const walk = fn.indexOf("linkifyPathTokens(root, sid, pathLinks, walkOpts)");   // walkOpts: a todo surface's targetSuffix (Slice 6 of plans/markdown-viewer.md); the transcript passes none
+  const walk = fn.indexOf("linkifyPathTokens(");   // the shared walk (path-links.ts), which skips text already inside a link
   assert.ok(spanPass >= 0 && walk >= 0 && spanPass < walk,
     "code-span links land first; the token walk's closest('.file-uri-link') guard then leaves them alone");
   const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");

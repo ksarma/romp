@@ -28,7 +28,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 km = load_source("romp_kernel_cdiag", os.path.join(BIN, "romp-kernel"))
 
 WID = "11111111-2222-3333-4444-555555555555"

@@ -193,9 +193,9 @@ class RepoListEdges(_Repo):
 
 
 class TokenizerParity(unittest.TestCase):
-    """The Python port and path-links.ts CLICKABLE_PATH_RE must agree on what a token IS — the map's
-    keys are what the client looks up, so a tokenizer drift silently unlinks. The client side of the
-    same fixture runs in chat-path-links.test.ts."""
+    """The Python port and path-links.ts CLICKABLE_PATH_RE must agree on what a token IS — the map's keys
+    are what the client looks up, so a tokenizer drift silently unlinks. The client side of the same
+    fixture runs in chat-path-links.test.ts."""
 
     def test_the_shared_fixture_tokenizes_identically(self):
         with open(os.path.join(HERE, "fixtures", "path_token_parity.json")) as f:

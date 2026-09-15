@@ -113,14 +113,6 @@ class WiringPins(unittest.TestCase):
             self.assertGreaterEqual(src.count("jd.load_goals(") + src.count("jd.load_goals_or_fault("), 1,
                                     "%s: still the writer's loader" % name)
 
-    def test_the_awaiting_lift_probes_the_shared_view_and_loads_the_writers_copy_once(self):
-        for name, (shared, writer) in TWO_PHASE.items():
-            src = inspect.getsource(getattr(km, name))
-            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), shared, "%s: the phase-1 probe" % name)
-            self.assertEqual(src.count("jd.load_goals_or_fault("), writer, "%s: the phase-2 writer load" % name)
-            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals("), 0,
-                             "%s: no bare load outside the boundary" % name)
-
     def test_the_nudge_walk_probes_the_shared_view_once_and_re_reads_the_writers_copy_at_send(self):
         for name, (shared, writer) in WALK.items():
             src = inspect.getsource(getattr(km, name))
@@ -129,23 +121,35 @@ class WiringPins(unittest.TestCase):
             self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals_or_fault("), 0,
                              "%s: no bare shared load, no boundary writer load" % name)
 
+    def test_the_awaiting_lift_probes_the_shared_view_and_loads_the_writers_copy_once(self):
+        for name, (shared, writer) in TWO_PHASE.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared_or_fault("), shared, "%s: the phase-1 probe" % name)
+            self.assertEqual(src.count("jd.load_goals_or_fault("), writer, "%s: the phase-2 writer load" % name)
+            self.assertEqual(src.count("jd.load_goals_shared(") + src.count("jd.load_goals("), 0,
+                             "%s: no bare load outside the boundary" % name)
+
     def test_the_lifts_decision_body_loads_nothing_and_writes_nothing(self):
         # every rule of the lift is decided here, on whichever store the caller hands in (the shared view
         # in phase 1, the writer's copy in phase 2); the verdict gate is read through jd.may_apply only
         src = inspect.getsource(km._lift_decisions)
         for needle in ("jd.load_goals(", "jd.load_goals_shared(", "jd.load_goals_or_fault(",
                        "jd.load_goals_shared_or_fault(", "record_verdict(", "save_goals(",
-                       "rollup_status(", "_drop_auto_nudge_rec(", "_lift_gate_key("):
+                       "rollup_status(", "_drop_auto_nudge_rec("):
             self.assertEqual(src.count(needle), 0, "_lift_decisions: %s" % needle)
-        self.assertGreaterEqual(src.count("jd.may_apply("), 3, "the read-only gate, once per arm")
+        self.assertEqual(src.count("jd.may_apply("), 4,
+                         "the read-only gate, once per arm: rolled-up, peer-superseded, empty-registry, cited-return")
+        # ...and it is the gate record_verdict consults before it appends, so a decision here is a
+        # record_verdict that would have returned True (LiftGate's floor cases run the two side by side)
+        self.assertIn("may_apply(", inspect.getsource(km.jd.record_verdict),
+                      "record_verdict asks may_apply: phase 1 decides through the gate phase 2 files through")
 
     def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
         # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
-        # read can describe a version the read did not see); the gate's three stats are not taken here.
-        # The one presence check (os.path.exists on the store file, an absent store answering nothing
-        # without a parse or a load) is not a key and is allowed.
+        # read can describe a version the read did not see); no stat is taken here. The one presence
+        # check (os.path.exists on the store file, an absent store answering nothing without a parse or
+        # a load) is not a key and is allowed.
         src = inspect.getsource(km._bg_placed_tops)
-        self.assertEqual(src.count("_lift_gate_key("), 0)
         self.assertEqual(src.count(".stat()"), 0)
         self.assertEqual(src.count("os.stat("), 0)
 
@@ -163,7 +167,7 @@ class WiringPins(unittest.TestCase):
         # memos.shared: upstream's review named the entry (the fork's offer had it as goals_shared); docs/reference.md
         # and shared_store_stats' docstring both say memos.shared
         self.assertIn('("shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
-        self.assertIn('("bg_tops", _bg_tops_report)', src, "…and the placed-launch memo beside it")
+        self.assertIn('("bgTops", _bg_tops_report)', src, "and the placed-launch memo beside it")
 
 
 class SharedViewInBuilds(unittest.TestCase):
@@ -172,6 +176,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.saved_state = jd.STATE
         jd._rebind_state(Path(self.td.name))         # clears the cache and lifts any earlier off switch
         self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging_marks")}
+        km._lanes_memo.clear()                        # a lane the timeline memo holds never reaches the spy below
         for i, sid in enumerate(SIDS):
             s = {"rompUuid": sid, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {},
                  "placements": {}, "status": {}}
@@ -290,7 +295,7 @@ class SharedViewInBuilds(unittest.TestCase):
     def test_the_store_a_wired_site_works_on_is_the_frozen_shared_view(self):
         seen, raised = [], []
 
-        def spy(sid, caps, goals, seg_ends=None):          # the per-lane marks derivation (the lane memo's miss path)
+        def spy(sid, caps, goals, seg_ends=None):
             seen.append(goals)
             for attempt in (lambda: goals["status"].__setitem__("x", "y"),
                             lambda: goals["nodes"][sid + ":g1"]["log"].append({"kind": "done"}),
@@ -301,7 +306,6 @@ class SharedViewInBuilds(unittest.TestCase):
                     raised.append(1)
             return self.saved["_derive_judging_marks"](sid, caps, goals, seg_ends)
         km._derive_judging_marks = spy
-        km._lanes_memo.clear()                            # every lane derives (a held lane would not reach the spy)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             tl = km.build_timeline(NOW, {}, with_bars=True)

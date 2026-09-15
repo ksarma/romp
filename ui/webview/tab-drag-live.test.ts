@@ -58,8 +58,10 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // there the trail's boundary is the pre-T264 13px divider, a real box the virtual layout measures by its rect,
   // whose gutters are padding (a margin would drift the simulated row); its rule is scoped off the break
   assert.doesNotMatch(CSS, /^\.tab-group-sep \{/m, "no unscoped separator rule: the break's boundary class gives it no box");
-  const sep = CSS.match(/^\.tab-group-sep:not\(\.tab-group-break\) \{[^}]*\}/m)![0];
-  assert.match(sep, /width: 13px; padding: 8px 6px;/, "the inline divider's footprint is its box");
+  const sepM = CSS.match(/^\.tab-group-sep:not\(\.tab-group-break\) \{[^}]*\}/m);
+  assert.ok(sepM, "the divider's rule exists, scoped off the break");
+  const sep = sepM[0];
+  assert.match(sep, /width: 13px; padding: 8px 6px;/, "the divider's footprint is its box");
   assert.doesNotMatch(sep, /margin/, "no margin on the divider: the virtual row holds what the real one holds");
   const head = CSS.match(/^\.tab-group-head \{[^}]*\}/m)![0];
   assert.doesNotMatch(head, /margin/, "headers carry no horizontal margin either");
@@ -88,8 +90,8 @@ test("the hover popover never survives a drag (defect 2, the user's recording)",
 
 test("drop commits through the SAME reorderTo — neighbor + side, hidden-view ids keep their places", () => {
   const body = between('tabs.addEventListener("drop"', "});");
-  assert.match(body, /if \(prev\?\.dataset\?\.id\) \{ reorderTo\(draggedId, prev\.dataset\.id, true\); tabDragCommitted = true; \}/);
-  assert.match(body, /else if \(next\?\.dataset\?\.id\) \{ reorderTo\(draggedId, next\.dataset\.id, false\); tabDragCommitted = true; \}/,
+  assert.match(body, /if \(prev\?\.dataset\?\.id\) tabDragCommitted = reorderTo\(draggedId, prev\.dataset\.id, true\);/);   // committed iff the reorder happened (2026-09-10)
+  assert.match(body, /else if \(next\?\.dataset\?\.id\) tabDragCommitted = reorderTo\(draggedId, next\.dataset\.id, false\);/,
     "committed only when a reorder ran (T264b): no neighbour → dragend's cancel path FLIPs the copy home");
   // the neighbours are TABS (tab groups, 2026-09-04): a section header or separator beside the
   // dropped tab is skipped, so a drop at a section's edge still names the nearest tab and its side
@@ -120,9 +122,11 @@ test("cancel (Escape / dropped outside) re-renders from the untouched order, FLI
   const de = between('tab.addEventListener("dragend"', "});");
   assert.match(de, /const cancelled = !tabDragCommitted;/);
   assert.match(de, /if \(cancelled\) flipTabs\(\(\) => renderTabs\(\)\);/);
-  // the drop handler is what marks a commit, and it does so AFTER committing
+  // the drop handler is what marks a commit, and it does so from the reorder's own word: a refused reorder (a page
+  // without its manager, 2026-09-10) is a cancelled drag, so the strip FLIPs home
   const drop = between('tabs.addEventListener("drop"', "});");
-  assert.match(drop, /tabDragCommitted = true;/);
+  assert.match(drop, /tabDragCommitted = reorderTo\(/);
+  assert.doesNotMatch(drop, /tabDragCommitted = true;/);
 });
 
 test("reduced motion: the mutation still happens, only the transition is skipped", () => {

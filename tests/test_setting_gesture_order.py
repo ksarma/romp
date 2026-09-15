@@ -813,7 +813,7 @@ class VersionReportsEveryStoredStamp(_Base):
     def test_a_fresh_install_reports_every_store_at_zero(self):
         gts = km._version_info()["settingsGt"]
         self.assertEqual(set(gts), set(km._GT_STORES), "one key per gt-gated store, no more, no less")
-        self.assertEqual(len(km._GT_STORES), 17, "five toggles/modes + eleven kernel-side stores (judge-concurrency since T277, tmux-backend since T288) + the fork's user-todos switch")
+        self.assertEqual(len(km._GT_STORES), 18, "five toggles/modes + twelve kernel-side stores (judge-concurrency since T277, tmux-backend since T288, judge-fast with Fast judging) + the fork's user-todos switch")
         self.assertEqual(set(gts.values()), {0}, "nothing applied yet reads 0 — nothing to outrank")
         self.assertEqual(json.loads(json.dumps(gts)), gts, "plain JSON — ints, no paths, nothing to redact")
 
@@ -827,10 +827,12 @@ class VersionReportsEveryStoredStamp(_Base):
         self.assertEqual(km._set_comment_fast("on", gt=T_NEW + 9), T_NEW + 9)
         self.assertEqual(km._set_user_todos(True, gt=T_NEW + 10), T_NEW + 10)
         self.assertEqual(km._set_judge_concurrency("4", gt=T_NEW + 11), T_NEW + 11)   # T277's store, stamped like the rest
+        self.assertEqual(km._set_judge_fast("on", gt=T_NEW + 12), T_NEW + 12)
         gts = km._version_info()["settingsGt"]
         want = {"judge-model": T_NEW, "auto-nudge": T_OLD, "compact-suggest": T_NEW + 5,
                 "file-editing": T_NEW + 6, "update-mode": T_NEW + 7, "thinking-summaries": T_NEW + 8,
-                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10, "judge-concurrency": T_NEW + 11}
+                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10, "judge-concurrency": T_NEW + 11,
+                "judge-fast": T_NEW + 12}
         for store, gt in want.items():
             self.assertEqual(gts[store], gt, store)
         for store in set(km._GT_STORES) - set(want):
@@ -857,7 +859,8 @@ class VersionReportsEveryStoredStamp(_Base):
                  {"type": "setDistillModel", "model": "haiku"},
                  {"type": "setDistillEffort", "effort": "high"}, {"type": "setCommentModel", "model": "haiku"},
                  {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"},
-                 {"type": "setTmuxBackend", "enabled": True}, {"type": "setUserTodos", "enabled": True}]
+                 {"type": "setTmuxBackend", "enabled": True}, {"type": "setUserTodos", "enabled": True},
+                 {"type": "setJudgeFast", "enabled": True}]
         older = [{"type": "setAutoNudge", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
                  {"type": "setFileEditing", "enabled": False}, {"type": "setUpdateMode", "mode": "off"},
                  {"type": "setThinkingSummaries", "enabled": False}, {"type": "setJudgeModel", "model": "opus"},
@@ -866,14 +869,15 @@ class VersionReportsEveryStoredStamp(_Base):
                  {"type": "setDistillModel", "model": "triage"},
                  {"type": "setDistillEffort", "effort": "low"}, {"type": "setCommentModel", "model": "session"},
                  {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"},
-                 {"type": "setTmuxBackend", "enabled": False}, {"type": "setUserTodos", "enabled": False}]
+                 {"type": "setTmuxBackend", "enabled": False}, {"type": "setUserTodos", "enabled": False},
+                 {"type": "setJudgeFast", "enabled": False}]
         with contextlib.redirect_stderr(io.StringIO()):
             for n, o in zip(newer, older):
                 km.Handler._dispatch_ws(types.SimpleNamespace(), dict(n, gt=T_NEW), client)
                 km.Handler._dispatch_ws(types.SimpleNamespace(), dict(o, gt=T_OLD), client)
         named = {m["setting"] for m in sent if m.get("type") == "settingStale"}
         self.assertEqual(named, set(km._version_info()["settingsGt"]), "frames and the report share one vocabulary")
-        self.assertEqual(len(named), 17)   # eleven kernel-side stores since T288, plus the fork's user-todos switch
+        self.assertEqual(len(named), 18)   # twelve kernel-side stores since Fast judging, plus the fork's user-todos switch
 
     def test_the_forks_user_todos_switch_is_taught_like_every_other_store(self):
         # the fork's per-install switch is gt-gated (_set_user_todos) and the gear stamps it, so a dashboard

@@ -5,7 +5,7 @@ This guide covers how to use Romp and how its back end works.
 ## The Romp user interface
 
 Romp gathers all your Claude Code sessions into one interface, with six
-complementary panes:
+complementary views of what the agents are doing:
 
 - **[The chat](#the-chat)** is the regular interface for talking to a coding
   agent, with features that make a long session easier to scan.
@@ -20,7 +20,7 @@ complementary panes:
   flagged for you, across all your sessions and machines, with Reply and
   Dismiss on each.
 - **[Files](#files)** holds the file viewer in a column of its own, so a file
-  stays open beside the chat and the feed.
+  stays open beside the chat and the feed. Off by default.
 
 ### The chat
 
@@ -30,17 +30,16 @@ complementary panes:
 composer as a quote chip, labeled with the file and the line the passage lives on. Type
 what should change and press **⌘⏎** to set the note aside; keep reading, select the next
 passage, and repeat — each staged note remembers its quote and its place. The list above
-the box shows about four staged notes and scrolls for the rest; its caret folds it to the
-count. **⏎** sends everything you staged along with whatever is in the box as one message,
-so the session applies the lot in one pass, and you never copy a line out of the document
-by hand. The line in each
-label is checked against the file at the moment you select, so numbers that moved under
-you are caught rather than quietly carried. Chips are one-off notes: they go out with the
-message and are not kept. For anything worth keeping with the file, use the viewer's
-**Comments** panel, described under Files: a file comment is stored beside the file, the
-session replies into it, and its edits to a tracked file come back as changes for you to
-accept or reject. When several sessions work in the same
-repository, or in worktrees of it, the viewer's title bar says which one you opened the
+the composer shows about four staged notes and scrolls for the rest; its caret collapses
+it to the count. **⏎** sends everything you staged along with whatever is in the box as
+one message, so the session applies the lot in one pass, and you never copy a line out of
+the document by hand. The line in each label is checked against the file at the moment
+you select, so numbers that moved under you are caught rather than quietly carried. Chips
+are one-off notes: they go out with the message and are not kept. For anything worth
+keeping with the file, use the viewer's **Comments** panel, described under Files: a file
+comment is stored beside the file, the session replies into it, and its edits to a tracked
+file come back as changes for you to accept or reject. When several sessions work in the
+same repository, or in worktrees of it, the viewer's title bar says which one you opened the
 file from: a chip with the session's name, in the same color as its tab. The title bar's
 **GitHub ↗** button opens the file on GitHub. While the check runs, the button waits dimmed
 with pulsing dots beside it.
@@ -70,6 +69,32 @@ it is a few rows tall. Paths and pull request numbers in a note are links. **Unp
 twice, removes a note; a session can also unpin its own. A note stays until unpinned, across
 restarts and revivals, and a session keeps at most eight; a ninth drops the oldest.
 
+**Naming another session.** Type `@` and the first letters of a session's name in the
+message box, and the sessions whose names match are listed above it, twelve at most; when
+more match, the last row says how many, and more letters narrow the list. Arrow to one and
+press **⏎** or **Tab**, or click it, and `@name` goes into the message as plain text, the
+name the session's mail tools take. Which form goes in depends on the session you are
+writing to. When you write to a session on this machine, a session on another machine goes
+in as `@host:name`, the way this machine knows it. When you write to a session on another
+machine, every name goes in bare, because the dashboard cannot see what that machine calls
+its peers; if the bare name is ambiguous there, the session's mail tools refuse the send and
+list the candidates as `host:name`, and the session picks one. **Escape** closes the list
+without inserting, and it stays closed for that `@` until you delete it: more letters, or a
+caret move away and back, do not reopen it. In the sent message, a name that matches a live
+session is shown as a chip: the name without its `@`, in that session's color on a dark
+backing, the way the Awaiting chip names the session it waits on. Hover it for how that
+session is doing; the message itself still carries the `@name` you typed.
+
+**A message that has not gone yet.** Send to a busy session and your message waits as a
+dashed bubble under an hourglass until the session takes it — while it compacts, while a
+turn runs, or in the beat before the kernel confirms the send. Until then it is still
+yours: the **✕** in its corner pulls it back into the composer, and the **✎** beside it loads
+the text into the composer under an editing pill, so you can change your mind without
+losing your place in the queue. Send replaces the message where it was, a follow-up keeps
+its context, and Esc or the pill's ✕ leaves it as it was. If the session takes the message
+before the edit lands, romp says so and gives your edited words back to the composer
+rather than sending them twice.
+
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
 file served from the dashboard's own address (a published report, an evidence doc). Figures
@@ -92,20 +117,6 @@ way a paper opens from OpenReview: full size, and it stays open beside the dashb
 you keep working. If the browser blocks that new tab, the PDF opens inside the dashboard
 instead; a PDF too large to show offers a download in its place. Commenting on a PDF, and
 what the viewer does while the **Comments** panel is open, is described under Files.
-
-**Naming another session.** Type `@` and the first letters of a session's name in the
-message box, and the sessions whose names match are listed above it, twelve at most; when
-more match, the last row says how many, and more letters narrow the list. Arrow to one and
-press **⏎** or **Tab**, or click it, and `@name` goes into the message as plain text, the
-name the session's mail tools take. Which form goes in depends on the session you are
-writing to. Writing to a session on this machine, a session on another machine is inserted
-as `@host:name`, the way this machine knows it. Writing to a session on another machine,
-every name is inserted bare, because the dashboard cannot see what that machine calls its
-peers; if the bare name is ambiguous there, the session's mail tools refuse the send and
-list the candidates as `host:name`, and the session picks one. **Escape** closes the list
-without inserting, and it stays closed for that `@` until you delete it: more letters, or a
-caret move away and back, do not reopen it. In the sent message, a name that matches a live
-session is shown as a chip in that session's color.
 
 **Sending while the session is working.** The session takes your message at its next
 step. In a Claude Code session the message stays where you sent it: it sits below everything
@@ -133,17 +144,22 @@ surface (the tag button in the strip narrows the tabs to the tags you pick), and
 the tabs: as soon as any session carries a tag, the strip shows one section per tag, in your
 tag order, each with a header in the tag's color, and the untagged sessions after a divider
 at the end. A session with several tags appears under each of them; every copy is the same
-session (click either to open it, and closing either ends it). Each header shows a chevron, the tag's color, its name, and a
+session (click either to open it, and closing either ends it). Each header shows the tag's color and name, then a chevron and a
 member count. Click a header, or press Enter on it, to fold its section down to the header
-alone; the count then says how many tabs are folded away, and a small dot after it says when
-one of them is working or waiting on you (hover it for their names). A folded header keeps the ⚑ flag
+alone; the count then says how many tabs are folded away, and a small dot after it shows when
+one of them is busy or needs you: red when one is blocked or waiting on you, otherwise gold
+when one is working, otherwise amber when one hit an API error and is retrying on its own
+(hover it for their names). A folded header keeps the ⚑ flag
 of any session in it that has asked you for something; when several have, the flag shows how
 many, and hovering it names them. Click the flag to open the section. To keep one tab visible
 while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
 the header's count and flag then leave that tab out; when every tab in a section is set to
 show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
 again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
-group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
+group is renamed. The section of the tab you are reading folds like any other; its header marks
+that it holds the tab (the tag's name is underlined), and folded, the header stands in for the tab:
+focus lands on it, and the left and right arrows step from there. The `archived` section starts
+folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tag of the group you right-clicked it in, leaving its other tags alone. A
@@ -161,7 +177,8 @@ tag at once. The row's **+** adds the tag without moving the tab. **Group tabs b
 button's menu, turns the sections off for this browser. The groups follow one another across the
 strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
 down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
-starts every group on its own row instead.
+starts every group on its own row instead. With the groups following one another, the untagged
+sessions sit behind a thin divider.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
@@ -241,14 +258,6 @@ while it is hidden: the hide wins, and the setting resumes when you show it agai
 session keeps the setting when its group is renamed, and shows again wherever it lands when it
 leaves the group. Like the sections, hiding is per browser and for the desktop layout.
 
-**On a small screen.** To keep more of the transcript in view, turn on the gear's
-**Compact tabs and agents** setting. It tightens the rows in the box of background work above the
-message box (the one headed **Awaiting** or **In the background**) and caps that box's list at
-about four rows that scroll; the cap lifts while a row's details are open. Where the tab strip is
-showing (a desktop-width screen, or a tablet wide enough for it) it also shrinks the tabs and group
-headers; on a phone the session picker stands in for the strip, so there the setting tightens the
-box. Like the other chat settings, it is per browser.
-
 **Coming back after a dropped connection.** When the dashboard's link to the kernel
 drops and comes back (a laptop lid closed and opened, a network change, a phone that
 slept), the page does not fetch every session again. The kernel sends the session you
@@ -262,6 +271,13 @@ not loaded yet.
 ![After a reconnect, the tab you were reading is back in full while the other tabs wait as skeletons](assets/guide/reconnect-skeleton-tabs.png){ width="32%" }
 ![Clicking a skeleton tab puts up the loader until its transcript arrives](assets/guide/reconnect-skeleton-click.png){ width="32%" }
 ![The clicked tab, loaded](assets/guide/reconnect-skeleton-loaded.png){ width="32%" }
+
+**On a small screen.** To keep more of the transcript in view, turn on the gear's
+**Compact tabs and agents** setting. It tightens the rows in the background-work panel above the
+composer (the one headed **Awaiting** or **In the background**) and shows about four of its rows,
+scrolling for the rest; the cap lifts while a row's details are open. Where the tab strip is showing,
+it also shrinks the tabs and group headers; on a phone the session picker stands in for the strip, so
+there the setting tightens the panel alone. Like the other chat settings, it is per browser.
 
 ### The feed
 
@@ -352,14 +368,17 @@ and the feed, so an open file covers neither. While the pane is open, a file
 link clicked in the chat opens here. When it is closed, the gear's **File
 links open in** setting decides where a link opens; set it to **The Files
 pane** and the pane comes forward on its own and stays up until you close the
-file. The folder under the chat (the session's working directory) opens a
+file; on a phone, closing the file takes you back to the tab you came from.
+The folder under the chat (the session's working directory) opens a
 listing of that folder by the same rule: in this pane while it is open or when
 the setting names it, otherwise over the feed. Pick a file in the listing and
-it opens where the listing is. Selecting
+it opens where the listing is. The **Directory** row of the **System context** card and
+**Browse files** on a tab's right-click menu open the same listing. Selecting
 a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again, and the file opens at the
-place you left it. The pane is off by default; the bottom bar turns it on.
+place you left it. The pane is off by default; the bottom bar turns it on, and on a phone it
+is a tab like the others.
 
 **Links in a file.** Wherever the viewer shows a file's text, over the chat, over
 the feed, or in this pane, the links in that text work. A web address opens in a
@@ -389,8 +408,8 @@ and Linux) or a middle-click opens the link in a browser tab of its own. Where a
 link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
 message gets: a path links only when it has a slash and a file extension, starts
-on its own, at the start of a line or after a space, a quote, a bracket or
-Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
+on its own, at the start of a line or after a space, a quote, a bracket, a comma, a
+semicolon, an equals sign, a pipe or Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
 `C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
 (`www.example.org/docs/index.html`), and is not the package an `import`
 statement or a `require()` call names, whether the statement fits one line or
@@ -1077,7 +1096,10 @@ internet and your agents, with no device check in front of it.
 #### Notifications on your phone
 
 Romp can buzz your phone when a session needs you or finishes a task, so you can
-put the phone down while the sessions work. On an iPhone, first add Romp to the
+put the phone down while the sessions work. Every notification is titled with
+the session's name: **Romp needs you: web** when that session is waiting on you,
+and **Romp: web** for anything else (a task finished, a turn ended); the line
+under it says what happened. On an iPhone, first add Romp to the
 Home Screen (share sheet, then **Add to Home Screen**) and open it from there:
 iOS only lets an installed app receive notifications, so in a plain Safari tab
 the option stays off and says so. On Android and on a desktop browser the page
@@ -1100,10 +1122,12 @@ switches indented under it, and a button:
   main switch off, the row says the device is set up but nothing arrives until
   the main switch is on.
 - **Also when a turn finishes**, also under it, adds a notification every time
-  any session finishes a turn, with the session's name and the first line of
-  what it said. With many sessions running this is a lot of buzzing, so it is
-  off unless you want it. A turn that ends by asking you something buzzes once,
-  not twice.
+  any session finishes a turn you started, with the session's name and the
+  first line of what it said. Turns a session starts on its own, such as
+  reacting to one of its background agents finishing, or to a reminder, stay
+  quiet: nothing there was waiting on you. With many sessions running this is
+  still a lot of buzzing, so it is off unless you want it. A turn that ends by
+  asking you something buzzes once, not twice.
 - **Send a test notification** sends one notification to the device you are
   holding, whatever the switches say, and prints the push service's answer under
   the button, so you can see at once whether the phone is set up or why it is
@@ -1113,10 +1137,18 @@ switches indented under it, and a button:
   switch off, the answer adds that real notifications will not arrive until it
   is on.
 
-The handler that answers a tap lives on the phone, and the phone refreshes it
-whenever you open the app and whenever a notification arrives. If a tap ever
-opens Romp on the wrong session, close the app from the app switcher and open
-it again once.
+A restart of the kernel (an update deploys one) announces nothing by itself.
+What Romp has told you about is written down beside its other state, so the
+cards already waiting on you or already finished when it comes back stay
+quiet. A card that stops needing you and then needs you again is announced
+once, not at every turn, unless you acted on the card in between (answered
+it, resolved it, crossed it off) or it finished in the meantime.
+
+Tapping a notification brings Romp forward on the session it was about. On an
+iPhone with the app already open in the background, the switch happens as the
+app comes forward; a notification you swipe away instead is read the same way,
+so the next time you open the app it may land on that session. With the app in
+front, nothing moves until you next come back to it.
 
 The bell itself shows the state of the device you are looking at: lit when the
 main switch is on and this device is set up, and crossed out otherwise. Its
@@ -1134,11 +1166,15 @@ ports, so without this any other user could inject prompts into your live
 sessions. The token is 144-bit random and lives at
 `~/.local/state/romp/serve-token` with mode `0600` (readable only by your own
 user account). Local tools (the CLI, hooks, the bus, the editor extension) read
-that file and send it automatically, so you never type it. Only liveness probes
-(`/healthz`, `/version`, `/busy`, and the bus's `/ping`) are exempt.
+that file and send it automatically, so you never type it. Only two kinds of
+request skip the token: the liveness probes (`/healthz`, `/version`, `/busy`,
+and the bus's `/ping`), and the files a browser fetches without credentials
+when you add Romp to the Home Screen (`/manifest.webmanifest` and three icons
+under `/media/`). Those files are fixed (the app's name, colors and icon art)
+and read no session state.
 
-The kernel and the bus mint that file when it is missing, one mint between them
-under a sibling lock file, `serve-token.lock`. An existing token is never
+The kernel and the bus mint the token file when it is missing, one mint between
+them under a sibling lock file, `serve-token.lock`. An existing token is never
 replaced: a file left looser than `0600` is tightened at the next start (its
 value is kept, so every client stays valid), and a token that exists but cannot
 be read, or a symlink at that path, refuses to start instead of minting a
@@ -1204,17 +1240,23 @@ stands alone only where there is no ledger). You can also reconfigure the
 judges from the gear: the high-volume indexing tier defaults to Haiku, and the
 judgment tier defaults to Sonnet.
 
-The bottom bar's **API** cell, a dot and a word, shows how the API is treating
-your sessions. Gray **ok** means no session is waiting on the API. Amber shows
-how many sessions are waiting and names the problem: **rate limited**,
-**overloaded**, **offline** (this machine cannot reach the API), or **errors**.
-Red **paused** means auto-retry and the judges are stopped, and says why: a
-usage limit, the monthly spend cap, or that you stopped them. Hover for the same
-reading with the waiting sessions listed, and the history under it: the API's
-state over the last 1, 5 and 15 minutes (attempts, the 429 and 5xx shares,
-give-ups, sessions that retried) and the most recent state changes with how long
-each held. A kernel restart shows as its own line there, because the counts
-start over with the kernel. Click the cell, or press Enter on it,
-for the detail: each waiting session (click one to open that session), a button
-that stops auto-retry for every session while sessions are waiting and resumes
-it while paused, and links to the usage figures and the Log.
+The bottom bar's API readout carries one small dot, right after its **API**
+label, that shows how the API is treating your sessions on
+every connected kernel. The accent colour (blue in the dark theme, clay in the
+light one) means everything is fine. Red means errors are being met somewhere:
+a 429 rate-limit storm, 5xx failures, a machine that cannot reach the API, or
+auto-retry paused (a usage limit, the monthly spend cap, or you stopped it), and
+it stays red while a failed attempt sits in the last 15 minutes anywhere. Gray
+means the API is not being used right now: no traffic in the last 15 minutes on
+any machine. A machine whose link is down is named in the popup with what it
+last said and does not colour the dot. Hover for the reading in plain
+words (for example, 4 requests in the last 15 minutes, all succeeded), one
+line per machine when several are connected, the waiting sessions listed, and
+the history under it: a graph of attempts per minute over the last 15 minutes
+with rate-limited attempts in red and server errors in orange, one sentence
+explaining the codes, and the most recent state changes with how long each
+held. A kernel restart shows as its own line there, because the counts start
+over with the kernel. Click the dot, or press Enter on it, for the detail:
+each waiting session (click one to open that session), a button that stops
+auto-retry for every session while sessions are waiting and resumes it while
+paused, and links to the usage figures and the Log.

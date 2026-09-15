@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
-const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher lives here since plans/file-review.md Slice 0
+const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");   // the matcher, lifted out of render.ts
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("a bare file:// URL becomes a clickable .file-uri-link that opens the file in the host app", () => {
@@ -21,7 +21,7 @@ test("a bare file:// URL becomes a clickable .file-uri-link that opens the file 
   assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/);   // with the click: a PDF's modified-click tab; and the target the link named after its path (Slice 6 of plans/markdown-viewer.md)
   // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts); only a
   // LOCAL URI (an empty authority, or localhost) is one; file://host/path names another machine and stays prose (2026-09-07)
-  assert.match(LINKS, /const FILE_URI_RE = \/\^file:\\\/\\\/\(\?:localhost\)\?\(\?=\\\/\)\/i;/);
+  assert.match(LINKS, /const FILE_URI_RE = \/\^file:\\\/\\\/\(\?:localhost\)\?\(\?=\\\/\)\/i;/, "a LOCAL URI: an empty authority or localhost; file://host/x names another machine and stays prose");
   assert.match(LINKS, /let p = uri\.replace\(FILE_URI_RE, ""\);/);
   assert.match(LINKS, /decodeURIComponent\(p\)/);
 });
@@ -48,6 +48,7 @@ test("linkify works inside INLINE backticks (agents backtick paths), skips only 
   assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat's default skip list (a variable since the file viewer walks inside its <pre>; DEAD_TEXT is the link and the inline SVG)");
   assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/);
   assert.doesNotMatch(LINKS, /"a, \.file-uri-link, code, pre"|code, pre"/);
+  assert.doesNotMatch(LINKS, /DEAD_TEXT \+ ", code/);
   assert.match(LINKS, /tok = tok\.slice\(0, tok\.length - trail\[0\]\.length\)/);
 });
 

@@ -330,7 +330,7 @@ class TypedNameOpsClassifyEveryAcceptedOp(_ForeignDriveFixture):
     # every other op the front door accepts: `name` means nothing to its handler, and a refusal keeps none
     NAMELESS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk",
                 "navAsk", "toggleAsk", "submitAsk", "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho",
-                "apiRetry", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
+                "apiRetry", "editQueued", "setModel", "setEffort", "setMode", "setFast", "setAuth", "endSession", "moveSession",
                 "stopTask", "rewindFiles", "mcpAction", "commentReply", "commentResolve", "commentDelete", "commentSeen",
                 "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge", "askFollowUp")
     # what the front door needs beside `type` to read a message as a drive op: an id for the id ops, nothing for

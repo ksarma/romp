@@ -59,6 +59,10 @@ the interpreter anyway, by its versioned path: `ROMP_PYTHON=/usr/bin/python3.12`
 in `~/.config/romp/service.env` holds through a deleted or rebuilt venv, where
 `python3` would follow the next upgrade.
 
+Install extra interpreters with `uv python install --no-bin <version>` and reach
+them through `uv python find <version>` or a venv, never as a bare `python3.X`
+on `PATH`.
+
 A move to another Python, 3.14t included, goes in this order:
 
 1. Put `ROMP_PYTHON=<path>` in `~/.config/romp/service.env`. The manager reads

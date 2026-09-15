@@ -207,6 +207,265 @@ class FindOrphanClis(unittest.TestCase):
         self.assertEqual(sb.find_orphan_clis(lines, [self.SID], self.OWN), [5001, 5002, 5003])
 
 
+class LeaseRules(unittest.TestCase):
+    """Ownership by LEASE (T305, stage 1 of sessions surviving a kernel restart): a CLI with a valid lease —
+    fresh heartbeat, holder alive by pid and start time, CLI alive by pid and start time — is owned whatever
+    its parent; a CLI with no valid lease and no live kernel parent is an orphan. Every anomaly is a problem
+    row. Pure: lease_census takes the ps listing, the leases and a start-time reader, so no process, pid or
+    second is real here. Synthetic ids throughout."""
+    SID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"     # the conversation id (lastSid) the CLI's argv carries
+    RSID = "11111111-2222-3333-4444-555555555555"    # the romp sid the lease is filed under
+    OWN = 31337                                      # this kernel's pid in the fixtures
+    HOLDER = 777                                     # the lease holder's pid in the fixtures
+    NOW = 1_800_000_000.0
+
+    def _cli(self, pid, ppid, sid=None):
+        return " %d %d /x/claude --output-format stream-json --resume=%s --input-format stream-json" % (pid, ppid, sid or self.SID)
+
+    def _lease(self, pid, start="1000", holder=None, t=None, version="abc12345", sid=None):
+        return {"sid": sid or self.RSID, "fsid": self.SID, "pid": pid, "start": start,
+                "holder": holder if holder is not None else {"pid": self.HOLDER, "start": "50"},
+                "version": version, "t": self.NOW if t is None else t}
+
+    def _census(self, lines, leases, starts, version=""):
+        return sb.lease_census(lines, [self.SID], self.OWN, leases, now=self.NOW, start=lambda p: starts.get(p), version=version)
+
+    def test_a_reparented_cli_with_a_valid_lease_is_owned_whatever_its_parent(self):
+        # launchd and the `systemd --user` manager: the two orphan shapes the parentage rule reaped, each owned here
+        for parent in (" 1 0 /sbin/launchd", " 901 1 /usr/lib/systemd/systemd --user"):
+            ppid = int(parent.split()[0])
+            c = self._census([parent, self._cli(700, ppid)], [self._lease(700)], {700: "1000", self.HOLDER: "50"})
+            self.assertEqual((c["orphans"], c["owned"], c["problems"], c["dead_leases"]), ([], {700: "lease"}, [], []), parent)
+        # find_orphan_clis, handed the leases, gives the census's verdict
+        self.assertEqual(sb.find_orphan_clis([" 1 0 /sbin/launchd", self._cli(700, 1)], [self.SID], self.OWN,
+                                             [self._lease(700)], now=self.NOW, start={700: "1000", self.HOLDER: "50"}.get), [])
+        # …and without them, the parentage rule alone, unchanged
+        self.assertEqual(sb.find_orphan_clis([" 1 0 /sbin/launchd", self._cli(700, 1)], [self.SID], self.OWN), [700])
+
+    def test_a_holder_that_is_gone_makes_the_cli_an_orphan_with_a_row(self):
+        # the holder's pid has no start time (gone) — a crashed kernel's lease: reaped as before leases
+        c = self._census([self._cli(701, 1)], [self._lease(701)], {701: "1000"})
+        self.assertEqual(c["orphans"], [701])
+        self.assertEqual([(p["kind"], p["sid"], p["cliPid"]) for p in c["problems"]], [("lease.holder-gone", self.RSID, 701)])
+        # a holder pid worn by ANOTHER process now (start time differs) is gone too: pid alone is never identity
+        c = self._census([self._cli(701, 1)], [self._lease(701)], {701: "1000", self.HOLDER: "51"})
+        self.assertEqual((c["orphans"], [p["kind"] for p in c["problems"]]), ([701], ["lease.holder-gone"]))
+
+    def test_a_stale_heartbeat_makes_the_cli_an_orphan_and_the_boundary_is_the_ttl(self):
+        starts = {702: "1000", self.HOLDER: "50"}
+        c = self._census([self._cli(702, 1)], [self._lease(702, t=self.NOW - sb.LEASE_TTL_S - 0.5)], starts)
+        self.assertEqual((c["orphans"], [p["kind"] for p in c["problems"]]), ([702], ["lease.stale-heartbeat"]))
+        c = self._census([self._cli(702, 1)], [self._lease(702, t=self.NOW - sb.LEASE_TTL_S)], starts)
+        self.assertEqual((c["orphans"], c["owned"]), ([], {702: "lease"}), "a beat exactly TTL old still holds")
+
+    def test_a_lease_whose_pid_now_names_another_process_is_no_live_process(self):
+        # the lease's CLI died and its pid was reused — by an SDK CLI of ours here, the hardest case: the new
+        # process has no valid lease (identity differs), so it is judged on its own and the row says why
+        c = self._census([self._cli(703, 1)], [self._lease(703, start="1000")], {703: "2000", self.HOLDER: "50"})
+        self.assertEqual((c["orphans"], [p["kind"] for p in c["problems"]]), ([703], ["lease.no-live-process"]))
+        # …and by an unrelated process: no CLI to reap, the lease is dead and listed for removal
+        c = self._census([" 1 0 /sbin/launchd", " 704 1 sleep 300"], [self._lease(704)], {704: "1000", self.HOLDER: "50"})
+        self.assertEqual((c["orphans"], c["dead_leases"], [p["kind"] for p in c["problems"]]),
+                         ([], [self.RSID], ["lease.no-live-process"]))
+
+    def test_this_kernels_own_child_without_a_lease_is_owned_and_not_a_row(self):
+        # the window between this kernel's spawn and its connect-time lease write is by design
+        c = self._census([self._cli(705, self.OWN)], [], {})
+        self.assertEqual((c["orphans"], c["owned"], c["problems"]), ([], {705: "own-child"}, []))
+
+    def test_a_live_kernels_child_without_a_lease_is_kept_and_reported(self):
+        # the previous code version's kernel wrote no leases: its sessions survive the upgrade boot, with a row
+        lines = [" 901 1 /usr/lib/systemd/systemd --user", " 600 901 /usr/bin/python3.12 /x/romp/bin/romp-kernel", self._cli(706, 600)]
+        c = self._census(lines, [], {})
+        self.assertEqual((c["orphans"], c["owned"]), ([], {706: "kernel-child"}))
+        self.assertEqual([(p["kind"], p["cliPid"], p["fsid"]) for p in c["problems"]], [("lease.cli-without-lease", 706, self.SID)])
+
+    def test_no_lease_and_no_kernel_parent_is_todays_plain_orphan(self):
+        c = self._census([" 901 1 /usr/lib/systemd/systemd --user", self._cli(707, 901)], [], {})
+        self.assertEqual((c["orphans"], c["owned"], c["problems"]), ([707], {}, []))
+
+    def test_a_lease_from_another_code_version_is_owned_and_reported(self):
+        starts = {708: "1000", self.HOLDER: "50"}
+        c = self._census([self._cli(708, 1)], [self._lease(708, version="old00000")], starts, version="new00000")
+        self.assertEqual((c["orphans"], c["owned"], [p["kind"] for p in c["problems"]]), ([], {708: "lease"}, ["lease.version-skew"]))
+        c = self._census([self._cli(708, 1)], [self._lease(708, version="new00000")], starts, version="new00000")
+        self.assertEqual(c["problems"], [])
+        c = self._census([self._cli(708, 1)], [self._lease(708, version="old00000")], starts)   # no version to compare: no row
+        self.assertEqual(c["problems"], [])
+
+    def test_two_clis_on_one_conversation_are_each_judged_alone_with_no_row_of_their_own(self):
+        # the boot sweep files that event itself (reconcile.duplicate-cli, duplicate_clis); the census judges each
+        c = self._census([self._cli(709, 1), self._cli(710, 1)], [self._lease(709)], {709: "1000", self.HOLDER: "50"})
+        self.assertEqual((c["owned"], c["orphans"], c["problems"]), ({709: "lease"}, [710], []))
+        self.assertEqual(sb.duplicate_clis([self._cli(709, 1), self._cli(710, 1)], [self.SID]), {self.SID: [709, 710]})
+
+    def test_lease_state_names_the_first_failing_check(self):
+        st = lambda starts: (lambda p: starts.get(p))
+        L = self._lease(1)
+        self.assertEqual(sb.lease_state(L, self.NOW, st({1: "1000", self.HOLDER: "50"})), "valid")
+        self.assertEqual(sb.lease_state(L, self.NOW, st({self.HOLDER: "50"})), "no-live-process")
+        self.assertEqual(sb.lease_state(L, self.NOW, st({1: "1000"})), "holder-gone")
+        self.assertEqual(sb.lease_state(dict(L, t=self.NOW - sb.LEASE_TTL_S - 1), self.NOW, st({1: "1000", self.HOLDER: "50"})), "stale-heartbeat")
+        self.assertEqual(sb.lease_state({"sid": "x"}, self.NOW, st({})), "no-live-process", "a missing field fails its check")
+        self.assertEqual(sb.lease_state(dict(L, holder="junk"), self.NOW, st({1: "1000"})), "holder-gone")
+
+    def test_find_session_cli_reaches_the_leased_cli_first_then_the_child_scan(self):
+        lines = [" 1 0 /sbin/launchd", self._cli(711, 1), self._cli(712, self.OWN)]
+        lease = self._lease(711)
+        self.assertEqual(sb.find_session_cli(lines, [self.SID], self.OWN, lease=lease, start={711: "1000"}.get), 711,
+                         "the re-parented leased CLI is the escalation's target")
+        self.assertEqual(sb.find_session_cli(lines, [self.SID], self.OWN, lease=lease, start={711: "9999"}.get), 712,
+                         "the lease's pid now names another process: the child scan stands")
+        self.assertEqual(sb.find_session_cli(lines, [self.SID], self.OWN), 712)
+        # a lease naming a pid that is not an SDK CLI of ours never wins
+        self.assertEqual(sb.find_session_cli([" 713 1 sleep 300", self._cli(712, self.OWN)], [self.SID], self.OWN,
+                                             lease=self._lease(713), start={713: "1000"}.get), 712)
+
+    def test_lease_files_round_trip_list_and_skip_junk(self):
+        d = tempfile.mkdtemp()
+        self.assertEqual(sb.list_leases(d), [])
+        sb.write_lease(d, self._lease(5))
+        self.assertEqual(sb.read_lease(d, self.RSID)["pid"], 5)
+        self.assertEqual([l["sid"] for l in sb.list_leases(d)], [self.RSID])
+        (Path(d) / sb.LEASE_DIR / "junk.json").write_text("{not json")
+        (Path(d) / sb.LEASE_DIR / "x.json.1.abcd.tmp").write_text("{}")
+        self.assertEqual(len(sb.list_leases(d)), 1, "a corrupt lease and a temp file are nobody's claim")
+        self.assertTrue(sb.remove_lease(d, self.RSID))
+        self.assertFalse(sb.remove_lease(d, self.RSID))
+        self.assertIsNone(sb.read_lease(d, self.RSID))
+
+    def test_proc_start_names_a_live_process_and_not_a_fake_pid(self):
+        me = sb.proc_start(os.getpid())
+        self.assertTrue(me)
+        self.assertEqual(sb.proc_start(os.getpid()), me, "a stable identity")
+        self.assertIsNone(sb.proc_start(_P + 424242), "a pid above pid_max is nobody")
+        # the no-procfs path (macOS): `ps -o lstart=` through the run seam
+        ran = []
+        def run(argv, **kw):
+            ran.append(argv); return types.SimpleNamespace(stdout="Thu Sep 10 17:22:37 2026\n")
+        with mock.patch.object(sb.os.path, "isdir", lambda p: False if p == "/proc" else os.path.isdir(p)):
+            self.assertEqual(sb.proc_start(4242, run=run), "Thu Sep 10 17:22:37 2026")
+            self.assertEqual(ran, [["ps", "-o", "lstart=", "-p", "4242"]])
+            self.assertIsNone(sb.proc_start(4243, run=lambda *a, **k: types.SimpleNamespace(stdout="")))
+
+    def test_problem_row_is_the_log_line_the_ring_prose_and_the_ledger_row(self):
+        d = tempfile.mkdtemp(); logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append)
+        del logs[:]                                     # the construction's own setup lines are not the subject
+        base = len(be.problems())                       # …nor its own problem (the SDK is not importable here)
+        prose = "CLI pid 5 of session 11111111 has a lease that does not hold (holder gone); reaped as an orphan"
+        line = sb.problem_row(d, prose, "lease.holder-gone", sid=self.RSID, log=be._log, cliPid=5, t=1700000000, fsid=None)
+        row = sb.parse_problem_row(line)
+        self.assertEqual((row["kind"], row["t"], row["sid"], row["cliPid"], row["pid"], row["text"]),
+                         ("lease.holder-gone", 1700000000, self.RSID, 5, os.getpid(), prose))
+        self.assertNotIn("fsid", row, "a None field is dropped")
+        self.assertTrue(line.startswith(prose + sb.PROBLEM_ROW_MARK), line)
+        self.assertEqual(logs, [line], "the kernel log gets the whole line")
+        self.assertEqual([r["text"] for r in be.problems()[base:]], [prose], "the ring gets the prose alone")
+        ledger = (Path(d) / sb.SESSION_EVENTS_FILE).read_text().splitlines()
+        self.assertEqual(json.loads(ledger[0]), row, "the ledger row is the same object")
+        self.assertIsNone(sb.parse_problem_row("a plain line"))
+        self.assertIsNone(sb.parse_problem_row("x" + sb.PROBLEM_ROW_MARK + "{not json"))
+        # a summary (ring=False): the ledger and the log, no ring entry
+        sb.problem_row(d, "boot summary", "reconcile.boot", log=be._log, ring=False)
+        self.assertEqual((len(be.problems()) - base, len(logs), len((Path(d) / sb.SESSION_EVENTS_FILE).read_text().splitlines())), (1, 2, 2))
+        # an unwritable ledger never raises
+        self.assertTrue(sb.problem_row(os.path.join(d, "no", "such", "dir"), "p", "k.x"))
+
+    def test_the_backend_writes_beats_and_drops_the_lease_of_a_connected_session(self):
+        d = tempfile.mkdtemp(); logs = []
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None, log=logs.append, code_version="abc12345")
+        del logs[:]                                     # the construction's own setup lines are not the subject
+        base = len(be.problems())
+        sess = types.SimpleNamespace(sid=self.RSID, name="web", resume_sid=self.SID)
+        client = types.SimpleNamespace(_transport=types.SimpleNamespace(_process=types.SimpleNamespace(pid=os.getpid())))
+        with mock.patch.object(sb.SdkBackend, "_lease_beat_loop", lambda self: None):   # the thread exits at once here
+            be._lease_open(sess, client)
+        lease = sb.read_lease(d, self.RSID)
+        self.assertEqual((lease["pid"], lease["fsid"], lease["version"], lease["holder"]["pid"], lease["name"]),
+                         (os.getpid(), self.SID, "abc12345", os.getpid(), "web"))
+        self.assertEqual((lease["start"], lease["holder"]["start"]), (sb.proc_start(os.getpid()),) * 2)
+        self.assertEqual(sb.lease_state(lease, time.time()), "valid")
+        self.assertEqual(sb.lease_census([" %d %d /x/claude --resume=%s --input-format stream-json" % (os.getpid(), 1, self.SID)],
+                                         [self.SID], self.OWN, [lease])["owned"], {os.getpid(): "lease"})
+        # a beat refreshes the heartbeat and follows a conversation flip (a /clear, a fork)
+        sess.resume_sid = "99999999-8888-7777-6666-555555555555"
+        self.assertEqual(be._lease_beat_once(now=lease["t"] + 5), 1)
+        again = sb.read_lease(d, self.RSID)
+        self.assertEqual((again["t"], again["fsid"]), (lease["t"] + 5, sess.resume_sid))
+        be._lease_close(sess)
+        self.assertIsNone(sb.read_lease(d, self.RSID))
+        self.assertEqual(be._lease_beat_once(), 0)
+        be._lease_close(sess)                           # idempotent
+        self.assertEqual(logs, [])
+        # a transport with no pid: loud, and the session runs unleased
+        be._lease_open(sess, types.SimpleNamespace())
+        self.assertIsNone(sb.read_lease(d, self.RSID))
+        self.assertEqual(len(be.problems()) - base, 1)
+        self.assertIn("exposes no CLI pid", be.problems()[-1]["text"])
+
+    def test_two_sessions_opening_at_once_start_one_heartbeat_thread_and_neither_crashes(self):
+        # the T305 review: the beat thread used to be assigned under the lock and STARTED outside it; a second
+        # opener in the first's write window read the unstarted thread as not alive, replaced it, and both then
+        # started one Thread (RuntimeError out of the connect). Two opens held inside the write window at once.
+        d = tempfile.mkdtemp(); be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        gate, started, errors = threading.Event(), [], []
+        def loop(self_):
+            started.append(threading.current_thread().name); gate.wait(10)
+        barrier = threading.Barrier(2, timeout=10)
+        real_write = sb.write_lease
+        def write_inside_the_window(state_dir, lease):
+            barrier.wait()                                  # both opens are between the lock and the write
+            real_write(state_dir, lease)
+        client = types.SimpleNamespace(_transport=types.SimpleNamespace(_process=types.SimpleNamespace(pid=os.getpid())))
+        def open_(sid):
+            try:
+                be._lease_open(types.SimpleNamespace(sid=sid, name=sid[-2:], resume_sid=None), client)
+            except Exception as e:
+                errors.append(e)
+        sids = ("11111111-2222-3333-4444-0000000000a1", "11111111-2222-3333-4444-0000000000a2")
+        with mock.patch.object(sb.SdkBackend, "_lease_beat_loop", loop), mock.patch.object(sb, "write_lease", write_inside_the_window):
+            ts = [threading.Thread(target=open_, args=(s,)) for s in sids]
+            for t in ts: t.start()
+            for t in ts: t.join(15)
+        gate.set()
+        self.assertEqual(errors, [], "no open may raise")
+        self.assertEqual(len(started), 1, "one heartbeat thread per backend, started once")
+        self.assertEqual(sorted(l["sid"] for l in sb.list_leases(d)), sorted(sids))
+
+    def test_a_close_during_a_beat_leaves_no_lease_file_behind(self):
+        # the T305 review: a beat snapshot is taken under the lock but each write ran without it, so a beat could
+        # rewrite a lease that _lease_close had just popped and unlinked, and the next boot filed a false
+        # no-live-process row for a session that ended cleanly. The close lands mid-beat, from another thread.
+        d = tempfile.mkdtemp(); be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        client = types.SimpleNamespace(_transport=types.SimpleNamespace(_process=types.SimpleNamespace(pid=os.getpid())))
+        a = types.SimpleNamespace(sid="11111111-2222-3333-4444-0000000000b1", name="a", resume_sid=None)
+        b = types.SimpleNamespace(sid="11111111-2222-3333-4444-0000000000b2", name="b", resume_sid=None)
+        with mock.patch.object(sb.SdkBackend, "_lease_beat_loop", lambda self: None):
+            be._lease_open(a, client); be._lease_open(b, client)
+        real_write = sb.write_lease; closer = []
+        def write_then_close_b(state_dir, lease):
+            real_write(state_dir, lease)
+            if lease["sid"] == a.sid:                       # b ends cleanly while the beat is between a and b
+                t = threading.Thread(target=be._lease_close, args=(b,)); t.start(); closer.append(t)
+                time.sleep(0.2)
+        with mock.patch.object(sb, "write_lease", write_then_close_b):
+            be._lease_beat_once()
+        for t in closer: t.join(5)
+        self.assertIsNone(sb.read_lease(d, b.sid), "the beat must not rewrite a lease the close removed")
+        self.assertIsNotNone(sb.read_lease(d, a.sid))
+        self.assertEqual(be._lease_beat_once(), 1)
+
+    def test_source_pins_the_connect_writes_the_close_drops_and_the_cadence_is_the_drain_holds(self):
+        src = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
+        self.assertIn("self.backend._lease_open(self, client)", src)
+        self.assertIn("self.backend._lease_close(self)", src)
+        self.assertIn("self._lease_close(s)", src, "the drain's reap drops the lease it ends")
+        self.assertIn("code_version=_kernel_sha()", open(os.path.join(BIN, "romp-kernel")).read())
+        self.assertEqual(sb.LEASE_TTL_S, sb.SdkBackend.DRAIN_HOLD_TTL, "the drain hold's TTL, exactly")
+        self.assertEqual(sb.LEASE_TTL_S, 4 * sb.LEASE_HEARTBEAT_S, "four beats: outlives a missed beat, not a dead holder")
+
+
 class QueuePersistence(unittest.TestCase):
     def test_enqueue_and_unqueue_mirror_to_registry(self):
         d = tempfile.mkdtemp()
@@ -835,6 +1094,14 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual(len(line), 1, logs)
         return line[0]
 
+    def _one_heal_row(self, be, logs):
+        # the heal line is written through problem_row (kind crash.heal, upstream's design since #1340): the ledger
+        # row, the parseable log line, and the prose alone on the problem ring. So a heal is exactly ONE ring entry,
+        # the cause named inside it; before the pull-in the fork's composed line was a plain log line and no problem
+        self.assertEqual([r["text"] for r in be.problems()],
+                         [self._died_line(logs).split(sb.PROBLEM_ROW_MARK, 1)[0]],
+                         "the heal is one problem row: its prose alone on the ring")
+
     def test_a_sigkill_exit_names_the_death_out_of_memory_the_counter_corroborating(self):
         # the primary signal: the CLI's own exit by SIGKILL (-9), the OOM killer's signature under
         # OOMPolicy=continue; the counter, read against the turn-start baseline, corroborates and is stated
@@ -854,7 +1121,7 @@ class CrashHeal(unittest.TestCase):
         self.assertTrue(sb.is_resume_nudge(q[0]), "readers that hide or re-head the resume nudge match this form too")
         self.assertTrue(sb.is_crash_resume_nudge(q[0]))
         self.assertEqual(sb.last_state_value(Path(d), self.SID), "working", "the cut marker stands as before")
-        self.assertEqual(be.problems(), [], "naming a cause is no problem")
+        self._one_heal_row(be, logs)
         # the always-log rule: one plain line saying what was read
         scope_line = [m for m in logs if "session scope result" in m]
         self.assertEqual(len(scope_line), 1, logs)
@@ -890,7 +1157,7 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("the scope was already collected (LoadState=not-found), so the live counter could not be read; "
                       "the journal records an OOM kill in the scope (A process of this unit has been killed by the OOM killer)",
                       scope_line[0])
-        self.assertEqual(be.problems(), [], "the read is no problem, and never silent")
+        self._one_heal_row(be, logs)
         # the whole-scope stop line (a scope without the policy, stopped whole) names it too
         d = tempfile.mkdtemp()
         be = _backend(d)
@@ -919,7 +1186,7 @@ class CrashHeal(unittest.TestCase):
         scope_line = [m for m in logs if "session scope result" in m]
         self.assertEqual(len(scope_line), 1, logs)
         self.assertIn("; the journal records an OOM kill in the scope (systemd-oomd killed 1 process(es) in this unit)", scope_line[0])
-        self.assertEqual(be.problems(), [])
+        self._one_heal_row(be, logs)
         # the Started line alone (a kill -9 by hand, or earlyoom, which leaves no line), an empty journal, journalctl raising
         # and journalctl exiting non-zero: each is the hedged "sigkill" kind and the killed notice, never out of
         # memory (a definite verdict needs a definite record), with the journal's clause in both lines
@@ -951,7 +1218,7 @@ class CrashHeal(unittest.TestCase):
                 self.assertEqual(len(scope_line), 1, logs)
                 self.assertIn("the scope was already collected (LoadState=not-found), so the live counter could not be read; " + said,
                               scope_line[0])
-                self.assertEqual(be.problems(), [])
+                self._one_heal_row(be, logs)
         # the newest life only: an earlier same-named unit's OOM death inside the -n window is cut off at the last
         # Started line, so this life's silence still reads as a kill the journal cannot see
         d = tempfile.mkdtemp()
@@ -1014,7 +1281,7 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("systemd stopped the whole scope over an OOM kill (Result=oom-kill)", self._died_line(logs))
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
         self.assertTrue(any("session scope result" in m and "could not be read" in m for m in logs), logs)
-        self.assertEqual(be.problems(), [])
+        self._one_heal_row(be, logs)
 
     def test_a_contained_child_kill_the_cli_outlived_is_not_named_as_the_clis_death(self):
         # regression-2's defect: under continue a contained tool-child kill is the designed normal outcome,
@@ -1030,7 +1297,7 @@ class CrashHeal(unittest.TestCase):
             line = self._died_line(logs)
             self.assertIn("a tool child, not the CLI", line)
             self.assertNotIn("OOM killer took", line)
-            self.assertEqual(be.problems(), [])
+            self._one_heal_row(be, logs)
 
     def test_an_earlier_contained_kill_then_an_unrelated_crash_is_not_named_oom(self):
         # the baseline's job: a child OOM-killed in an EARLIER turn (baseline 1) that the session survived,
@@ -1080,7 +1347,9 @@ class CrashHeal(unittest.TestCase):
                                            exit_code=1, baseline=0)
         self.assertEqual(len(calls), 1)
         line = self._died_line(logs)
-        self.assertEqual(line, "session %s: claude process died mid-turn; resuming with history intact" % ("s-" + self.SID[:4]))
+        # the heal line is a problem_row line now (kind crash.heal): the prose stands ahead of PROBLEM_ROW_MARK, the row after it
+        self.assertEqual(line.split(sb.PROBLEM_ROW_MARK, 1)[0],
+                         "session %s: claude process died mid-turn; resuming with history intact" % ("s-" + self.SID[:4]))
         self.assertNotIn("oom killer", line.lower())
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
         self.assertTrue(any("session scope result" in m for m in logs), "the read is reported on every path")
@@ -1163,8 +1432,8 @@ class CrashHeal(unittest.TestCase):
         self.assertIn("exited 1", line[0])
         self.assertIn("Failed to connect to bus", line[0])
         self.assertNotIn("more", line[0])
-        self.assertEqual(be.problems(), [])
-        self.assertEqual(be.problem_seq(), seq)
+        self._one_heal_row(be, logs)
+        self.assertEqual(be.problem_seq(), seq + 1, "the heal's one row; the show's failure line adds none")
 
     def test_a_show_that_raises_is_a_plain_line_too(self):
         for exc in (OSError("no systemctl"), subprocess.TimeoutExpired(["systemctl"], 10)):
@@ -1174,7 +1443,7 @@ class CrashHeal(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE], "the heal ran all the same")
             self.assertTrue(any("session scope result" in m and "did not answer" in m and str(exc) in m for m in logs), logs)
-            self.assertEqual(be.problems(), [], "logged inside the except block, and still plain")
+            self._one_heal_row(be, logs)
 
     def test_an_unreadable_memory_events_is_a_plain_line(self):
         # the unit is loaded but its memory.events cannot be read (no file under the cgroup root; a ControlGroup
@@ -1188,7 +1457,7 @@ class CrashHeal(unittest.TestCase):
         self.assertEqual(len(line), 1, logs)
         self.assertIn("memory.events could not be read", line[0])
         self.assertIn("only systemd's Result can say", line[0])
-        self.assertEqual(be.problems(), [])
+        self._one_heal_row(be, logs)
         d = tempfile.mkdtemp()
         be = _backend(d)
         calls, logs = self._heal_with_show(d, be, self._show(cgroup=""), events={self.UNIT: self.EVENTS(1)}, exit_code=1)
@@ -1221,7 +1490,7 @@ class CrashHeal(unittest.TestCase):
                 self.assertNotIn("already collected", line)
                 self.assertNotIn("memory limit", line)
                 self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
-                self.assertEqual(be.problems(), [])
+                self._one_heal_row(be, logs)
         # round 4 (correctness-2): a SIGKILL exit on a loaded unit whose counter could not be read still states a
         # Result=oom-kill the show DID read, in the died line and in the plain line (no journal: the unit is loaded)
         d = tempfile.mkdtemp()
@@ -1256,7 +1525,7 @@ class CrashHeal(unittest.TestCase):
                 self.assertNotIn("already collected", line)
                 self.assertIn("Failed to connect to bus" if label == "exits 1" else "no systemctl", line)
                 self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM])
-                self.assertEqual(be.problems(), [])
+                self._one_heal_row(be, logs)
 
     def test_the_crash_loop_refusal_reads_the_evidence_first_and_names_the_cause(self):
         # kernel-1: a session OOM-killed twice in a row must still have its cause named in the log, so the
@@ -1640,7 +1909,7 @@ class CrashHeal(unittest.TestCase):
         self.assertTrue(sb.is_crash_resume_nudge(q[0]), "the readers that re-head or hide the crash notice match it")
         self.assertTrue(sb.is_resume_nudge(q[0]))
         self.assertEqual(sb.last_state_value(Path(d), self.SID), "working")
-        self.assertEqual(be.problems(), [])
+        self._one_heal_row(be, logs)
         scope_line = [m for m in logs if "session scope result" in m]
         self.assertEqual(len(scope_line), 1, logs)
         self.assertIn("the CLI was killed by signal 9; oom_kill was 0 at the turn's start; memory.events oom_kill=0, Result=success",
@@ -1709,7 +1978,7 @@ class CrashHeal(unittest.TestCase):
                 self.assertIn("the scope was already collected (LoadState=not-found)", scope_line[0])
                 self.assertIn("; the journal says systemd stopped the scope over an OOM kill (Failed with result 'oom-kill')",
                               scope_line[0])
-                self.assertEqual(be.problems(), [])
+                self._one_heal_row(be, logs)
         self.assertEqual(self.JOURNAL_ARGV, sb.SCOPE_JOURNAL_ARGV + [self.UNIT])
         self.assertEqual(sb.SCOPE_JOURNAL_ARGV, ["journalctl", "--user", "-n", "5", "-o", "cat", "-t", "systemd", "-u"],
                          "the manager's own lines only (-t systemd): a scope member's logger lines would push them out of the window")
@@ -1739,7 +2008,7 @@ class CrashHeal(unittest.TestCase):
                               "(LoadState=not-found), so the live counter could not be read; " + said, scope_line[0])
                 if label == "exits 1":
                     self.assertNotIn("more", scope_line[0])
-                self.assertEqual(be.problems(), [])
+                self._one_heal_row(be, logs)
         # a LOADED unit never reads the journal, whatever the exit: its Result and counter are readable
         d = tempfile.mkdtemp()
         be = _backend(d)
@@ -1797,7 +2066,7 @@ class CrashHeal(unittest.TestCase):
         self.assertNotIn("a tool child", line)
         self.assertNotIn("OOM killer took", line)
         self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE])
-        self.assertEqual(be.problems(), [])
+        self._one_heal_row(be, logs)
         # with the scope collected the journal is read (not a SIGKILL) and an empty one leaves the bare notice
         d = tempfile.mkdtemp()
         be = _backend(d)
@@ -2391,7 +2660,7 @@ class CrashHeal(unittest.TestCase):
             self.assertEqual(rep.pending(), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"], "the replacement took it, behind the nudge")
             self.assertEqual(sb.read_reg(Path(d), self.SID).get("queue"), [sb.CRASH_RESUME_NUDGE_OOM, "peer text"])
             self.assertTrue(any("queue closed under the send" in m for m in logs), logs)
-            self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
+            self._one_heal_row(be, logs)         # the re-resolve is the designed path: the heal's one row, nothing more
 
     def test_a_send_in_the_heals_pop_to_write_gap_lands_behind_the_nudge(self):
         # round 6 (tests-1): a send whose _ensure ran between the heal's pop and its reg write found no session and
@@ -2472,8 +2741,8 @@ class CrashHeal(unittest.TestCase):
                 return orig_write(state_dir, sid, reg)
             orig_enqueue = sb.SdkSession.enqueue
 
-            def observing_enqueue(self_, text, todo="", send_id=""):
-                r = orig_enqueue(self_, text, todo=todo, send_id=send_id)
+            def observing_enqueue(self_, text, qid=None, qts=None, todo=""):
+                r = orig_enqueue(self_, text, qid=qid, qts=qts, todo=todo)
                 if self_ is s and r is False:
                     order.append("refused")              # the send observed the closed queue
                 return r
@@ -2518,12 +2787,12 @@ class CrashHeal(unittest.TestCase):
         with self._heal_blocked_in_the_show(d, be) as (s, sent, calls):
             orig_enqueue, released = sb.SdkSession.enqueue, []
 
-            def late_enqueue(self_, text, todo="", send_id=""):
+            def late_enqueue(self_, text, qid=None, qts=None, todo=""):
                 if self_ is s and not released:
                     released.append(True)
                     sent.set()             # the heal runs to its end before this enqueue reaches the queue
                     s.thread.join(10)
-                return orig_enqueue(self_, text, todo=todo, send_id=send_id)
+                return orig_enqueue(self_, text, qid=qid, qts=qts, todo=todo)
             with mock.patch.object(sb.SdkSession, "enqueue", late_enqueue):
                 self.assertTrue(be.deliver(self.SID, "peer mail"), "the deliver is accepted")
             self.assertEqual(released, [True])
@@ -2538,7 +2807,7 @@ class CrashHeal(unittest.TestCase):
             # round 7 (kernel-2): the helper logs the verb it serves, so a deliver's re-resolve is not logged as a send
             self.assertTrue(any(m.startswith("deliver (") and "queue closed under the deliver" in m for m in logs), logs)
             self.assertFalse(any("under the send" in m for m in logs), logs)
-            self.assertEqual(be.problems(), [], "the re-resolve is the designed path, not a problem")
+            self._one_heal_row(be, logs)         # the re-resolve is the designed path: the heal's one row, nothing more
 
     def test_a_rewind_during_the_heals_scope_read_is_refused_and_the_replacement_takes_the_nudge_alone(self):
         # round 7 (kernel-3): the rewind arm queued its edit through _enqueue_resolving, so an edit that reached the
@@ -2908,13 +3177,15 @@ class CrashHeal(unittest.TestCase):
         ens.assert_called_once_with(self.SID)
 
     def test_the_three_forms_share_the_lead_and_the_bare_one_is_unchanged(self):
-        # CRASH_RESUME_NUDGE is what every existing reader matched on: its text is the same to the byte
+        # CRASH_RESUME_NUDGE is what every existing reader matched on: its text is the same to the byte (upstream's
+        # text, the trailing gist marker included: every mechanics notice ends in its one-line gist)
         self.assertEqual(sb.CRASH_RESUME_NUDGE,
                          "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn "
                          "(killed or crashed); the session has been resumed with its history intact. If the conversation "
                          "tail shows '[Request interrupted by user]', that record came from this cut, not from the user: "
                          "nobody asked you to stop. Re-read the tail of the conversation and pick the work back up where "
-                         "it stopped, without asking whether to continue.")
+                         "it stopped, without asking whether to continue."
+                         "<!-- romp-gist: resumed after its process died mid-turn -->")
         lead = "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn"
         for text in (sb.CRASH_RESUME_NUDGE, sb.CRASH_RESUME_NUDGE_OOM, sb.CRASH_RESUME_NUDGE_KILLED):
             self.assertTrue(text.startswith(lead))

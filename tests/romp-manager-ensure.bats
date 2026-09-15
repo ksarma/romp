@@ -10,19 +10,6 @@ load tmux-private
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
-    # A state root of the suite's own. The manager notes every SIGTERM it sends in
-    # STATE_ROOT/restart-audit.jsonl (auditSigterm), and every test here stops a real manager in
-    # teardown: with no root set, those rows landed in the LIVE ledger as requests on record for kills
-    # nobody made (seven rows, 2026-09-06). ROMP_STATE_DIR outranks the XDG floor and a session of a
-    # profiled kernel inherits it, so it is dropped, not shadowed. tests/bats-state-isolation.bats
-    # checks that both lines stay.
-    unset ROMP_STATE_DIR
-    export XDG_STATE_HOME="$TEST_DIR/state"; mkdir -p "$XDG_STATE_HOME"
-    # The manager's write doors (/restart-all, /stop, /ensure) take the serve token (X-Romp-Token): the
-    # suite's state root carries one, and every POST below presents it. The env spelling is dropped so
-    # the file is the token for the manager and the curls alike (a synthetic value, never a real token).
-    unset ROMP_SERVE_TOKEN
-    TOK=ensure-suite-token; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$TOK" > "$XDG_STATE_HOME/romp/serve-token"
     # Every test here starts a REAL manager, and startManager() runs `tmux start-server` before it does
     # anything else. Two layers keep that off the machine's tmux server (tests/tmux-private.bash has the
     # 2026-09-06 incident this file caused): a recording fake tmux on PATH for the WHOLE file (the
@@ -43,6 +30,19 @@ FAKE
     chmod +x "$BIN/tmux"
     export PATH="$BIN:$PATH"
     tmux_private_socket_dir "$TEST_DIR"   # also floors ROMP_CLI_SCOPE=0: no real scope on the user manager
+    # The manager's state root is private too. With neither variable set STATE_ROOT is the live
+    # ~/.local/state/romp, and `up` boots from that root's kernels.json: the fake launcher below runs
+    # once per kernel registered there, each handed the registry entry's stateDir, and the drain
+    # poll's token is read from that root's serve-token. ROMP_STATE_DIR outranks the XDG floor and a
+    # profiled kernel's sessions inherit it, so it is dropped, not shadowed (tests/bats-state-isolation.bats
+    # keeps both lines in every suite that starts the real manager).
+    unset ROMP_STATE_DIR
+    export XDG_STATE_HOME="$TEST_DIR/state"; mkdir -p "$XDG_STATE_HOME"
+    # The manager's write doors (/restart-all, /stop, /ensure) take the serve token (X-Romp-Token): the
+    # suite's state root carries one, and every POST below presents it. The env spelling is dropped so
+    # the file is the token for the manager and the curls alike (a synthetic value, never a real token).
+    unset ROMP_SERVE_TOKEN
+    TOK=ensure-suite-token; mkdir -p "$XDG_STATE_HOME/romp"; printf '%s\n' "$TOK" > "$XDG_STATE_HOME/romp/serve-token"
     # Fake kernel launcher: stay alive without binding a real port (we assert on the
     # manager's control endpoint, not a live kernel).
     FAKE="$TEST_DIR/fake-serve"
@@ -333,33 +333,47 @@ PYEOF
     curl -fsS -X POST -H "X-Romp-Token: $TOK" "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
 }
 
-@test "ensure: a romp down marker holds the auto-start — no manager comes up, exit 0, the reason said" {
+@test "ensure: a romp down marker holds the auto-start: no manager comes up, exit 0, the reason said" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
     # setup's free_port pair, like every other test here: a literal pair once collided with another
     # suite's control port, where a concurrent run's manager answered the probe and ensure said nothing
-    local state="$TEST_DIR/state"
+    local state="$TEST_DIR/state" SPAWNS="$TEST_DIR/spawns" FAKEK="$TEST_DIR/fake-serve-recording"
+    # a launcher that records each spawn: whether ensure started a manager is read off the record
+    # that manager's kernel would leave, never off a clock
+    printf '#!/usr/bin/env bash\necho spawn >> "%s"\nexec sleep 30\n' "$SPAWNS" > "$FAKEK"
+    chmod +x "$FAKEK"
     mkdir -p "$state"
     printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$state/down-by-romp"
-    run env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
-    [ "$status" -eq 0 ]                       # the far-host update or restart is not failing: the kernel is down on purpose
-    [[ "$output" == *"stopped by \`romp down\`"* ]]
-    [[ "$output" == *"romp up"* ]]
-    sleep 1                                   # a spawned manager would have bound the port by now
-    run curl -fsS "http://127.0.0.1:$CPORT/status"
-    [ "$status" -ne 0 ]
-    [ -f "$state/down-by-romp" ]              # ensure never clears it — only a deliberate start does
-
-    # ...and a deliberate `up` clears the marker and comes up
-    env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" up >"$TEST_DIR/up.log" 2>&1 &
+    run env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKEK" node "$MGR" ensure
+    local ensure_status=$status ensure_output=$output marker_kept=0
+    [ -f "$state/down-by-romp" ] && marker_kept=1
+    # the deliberate `up` starts BEFORE the assertions on ensure: it takes the control port, so a
+    # manager an ensure that ignored the marker spawned detached either finds the port taken and
+    # exits, or holds it and is what teardown's /stop reaps. Asserting first would leave that stray
+    # to come up after a failed test ended, with nothing left to stop it (it happened: its launcher
+    # gone with the test dir, its respawn fell through to the machine's own romp-serve).
+    env ROMP_STATE_DIR="$state" ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKEK" node "$MGR" up >"$TEST_DIR/up.log" 2>&1 &
     MGR_PID=$!
+    [ "$ensure_status" -eq 0 ]                # the far-host update or restart is not failing: the kernel is down on purpose
+    [[ "$ensure_output" == *"stopped by \`romp down\`"* ]]
+    [[ "$ensure_output" == *"romp up"* ]]
+    [ "$marker_kept" -eq 1 ]                  # ensure never clears it; only a deliberate start does
+
+    # ...and the deliberate `up` clears the marker and comes up, the ONE manager this test starts:
+    # its kernel is the one spawn on the record. A manager ensure had started would have recorded a
+    # spawn of its own (and cleared the marker itself), so a count of one says ensure spawned nothing.
     local i
     for i in $(seq 1 40); do
-        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && break
+        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
         sleep 0.1
     done
     run curl -fsS "http://127.0.0.1:$CPORT/status"
     [ "$status" -eq 0 ]
     [ ! -e "$state/down-by-romp" ]
     grep -q 'cleared the `romp down` marker' "$TEST_DIR/up.log"
+    [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
+    # this manager's root is $state, so its token is the one it minted there (the write doors take it)
+    curl -fsS -X POST -H "X-Romp-Token: $(cat "$state/serve-token")" "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
+    for i in $(seq 1 60); do kill -0 "$MGR_PID" 2>/dev/null || break; sleep 0.1; done
 }

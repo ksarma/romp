@@ -23,6 +23,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -33,6 +34,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
+sys.path.insert(0, HERE)
+import test_ship_reship as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes: an
+#                                   imported TestCase would be collected here a second time)
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"
 TEXT = "and also update the docstring"
@@ -102,9 +106,9 @@ const measure = () => page.evaluate(() => {
 });
 // frames: the queue with the mail card; the queue without it (taken, not landed); the transcript landing it
 const inject = (frame) => page.evaluate((f) => { window.postMessage(f, "*"); }, frame);
-const withCard = (b, qid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "queued", texts: [{ md: cfg.mail, romp: true, cancelable: true, idx: 0, ...(qid ? { sendId: qid, qts: Date.now() } : {}) }] }] });
+const withCard = (b, qid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "queued", texts: [{ md: cfg.mail, romp: true, cancelable: true, idx: 0, ...(qid ? { qid, qts: Date.now() } : {}) }] }] });
 const without = (b) => ({ ...b, type: "update", events: b.events.filter((e) => e.kind !== "queued") });
-const landed = (b, qid, uuid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid, ts: new Date().toISOString(), romp: true, absorbed: true, sentAt: Math.floor(Date.now() / 1000) - 5, ...(qid ? { sendIds: [qid] } : {}) }] });
+const landed = (b, qid, uuid) => ({ ...b, type: "update", events: [...b.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid, ts: new Date().toISOString(), romp: true, absorbed: true, sentAt: Math.floor(Date.now() / 1000) - 5, ...(qid ? { qid } : {}) }] });
 const run = async (label, qid, uuid) => {
   const out = { label };
   await inject(withCard(base, qid)); await page.waitForTimeout(400); out.card = await measure();
@@ -119,7 +123,7 @@ await page.waitForTimeout(300);
 const start = await measure();
 const idPath = await run("id", "echo:m1", "am1");
 // the landed atom stays in the base for the next rounds
-base.events = [...base.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid: "am1", ts: new Date().toISOString(), romp: true, absorbed: true, sendIds: ["echo:m1"] }];
+base.events = [...base.events.filter((e) => e.kind !== "queued"), { kind: "user", md: cfg.mail, uuid: "am1", ts: new Date().toISOString(), romp: true, absorbed: true, qid: "echo:m1" }];
 await page.evaluate(() => { const c = document.getElementById("content"); c.scrollTop = c.scrollHeight; });
 await page.waitForTimeout(300);
 const textPath = await run("text", null, "am2");
@@ -200,11 +204,7 @@ class ServedQueuedCopyHeld(unittest.TestCase):
                        "sessionId": SID, "attachment": {"type": "queued_command", "prompt": TEXT}}
         cls.port = _free_port()
         cls.token = "testtok-queuedheld"
-        env = dict(os.environ, XDG_STATE_HOME=os.path.join(cls.lab, "xdg"), CLAUDE_CONFIG_DIR=claude,
-                   ROMP_MANAGER_PORT="1", ROMP_KERNEL_NO_OPEN="1", ROMP_SERVE_TOKEN=cls.token,
-                   ROMP_KERNEL_PORT=str(cls.port), ROMP_DIST_DIR=dist, ROMP_MODEL_CATALOG="off")
-        for k in ("ROMP_STATE_DIR", "ROMP_API_KEY_CMD", "ANTHROPIC_API_KEY"):
-            env.pop(k, None)
+        env = _lab.kernel_env(cls.lab, claude, dist, cls.port, cls.token)
         cls.klog = os.path.join(cls.lab, "kernel.log")
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(cls.klog, "w"), stderr=subprocess.STDOUT, env=env)
@@ -262,8 +262,9 @@ class ServedQueuedCopyHeld(unittest.TestCase):
                          "between the queue frame and the transcript frame the card's slot is continuous: %r" % idp["taken"])
         self.assertEqual(idp["taken"]["landing"], 1, "…the held card is marked landing: %r" % idp["taken"])
         # the identified copy is held until its atom lands, not for one push: a second queue frame without it keeps the
-        # held card (the text path drops it there, below). Red with a driver that stamps upstream's qid instead of the
-        # fork's sendId / sendIds: the module then finds no identity and treats the copy as id-less (the 2026-09-09 fold, T252)
+        # held card (the text path drops it there, below). The driver stamps the copy's identity in the wire's own
+        # spelling (qid on the queued text, qid on the landed atom, queued-held.ts): a driver that stamped another name
+        # would find no identity and the module would treat the copy as id-less
         self.assertEqual(idp["taken2"]["landing"], 1, "the identified copy stays held across a second queue frame: %r" % idp["taken2"])
         self.assertEqual(idp["landed"]["landedMail"], 1, "the landed atom took the slot: %r" % idp["landed"])
         self.assertEqual(idp["landed"]["queuedCards"], 0, "…and the held copy is gone with it: %r" % idp["landed"])
@@ -283,6 +284,10 @@ class ServedQueuedCopyHeld(unittest.TestCase):
     def test_our_own_send_in_the_fed_gap_is_one_bubble(self):
         # the tail fix's review: with our copy gone from the queue (held by the pane) and the kernel's echo showing, the
         # echo cover skipped hiding the held copy — two bubbles for one message (three with the echo)
+        # Also the wire's half of the copy's identity, executed on the served page: the send posts an id minted at the
+        # press and our bubble's ✕ carries the same one. The kernel's frames here wear an id of the kernel's own (one
+        # that took none from the press), so the copies are read by text; the frames under the pressed id are the
+        # unit tests'.
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
             json.dump({"chat": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token), "text": "and also update the docstring"}, f)
@@ -300,7 +305,9 @@ class ServedQueuedCopyHeld(unittest.TestCase):
         print("T262M:", json.dumps(r))
         self.assertEqual(r["dropped"], 1, "the send was dropped at the socket: the pane's bubble is the only copy of ours")
         self.assertEqual((r["pressed"]["bubbles"], r["pressed"]["users"]), (1, 0), "our bubble at the press: %r" % r["pressed"])
-        self.assertEqual((r["queued"]["bubbles"], r["queued"]["users"]), (1, 0), "the kernel's queued copy hidden for ours: %r" % r["queued"])
+        self.assertRegex(r["posted"] or "", r"^echo:[0-9a-f]{32}$", "the send posted the copy's id, minted at the press in the kernel's echo form: %r" % (r["posted"],))
+        self.assertEqual(r["bubbleQid"], r["posted"], "our bubble's ✕ carries the id the send posted: %r" % ((r["bubbleQid"], r["posted"]),))
+        self.assertEqual((r["queued"]["bubbles"], r["queued"]["users"]), (1, 0), "the kernel's queued copy under an id of its own hidden for ours, by text: %r" % r["queued"])
         self.assertEqual(r["fed"]["total"], 1, "the fed gap: the echo hidden, the held copy hidden, ours the one bubble: %r" % r["fed"])
         self.assertEqual(r["fed2"]["total"], 1, "…and on the next push too: %r" % r["fed2"])
         self.assertEqual((r["landed"]["bubbles"], r["landed"]["users"]), (0, 1), "the landing takes the slot: %r" % r["landed"])
@@ -323,7 +330,7 @@ await page.addInitScript(() => {
   Object.defineProperty(WebSocket.prototype, "onmessage", { configurable: true, get() { return desc.get.call(this); },
     set(fn) { desc.set.call(this, (ev) => { if (window.__quiet) { try { const m = JSON.parse(ev.data); if (m && (m.type === "chatTail" || m.type === "update" || m.type === "session" || m.type === "status")) return; } catch (e) {} } return fn.call(this, ev); }); } });
   const orig = WebSocket.prototype.send;
-  WebSocket.prototype.send = function (d) { try { const m = JSON.parse(d); if (m && m.type === "sendMessage") { window.__dropped++; return; } } catch (e) {} return orig.call(this, d); };
+  WebSocket.prototype.send = function (d) { try { const m = JSON.parse(d); if (m && m.type === "sendMessage") { window.__dropped++; window.__posted = m.qid; return; } } catch (e) {} return orig.call(this, d); };
 });
 await page.goto(cfg.chat);
 await page.waitForSelector("#tabs .tab, #tabs [data-sid]", { timeout: 20000 });
@@ -346,7 +353,10 @@ await page.press("#composer-input", "Enter");
 await page.waitForSelector(".turn-queued", { timeout: 10000 });
 await page.waitForTimeout(300);
 const pressed = await measure();
-// the kernel lists our copy with its id → ours stays, the kernel's copy hidden
+// the id the send posted, and the id our bubble's ✕ carries: one id, minted at the press
+const posted = await page.evaluate(() => window.__posted);
+const bubbleQid = await page.evaluate(() => { const x = document.querySelector(".turn-queued .queued-x"); return x ? x.dataset.qid : null; });
+// a kernel that minted its own id for the copy (it took none from the press): our copy hidden for ours, by text
 await inject({ ...base, type: "update", events: [...base.events, { kind: "queued", texts: [{ md: cfg.text, qid: "echo:m9", qts: Date.now(), cancelable: true, idx: 0 }] }] });
 await page.waitForTimeout(400);
 const queued = await measure();
@@ -361,7 +371,7 @@ const fed2 = await measure();
 await inject({ ...base, type: "update", events: [...base.events, { kind: "user", md: cfg.text, uuid: "am9", ts: new Date().toISOString(), qid: "echo:m9", human: true }] });
 await page.waitForTimeout(400);
 const landed = await measure();
-fs.writeSync(1, "RESULT:" + JSON.stringify({ pressed, queued, fed, fed2, landed, dropped: await page.evaluate(() => window.__dropped) }) + "\n");
+fs.writeSync(1, "RESULT:" + JSON.stringify({ pressed, posted, bubbleQid, queued, fed, fed2, landed, dropped: await page.evaluate(() => window.__dropped) }) + "\n");
 await browser.close();
 process.exit(0);
 """

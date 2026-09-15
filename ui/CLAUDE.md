@@ -1,4 +1,4 @@
-# romp UI — design rules
+# romp UI design rules
 
 Repo-wide rules live in the root `CLAUDE.md`; these apply to any UI work.
 

@@ -227,7 +227,7 @@ test("viewerPathGate, the token alone: a slash and a letter-led extension on the
   }
 });
 
-test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one, and an unanchored token is not the specifier of an import statement or a require call (the English from and export in prose name files); an opener (Markdown's * with a closing * after the path, every Unicode space and the zero-width space included) or the line's start admits it; a glob's tail after a star, an operand after one and a hand-split import's specifier (a line shaped as an import's continuation) are refused; emphasis around an anchored path links, and an English from with more after its path links whatever stands above it", async () => {
+test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one; an unanchored token named by an import statement or a require call is not one, while the English from and export in prose name files; an opener (Markdown's * with a closing * after the path, every Unicode space and the zero-width space included) or the line's start admits it; a glob's tail after a star, an operand after one and a hand-split import's specifier (a line shaped as an import's continuation) are refused; emphasis around an anchored path links, and an English from with more after its path links whatever stands above it", async () => {
   const { viewerPathGate } = await import("./file-view-links");
   const at = (text: string, tok: string) => ({ text, at: text.indexOf(tok) });
   for (const [text, tok] of [
@@ -390,7 +390,8 @@ test("a file:// URI is a path only with an empty authority or localhost: file://
   assert.equal(fileUriToPath("file://localhost/tmp/a%20b.md"), "/tmp/a b.md");
   assert.equal(fileUriToPath("file://evil.invalid/share/x.md"), "file://evil.invalid/share/x.md", "not a local path: returned as written, never as a relative path");
   const { linkifyFileText } = await import("./file-view-links");
-  const c = code(row('y = "file://evil.invalid/share/x.md"'), row("z = 'file:///tmp/TESTHOST/x.md:12'"), row("w = 'file://localhost/tmp/TESTHOST/y.md#L7'"), row("v = file:///tmp/TESTHOST/z.md:3:4 end"));
+  const c = code(row('y = "file://evil.invalid/share/x.md"'), row("z = 'file:///tmp/TESTHOST/x.md:12'"), row("w = 'file://localhost/tmp/TESTHOST/y.md#L7'"), row("v = file:///tmp/TESTHOST/z.md:3:4 end"),
+    row("u = 'file:///tmp/TESTHOST/x/../y.md'"));
   const before = c.childNodes.map((r) => r.textContent);
   linkifyFileText(c as unknown as HTMLElement, FILE);
   assert.deepEqual(c.childNodes.map((r) => r.textContent), before);
@@ -398,7 +399,8 @@ test("a file:// URI is a path only with an empty authority or localhost: file://
     ["file:///tmp/TESTHOST/x.md:12", "/tmp/TESTHOST/x.md", "12", "Open /tmp/TESTHOST/x.md:12"],
     ["file://localhost/tmp/TESTHOST/y.md#L7", "/tmp/TESTHOST/y.md", "7", "Open /tmp/TESTHOST/y.md:7"],
     ["file:///tmp/TESTHOST/z.md:3:4", "/tmp/TESTHOST/z.md", "3", "Open /tmp/TESTHOST/z.md:3"],
-  ], "the host-bearing URI stays text; the line rides in the link and off the path");
+    ["file:///tmp/TESTHOST/x/../y.md", "/tmp/TESTHOST/y.md", undefined, "Open /tmp/TESTHOST/y.md"],
+  ], "the host-bearing URI stays text; the line rides in the link and off the path; a URI's path is normalized once, as a written path is (the viewer's resolve, which the shared walk hands every target since the 2026-09-15 pull-in)");
 });
 
 // ── the pass over a code body ─────────────────────────────────────────────────────────────────────
@@ -801,8 +803,11 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.match(codeFn, /if \(hl !== null\) code\.innerHTML = hl; else code\.textContent = text;\n\s*linkifyFileText\(code, path\);/, "the gutter branch too");
   assert.doesNotMatch(codeFn, /linkifyFileText\(text|escapeHtml\(linkify/, "never over the HTML string");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n[^\n]*\n\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
+  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{\n(?:\s*if \(t\.type === "code"\)[^\n]*\n)?\s*if \(doc && doc\.kind === "file"\) viewerWalkTokens\(t\);\n\s*if \(base\) void base\.call\(marked, t\);\n\s*\} \}\) as string;/,
     "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7` (the walkTokens itself runs for every kind since the Slice 3 review, collecting the code tokens for Copy)");
+  // the viewer always builds the wrap view (each line its own .fv-cl row), which is what scrollToLine reads
+  const openFnWrap = VIEW.split("export function openFileView(")[1].split("function offersDownload")[0];
+  assert.ok((openFnWrap.match(/codeBlock\([^)]*\)/g) || []).every((c) => /, true\)$/.test(c)), "every codeBlock call in the viewer asks for wrap mode: " + (openFnWrap.match(/codeBlock\([^)]*\)/g) || []).join(" | "));
   const anchorsAt = mdFn.indexOf("\n    linkMarkdownAnchors(box, doc.path);\n");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
   const textAt = mdFn.indexOf('if (doc && doc.kind === "file") linkifyFileText(box, doc.path);');
@@ -853,7 +858,7 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
   assert.equal((o.match(/stopPropagation/g) || []).length, 2, "two stops in openLink, both on the modified gesture: the URL anchor's and the path link's; a plain click goes on to the document's listeners");
-  assert.match(RENDER, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the chat's body delegate serves the todo card, its Reply modal and the pinned-notes strip alone, with the click's gesture: a viewer link that reaches it opens nothing there (the double open after #346)");
+  assert.match(RENDER, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.turn-todo, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the chat's body delegate serves the todo card, its Reply modal and the pinned-notes strip alone, with the click's gesture: a viewer link that reaches it opens nothing there (the double open after #346)");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
   assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
   assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && \(x\.dataset\.act === "openpath" \|\| x\.classList\.contains\(FRAG_LINK_CLASS\)\)\) openLink\(x, ev\);\n\s*\}\);/,
@@ -873,6 +878,7 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(LINKS, /if \(e\.metaKey \|\| e\.ctrlKey\) a\.dispatchEvent\(new MouseEvent\("click", \{ bubbles: true, cancelable: true, metaKey: e\.metaKey, ctrlKey: e\.ctrlKey \}\)\);\n\s*else a\.click\(\);/);
   // the gesture is the project's one rule, in preview.ts
   const PREVIEW = read("preview.ts");
+  assert.match(PREVIEW, /export function openPdfTab\(path: string, sid\?: string \| null\): boolean \{\n\s*if \(previewKind\(path\) !== "pdf"\) return false;\n\s*return openFileTab\(path, sid\);\n\}/, "the PDF opener is the file opener with the kind check in front");
   assert.match(PREVIEW, /export function wantsOwnTab\(ev\?: \{ metaKey\?: boolean; ctrlKey\?: boolean; button\?: number \} \| null\): boolean \{\n\s*return !!ev && \(!!ev\.metaKey \|\| !!ev\.ctrlKey \|\| ev\.button === 1\);\n\}/);
   assert.match(PREVIEW, /export function openFileTab\(path: string, sid\?: string \| null\): boolean \{\n\s*if \(!canPreview\(\)\) return false;\n\s*const w = window\.open\(fileUrl\(path, sid\), "_blank"\);\n\s*if \(!w\) return false;/);
 });
@@ -892,7 +898,7 @@ test("source: a close or a replace-open asks about an unsaved comment the way it
   assert.doesNotMatch(FC, /window\.confirm\(/, "the panel asks nothing itself: window.confirm shows nothing in the VS Code webview");
 });
 
-test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the notice bar and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
+test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the viewer's notice and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   // the notice before the zero-rows return since the Slice 7 review's round 1: a line open of an empty file says so too, in the same
   // one-line shape, with no "showing the last line" tail when there is none

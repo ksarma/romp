@@ -18,7 +18,10 @@ What these pin, by layer:
   * the turn-finished push — _turn_notify_tick fires on a session's turn-end KEY moving (the Stop
     hook's lastStopAt, or a STOPPED states/ transition), only with the master AND the switch on
     and the session unmuted, with a silent first-sight baseline; the event travels to trusted
-    peers the bell-event way.
+    peers the bell-event way. Since 2026-09-10 it fires for the HUMAN's turns only: the Stop hook
+    stamps who opened the turn beside the settle (lastTurnOpener, sdk_backend) and an end the CLI
+    or romp opened by itself (a subagent's task notification, a scheduled prompt, a peer's message,
+    a nudge) is skipped without spending the buzz claim; a registry without the field reads human.
   * the one-buzz-per-turn-end rule — _buzz_claim: the bell event and the turn push both claim
     (sid, turn-end key); the first to file buzzes and the other yields; bell events never
     suppress each other; a sid-less event always passes.
@@ -28,6 +31,7 @@ What these pin, by layer:
 
 Synthetic only: placeholder sids, the notes-api demo sessions (web/api), invented reply text.
 """
+import asyncio
 import io
 import json
 import os
@@ -53,6 +57,8 @@ jd.STATE = Path(_STATE_TD.name)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = load_source("romp_kernel_notify_popover", os.path.join(BIN, "romp-kernel"))
+# the SDK backend, for the Stop hook's half of the turn-opener stamp (TurnOpenerStamp)
+sb = load_source("romp_sdk_backend_turn_opener", os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID_WEB = "11111111-2222-4333-8444-555555555501"
 SID_API = "11111111-2222-4333-8444-555555555502"
@@ -259,8 +265,10 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         (sub, payload), _ = pp.call_args
         self.assertEqual(sub["endpoint"], self.ep)
         d = json.loads(payload.decode())
-        self.assertEqual(d["title"], "romp")
-        self.assertTrue(d["body"])
+        # ONE title rule (the user 2026-09-09): "Romp: <session>" with a session in front, a bare
+        # "Romp" without one; the body stays what it was. Was the lowercase "romp" for both.
+        self.assertEqual(d["title"], "Romp")
+        self.assertEqual(d["body"], "Test notification — this device is set up.")
         # preview reconciliation with #940: the tap payload rides `data` (kind test, no sid) and a tag
         self.assertLessEqual(set(d), {"title", "body", "tag", "data", "sid"}, "a test carries no sid to jump to and no badge")
         self.assertFalse(d.get("sid"))
@@ -281,14 +289,17 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         (sub, payload), _ = pp.call_args
         self.assertEqual(sub["endpoint"], self.ep)
         d = json.loads(payload.decode())
-        self.assertEqual(d["title"], "romp")
+        self.assertEqual(d["title"], "Romp: web", "the session the tap comes back to, in the title too")
         self.assertEqual(d["body"], "Test notification — tap to come back to web.")
         self.assertEqual(d["sid"], SID_WEB)
         self.assertEqual(d["tag"], "romp:" + SID_WEB)
         # a turn's routing shape under kind test: the shell POSTs /reveal for the sid, no card to scroll to
+        pid = d["data"].pop("pid")   # the kernel's handle on this push to this device (2026-09-09, the ledger — test_kernel_webpush's PushLedger): minted per send, so checked by shape and against the row it filed
+        self.assertRegex(pid, r"^[A-Za-z0-9_-]{22}$")
+        self.assertEqual([r["sid"] for r in km._push_ledger() if r["pid"] == pid], [SID_WEB], "the row the pid names is this push's")
         self.assertEqual(d["data"], {"sid": SID_WEB, "host": "", "kind": "test", "cardId": "",
-                                     "url": "/?push-reveal=" + SID_WEB,
-                                     "name": "web"})   # the same name the answer carries (2026-09-09: the shell's offer chip reads it off the payload)
+                                     "url": "/?push-reveal=%s&push-pid=%s" % (SID_WEB, pid),   # the deep link carries the pid (2026-09-10): on Apple the link IS the tap, and the page settles the row it lands
+                                     "name": "web"})   # the same name the answer carries (2026-09-09: the ledger row files it, so the kernel's lines can name the session)
         self.assertNotIn("badge", d, "the count rides its own push")
 
     def test_every_test_push_leaves_a_line_in_the_kernel_log(self):
@@ -326,6 +337,7 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         self.assertEqual((res["sid"], res["name"]), ("boxa:" + SID_API, SID_API[:8]))
         d = json.loads(pp.call_args[0][1].decode())
         self.assertEqual(d["body"], "Test notification — tap to come back to %s." % SID_API[:8])
+        self.assertEqual(d["title"], "Romp: " + SID_API[:8], "the title wears the same stand-in the body does")
         self.assertEqual((d["data"]["sid"], d["data"]["host"], d["data"]["kind"]), ("boxa:" + SID_API, "boxa", "test"))
 
     def _snapshot(self, host, names):
@@ -352,6 +364,12 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         self.assertEqual((res["sid"], res["name"]), ("boxa:" + SID_API, "boxa:api"))
         d = json.loads(pp.call_args[0][1].decode())
         self.assertEqual(d["body"], "Test notification — tap to come back to boxa:api.")
+        # the TITLE wears the session name alone (the user 2026-09-09: the host is not their
+        # concern — the tap carries the routing in `data`); the body and the popover's result
+        # line keep the host-prefixed name the merged dashboard shows
+        self.assertEqual(d["title"], "Romp: api")
+        self.assertNotIn("boxa", d["title"])
+        self.assertEqual(d["data"]["name"], "boxa:api", "the routing block (#1157) carries the form the body and the popover echo wear")
 
     def test_the_shells_label_stands_in_when_the_kernel_has_no_name_for_the_id(self):
         # no snapshot for that host (never polled, or a kernel too old to file names): the tab's own
@@ -365,6 +383,10 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         self.assertEqual(json.loads(body)["name"], "boxa:api (paused)", "trimmed and flattened, otherwise verbatim")
         d = json.loads(pp.call_args[0][1].decode())
         self.assertEqual(d["body"], "Test notification — tap to come back to boxa:api (paused).")
+        # the title takes the label WHOLE: it is the user's own tab text, not a host:name the kernel composed,
+        # so there is no host to strip from it (only a snapshot-resolved remote name loses its prefix in the title)
+        self.assertEqual(d["title"], "Romp: boxa:api (paused)")
+        self.assertEqual(d["data"]["name"], "boxa:api (paused)", "the routing block carries the same stand-in")
         # a local session keeps the registry's name even when the label disagrees (the registry is authoritative)
         with mock.patch.object(km, "_vapid_keys", return_value=(None, "pub")), \
              mock.patch.object(km, "_push_post", return_value=(201, "Created")), \
@@ -374,7 +396,7 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
 
     def test_the_label_is_a_capped_string_or_a_400(self):
         with mock.patch.object(km, "_vapid_keys", return_value=(None, "pub")), \
-             mock.patch.object(km, "_push_post", return_value=(201, "Created")), \
+             mock.patch.object(km, "_push_post", return_value=(201, "Created")) as pp, \
              mock.patch.object(km, "_name_of", return_value=None):
             code, _ = self._post("/push/test", {"endpoint": self.ep, "sid": "boxa:" + SID_API, "label": 5})
             self.assertEqual(code, 400)
@@ -384,6 +406,11 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(json.loads(body)["name"], "x" * km.PUSH_LABEL_MAX, "long UI text is clipped, not refused")
         self.assertLessEqual(km.PUSH_LABEL_MAX, 80)
+        # the title wears the SAME clipped stand-in (#1157's clip meets #1155's title rule through one lookup,
+        # _push_session_names): an unclipped 500-char title over a clipped body would be two names for one session
+        d = json.loads(pp.call_args[0][1].decode())
+        self.assertEqual(d["title"], "Romp: " + "x" * km.PUSH_LABEL_MAX)
+        self.assertEqual(d["data"]["name"], "x" * km.PUSH_LABEL_MAX, "the routing block carries the name the body wears")
 
     def test_without_a_sid_the_probe_is_what_it_was(self):
         code, res, pp = self._test((201, "Created"))
@@ -496,11 +523,15 @@ class RemoteNames(unittest.TestCase):
         self.assertIsNone(km._remote_name_of("nohost", SID_WEB))
 
 
-def _stamp_stop(sid, t):
-    """The Stop hook's ledger stamp — the SDK session's authoritative turn-end fact."""
+def _stamp_stop(sid, t, opener=None):
+    """The Stop hook's ledger stamp — the SDK session's authoritative turn-end fact. `opener` is the
+    lastTurnOpener the hook stamps beside it (2026-09-10); None leaves the field off, an older ledger's shape."""
     d = jd.STATE / "sdk"
     d.mkdir(parents=True, exist_ok=True)
-    (d / (sid + ".json")).write_text(json.dumps({"lastStopAt": int(t)}))
+    reg = {"lastStopAt": int(t)}
+    if opener is not None:
+        reg["lastTurnOpener"] = opener
+    (d / (sid + ".json")).write_text(json.dumps(reg))
 
 
 def _append_state(sid, state, t):
@@ -545,11 +576,16 @@ class TurnFinishedPush(unittest.TestCase):
         self.assertEqual((fired, pushed, fwd), ([], [], []), "existing state is status, not news")
         _stamp_stop(SID_WEB, 1001)
         fired, pushed, fwd = self._tick()
-        self.assertEqual(fired, [{"title": "web", "body": "Done: the login flow now redirects to the notes list.",
+        # the title is "Romp: <session>" (the user 2026-09-09: one title rule for every kind; a turn end
+        # is not a needs-you) — was the bare session name. The body stays the first line it said.
+        self.assertEqual(fired, [{"title": "Romp: web", "body": "Done: the login flow now redirects to the notes list.",
                                   "sid": SID_WEB, "kind": "turn"}])   # preview reconciliation with #940: the kind rides to peers
         (args, kw), = pushed
-        self.assertEqual(args, ("web", "Done: the login flow now redirects to the notes list.", SID_WEB))
+        self.assertEqual(args, ("Romp: web", "Done: the login flow now redirects to the notes list.", SID_WEB))
         self.assertNotIn("badge", kw, "the count rides its own push")
+        # the routing block's `name` (the ledger row files it, so the kernel's lines can name the session) is the session name
+        # the title was built from — NOT the title: "Romp: web" is not a session
+        self.assertEqual(kw, {"kind": "turn", "name": "web"})
         self.assertEqual(fwd, [fired], "the same event travels to trusted peers, the bell-event way")
         # the same key again is nothing new
         self.assertEqual(self._tick()[0], [])
@@ -652,6 +688,251 @@ class TurnFinishedPush(unittest.TestCase):
                         "the feed builds first, so a same-settle bell event files its buzz first")
 
 
+class TurnOpenerGate(unittest.TestCase):
+    """The turn-finished push buzzes for the HUMAN's turns only (2026-09-10). A session running background
+    subagents gets a harness-injected user-role turn per completion (the task notification), reacts to it,
+    and that reaction's Stop stamped lastStopAt like any other end: ten buzzes in fifty minutes from one
+    coordinating session, none about anything the user had asked at that moment. The Stop hook now stamps
+    WHO opened the turn beside the settle (lastTurnOpener, sdk_backend) and the tick skips an end whose
+    opener is not the human — without spending the buzz claim, so a bell event that turn raises keeps its
+    buzz. A registry without the field (an older ledger, a tmux session) reads as the human's: a missing
+    fact never drops the user's buzz."""
+
+    def setUp(self):
+        _reset_store()
+        for p in (jd.STATE / "sdk", jd.STATE / "states"):
+            for f in p.glob("*") if p.exists() else []:
+                f.unlink()
+        km._set_notify_all(True)
+        km._set_notify_turns(True)
+        self.path = _transcript(SID_WEB, "The report is in; folding it into the plan.")
+        self.alive = [{"sid": SID_WEB, "name": "web", "path": self.path}]
+
+    def tearDown(self):
+        km._set_notify_all(False)
+        km._set_notify_turns(False)
+
+    def _tick(self):
+        pushed = []
+        with mock.patch.object(km, "_alive_sessions", return_value=self.alive), \
+             mock.patch.object(km, "_push_notify", side_effect=lambda *a, **k: pushed.append((a, k))), \
+             mock.patch.object(km, "_push_forward"):
+            fired = km._turn_notify_tick(time.time(), {SID_WEB: {"state": "waiting"}})
+        return fired, pushed
+
+    def test_a_turn_the_human_opened_buzzes_as_before(self):
+        _stamp_stop(SID_WEB, 1000, opener="human")
+        self._tick()                                                   # the baseline sighting
+        _stamp_stop(SID_WEB, 1001, opener="human")
+        fired, pushed = self._tick()
+        self.assertEqual(len(fired), 1)
+        self.assertEqual(pushed[0][0], ("Romp: web", "The report is in; folding it into the plan.", SID_WEB))
+
+    def test_a_turn_a_task_notification_opened_is_silent_and_spends_no_claim(self):
+        _stamp_stop(SID_WEB, 1000, opener="human")
+        self._tick()
+        _stamp_stop(SID_WEB, 1001, opener="injected")             # a subagent's completion, reacted to
+        fired, pushed = self._tick()
+        self.assertEqual((fired, pushed), ([], []), "nobody asked the user anything: no buzz")
+        self.assertNotIn(SID_WEB, km._PUSH_BUZZED, "the claim is untouched…")
+        self.assertTrue(km._buzz_claim(SID_WEB, 1001, "bell"), "…so a bell event that turn raises still buzzes")
+
+    def test_the_memo_advances_past_silent_ends_and_the_next_human_end_fires_once(self):
+        _stamp_stop(SID_WEB, 1000, opener="human")
+        self._tick()
+        for t in (1001, 1002, 1003):                                   # three completions, three reactions
+            _stamp_stop(SID_WEB, t, opener="injected")
+            self.assertEqual(self._tick()[0], [], t)
+        _stamp_stop(SID_WEB, 1004, opener="human")
+        self.assertEqual(len(self._tick()[0]), 1, "the human's next turn buzzes once; the silent ends never replay")
+        self.assertEqual(self._tick()[0], [])
+
+    def test_an_older_registry_without_the_field_is_the_humans(self):
+        _stamp_stop(SID_WEB, 1000)
+        self._tick()
+        _stamp_stop(SID_WEB, 1001)                                     # a pre-field ledger: lastStopAt alone
+        self.assertNotIn("lastTurnOpener", km._thread_reg(SID_WEB))
+        self.assertEqual(len(self._tick()[0]), 1, "a missing fact never drops the user's buzz")
+
+    def test_a_value_the_hook_never_writes_reads_as_the_humans(self):
+        _stamp_stop(SID_WEB, 1000, opener="human")
+        self._tick()
+        _stamp_stop(SID_WEB, 1001, opener=7)
+        self.assertEqual(len(self._tick()[0]), 1)
+        self.assertEqual(km._turn_opener({"lastTurnOpener": "injected"}), "injected")
+        self.assertEqual(km._turn_opener({"lastTurnOpener": "human"}), "human")
+        for junk in ({}, {"lastTurnOpener": None}, {"lastTurnOpener": "peer"}, None):
+            self.assertEqual(km._turn_opener(junk), "human", junk)
+
+    def test_the_opener_and_the_settle_come_off_one_registry_read_and_the_gate_precedes_the_claim(self):
+        # the pair is ONE Stop-hook write; reading the file twice could pair an older settle with a
+        # newer turn's opener (a lost buzz on the race)
+        import inspect
+        src = inspect.getsource(km._turn_notify_tick)
+        self.assertIn("reg = _thread_reg(sid)", src)
+        self.assertIn("_turn_end_key(sid, reg)", src)
+        self.assertLess(src.index("_turn_opener(reg)"), src.index('_buzz_claim(sid, key, "turn")'),
+                        "the gate sits before the claim, so a silent end spends nothing")
+
+
+class TurnOpenerStamp(unittest.TestCase):
+    """The backend's half of the gate: who opened the turn is a fact the session learns at the two moments a
+    turn can open — the feeder's POP (a fed text: the human's words, or romp's own marker-carrying nudge /
+    follow-up / restart notice / relayed mail) and a user atom the CLI STREAMS WHILE IDLE (a turn the CLI
+    opened by itself: a background task's notification, a scheduled prompt, a peer's channel message, told
+    by its origin stamp; a fed text is never replayed on the stream). The Stop hook stamps it beside
+    lastStopAt in the same write. Synthetic throughout: the notes-api demo session, invented prompt text."""
+
+    NUDGE = "Where does this stand?\n\n<!-- romp-injected --><!-- romp-auto -->"
+    NOTIF = "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>done</task-notification>"
+
+    class _TextBlock:
+        def __init__(self, text):
+            self.text = text
+
+    class _UserMessage:
+        def __init__(self, content, origin=None, uuid="u-1"):
+            self.content, self.uuid, self.tool_use_result, self.origin = content, uuid, None, origin
+
+    _TextBlock.__name__ = "TextBlock"
+    _UserMessage.__name__ = "UserMessage"
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.be, self.sess = self._session(self.d)
+
+    def _session(self, state_dir):
+        be = sb.SdkBackend(state_dir, "/bin/true", lambda *a, **k: None, log=lambda *a, **k: None)
+        sb.write_reg(Path(state_dir), SID_WEB, {"sid": SID_WEB, "name": "web", "cwd": "/tmp", "alive": True})
+        return be, sb.SdkSession(be, sb.read_reg(Path(state_dir), SID_WEB))
+
+    def _streamed(self, origin, text=NOTIF, be=None, sess=None):
+        be, sess = be or self.be, sess or self.sess
+        be._forward(sess, self._UserMessage([self._TextBlock(text)], origin=origin, uuid="u-%d" % time.time_ns()))
+
+    def _stop(self):
+        asyncio.run(self.sess._stop_hook({}, None, None))
+        return sb.read_reg(Path(self.d), SID_WEB) or {}
+
+    def _idle(self):
+        self.sess.inflight = 0
+        self.sess._cli_working = False
+
+    def test_fed_text_opener_reads_the_marker_in_its_comment_form_only(self):
+        self.assertEqual(sb.fed_text_opener("fix the login redirect"), "human")
+        self.assertEqual(sb.fed_text_opener("/compact"), "human")                 # the user's own button
+        self.assertEqual(sb.fed_text_opener(self.NUDGE), "injected")
+        self.assertEqual(sb.fed_text_opener(sb.RENAME_PING_HEAD + " to x"), "injected")
+        self.assertEqual(sb.fed_text_opener("a typed note that mentions romp-injected in prose"), "human",
+                         "the comment form only, the rule send()'s echo authoring follows")
+        self.assertEqual(sb.fed_text_opener(""), "human")
+
+    def test_the_humans_text_opens_the_turn_as_theirs_and_the_stop_stamps_it_beside_the_settle(self):
+        self.sess._note_turn_opener(sb.fed_text_opener("fix the login redirect"), True)
+        reg = self._stop()
+        self.assertEqual(reg["lastTurnOpener"], "human")
+        self.assertAlmostEqual(reg["lastStopAt"], time.time(), delta=30)
+
+    def test_a_nudge_fed_from_idle_opens_an_injected_turn(self):
+        self.sess._note_turn_opener(sb.fed_text_opener(self.NUDGE), True)
+        self.assertEqual(self._stop()["lastTurnOpener"], "injected")
+
+    def test_a_nudge_folded_into_the_humans_turn_leaves_it_theirs(self):
+        self.sess._note_turn_opener("human", True)
+        self.sess._note_turn_opener(sb.fed_text_opener(self.NUDGE), False)     # mid-turn: the CLI splices it in
+        self.assertEqual(self._stop()["lastTurnOpener"], "human")
+
+    def test_the_humans_message_spliced_into_an_injected_turn_makes_it_theirs(self):
+        # the person asked during it and is answered in it, so the turn's end IS news to them
+        self.sess._note_turn_opener("injected", True)
+        self.sess._note_turn_opener(sb.fed_text_opener("and the tests?"), False)
+        self.assertEqual(self._stop()["lastTurnOpener"], "human")
+
+    def test_a_task_notification_streamed_while_idle_opens_an_injected_turn(self):
+        self.sess._note_turn_opener("human", True)      # the previous turn, the human's…
+        self._idle()                                    # …settled
+        self._streamed({"kind": "task-notification"})
+        self.assertEqual(self.sess._turn_opener, "injected")
+        self.assertTrue(self.sess._cli_working, "the atom still re-asserts working, as before")
+        self.assertEqual(self._stop()["lastTurnOpener"], "injected")
+
+    def test_a_peers_message_and_a_scheduled_prompt_streamed_while_idle_are_injected_too(self):
+        for origin in ({"kind": "peer", "name": "api"},
+                       {"kind": "task-notification", "subkind": "peer-send-message"},
+                       {"kind": "task-notification", "subkind": "scheduled-trigger"},
+                       {"kind": "auto-continuation"}):
+            self.sess._turn_opener = "human"
+            self._idle()
+            self._streamed(origin)
+            self.assertEqual(self.sess._turn_opener, "injected", origin)
+
+    def test_a_notification_spliced_into_the_humans_turn_does_not_take_it(self):
+        self.sess._note_turn_opener("human", True)
+        self.sess.inflight = 1                           # the human's text is in flight
+        self.sess._cli_working = True
+        self._streamed({"kind": "task-notification"})
+        self.assertEqual(self.sess._turn_opener, "human")
+
+    def test_a_stamp_less_or_human_stamped_user_atom_says_nothing(self):
+        self.sess._note_turn_opener("human", True)
+        self._idle()
+        self._streamed(None, text="hello there")
+        self._streamed({"kind": "human"}, text="hello again")
+        self.assertEqual(self.sess._turn_opener, "human")
+
+    def test_no_open_seen_stamps_the_humans(self):
+        # a fresh session object (a kernel restart mid-turn), or a CLI that stamps no origin: fail OPEN
+        # on the buzz — a missing fact never drops the user's
+        self.assertIsNone(self.sess._turn_opener)
+        self.assertEqual(self._stop()["lastTurnOpener"], "human")
+
+    def test_the_feeder_notes_the_opener_at_the_pop(self):
+        import inspect
+        src = inspect.getsource(sb.SdkSession._amain)
+        self.assertIn("self._note_turn_opener(fed_text_opener(item), fresh)", src)
+        self.assertLess(src.index("fresh = item is not None"), src.index("self._note_turn_opener("),
+                        "fresh (from idle, not mid-turn) is decided under the lock first")
+
+    def test_end_to_end_the_kernel_buzzes_for_the_humans_turn_and_not_the_nudged_or_notified_ones(self):
+        # the backend's Stop hook writes the same STATE/sdk/<sid>.json the kernel's tick reads
+        _reset_store()
+        for p in (jd.STATE / "sdk", jd.STATE / "states"):
+            for f in p.glob("*") if p.exists() else []:
+                f.unlink()
+        km._set_notify_all(True)
+        km._set_notify_turns(True)
+        self.addCleanup(lambda: (km._set_notify_all(False), km._set_notify_turns(False)))
+        be, sess = self._session(str(jd.STATE))
+        alive = [{"sid": SID_WEB, "name": "web", "path": _transcript(SID_WEB, "Folded the report in.")}]
+
+        def stop_at(t):
+            with mock.patch("time.time", return_value=float(t)):
+                asyncio.run(sess._stop_hook({}, None, None))
+            sess._mark("waiting")                                      # the settle that follows the Stop
+
+        def tick():
+            with mock.patch.object(km, "_alive_sessions", return_value=alive), \
+                 mock.patch.object(km, "_push_notify"), mock.patch.object(km, "_push_forward"):
+                return km._turn_notify_tick(time.time(), {SID_WEB: {"state": "waiting"}})
+
+        sess._note_turn_opener(sb.fed_text_opener("start on the login flow"), True)
+        stop_at(2000)
+        tick()                                                         # the baseline sighting
+        self.assertEqual(km._thread_reg(SID_WEB)["lastTurnOpener"], "human")
+        # a subagent finished: the CLI opens the turn itself, the session reacts, the Stop stamps
+        self._streamed({"kind": "task-notification"}, be=be, sess=sess)
+        stop_at(2001)
+        self.assertEqual(tick(), [], "the reaction's end is not news to the user")
+        # romp's own nudge, fed from idle
+        sess._note_turn_opener(sb.fed_text_opener(self.NUDGE), True)
+        stop_at(2002)
+        self.assertEqual(tick(), [])
+        # the human's next message
+        sess._note_turn_opener(sb.fed_text_opener("ship it"), True)
+        stop_at(2003)
+        self.assertEqual([f["body"] for f in tick()], ["Folded the report in."])
+
+
 class FirstLine(unittest.TestCase):
     def test_first_non_empty_line_clipped(self):
         self.assertEqual(km._first_line("\n\n  Shipped it.  \nmore"), "Shipped it.")
@@ -738,13 +1019,13 @@ class RelayOfTurnEvents(unittest.TestCase):
         km._set_notify_turns(False)
 
     def test_a_turn_shaped_event_mirrors_with_the_origin_on_its_sid(self):
-        # the relay's tolerant surgery (the federation test's contract): a session-named title
-        # passes as composed, the sid gains the origin so a tap routes through the merged dashboard
+        # the relay touches the SID only (the federation test's contract): the title passes as the
+        # origin composed it, the sid gains the origin so a tap routes through the merged dashboard
         with km._remotes_lock:
             km._remotes["boxa"] = {"host": "boxa", "kernel_port": 1, "local_port": 1, "token": "tok",
                                    "proc": None, "status": "up", "trust": "trusted"}
         try:
-            raw = json.dumps({"origin": "boxa", "events": [{"title": "web", "body": "Done: shipped.", "sid": SID_WEB}]}).encode()
+            raw = json.dumps({"origin": "boxa", "events": [{"title": "Romp: web", "body": "Done: shipped.", "sid": SID_WEB}]}).encode()
             h = km.Handler.__new__(km.Handler)
             h.client_address = ("127.0.0.1", 0)
             h.headers = {"X-Romp-Token": km.TOKEN, "Content-Length": str(len(raw))}
@@ -762,8 +1043,9 @@ class RelayOfTurnEvents(unittest.TestCase):
                 h.do_POST()
             pn.assert_called_once()   # preview reconciliation with #940: kind/host ride as kwargs
             args, kw = pn.call_args
-            self.assertEqual(args, ("web", "Done: shipped.", "boxa:" + SID_WEB))
+            self.assertEqual(args, ("Romp: web", "Done: shipped.", "boxa:" + SID_WEB))
             self.assertEqual(kw.get("host"), "boxa")
+            self.assertNotIn("boxa", args[0] + args[1], "the host rides the routing, never the words")
         finally:
             with km._remotes_lock:
                 km._remotes.pop("boxa", None)

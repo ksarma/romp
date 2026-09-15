@@ -6,11 +6,13 @@ test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isol
 top exactly as before."""
 import atexit
 import importlib.util
+import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
@@ -47,6 +49,32 @@ _TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
 tempfile.tempdir = _TMP_ROOT
 os.environ["TMPDIR"] = _TMP_ROOT
 _PACKAGE_STATE_DIR = getattr(sys.modules.get("tests"), "STATE_DIR", None)
+
+# Owner marker (2026-09-10): a run that dies without reaching any removal below — pytest-timeout's
+# os._exit, a kernel restart cutting the tool shell, the cut-turn reaper's kill — leaves its root
+# standing, and on a shared machine those roots piled into millions of files that the next boot's
+# /tmp cleanup spent 39 minutes deleting. Nothing in this process can run after such a death, so the
+# removal has to come from outside: the kernel's boot reconcile sweeps `romp-tests-*` roots under the
+# system temp dir whose owner is dead (sdk_backend.sweep_dead_test_roots). This marker is what it
+# reads — the owning pid, written at mint time so it is there for the whole life of the root. A root
+# WITHOUT a marker is not touched (the sweep cannot tell a foreign directory from a pre-marker one).
+# The package state dir sits beside the root, not inside it, so it carries its own copy.
+TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"
+
+
+def _write_owner_marker(d):
+    if not d:
+        return
+    try:
+        with open(os.path.join(d, TEST_ROOT_OWNER_MARKER), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"pid": os.getpid(), "started": time.time(),
+                                 "argv": [os.path.basename(a) for a in sys.argv[:3]]}))
+    except OSError:
+        pass                                 # a root we cannot write into is one we cannot leak into either
+
+
+_write_owner_marker(_TMP_ROOT)
+_write_owner_marker(_PACKAGE_STATE_DIR)
 
 
 def _remove_run_dirs(report=False):
@@ -111,10 +139,11 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # not reach a test either) before any test module loads, and re-asserted per test below so a
 # module-level pop or write in one test file cannot erase it for the run. A test that needs its own
 # Claude root sets the variable in setUp, after the fixture, exactly as the ones that do already do.
-# The operator's own location is saved FIRST, before the floor replaces it: the one opt-in live test that
-# borrows the user's apiKeyHelper command (tests/test_session_move_live.py) reads it through
-# ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR. Captured after the floor (the 2026-09-08 fold's first cut) it named the
-# run's empty temp dir and that test skipped as "no auth". setdefault, so an xdist worker keeps the
+# The location the run was handed is saved FIRST, before the floor replaces it: the one opt-in live
+# test that borrows the operator's apiKeyHelper command from their own settings
+# (tests/test_session_move_live.py) reads it through ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR. Captured
+# after the floor it would name the run's empty temp dir, and that test would skip as "no auth"
+# while its skip message still named the borrow. setdefault, so an xdist worker keeps the
 # controller's value rather than re-reading an environment the controller has already floored.
 os.environ.setdefault("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
                       os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"))
@@ -137,14 +166,12 @@ os.environ["CLAUDE_CONFIG_DIR"] = _CLAUDE_CONFIG
 # is the one state safe against every consumer, present and future. Import-time, so collection-time code
 # is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
-# ...and no test may reach the REAL kernel either (2026-09-06): a shell of a romp session inherits the
-# live kernel's ROMP_KERNEL_PORT (and ROMP_SERVE_PORT, the same value under the manager's name), so
-# every reader of the kernel port that a test forgot to point elsewhere dialled the running kernel:
-# postal_service.py's KERNEL_BASE and kernel.py's PORT resolve it at import time. Same shape as the
-# manager floor, for the same reason: a
-# dead value is the one state every consumer treats safely (absent means the default, the live
-# port), and import-time so collection-time code is floored too. Tests that need a kernel start
-# their own on an ephemeral port and pass it explicitly.
+# The kernel's port, both spellings, for the same reason: kernel/kernel.py resolves PORT from
+# ROMP_KERNEL_PORT at import and postal/postal_service.py builds KERNEL_BASE from it at import, bin/romp
+# reads it in every kernel subcommand and hooks/romp-wake.sh at every wake, and bin/romp-manager reads
+# ROMP_SERVE_PORT first; each maps an absent variable to the DEFAULT port, the live kernel's, so a test
+# that dials "the kernel" through an inherited or absent value reaches the developer's own. A test that
+# starts a kernel of its own passes the port it picked, as the ones that do already do.
 os.environ["ROMP_KERNEL_PORT"] = "1"
 os.environ["ROMP_SERVE_PORT"] = "1"
 
@@ -235,8 +262,9 @@ def _dead_manager_port():
     """The import-time poison above covers collection, but a module-level env write in a test file
     ALSO executes during collection — so one module's write (or pop) would otherwise hold for the
     entire run phase, erasing the floor for every test after it. Re-assert per test: no
-    module-level write can outlive collection against this. The kernel/serve port floor rides the
-    same fixture, for the same reason."""
+    module-level write can outlive collection against this. The kernel's port, both spellings, is
+    re-asserted the same way; a test that needs a port of its own sets it in setUp or passes it
+    to the process it starts."""
     os.environ["ROMP_MANAGER_PORT"] = "1"
     os.environ["ROMP_KERNEL_PORT"] = "1"
     os.environ["ROMP_SERVE_PORT"] = "1"
@@ -348,7 +376,7 @@ def _stub_place_llm(monkeypatch):
 
 
 # No test may leave the shared judge or a call-time environment seam changed (2026-09-09). kernel.py
-# loads the judge as SourceFileLoader("romp_judge", ...).load_module(), and load_module re-executes
+# loads the judge as load_source("romp_judge", ...) (kernel/loadsource.py), which re-executes
 # into the module object already in sys.modules under that name, so every kernel-loading test
 # module's km.jd is ONE process-wide object. A test that rebinds jd.STATE to a temp dir and removes
 # that dir in tearDown without restoring the prior value leaves every later STATE reader in the
@@ -480,8 +508,8 @@ _ENV_VALUE_PATH_NAMES = frozenset((
     "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
     "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
     "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "TMUX_TMPDIR", "ROMP_TESTS_SYSTEM_TMPDIR",
-    # this conftest's own floor that the offer upstream does not carry: the pre-floor Claude settings
-    # dir the live move test reads
+    # the Claude settings dir conftest saved ahead of its CLAUDE_CONFIG_DIR floor (above), for the live
+    # move test: a path a failure report may quote, like CLAUDE_CONFIG_DIR beside it
     "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",
     # GitHub Actions: the runner's workspace and tool cache, and the interpreter prefix setup-python
     # exports under six names (every stdlib and site-packages frame of a CI traceback is under it)
@@ -721,8 +749,14 @@ def _redact_report(rep) -> None:
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
+    # ONE implementation per hook per module: a second `def` of this name would silently replace this one
+    # (it did, for an afternoon on 2026-09-10, and every report printed its values again). Anything else
+    # that shapes a test report joins here: the served-tests switch first (its message quotes the skip's
+    # reason), the redaction last, so whatever any step wrote is read for values before it is printed.
     outcome = yield
-    _redact_report(outcome.get_result())
+    rep = outcome.get_result()
+    _require_served_test_ran(item, rep)
+    _redact_report(rep)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -768,3 +802,38 @@ def wait_for_census(before, timeout=5.0):
         if not extra or time.monotonic() >= deadline:                              # kind already present is a leftover
             return extra
         time.sleep(0.02)
+
+
+# Browser-backed served-page tests fail loudly where they must run (T308, 2026-09-10). tests/test_*_browser.py and
+# tests/test_*_served.py boot a hermetic kernel and drive the real dashboard pages in playwright's Chromium; on a machine
+# without the extension's node deps or a browser they skip, and say why. CI's Python matrix jobs are such machines, so a
+# served-page regression never turned them red (the deep-link landing pin, T307, red on main while CI stayed green). The
+# extension job installs that browser and runs these files with ROMP_SERVED_TESTS_REQUIRE=1: any skip in them (a class
+# setUp that finds no deps, a driver that exits 3 for a missing browser, a kernel that never served) is reported as a
+# FAILURE carrying the skip's own reason, the stance the pane bench takes with ROMP_UI_BENCH_REQUIRE. One exception a
+# test can claim for itself: a skip whose reason begins with "optional:" stays a skip, for a leg the runner has declared
+# it does not carry (the pane-hiding test drives three engines and CI installs one; ROMP_SERVED_TESTS_ENGINES names the
+# installed ones, and that test says "optional:" for the others). Off (the default) nothing changes: contributors and
+# the Python matrix jobs skip as before. Pinned by tests/test_served_tests_require.py.
+_SERVED_TESTS_REQUIRE = os.environ.get("ROMP_SERVED_TESTS_REQUIRE") == "1"
+
+
+def _is_served_test_file(item) -> bool:
+    name = os.path.basename(str(getattr(item, "path", None) or item.fspath))
+    return name.startswith("test_") and (name.endswith("_browser.py") or name.endswith("_served.py"))
+
+
+def _require_served_test_ran(item, rep) -> None:
+    """Under ROMP_SERVED_TESTS_REQUIRE=1, a skip in a browser-backed served-page test file is reported as a
+    failure carrying the skip's own reason; an `optional:` skip stays a skip. Called from the one
+    pytest_runtest_makereport above. No-op with the switch off."""
+    if not _SERVED_TESTS_REQUIRE:
+        return
+    if rep.skipped and _is_served_test_file(item):
+        lr = rep.longrepr
+        reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
+        if re.match(r"^(Skipped: )?optional:", reason):
+            return
+        rep.outcome = "failed"
+        rep.longrepr = ("ROMP_SERVED_TESTS_REQUIRE=1: a browser-backed test skipped (at %s) where it must run: %s"
+                        % (rep.when, reason))

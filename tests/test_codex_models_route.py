@@ -24,8 +24,8 @@ import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
-from unittest import mock
 from romp_load import load_source
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -40,7 +40,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["ROMP_MANAGER_PORT"] = "1"             # a dead port, never an inherited live one
 os.environ["ROMP_MODEL_CATALOG"] = "off"          # never the Models API from a test
 km = load_source("romp_kernel_codex_models", os.path.join(BIN, "romp-kernel"))
-cb = load_source("romp_codex_backend_codex_models", os.path.join(ROOT, "kernel", "codex_backend.py"))
+cb = load_source("romp_codex_backend_codex_models",
+                      os.path.join(ROOT, "kernel", "codex_backend.py"))
 
 SID = "11111111-2222-4333-8444-555555555555"
 MODELS = [{"value": "gpt-5-test", "label": "GPT-5 Test"}]

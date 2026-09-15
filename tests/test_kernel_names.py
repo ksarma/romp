@@ -999,7 +999,7 @@ class RenameFaultsThroughTheDoors(_Routes):
         # so the doors route it to the tmux backend, whose dead path renames the Codex registry's
         # durable name first; the fault is beneath its real names writer (the atomic publish)
         cb = load_source("romp_codex_backend_names",
-                         os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py"))
+                              os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py"))
         st = Path(tempfile.mkdtemp())
         cx = cb.CodexBackend(st, client_factory=lambda: None)
         self.assertEqual(cx.spawn("web", "/work/web", sid=SID), SID)
