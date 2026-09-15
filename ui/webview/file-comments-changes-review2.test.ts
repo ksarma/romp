@@ -804,7 +804,7 @@ test("between a reject's reply and its reload the cards wear the romp loader at 
 
 test("a picture's landing moves mtimeNs() to the status's mtime BEFORE its bytes decode (file-view.ts assigns the mtime ahead of the Blob branch; the img's error fires imgFailed later), so the pane has the status's mtime under it: the row bytesFailed files at that paint stands, with the pane's sentence and Reload, the loader gone, through a status over the pane and the deadline's tick; a Reload whose bytes decode takes it away", async (t: TestContext) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const DECODE = "this image failed to decode; it may be mid-write or truncated";   // the pane's own sentence, as error() answers it (contract C1)
+  const DECODE = "this image failed to decode: it may be mid-write or truncated";   // the pane's own sentence, as error() answers it (contract C1)
   const after = status({ fileMtimeNs: F11, storeMtimeNs: S12, hunks: [shifted(h3, 4), shifted(h5, 4)],
     store: { ...NO_COMMENTS, suggestions: [SUGG[1]], comments: [passage] }, unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } });
   const { BYTES_FAILED } = await import("./file-comments");

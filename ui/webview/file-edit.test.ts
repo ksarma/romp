@@ -118,11 +118,12 @@ test("a cancelled save's late ack cannot touch a NEW editing session", () => {
 test("CRLF files round-trip byte-identical", () => {
   // textareas normalize CRLF→LF on assignment: dirty compares NORMALIZED, and the send restores
   // the file's own endings — an untouched CRLF file must not save with every line rewritten
-  assert.match(VIEW, /const norm = \(s: string\): string => s\.replace\(\/\\r\\n\/g, "\\n"\);/);
+  assert.match(VIEW, /const norm = \(s: string\): string => s\.replace\(\/\\r\\n\?\/g, "\\n"\);/);   // a lone CR reads as a line break too, the editor's own view (Slice 7 of plans/markdown-viewer.md, item 7)
   assert.match(VIEW, /eolCRLF = \/\\r\\n\/\.test\(text\);/);
+  assert.match(VIEW, /eolCR = \/\\r\/\.test\(text\) && !\/\\n\/\.test\(text\);/);   // every ending a lone CR: the save writes them back
   assert.match(VIEW, /dirty = ta!\.value !== norm\(text!\);/);   // the fallback surface
   assert.match(VIEW, /dirty = cm!\.value\(\) !== norm\(text!\);/);   // …and CodeMirror compares the same way
-  assert.match(VIEW, /const content = eolCRLF \? buf\.replace\(\/\\n\/g, "\\r\\n"\) : buf;/);
+  assert.match(VIEW, /const content = eolCRLF \? buf\.replace\(\/\\n\/g, "\\r\\n"\) : eolCR \? buf\.replace\(\/\\n\/g, "\\r"\) : buf;/);
 });
 
 test("the anchor headers ride the /remote relay too — mirrored, unlike Content-Type", () => {

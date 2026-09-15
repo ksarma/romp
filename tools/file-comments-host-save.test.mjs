@@ -19,7 +19,7 @@ import { createRequire } from 'node:module';
 
 import { storePathFor, saveStore, fingerprintOf, writeTrackedPaths } from '../vendor/track-changents/store-io.mjs';
 import {
-  statNs, logPathFor, applyEdits, editDiff, fitRecords, BadRequest,
+  statNs, logPathFor, applyEdits, editDiff, splitLinesKernel, fitRecords, BadRequest,
   TEXT_MAX_BYTES, EDIT_DIFF_MAX_LINES, EDIT_DIFF_MAX_BYTES,
 } from './file-comments-host.mjs';
 
@@ -31,6 +31,9 @@ const FIX = path.join(REPO, 'tests', 'fixtures', 'file_comments');
 const engine = createRequire(import.meta.url)(path.join(VENDOR, 'engine.js'));
 
 const SID = '11111111-2222-3333-4444-555555555555';
+// The two save doors' shared cases (tests/fixtures/file_comments/save-doors.json), read here and by
+// tests/test_savefile.py, so the host's save verb and the kernel's saveFile are held to one recorded answer.
+const DOORS = JSON.parse(fs.readFileSync(path.join(FIX, 'save-doors.json'), 'utf8'));
 const NS_RE = /^\d+$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const HUNK_RE = /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@$/;
@@ -174,6 +177,36 @@ test('editDiff writes the shape the kernel logs for a direct edit (difflib, zero
   assert.equal(bulk.truncated, true);
   assert.match(bulk.diff.split('\n')[2], HUNK_RE);
   assert.equal(bulk.diff.split('\n')[2], '@@ -1,3000 +1,3000 @@');
+});
+
+test('editDiff splits lines on the kernel\'s set (Python\'s str.splitlines: a CRLF as one ending, else a lone CR, LF, VT, FF, FS, GS, RS, NEL, LS or PS), so a save through this door logs the same hunks and @@ numbers as the kernel\'s door on a CR, a CRLF or a form-feed file: the shared fixture, then the door end to end over the CR case', () => {
+  // Before, the split was the engine's LF-only splitLinesKeep: a CR-only text was one line here and three to the
+  // kernel, so the same edit read `@@ -1 +1 @@` over the whole text in one door's entry and `@@ -2 +2 @@` in the other's.
+  assert.deepEqual(splitLinesKernel('a\r\nb\rc\nd\ve\ff\x1cg\x1dh\x1ei\x85j\u2028k\u2029l'),
+    ['a\r\n', 'b\r', 'c\n', 'd\v', 'e\f', 'f\x1c', 'g\x1d', 'h\x1e', 'i\x85', 'j\u2028', 'k\u2029', 'l'], 'the eleven endings, a CRLF as one, the tail without one');
+  assert.deepEqual(splitLinesKernel(''), [], 'no lines in an empty text, as splitlines answers');
+  assert.deepEqual(splitLinesKernel('\r\n\r'), ['\r\n', '\r'], 'a CRLF is never a CR and an LF');
+  const spec = DOORS.editDiffLineEndings;
+  assert.equal(spec.name, 'notes.md');
+  assert.deepEqual(spec.cases.map((c) => c.name), ['cr', 'crlf', 'ff', 'rest-of-the-set']);
+  for (const c of spec.cases) {
+    const got = editDiff(c.old, c.new, spec.name);
+    assert.deepEqual(got, { diff: c.diff, truncated: false }, `${c.name}: the kernel's entry, byte for byte`);
+    assert.deepEqual(got.diff.split('\n').filter((l) => l.startsWith('@@')), c.hunks, `${c.name}: the @@ numbers`);
+  }
+  // The door end to end: a tracked CR-only file saved with no records, the log's edit entry carrying the fixture's diff.
+  const cr = spec.cases.find((c) => c.name === 'cr');
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/notes.md']);
+  const file = path.join(w.root, 'docs', 'notes.md');
+  fs.writeFileSync(file, cr.old);
+  const st = status(w, file);
+  const r = save(w, file, st, cr.new, []);
+  assert.equal(fs.readFileSync(file, 'utf8'), cr.new, 'the CR endings written as sent');
+  assert.deepEqual(r.log.map((e) => e.kind), ['edit']);
+  assert.equal(r.log[0].diff, cr.diff);
+  assert.equal(r.log[0].truncated, false);
+  assert.deepEqual(readLogLines(logPathFor(storePathFor(w.root, file))).map((e) => e.diff), [cr.diff], 'the entry on disk');
 });
 
 test('fitRecords keeps a record whose text sits at its offset, rebuilt in recordAgentEdit\'s shape, and names the first that does not fit', () => {
@@ -908,4 +941,32 @@ test('a content that already begins with U+FEFF is written as it is with its rec
   assert.equal(fs.readFileSync(w.report)[0], 0x23, 'the first byte is the title\'s #');
   assert.equal(readSidecar(st2.storePath).suggestions[0].from, t2.records[0].from);
   assert.equal(r2.bom, false, 'a value, never absent');
+});
+
+test('the three bytes count against the text cap at this door as at the kernel\'s (tests/test_savefile.py, over the same fixture): a BOM file saved with a content two bytes under the cap is refused too-large with nothing written, and one three bytes under lands at exactly the cap, EF BB BF first', () => {
+  // checkTooLarge runs over `content`, the text with the BOM put back, never over the view's text alone: the view's
+  // text within the cap by two bytes joins the three-byte BOM to pass it.
+  const edge = DOORS.bomCapEdge;
+  assert.equal(edge.file.charCodeAt(0), 0xFEFF, 'the fixture: a BOM file');
+  assert.equal(Buffer.byteLength(edge.fill, 'utf8'), 1, 'the fixture: one byte per character, so the count is in bytes');
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/notes.md']);
+  const bom = path.join(w.root, 'docs', 'notes.md');
+  fs.writeFileSync(bom, edge.file);
+  assert.deepEqual([...fs.readFileSync(bom).subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  const st = status(w, bom);
+  const before = snapshot(bom, storePathFor(w.root, bom));
+  const r = refused(w, saveReq(bom, st, edge.fill.repeat(TEXT_MAX_BYTES - edge.refusedUnderCapBy), []), 'too-large');
+  assert.match(r.error, /exceeds the 2 MB text cap/);
+  assert.ok(r.error.includes('~/notes-api/docs/notes.md'), r.error);
+  untouched(w, before);
+  const r2 = save(w, bom, st, edge.fill.repeat(TEXT_MAX_BYTES - edge.writtenUnderCapBy), []);
+  const bytes = fs.readFileSync(bom);
+  assert.equal(bytes.length, TEXT_MAX_BYTES, 'exactly at the cap, the BOM counted');
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xEF, 0xBB, 0xBF], 'the BOM first');
+  assert.equal(bytes.subarray(3).toString('utf8'), edge.fill.repeat(TEXT_MAX_BYTES - edge.writtenUnderCapBy), 'then the content');
+  assert.equal(r2.bom, true);
+  assert.equal(r2.fileMtimeNs, statNs(bom));
+  assert.deepEqual(r2.log.map((e) => e.kind), ['edit']);
+  assert.equal(r2.log[0].bytesAfter, TEXT_MAX_BYTES, 'the entry counts the bytes on disk');
 });

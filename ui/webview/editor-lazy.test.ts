@@ -4,6 +4,15 @@
 // is untouched (same string to the same saveFile op behind the same consent gate + ns conflict
 // floor), and byte fidelity survives round-trips (UTF-8-only arming, CRLF restore, no invented
 // or stripped trailing newline). Pure units run the real langNameFor; the rest are source pins.
+// Running this file alone (the single-file recipe: one test bundled with esbuild into a scratch directory and run there) needs
+// two things the full suite's testBuild carries and a plain `esbuild --bundle` does not: NODE_PATH pointing at the extension's
+// node_modules, since ui/webview has no node_modules above it, and testBuild's `alias: oneCodeMirror` (esbuild's --alias flags for
+// @codemirror/state and @codemirror/commands to their dist/index.js), without which the test bundle itself holds two copies of
+// @codemirror/state (the ESM import's and the vendored require's) and the executed track test fails with "Unrecognized
+// extension value", the very hazard the chunk test below pins the shipped bundle against. Over a scratch copy whose node_modules
+// is a symlink to the real one, esbuild resolves the alias's absolute path through the link, so the metafile keys the one copy by a
+// relative path into the real tree; the chunk test reads the path's tail, not its head, for that reason (the Slice 7 review's
+// round 1, which found the test red under that recipe alone).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -164,9 +173,13 @@ test("exactly one copy of @codemirror/state (and commands, view) ends up in the 
   const r = await esbuild.build({ ...(webview as object), entryPoints: ["../ui/webview/editor-chunk.ts"], write: false, metafile: true, logLevel: "silent" });
   const inputs = Object.keys(r.metafile!.inputs);
   const copies = (pkg: string) => inputs.filter((k) => k.includes(`node_modules/@codemirror/${pkg}/`)).sort();
-  assert.deepEqual(copies("state"), ["node_modules/@codemirror/state/dist/index.js"]);
-  assert.deepEqual(copies("commands"), ["node_modules/@codemirror/commands/dist/index.js"]);
-  assert.deepEqual(copies("view"), ["node_modules/@codemirror/view/dist/index.js"]);
+  // one input per package, and it is the ESM build: the key's tail, since a metafile keys an input by its path relative to the
+  // working directory, which runs through a symlinked node_modules into the real tree under the single-file recipe (the header)
+  for (const pkg of ["state", "commands", "view"]) {
+    const found = copies(pkg);
+    assert.equal(found.length, 1, `one copy of @codemirror/${pkg} in the chunk, got ${JSON.stringify(found)}`);
+    assert.ok(found[0].endsWith(`node_modules/@codemirror/${pkg}/dist/index.js`), `the ESM build (dist/index.js), never dist/index.cjs: ${found[0]}`);
+  }
   // the vendored modules ride inside the chunk; track-cm.js's require('track-changents/engine') resolves by
   // self-reference through the vendored package.json, with no alias for it
   for (const f of ["obsidian/src/track-cm.js", "obsidian/src/track-logic.js", "engine.js", "display.js"]) {
@@ -224,8 +237,12 @@ test("the chunk wait wears the romp loader, and a failed load falls back LOUDLY 
 
 test("both surfaces hand the SAME string to the SAME saveFile op — the gate and floor are untouched", () => {
   assert.match(VIEW, /const bufValue = \(\): string \| null => \(cm \? cm\.value\(\) : ta \? ta\.value : null\);/);
-  assert.match(VIEW, /const content = eolCRLF \? buf\.replace\(\/\\n\/g, "\\r\\n"\) : buf;/,
-    "the CRLF restore stays file-view's, whichever surface owns the buffer");
+  assert.match(VIEW, /const content = eolCRLF \? buf\.replace\(\/\\n\/g, "\\r\\n"\) : eolCR \? buf\.replace\(\/\\n\/g, "\\r"\) : buf;/,
+    "the CRLF restore stays file-view's, whichever surface owns the buffer; a CR-only file's lone CRs are restored the same way (eolCR; the Slice 7 review's round 1)");
+  assert.match(VIEW, /const norm = \(s: string\): string => s\.replace\(\/\\r\\n\?\/g, "\\n"\);/,
+    "the buffer is compared against the editor's own view of the text: a CRLF or a lone CR read as a line break and given back as LF");
+  assert.match(VIEW, /eolCRLF = \/\\r\\n\/\.test\(text\);\n\s*eolCR = \/\\r\/\.test\(text\) && !\/\\n\/\.test\(text\);/,
+    "both endings read at the mount: CR-only means a lone CR somewhere and no LF anywhere, so every LF the editor gives back came from a CR or a typed line break");
   assert.match(VIEW, /post\(\{ type: "saveFile", path, sid: sid \|\| undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq \}\);/);
   // in-flight typing survives the ack from EITHER surface
   assert.match(VIEW, /if \(bufValue\(\) !== null && bufValue\(\) !== norm\(content\)\) \{/);
@@ -254,16 +271,28 @@ test("langNameFor curates exactly the in-repo set, plain text otherwise", () => 
   assert.equal(langNameFor(""), null);
 });
 
-test("the CRLF restore + trailing-newline behavior round-trips byte-identically", () => {
-  // the exact expression doSave applies to the buffer (pinned above); executed here on both shapes
-  const save = (buf: string, eolCRLF: boolean) => (eolCRLF ? buf.replace(/\n/g, "\r\n") : buf);
-  const norm = (s: string) => s.replace(/\r\n/g, "\n");
+test("the CRLF restore + trailing-newline behavior round-trips byte-identically, and a CR-only file's lone CRs the same way", () => {
+  // the exact expressions doSave, norm and the mount apply to the buffer (pinned above); executed here on every shape
+  const save = (buf: string, eolCRLF: boolean, eolCR: boolean) => (eolCRLF ? buf.replace(/\n/g, "\r\n") : eolCR ? buf.replace(/\n/g, "\r") : buf);
+  const norm = (s: string) => s.replace(/\r\n?/g, "\n");
+  const endings = (text: string) => ({ eolCRLF: /\r\n/.test(text), eolCR: /\r/.test(text) && !/\n/.test(text) });
+  const round = (text: string) => { const e = endings(text); return save(norm(text), e.eolCRLF, e.eolCR); };
   const crlf = "line one\r\nline two\r\n";
-  assert.equal(save(norm(crlf), true), crlf, "an untouched CRLF file round-trips byte-identical");
+  assert.equal(round(crlf), crlf, "an untouched CRLF file round-trips byte-identical");
   const noTail = "no trailing newline";
-  assert.equal(save(norm(noTail), false), noTail, "no newline is invented at EOF");
+  assert.equal(round(noTail), noTail, "no newline is invented at EOF");
   const tail = "kept\n";
-  assert.equal(save(norm(tail), false), tail, "an existing trailing newline is kept");
+  assert.equal(round(tail), tail, "an existing trailing newline is kept");
+  // a CR-only file (the Slice 7 review's round 1): the editor's view is LF, the save writes the CRs back, a typed line break included
+  const cr = "line one\rline two\r";
+  assert.equal(norm(cr), "line one\nline two\n", "the editor's view of a CR-only file: every lone CR a line break (CodeMirror's document model and the textarea agree)");
+  assert.deepEqual(endings(cr), { eolCRLF: false, eolCR: true });
+  assert.equal(round(cr), cr, "an untouched CR-only file round-trips byte-identical (before: LF at every ending)");
+  assert.equal(save(norm(cr) + "typed\n", false, true), cr + "typed\r", "a typed line break takes the file's ending");
+  assert.notEqual(norm(cr), cr, "the editor's view differs from the disk text, which is why the dirty compare reads the buffer against norm(text) (an untouched buffer is clean) and the save door restores the ending");
+  // a file mixing lone CRs and LFs has no one ending to restore: saved as the editor gives it, the pre-existing edge
+  const mixed = "a\rb\nc";
+  assert.deepEqual(endings(mixed), { eolCRLF: false, eolCR: false }); assert.equal(round(mixed), "a\nb\nc");
 });
 
 test("edit arming stays the kernel's verdict: UTF-8-only and the ns mtime anchor", () => {

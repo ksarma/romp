@@ -306,8 +306,8 @@ function status(hunks: Hunk[], over: Partial<Status> = {}): Status {
 }
 // the host's words for an append that failed on a save that landed (tools/file-comments-host.mjs, the save verb's `landed`)
 const WARN = "saved, but the edit was not written to the comments log (the log file is not writable) — the Log will not show this edit";
-// the refusal's sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md (item 7): CodeMirror's document model
-// rewrites a lone CR to LF as it loads the text, as norm rewrites a CRLF, so the same refusal covers both (CR_REFUSAL)
+// the refusal's sentence names CR and CRLF since Slice 7 of plans/markdown-viewer.md (item 7): the editor's document model reads a
+// lone CR as a line break as it does a CRLF (norm rewrites both to LF before the mount), so the same refusal covers both (CR_REFUSAL)
 const CR_WORDS = /^The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes\. /;
 
 // ── the probe: an action whose only job is to keep the ctx the viewer hands it ──────────────────────
@@ -508,14 +508,37 @@ test("a lone CR: pending changes that land during the consent read are refused a
   assert.match(errBar(body)!.textContent, /1 change is pending in this file, so Edit is off here/);
 });
 
-test("a lone CR without pending changes: Edit mounts as before (the refusal is about the records, not the endings), and the viewer hands the chunk the text with its CRs (norm rewrites CRLF alone; the rewrite of a lone CR is the editor's own document model's, so a save writes LF where the file had CR: a pre-existing edge, recorded, not fixed)", async (t) => {
+// A CR-only file's endings through an edit (the Slice 7 review's round 1, on the PR body's open decision): the editor's document
+// model reads a lone CR as a line break and gives it back as LF, so before this round a keystroke made the buffer dirty against
+// the CR text for good and a save wrote LF at every ending, a data change the reader did not make. Now norm rewrites a lone CR
+// as it does a CRLF (the buffer is compared against the editor's own view of the text), and the save door writes the lone CRs
+// back where the buffer has LF (eolCR), the CRLF restore's shape: exact, since a file with no LF gave the editor nothing else to
+// turn into one. Red over a git archive of 98859d061 at the buffer's text (CR_DOC there), at the save frame a buffer equal to the
+// text still posted, and at the LF endings in the content posted.
+test("a lone CR without pending changes: Edit mounts as before (the refusal is about the records, not the endings) over the LF view of the text, a buffer equal to that view is not dirty and Save posts nothing, and a typed change lands with every ending a CR through the panel's save, the file's own (the Slice 7 review's round 1: before, LF where the file had CR)", async (t) => {
   const o = await open(t, CR_DOC);
   await answerStatus(status([]));
   await enterEdit(o);
   assert.equal(ed.mounted, 1, "the editor mounted");
   assert.equal(o.ctx.editing(), true);
-  assert.equal(ed.buf, CR_DOC, "the text as the viewer hands it: the CRs intact (the stub is not CodeMirror; the real chunk splits the string on CRLF, CR or LF and joins its lines with LF)");
+  assert.equal(ed.buf, DOC, "the text as the viewer hands it: the LF view (norm), what the editor's document model holds for a CR-only file (before: the CRs as on disk, so the buffer never again equalled the text)");
   assert.equal(ed.trackOpts, null, "nothing pending: no track option");
+  // the buffer as the editor loaded it: nothing to save, so Save leaves edit mode and posts nothing
+  typeInto(DOC);
+  o.b.save.click(); await settle();
+  assert.equal(countOf("fileComments", "save"), 0, "no save verb: the buffer is the file's text in the editor's view (before: dirty against the CR text, and a frame with LF endings)");
+  assert.equal(countOf("saveFile"), 0, "and no saveFile frame");
+  assert.equal(o.ctx.editing(), false, "Save with nothing changed leaves edit mode, the honest ack");
+  // a typed change: the content posted carries the file's own endings, every LF the editor gave back written as a CR
+  const o2 = await open(t, CR_DOC);
+  await answerStatus(status([]));
+  await enterEdit(o2);
+  const m = saveTracked(o2, DOC + "More.\n");
+  assert.equal(m.args.content, CR_DOC + "More.\r", "the file's lone CRs restored at every ending, the typed line break included (before: LF throughout)");
+  assert.deepEqual(m.args.suggestions, [], "nothing pending rode in");
+  assert.equal(m.fence.fileMtimeNs, MT, "the same fence as any save");
+  await saveReply(m.reqId, status([], { fileMtimeNs: NS(9) }));
+  assert.equal(o2.ctx.mtimeNs(), NS(9), "the save landed"); assert.equal(o2.ctx.editing(), false, "and the ack left edit mode: no in-flight typing was read into the LF buffer against the CR content");
 });
 
 // ── 2. the host's logWarning reaches the viewer's note bar ──────────────────────────────────────────

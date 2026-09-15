@@ -3743,8 +3743,14 @@ export function fitRecords(content, suggestions) {
 // `@@ -<range> +<range> @@` with the removed lines and then the added ones, every line
 // newline-terminated, capped at EDIT_DIFF_MAX_LINES lines or EDIT_DIFF_MAX_BYTES bytes with
 // `truncated: true` when cut — so the panel's Log reads a save's entry and a direct edit's the
-// same way. Lines are split on '\n' (a CR stays with its line). The common head and tail are
-// trimmed first and the engine's line LCS (lcsOps, the one diff this script has) aligns the rest;
+// same way. Lines are split as the kernel splits them (Python's str.splitlines, which _edit_log_diff
+// hands difflib), one rule for both doors: a CRLF is one ending, else a lone CR, LF, VT (U+000B), FF
+// (U+000C), FS (U+001C), GS (U+001D), RS (U+001E), NEL (U+0085), LS (U+2028) or PS (U+2029) ends a
+// line, and the ending stays with its line (splitLinesKernel), so the same edit yields the same hunks
+// and @@ numbers from either door on a file with any of those endings; the engine's splitLinesKeep,
+// LF alone, made a CR-only or a form-feed-separated text one line here and several to the kernel
+// (tests/fixtures/file_comments/save-doors.json holds both doors to one answer). The common head and
+// tail are trimmed first and the engine's line LCS (lcsOps, the one diff this script has) aligns the rest;
 // past DIFF_CELLS cells the middle is written as one replacement hunk, which the cap cuts anyway
 // — an exact alignment of a wholesale paste is not worth the memory. An identical text yields ''
 // (difflib writes no header when there is no hunk).
@@ -3761,9 +3767,16 @@ function rangeUnified(start, length) {
   return `${beginning},${length}`;
 }
 
+// The kernel's line endings (the header): a CRLF first, so it is one ending, then any one of the
+// other ten. A line is the text up to and including its ending, or the tail with none; '' has no lines.
+const KERNEL_LINES = /[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]*(?:\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029])|[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]+$/g;
+export function splitLinesKernel(s) {
+  return s.match(KERNEL_LINES) || [];
+}
+
 export function editDiff(oldText, newText, name) {
-  const a = engine.splitLinesKeep(oldText);
-  const b = engine.splitLinesKeep(newText);
+  const a = splitLinesKernel(oldText);
+  const b = splitLinesKernel(newText);
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tail = 0;

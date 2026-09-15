@@ -92,7 +92,8 @@ export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/
  *  table and fetch stub, the status-answering poster, the probe action.
  *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a text answer's
  *  `X-Romp-Text-Utf8` is `window.__utf8[path]` when a test set one ("0": the kernel's Latin-1 fallback; Slice 7, item 5) and
- *  "1" otherwise; a URL the URL viewer
+ *  "1" otherwise, and its `Content-Length` the body's UTF-8 byte count as the kernel's `_send` writes it (a text of one U+FEFF
+ *  answers 3 and reads as "" through the Response's decode: the BOM-only line, Slice 7, item 6); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
  *  answers a `fileComments` ask with a `fileCommentsResult` carrying STATUS and the current mtime while `window.__autoReply`
  *  is on. `window.__fetches` counts every request the stub answers and `window.__heads` the `HEAD`s among them (the Comments
@@ -122,7 +123,7 @@ window.fetch = async function (url, init) {
   var text = window.__docs[p];
   if (text === undefined) return new Response(head ? null : "no such file: " + p, { status: 404, headers: window.__reason ? { "X-Romp-Reason": window.__reason } : {} });   // the kernel's one-word cause on a 404 (the header above)
   if (/\.svg$/i.test(p)) return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "image/svg+xml", "X-Romp-Mtime-Ns": window.__mtime } });   // an image: no text header, as the kernel sends it
-  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": window.__utf8[p] !== undefined ? window.__utf8[p] : "1" } });   // the kernel's decode verdict per path: "0" for a Latin-1 fallback (window.__utf8), "1" otherwise
+  return new Response(head ? null : text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8", "Content-Length": String(new TextEncoder().encode(text).length), "X-Romp-Mtime-Ns": window.__mtime, "X-Romp-Text-Utf8": window.__utf8[p] !== undefined ? window.__utf8[p] : "1" } });   // the kernel's decode verdict per path: "0" for a Latin-1 fallback (window.__utf8), "1" otherwise; Content-Length the body's byte count, as the kernel's _send writes it (the viewer reads it for a BOM-only file, whose one U+FEFF the Response's decode strips; Slice 7, item 6)
 };
 window.__paints = 0; window.__reflows = 0; window.__seam = null; window.__autoReply = true;
 FV.initFileView(function (m) {

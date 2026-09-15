@@ -318,11 +318,14 @@ const fetches: string[] = [];
   if (url.startsWith("/sessions")) return { json: async () => [{ id: SID, name: "api", bg: "#123456", fg: "#ffffff" }] };
   const p = decodeURIComponent((/[?&]path=([^&]*)/.exec(url) || [])[1] || "");
   const f = disk[p];
-  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? (f.utf8 ?? "1") : null) : null) };
+  // Content-Length: the body's byte count, as the kernel's _send writes it (tests/test_kernel_preview.py pins 0 for an empty file);
+  // the viewer reads it for a file whose only bytes are a BOM (Slice 7, item 6: "" from more than zero bytes)
+  const byteLength = (b: string | Uint8Array): number => (typeof b === "string" ? new TextEncoder().encode(b).length : b.length);
+  const headers = { get: (h: string) => (f ? (h === "Content-Type" ? f.type : h === "X-Romp-Mtime-Ns" ? f.mtimeNs : h === "X-Romp-Text-Utf8" ? (f.utf8 ?? "1") : h === "Content-Length" ? String(byteLength(f.bytes)) : null) : null) };
   if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
   return {
     ok: true, status: 200, headers,
-    text: async () => String(f.bytes),
+    text: async () => String(f.bytes).replace(/^\uFEFF/, ""),   // the browser's UTF-8 decode strips exactly one leading U+FEFF (Chromium 151, the Slice 7 review's round 4 record), so the stub does too
     blob: async () => new Blob([f.bytes as unknown as BlobPart], { type: f.type }),
   };
 };
@@ -586,7 +589,7 @@ test("a load that lands after the viewer moved on fires nothing: the decode fail
   const img = body.querySelector("img.fileview-img")!;
   img.dispatchEvent(new Ev("error"));                      // the pane took the body before the picture ever showed
   assert.equal(paints, 1, "the failure pane is the paint (imgFailed fires the hooks itself)");
-  assert.match(ctx.error()!, /^this image failed to decode/, "error() names the pane (Slice 7 of plans/markdown-viewer.md, item 3)");
+  assert.equal(ctx.error(), (await mod()).DECODE_FAILED, "error() names the pane with the exported sentence (Slice 7 of plans/markdown-viewer.md, item 3; DECODE_FAILED since the review's round 1)");
   img.dispatchEvent(new Ev("load"));
   assert.equal(paints, 1, "a load on the replaced picture is not a paint");
   disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02]), type: "image/png", mtimeNs: "1757145600000000007" };
@@ -1055,7 +1058,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /mtimeNs: \(\) => mtimeNs,\n\s*error: \(\) => viewError,/, "the closure answers the state, beside mtimeNs");
   assert.match(VIEW, /let viewError: string \| null = null;/, "per open");
   assert.equal((VIEW.match(/viewError = null;/g) || []).length, 3, "cleared at the text paint, the media arm (the SVG Source view, the pages, the frame or picture before whenShown) and the editor's entry");
-  assert.match(VIEW, /renderFell = fell;[^\n]*\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\);/, "the text paint: after the try's close and the empty file's line, so a swap stood (the Rendered box, or the fallback's line and rows) before the pane's record clears; a fallback swap that throws propagates past it and leaves a standing pane's words (the review's round 3)");
+  assert.match(VIEW, /renderFell = fell;[^\n]*\n\s*\}\n\s*if \(text === ""\) body\.prepend\(textBytes !== null && textBytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);[^\n]*\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\);/, "the text paint: after the try's close and the empty file's line, so a swap stood (the Rendered box, or the fallback's line and rows) before the pane's record clears; a fallback swap that throws propagates past it and leaves a standing pane's words (the review's round 3)");
   assert.doesNotMatch(VIEW, /if \(text === null \|\| editing\) return;[^\n]*\n\s*viewError = null;/, "no longer before the pass (round 2's placement: a fallback throw over a standing pane left error() null while the pane stood)");
   assert.match(VIEW, /if \(objUrl === null\) return;[^\n]*\n\s*viewError = null;/, "the media arm: after the loader's return, before every media paint");
   assert.match(VIEW, /viewError = null;[^\n]*\n\s*fireRendered\(\);\n\s*\/\/ a notice over the read view/, "the editor's entry: before its edit-mode render");
@@ -1077,7 +1080,8 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.equal((VIEW.match(/fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the two reflow triggers, and nothing else, keep the selection");
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n\s*viewError = words;[^\n]*\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none; error() is set between them (Slice 7, item 3)");
-  assert.match(failed, /why\.textContent = "this image failed to decode[^"]*";\n\s*const words = why\.textContent;/, "the sentence alone, taken before the hint and the button join the pane");
+  assert.match(failed, /why\.textContent = DECODE_FAILED;[^\n]*\n\s*const words = why\.textContent;/, "the exported sentence alone (DECODE_FAILED, hoisted for the guide's pin in the Slice 7 review's round 1), taken before the hint and the button join the pane");
+  assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "the constant's export line, the guide's pin");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify; no fallback stands between them since Slice 7 of
   // plans/markdown-viewer.md (item 1): a throw propagates to renderBody's try, whose catch paints the failure line over Raw rows
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
@@ -1792,7 +1796,7 @@ const cardRows = (body: El): string[] => cardOf(body).childNodes.filter((x): x i
 /** The bar's own words: its text nodes, without a button's label. */
 const barWords = (body: El): string => { const bar = errBar(body); return bar ? bar.childNodes.filter((x): x is Txt => x instanceof Txt).map((x) => x.textContent).join("") : ""; };
 
-test("a Latin-1 file says why Edit is off (Slice 7 of plans/markdown-viewer.md, item 5): a text/plain answer wearing X-Romp-Text-Utf8 \"0\" raises LATIN1_NOTICE in the notice bar, the card's child directly above the body row, with Edit hidden and the text shown (text() answers it, error() null: the file is readable); a reload raises it again; the changed-on-disk bar takes the row and its Reload's landing brings the line back over the new text; a \"1\" file and an image raise nothing", async (t) => {
+test("a Latin-1 file says why Edit is off (Slice 7 of plans/markdown-viewer.md, item 5): a text/plain answer wearing X-Romp-Text-Utf8 \"0\" raises LATIN1_NOTICE in the notice bar, the card's child directly above the body row, with Edit hidden and the text shown (text() answers it, error() null: the file is readable); a reload's landing leaves the standing line as it is, the same element (one announcement; the review's round 1); the changed-on-disk bar takes the row and its Reload's landing brings the line back over the new text, a fresh element; a \"1\" file and an image raise nothing", async (t) => {
   disk[LEGACY] = { bytes: LEGACY_TEXT, type: "text/plain; charset=utf-8", mtimeNs: MT, utf8: "0" };
   t.after(() => { delete disk[LEGACY]; });
   const o = await open(LEGACY, t);
@@ -1810,10 +1814,13 @@ test("a Latin-1 file says why Edit is off (Slice 7 of plans/markdown-viewer.md, 
   assert.equal(ctx.error(), null, "error() null: the file shows; the line is a notice, not a pane in place of the file");
   assert.equal(ctx.mode(), "raw"); assert.ok(body.querySelector("code.hljs"), "the text is painted as rows");
   assert.equal(paints, 1);
-  // a reload's landing raises the line again: a fresh bar with the same words
+  // a reload's landing (the Comments panel's poll asks one at every status whose mtime moved) finds the line standing with the same
+  // words and leaves the element as it is: the bar is a role=status live region, so a fresh element with the same words was read
+  // out again by assistive technology at every reload (the Slice 7 review's round 1; before, a fresh bar at every landing)
   ctx.reload(); await settle();
   const bar2 = errBar(body);
-  assert.ok(bar2 && bar2 !== bar, "the reload raised a fresh bar"); assert.equal(bar2!.textContent, fv.LATIN1_NOTICE);
+  assert.equal(bar2, bar, "the same element stands: nothing was re-raised and nothing is announced again"); assert.equal(bar2!.textContent, fv.LATIN1_NOTICE);
+  assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"], "one notice");
   assert.equal(paints, 2); assert.equal(b.edit.hidden, true);
   // the changed-on-disk bar, raised later, takes the row (the one-bar rule); its Reload's landing drops that bar
   // (settleDiskBar, before the text paint) and the line returns over the new text
@@ -1827,6 +1834,7 @@ test("a Latin-1 file says why Edit is off (Slice 7 of plans/markdown-viewer.md, 
   assert.equal(paints, 3, "the Reload's landing painted");
   assert.equal(ctx.mtimeNs(), MT7); assert.equal(ctx.text(), LEGACY_TEXT + "one more line\n");
   assert.equal(errBar(body)?.textContent, fv.LATIN1_NOTICE, "the line is back over the dropped bar (before item 5: nothing said why Edit stayed off)");
+  assert.notEqual(errBar(body), bar, "a fresh element here: the changed-on-disk bar had taken the row, so the line's return is new information and is announced");
   assert.equal(errBar(body)!.querySelectorAll("button").length, 0, "the bar's Reload went with it");
   assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-err", "fileview-main"], "still one notice");
   assert.equal(b.edit.hidden, true);
@@ -2335,7 +2343,7 @@ test("an empty text file says so (Slice 7, item 6): a file with no Rendered view
   assert.equal(ctx.text(), PY); assert.equal(ctx.mtimeNs(), MT_E2); assert.equal(b.edit.hidden, false);
 });
 
-test("record pin: a target over an empty file lands nothing and throws nothing, and the line stands (Slice 7, item 6, beside the Slice 6 PR body's open ruling): an offset open of an empty note raises the offset notice as worded today (past the end of a file with 0 characters) a frame after the paint with the line still above the box; a line open of an empty text file raises nothing (scrollToLine returns over zero rows) and the line above the rows' root says why", async (t) => {
+test("a target over an empty file lands nothing and throws nothing, and the line stands (Slice 7, item 6, beside the Slice 6 PR body's open ruling): an offset open of an empty note raises the offset notice as worded today (past the end of a file with 0 characters, a record) a frame after the paint with the line still above the box; a line open of an empty text file raises the same one-line notice at the landing, with no last line to show (the Slice 7 review's round 1: before, scrollToLine returned over zero rows and said nothing)", async (t) => {
   withFrames(t);
   disk[EMPTY_MD] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
   disk[EMPTY_TXT] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT };
@@ -2353,7 +2361,61 @@ test("record pin: a target over an empty file lands nothing and throws nothing, 
   const u = await open(EMPTY_TXT, t, SID, { at: { line: 2 } });
   emptyLine(u.fv, u.body);
   assert.equal(frames.length, 0, "a line lands at once, no frame");
-  assert.deepEqual(cardRows(u.body), ["fileview-bar", "fileview-main"], "no notice: scrollToLine returns over zero rows (a record; the line above the rows' root is what says the file has no line 2)");
-  assert.ok((u.body.childNodes[1] as El).matches("div.fileview-code"), "the landing threw nothing");
+  assert.equal(errBar(u.body)?.textContent, "Line 2 is past the end of this file, which has 0 lines.", "the line's one-line notice, the offset's shape, stopping short of \"showing the last line\" since there is none (before: no notice at all, the line above the rows' root being the only word)");
+  assert.equal(errBar(u.body)!.id, "fileview-save-err", "the bar above the body, not the line in it");
+  assert.deepEqual(cardRows(u.body), ["fileview-bar", "fileview-err", "fileview-main"], "one notice");
+  assert.equal(errBar(u.body)!.querySelectorAll("button").length, 0, "no button");
+  emptyLine(u.fv, u.body);
+  assert.ok((u.body.childNodes[1] as El).matches("div.fileview-code"), "the landing threw nothing: the line and the empty rows' root stand");
   assert.equal(u.ctx.error(), null); assert.equal(u.ctx.text(), ""); assert.equal(paints, 1);
+  // the control over rows (a line past the end of a file WITH rows keeps its "showing the last line" tail) is the failures leg's
+  // line-9999 scene: this stand-in parses no innerHTML, so it lays no rows at a landing (the Latin-1 target case's note above)
+});
+
+// ── item 6 of Slice 7 of plans/markdown-viewer.md, the review's round 1: a file whose only bytes are a byte order mark ───────
+// The kernel serves such a file as one U+FEFF under Content-Length 3, the browser's UTF-8 decode strips that one character, and
+// the view's text is "" as an empty file's is, so the text paint said "This file is empty.", untrue of the bytes on disk. The
+// paint tells the two apart by the answer's byte count (the verdict's `bytes`, the kernel's Content-Length): UTF-8 bytes that
+// decode to nothing and number more than zero are exactly the three of a BOM, and the line says so (BOM_ONLY_FILE) in the empty
+// file's shape and place. The stub answers Content-Length as the kernel does and strips one leading U+FEFF as the browser does.
+// Red over a git archive of 98859d061 at the first line's words (EMPTY_FILE there) with BOM_ONLY_FILE undefined.
+const BOM_MD = ROOT + "/docs/bom.md";
+const BOM_TXT = ROOT + "/notes/bom.txt";
+
+test("a file whose only bytes are a byte order mark says so (Slice 7, item 6; the review's round 1): served as one U+FEFF under Content-Length 3, the body's first child is the BOM_ONLY_FILE line in the empty file's place above the empty Rendered box, text() \"\", error() null, Edit shown, no bar; the Raw click keeps it above the empty rows' root; a reload landing an empty body (Content-Length 0) paints EMPTY_FILE, one landing text after the mark paints no line; a .txt of the same bytes says the same above its rows' root", async (t) => {
+  disk[BOM_MD] = { bytes: "\uFEFF", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  disk[BOM_TXT] = { bytes: "\uFEFF", type: "text/plain; charset=utf-8", mtimeNs: MT };
+  t.after(() => { delete disk[BOM_MD]; delete disk[BOM_TXT]; });
+  const o = await open(BOM_MD, t);
+  const { fv, ctx, body, b } = o;
+  assert.equal(fv.BOM_ONLY_FILE, "This file holds only a byte order mark.", "the sentence, in the empty line's shape (its own period)");
+  const first = body.childNodes[0];
+  assert.ok(first instanceof El && first.matches("div.fileview-err"), "the body's first child is the line, in the pane dress");
+  assert.equal(first.textContent, fv.BOM_ONLY_FILE, "the true sentence (before: EMPTY_FILE, untrue of the three bytes on disk)");
+  assert.equal(first.querySelectorAll("button").length, 0, "no button"); assert.equal(first.closest("code.hljs"), null); assert.equal(first.classList.contains("fv-cl"), false);
+  assert.equal(body.childNodes.length, 2, "the line and the root");
+  assert.ok((body.childNodes[1] as El).matches("div.fileview-md") && (body.childNodes[1] as El).childNodes.length === 0, "the empty Rendered box under it");
+  assert.equal(ctx.text(), "", "text() is the view's text, the mark stripped by the browser's decode, never null");
+  assert.equal(ctx.error(), null, "error() null: the content shows"); assert.equal(ctx.mode(), "rendered"); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(b.edit.hidden, false, "Edit shown: a save writes the three bytes back through the doors' BOM rule (item 4)");
+  assert.equal(paints, 1); assert.deepEqual(cardRows(body), ["fileview-bar", "fileview-main"], "no bar: the line is in the body");
+  b.raw.click();
+  assert.equal((body.childNodes[0] as El).textContent, fv.BOM_ONLY_FILE, "the Raw click keeps the line"); assert.ok((body.childNodes[1] as El).matches("div.fileview-code"), "above the rows' root");
+  assert.equal(body.querySelectorAll(".fv-cl").length, 0, "zero rows"); assert.equal(ctx.mode(), "raw");
+  b.rendered.click();
+  // a session emptied the file: zero bytes, and the empty file's words
+  disk[BOM_MD] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT_E2 };
+  ctx.reload(); await settle();
+  assert.equal(paints, 4); assert.equal((body.childNodes[0] as El).textContent, fv.EMPTY_FILE, "an empty body: the empty file's line (Content-Length 0)"); assert.equal(ctx.mtimeNs(), MT_E2);
+  // a session wrote text after the mark: the decode strips the mark, the text paints, no line
+  disk[BOM_MD] = { bytes: "\uFEFF" + DOC, type: "text/plain; charset=utf-8", mtimeNs: MT_E3 };
+  ctx.reload(); await settle();
+  assert.equal(paints, 5); assert.equal(body.querySelector(".fileview-err"), null, "no line over text"); assert.equal(ctx.text(), DOC, "the view's text without the mark, as the browser hands it");
+  assert.ok((body.childNodes[0] as El).matches("div.fileview-md"), "the box alone"); assert.equal(body.childNodes.length, 1, "and nothing else");
+  // a text file of the same bytes: the line above the empty rows' root
+  fv.closeFileView();
+  const u = await open(BOM_TXT, t);
+  assert.equal((u.body.childNodes[0] as El).textContent, u.fv.BOM_ONLY_FILE, "the .txt says the same");
+  assert.ok((u.body.childNodes[1] as El).matches("div.fileview-code") && u.body.querySelectorAll(".fv-cl").length === 0, "above the empty rows' root");
+  assert.equal(u.ctx.mode(), "raw"); assert.equal(u.ctx.text(), ""); assert.equal(u.b.edit.hidden, false);
 });

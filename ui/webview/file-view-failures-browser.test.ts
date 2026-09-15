@@ -31,6 +31,12 @@
 // empty document. openViewer's default wait (a paragraph or a row) would time out over an empty document, so the scene waits on
 // the line itself through the `waitFor` option. Before item 6: no line, the wait for it timed out (red over a git archive of the
 // base with EMPTY_FILE stubbed). Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
+// The Slice 7 review's round 1 (the manager's) added three readings: a same-bytes reload leaves the Latin-1 line's element standing
+// (one announcement by assistive technology, not one per reload); a file whose only bytes are a BOM says so (BOM_ONLY_FILE) in
+// the empty file's place, told from an empty file by the answer's Content-Length, which the page's stub writes as the kernel does,
+// and in the URL viewer by its streamed read's own byte count; and the Comments panel over a note whose Rendered paint throws pairs
+// its comment over the fallback Raw rows and moves the highlight into the Rendered box at the healed click (the claim source pins
+// alone had held before).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -41,6 +47,8 @@ import { inBrowser, openViewer, openPanel, closePanel, frames, paintsReach, PARA
 const LATIN1_NOTICE = (/^export const LATIN1_NOTICE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
 /** The empty file's exported sentence (contract C5), read the same way. */
 const EMPTY_FILE = (/^export const EMPTY_FILE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
+/** The BOM-only file's exported sentence (the review's round 1), read the same way. */
+const BOM_ONLY_FILE = (/^export const BOM_ONLY_FILE = "([^"]+)";$/m.exec(fs.readFileSync(path.join(UI, "file-view.ts"), "utf8")) || [])[1];
 const MT3 = "1757145600000000011";
 
 type Seen = { paints: number; error: string | null; text: string | null; mt: string; mode: string; pane: string | null; paneInBody: boolean; mdBox: boolean };
@@ -84,7 +92,7 @@ test("in a browser: a failed reload (the file gone from the kernel's table) fire
   });
 });
 
-type Bar = { present: boolean; words: string; parent: string; before: string | null; buttons: number; inCard: boolean; aboveRow: boolean; inViewport: boolean; bodyScrollTop: number; edit: boolean | null; rows: number; paints: number; error: string | null; text: string | null; bars: number };
+type Bar = { present: boolean; words: string; parent: string; before: string | null; buttons: number; inCard: boolean; aboveRow: boolean; inViewport: boolean; stamped: boolean; bodyScrollTop: number; edit: boolean | null; rows: number; paints: number; error: string | null; text: string | null; bars: number };
 /** The note bar as laid out (file-view-notebar-browser.test.ts's reading): its own words (text nodes, without a button's label),
  *  its parent and next sibling, its box against the card's, the body row's and the viewport; with the Edit button's hidden bit,
  *  the painted rows or blocks, the paint count, the seam's error() and text(), and how many bars the card holds. */
@@ -97,7 +105,7 @@ const readBar = (page: any): Promise<Bar> => page.evaluate(() => {
     bodyScrollTop: body.scrollTop, edit: edit ? edit.hidden : null, rows: body.querySelectorAll(".fileview-md > p, code.hljs .fv-cl").length,
     paints: w.__paints, error: w.__seam.error(), text: w.__seam.text(), bars: document.querySelectorAll("#fileview-save-err, .fileview > .fileview-err").length,
   };
-  if (!bar) return { present: false, words: "", parent: "", before: null, buttons: 0, inCard: false, aboveRow: false, inViewport: false, ...base };
+  if (!bar) return { present: false, words: "", parent: "", before: null, buttons: 0, inCard: false, aboveRow: false, inViewport: false, stamped: false, ...base };
   const r = bar.getBoundingClientRect(), card = document.querySelector(".fileview")!.getBoundingClientRect(), main = document.querySelector(".fileview-main")!.getBoundingClientRect();
   return {
     present: true, words: Array.from(bar.childNodes).filter((x) => x.nodeType === 3).map((x) => x.textContent || "").join(""),
@@ -106,11 +114,12 @@ const readBar = (page: any): Promise<Bar> => page.evaluate(() => {
     inCard: r.top >= card.top - 0.5 && r.bottom <= card.bottom + 0.5 && r.left >= card.left - 0.5 && r.right <= card.right + 0.5,
     aboveRow: r.bottom <= main.top + 0.5 && r.height > 0,
     inViewport: r.top >= 0 && r.bottom <= innerHeight && r.height > 0,
+    stamped: !!(bar as any).__stamp,   // a mark a test put on the element before a landing: still there means the same element stands
     ...base,
   };
 });
 
-test("in a browser: a Latin-1 file says why Edit is off (Slice 7, item 5): opened over a text answer wearing X-Romp-Text-Utf8 \"0\", the note bar reads LATIN1_NOTICE above the body row, in the card and on screen at scrollTop 400, with no button, the Edit button hidden and the text painted (error() null); a window focus over a moved mtime raises the changed-on-disk bar in its place and its Reload's landing brings the line back over the new text; an open at a line past the end shows the past-the-end notice and not the line, and a reload brings the line back; pane and chat", { timeout: 180000 }, async (t) => {
+test("in a browser: a Latin-1 file says why Edit is off (Slice 7, item 5): opened over a text answer wearing X-Romp-Text-Utf8 \"0\", the note bar reads LATIN1_NOTICE above the body row, in the card and on screen at scrollTop 400, with no button, the Edit button hidden and the text painted (error() null); a window focus over a moved mtime raises the changed-on-disk bar in its place and its Reload's landing brings the line back over the new text; a reload of the same bytes leaves that element standing (the review's round 1); an open at a line past the end shows the past-the-end notice and not the line, and a reload brings the line back; pane and chat", { timeout: 180000 }, async (t) => {
   assert.ok(LATIN1_NOTICE, "the constant is read off the source");
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "chat"] as const) {
@@ -145,6 +154,15 @@ test("in a browser: a Latin-1 file says why Edit is off (Slice 7, item 5): opene
       assert.ok(b.aboveRow && b.inCard && b.inViewport, mode + ": above the row, on screen");
       assert.equal(b.text, LONG2, mode + ": over the new text"); assert.equal(b.edit, true, mode + ": Edit still hidden");
       assert.equal(await page.evaluate(() => (window as any).__seam.mtimeNs()), MT2, mode + ": the reload landed the new bytes");
+      // a reload of the same bytes (the Comments panel's poll asks one at every status whose mtime moved; here the seam's own) finds
+      // the line standing with the same words and leaves the element as it is: the bar is a role=status live region, and one
+      // re-created at every landing was read out again by assistive technology each time (the review's round 1)
+      await page.evaluate(() => { (document.getElementById("fileview-save-err") as any).__stamp = 1; (window as any).__seam.reload(); });
+      await paintsReach(page, paints + 2);
+      await frames(page, 2);
+      b = await readBar(page);
+      assert.equal(b.words, LATIN1_NOTICE, mode + ": the line stands"); assert.equal(b.bars, 1, mode + ": one bar");
+      assert.equal(b.stamped, true, mode + ": the same element, not a fresh one (before: a new role=status element at every landing, announced again)");
       assert.deepEqual(errors, [], mode + ": no uncaught page error");
       await page.close();
       // a target's notice wins: an open at a line past the end (the Raw view) shows the past-the-end notice, not the line, because
@@ -249,6 +267,46 @@ test("in a browser: an empty file says so (Slice 7, item 6): opened over a zero-
     await frames(u.page, 2);
     e = await seenEmpty(u.page);
     assert.equal(e.line, EMPTY_FILE); assert.deepEqual(e.kids, ["fileview-err", "fileview-code"], "URL: above the empty rows' root"); assert.equal(e.rows, 0);
+    assert.deepEqual(u.errors, [], "URL: no uncaught page error");
+    await u.page.close();
+  });
+});
+
+test("in a browser: a file whose only bytes are a byte order mark says so (Slice 7, item 6; the review's round 1): served as one U+FEFF under Content-Length 3, the way the kernel serves it, a real Response's decode strips the mark and the body's first child is the BOM_ONLY_FILE line where the empty file's stands, text() \"\", Edit shown, error() null, the pane's dress; a reload landing zero bytes paints EMPTY_FILE and one landing text after the mark paints no line; the URL viewer over a BOM-only document, its streamed read counting the three bytes, paints the same line; pane", { timeout: 180000 }, async (t) => {
+  assert.ok(BOM_ONLY_FILE && EMPTY_FILE, "the constants are read off the source");
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 700, 600, { docs: { [REPORT]: "\uFEFF" }, waitFor: ".fileview-body > .fileview-err" });
+    // the page's stub answers the kernel's shape: one U+FEFF under Content-Length 3, and the Response's own decode gives ""
+    const served = await page.evaluate(async (p: string) => { const r = await fetch("/file?path=" + encodeURIComponent(p)); return { len: r.headers.get("Content-Length"), text: await r.text() }; }, REPORT);
+    assert.deepEqual(served, { len: "3", text: "" }, "three bytes on the wire, an empty text after the browser's decode");
+    let e = await seenEmpty(page);
+    assert.equal(e.line, BOM_ONLY_FILE, "the true sentence (before: EMPTY_FILE over a file of three bytes)");
+    assert.deepEqual(e.kids, ["fileview-err", "fileview-md"], "in the empty file's place, above the empty Rendered box"); assert.equal(e.blocks, 0);
+    assert.equal(e.lineParent, "fileview-body"); assert.equal(e.inCode, false); assert.equal(e.isRow, false);
+    assert.equal(e.text, "", "text() is the view's text, the mark stripped by the decode, never null"); assert.equal(e.edit, false, "Edit shown: a save writes the bytes back through the doors' BOM rule");
+    assert.equal(e.error, null); assert.equal(e.mode, "rendered"); assert.equal(e.bars, 0); assert.equal(e.color, e.warn, "the pane's dress"); assert.ok(e.onScreen);
+    const p1 = e.paints;
+    // a session emptied the file: zero bytes, the empty file's words
+    await page.evaluate(([p, tx, m]: [string, string, string]) => { const w = window as any; w.__docs[p] = tx; w.__mtime = m; w.__seam.reload(); }, [REPORT, "", MT2]);
+    await paintsReach(page, p1 + 1); await frames(page, 2);
+    e = await seenEmpty(page);
+    assert.equal(e.line, EMPTY_FILE, "zero bytes (Content-Length 0): the empty file's words"); assert.equal(e.mt, MT2); assert.equal(e.text, "");
+    // a session wrote text after the mark: the decode strips the mark, the note paints, no line
+    await page.evaluate(([p, tx, m]: [string, string, string]) => { const w = window as any; w.__docs[p] = tx; w.__mtime = m; w.__seam.reload(); }, [REPORT, "\uFEFF" + LONG2, MT3]);
+    await paintsReach(page, p1 + 2); await frames(page, 2);
+    e = await seenEmpty(page);
+    assert.equal(e.line, null, "text after the mark: no line"); assert.ok(e.blocks > 0, "the note painted"); assert.equal(e.text, LONG2, "the view's text without the mark, as the browser hands it"); assert.equal(e.mt, MT3);
+    assert.deepEqual(errors, [], "no uncaught page error");
+    await page.close();
+    // the URL viewer: no kernel header to read, but its streamed read (readTextCapped) counts the bytes itself and its decode strips the mark
+    const u = await openViewer(browser, "pane", 700, 600, { url: "/notes/bom.md", urls: { [ORIGIN + "/notes/bom.md"]: "\uFEFF" }, waitFor: ".fileview-body > .fileview-err" });
+    e = await seenEmpty(u.page);
+    assert.equal(e.line, BOM_ONLY_FILE, "URL: the same sentence (three bytes counted, \"\" decoded)");
+    assert.deepEqual(e.kids, ["fileview-err", "fileview-md"], "URL: above the empty Rendered box"); assert.equal(e.blocks, 0); assert.equal(e.bars, 0); assert.equal(e.color, e.warn);
+    await u.page.locator("#romp-fileview .fileview-acts button", { hasText: /^Raw$/ }).click();
+    await frames(u.page, 2);
+    e = await seenEmpty(u.page);
+    assert.equal(e.line, BOM_ONLY_FILE); assert.deepEqual(e.kids, ["fileview-err", "fileview-code"], "URL: above the empty rows' root after Raw"); assert.equal(e.rows, 0);
     assert.deepEqual(u.errors, [], "URL: no uncaught page error");
     await u.page.close();
   });
@@ -376,6 +434,53 @@ test("in a browser, the URL viewer (the Slice 7 review's round 1): a document op
     assert.deepEqual(r.kids, ["fileview-md"], "the note rendered"); assert.equal(r.paras, 100); assert.equal(r.threw, 2, "no further throw");
     assert.ok(r.laterTop !== null && r.laterTop >= -1 && r.laterTop < 40, "the section at the body's top, as the control's (before: scrollTop 0 and the heading thousands of pixels down, the fragment spent over the rows): " + JSON.stringify(r));
     assert.ok(r.scrollTop > 1000, "the body scrolled to it: " + r.scrollTop);
+    assert.deepEqual(errors, [], "no uncaught page error");
+    await page.close();
+  });
+});
+
+// ── the Slice 7 review's round 1: the Comments panel over the render catch's rows ─────────────────────────────────────────
+type FellPanel = { kids: string[]; line: string | null; rowMarks: number; mdMarks: number; marks: number; asideErrs: number; loaders: number; mode: string; error: string | null; threw: number; rows: number; paras: number; pressed: string[] };
+/** The body and the aside over a render that fell: the body's children, the failure line's words, the highlights inside Raw rows
+ *  and inside the Rendered box, the aside's error rows and loaders, the seam's mode() and error(), the fault's count. */
+const fellPanelSeen = (page: any): Promise<FellPanel> => page.evaluate(() => {
+  const w = window as any;
+  const body = document.querySelector(".fileview-body") as HTMLElement; const aside = document.querySelector(".fileview-aside");
+  const err = body.querySelector(":scope > .fileview-err");
+  return {
+    kids: Array.from(body.children).map((k) => k.className.split(" ")[0]), line: err ? err.textContent : null,
+    rowMarks: body.querySelectorAll("code.hljs .fv-cl mark.fc-hl").length, mdMarks: body.querySelectorAll(".fileview-md mark.fc-hl").length, marks: body.querySelectorAll("mark.fc-hl").length,
+    asideErrs: aside ? aside.querySelectorAll(".fc-err").length : -1, loaders: aside ? aside.querySelectorAll(".fc-load").length : -1,
+    mode: w.__seam.mode(), error: w.__seam.error(), threw: w.__threw ?? 0, rows: body.querySelectorAll(".fv-cl").length, paras: body.querySelectorAll(".fileview-md > p").length,
+    pressed: Array.from(document.querySelectorAll('#romp-fileview .fileview-acts button[aria-pressed="true"]')).map((b) => b.textContent || "").filter((l) => l === "Rendered" || l === "Raw"),   // the format pair alone: the Comments button is pressed too while the aside is open
+  };
+});
+
+test("in a browser: the Comments panel survives the render catch (Slice 7, item 1; the review's round 1): over a note whose Rendered paint throws at the open, a seeded comment pairs over the fallback Raw rows, one highlight inside a row and none elsewhere, no error row and no loader in the aside, the failure line the body's first child, mode() raw and error() null; the healed Rendered click renders the note and the pass paints the highlight inside .fileview-md with none left in a row; pane", { timeout: 180000 }, async (t) => {
+  assert.ok(RENDER_FELL, "the line's constant is read off the source");
+  await inBrowser(t, async (browser) => {
+    const { page, errors } = await openViewer(browser, "pane", 900, 700, { before: faultRenderedBox, waitFor: ".fileview-body code.hljs .fv-cl" });
+    await page.evaluate((cs: unknown[]) => { const s = (window as any).__status; s.store.comments = cs; s.unsent.comments = (cs as Array<{ id: string }>).map((c) => c.id); }, COMMENTS);
+    await openPanel(page);
+    await page.waitForFunction(() => document.querySelectorAll(".fileview-body mark.fc-hl").length > 0, null, { timeout: 10000 });   // the pass's paint over the rows, the event
+    await frames(page, 2);
+    const fell = await fellPanelSeen(page);
+    assert.deepEqual(fell.kids, ["fileview-err", "fileview-code"], "the failure line first, the rows under it: " + JSON.stringify(fell));
+    assert.ok(fell.line && fell.line.startsWith(RENDER_FELL) && fell.line.includes("synthetic render failure"), "the line names the error: " + fell.line);
+    assert.equal(fell.threw, 1, "the open's paint threw once"); assert.equal(fell.mode, "raw", "mode() answers raw over the rows"); assert.equal(fell.error, null, "the rows are the content: error() null");
+    assert.equal(fell.rowMarks, 1, "the comment's highlight is painted inside a Raw row (the panel pairs over code.hljs when mode() answers raw)");
+    assert.equal(fell.marks, 1, "one highlight in the body"); assert.equal(fell.mdMarks, 0, "none in a Rendered box: there is none");
+    assert.equal(fell.asideErrs, 0, "no error row in the aside"); assert.equal(fell.loaders, 0, "no loader held");
+    assert.deepEqual(fell.pressed, ["Rendered"], "the Rendered button stays pressed (item 1)");
+    // healed: the Rendered click tries again, the note renders, and the pass paints the highlight inside the Rendered box
+    await page.evaluate(() => { (window as any).__unfault(); });
+    await page.locator("#romp-fileview .fileview-acts button", { hasText: /^Rendered$/ }).click();
+    await page.waitForFunction(() => !!document.querySelector(".fileview-md mark.fc-hl"), null, { timeout: 10000 });   // the pass over the rendered note, the event
+    await frames(page, 2);
+    const healed = await fellPanelSeen(page);
+    assert.deepEqual(healed.kids, ["fileview-md"], "the note rendered, the line gone: " + JSON.stringify(healed)); assert.ok(healed.paras > 0, "paragraphs in the box"); assert.equal(healed.rows, 0, "no rows");
+    assert.equal(healed.mdMarks, 1, "the highlight moved into the Rendered box"); assert.equal(healed.rowMarks, 0, "none left in a row"); assert.equal(healed.marks, 1, "one highlight");
+    assert.equal(healed.mode, "rendered"); assert.equal(healed.error, null); assert.equal(healed.threw, 1, "no further throw"); assert.equal(healed.asideErrs, 0); assert.equal(healed.loaders, 0);
     assert.deepEqual(errors, [], "no uncaught page error");
     await page.close();
   });

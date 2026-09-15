@@ -475,8 +475,13 @@ and Space scroll it at once; a box you were typing in keeps the keyboard. When a
 changes on disk while you read it with the Comments panel closed, a line above the text says
 so the next time you return to the dashboard, and **Reload** reads it again with your place
 kept.
+With the Comments panel open, the panel itself reads the file again; when that read fails, a line
+at the top of its cards says so (**The file could not be read again**), gives the reason in
+parentheses, and offers **Reload**.
 An empty file says so in place of its text (**This file is empty**), and **Edit** still opens
 it.
+A file whose only bytes are a byte order mark says so instead (**This file holds only a byte
+order mark**).
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under rules
 modelled on those GitHub applies to a README, so nothing in a file can move, hide or cover the
@@ -563,6 +568,10 @@ on a phone, comment on the file as a whole instead.
 A figure that cannot be loaded, because its file is missing or is not an image, shows a line
 where the picture would be: **Image failed to load**, then the figure's path as written in the
 file, and its alt text when it has one.
+A picture opened as a file of its own whose bytes will not decode, because it is still being
+written or was cut short, shows a line in its place (**this image failed to decode: it may be
+mid-write or truncated**), then the file's path, and **Download**, which saves the file to your
+device.
 
 **PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
 draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
@@ -628,8 +637,9 @@ keeps your text and offers **Reload file**, which asks before discarding it; whi
 the panel says when the file changed under you. The session's own track-edit keeps working
 throughout. A file with CR or CRLF line endings cannot be edited while changes are pending,
 because the editor rewrites its line endings, which would move them; accept or reject them
-first. A file that is not UTF-8 on disk can be read but not edited, and a line above the
-text says why: a save would rewrite its bytes as UTF-8.
+first. Without pending changes such a file can be edited, and when its lines all end in CR, or
+all in CRLF, it is saved with those endings. A file that is not UTF-8 on disk can be read but
+not edited, and a line above the text says why: a save would rewrite its bytes as UTF-8.
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with

@@ -819,27 +819,62 @@ export function changeCards(store: Store | null, hunks: Hunk[], log: LogEntry[] 
   return pending.concat(detached);
 }
 
+/** The line endings the viewer's Raw rows split on (file-view.ts RAW_ROW_SPLIT; Slice 7 of plans/markdown-viewer.md,
+ *  item 7): a CRLF, tried first so it is one ending, a lone CR, or an LF. The one rule for every reader of a line
+ *  boundary in this module, so the Changes section's paragraph groups and their "line N" titles (paragraphAt,
+ *  changeGroups) and the Switch to Raw offer's row walk (lineStartOffset) agree ending for ending with the Reveal title,
+ *  the landing cue and the Raw rows (anchor-map's rawOffsetToLine). The two paragraph readers found LF alone until the
+ *  Slice 7 review's closing round: on a CR-only file every pending change fell into one group titled by the document's
+ *  first sixty characters flattened, and a blank line's "line N" counted no row, where the Reveal title beside it and the
+ *  rows it named counted every CR; on a CRLF file a paragraph ended between its CR and its LF. Written here rather than
+ *  imported: this module takes no file-view or anchor-map import. */
+export const LINE_ENDING = /\r\n|\r|\n/;
+const isEnding = (ch: string | undefined): boolean => ch === "\n" || ch === "\r";
+/** The length of the ending whose first character is at `i`: 2 for a CRLF, else 1. */
+const endingLength = (text: string, i: number): number => (text[i] === "\r" && text[i + 1] === "\n" ? 2 : 1);
+/** The start of the row holding `p`: one past the nearest ending character before it, or 0. `p` is never the LF of a
+ *  CRLF (the callers step onto its CR first), so that character is the whole ending before the row. */
+function rowStart(text: string, p: number): number {
+  let i = p - 1;
+  while (i >= 0 && !isEnding(text[i])) i--;
+  return i + 1;
+}
+/** Where the row holding `p` ends: its ending's first character, or the text's length. */
+function rowEnd(text: string, p: number): number {
+  let i = p;
+  while (i < text.length && !isEnding(text[i])) i++;
+  return i;
+}
+/** The 1-based line of the row starting at `at` (a row start, so no ending straddles it): one more than the endings
+ *  before it, a CRLF counted once, the count rawOffsetToLine gives that offset plus one. */
+function lineNumberAt(text: string, at: number): number {
+  const ending = new RegExp(LINE_ENDING.source, "g");
+  let n = 1, m: RegExpExecArray | null;
+  while ((m = ending.exec(text)) !== null && m.index < at) n++;
+  return n;
+}
+
 /** The [start, end) of the paragraph holding `pos`: the maximal run of non-blank lines around it (the display
  *  planner's own rule, so a group here is the paragraph the other hosts would merge). A blank line is its own
- *  empty paragraph. */
+ *  empty paragraph. A line ends at a CRLF, a lone CR or an LF (LINE_ENDING), and an offset on an ending's own
+ *  character lies on the line the ending closes, as rawOffsetToLine places it. */
 export function paragraphAt(text: string, pos: number): { start: number; end: number } {
-  const p = Math.max(0, Math.min(pos, text.length));
-  let start = text.lastIndexOf("\n", p - 1) + 1;
-  const nl = text.indexOf("\n", p);
-  let end = nl === -1 ? text.length : nl;
+  let p = Math.max(0, Math.min(pos, text.length));
+  if (text[p] === "\n" && text[p - 1] === "\r") p--;   // the LF of a CRLF: the row its CRLF closes, never an empty row between the two
+  let start = rowStart(text, p);
+  let end = rowEnd(text, p);
   const blank = (a: number, b: number) => /^\s*$/.test(text.slice(a, b));
   if (blank(start, end)) return { start, end };
   while (start > 0) {
-    const prevEnd = start - 1;
-    const prevStart = text.lastIndexOf("\n", prevEnd - 1) + 1;
+    const prevEnd = text[start - 1] === "\n" && text[start - 2] === "\r" ? start - 2 : start - 1;   // the ending closing the row before
+    const prevStart = rowStart(text, prevEnd);
     if (blank(prevStart, prevEnd)) break;
     start = prevStart;
   }
   while (end < text.length) {
-    const nextStart = end + 1;
-    const nn = text.indexOf("\n", nextStart);
-    const nextEnd = nn === -1 ? text.length : nn;
-    if (nextStart > text.length || blank(nextStart, nextEnd)) break;
+    const nextStart = end + endingLength(text, end);
+    const nextEnd = rowEnd(text, nextStart);
+    if (blank(nextStart, nextEnd)) break;
     end = nextEnd;
   }
   return { start, end };
@@ -860,8 +895,8 @@ export function changeGroups(cards: ChangeCard[], text: string | null): ChangeGr
       const pr = paragraphAt(text, c.curFrom);
       const last = out[out.length - 1];
       if (last && last.start === pr.start && last.end === pr.end) { last.changes.push(c); continue; }
-      const first = text.slice(pr.start, pr.end).split("\n").map((l) => l.trim()).find((l) => l) || "";
-      const line = (text.slice(0, pr.start).match(/\n/g) || []).length + 1;
+      const first = text.slice(pr.start, pr.end).split(LINE_ENDING).map((l) => l.trim()).find((l) => l) || "";
+      const line = lineNumberAt(text, pr.start);
       out.push({ key: pr.start + "-" + pr.end, title: first ? oneLine(first, 60) : "line " + line, start: pr.start, end: pr.end, changes: [c] });
     }
   }
@@ -1110,10 +1145,10 @@ export const MOVED_UNDER_EDIT = "The file changed on disk while you were editing
  *  end a row, a CRLF as one ending; before, LF alone, when the map counted LF alone too). The two must agree ending for
  *  ending: the Slice 7 review's round 1 found the map counting a lone CR and this walk not, so on a CR-only file the
  *  offer scrolled to the file's end (source.length, the "no more rows" answer) instead of the block's row. Past the last
- *  row the answer is the source's length, as before. Written here rather than imported: this module takes no
- *  anchor-map import. */
+ *  row the answer is the source's length, as before. The endings are LINE_ENDING, the rule paragraphAt and the Changes
+ *  section's line titles read too. Written here rather than imported: this module takes no anchor-map import. */
 export function lineStartOffset(source: string, line: number): number {
-  const ending = /\r\n|\r|\n/g;
+  const ending = new RegExp(LINE_ENDING.source, "g");
   let at = 0;
   for (let i = 0; i < line; i++) {
     ending.lastIndex = at;

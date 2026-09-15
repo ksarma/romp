@@ -416,6 +416,28 @@ function emptyFileLine(): HTMLElement {
   why.textContent = EMPTY_FILE;
   return why;
 }
+/** The line for a file whose only bytes are a UTF-8 byte order mark (plans/markdown-viewer.md Slice 7, item 6; the Slice 7
+ *  review's round 1). The kernel serves such a file as one U+FEFF and the browser's UTF-8 decode strips that one character
+ *  (Chromium 151, the round 4 record: fetch().text(), the Response constructor and TextDecoder agree), so the view's text is ""
+ *  exactly as an empty file's is, while the file is not empty: EMPTY_FILE would be untrue of its bytes. The two are told apart
+ *  by the answer's byte count, the served body's Content-Length (the kernel's own field; tests/test_kernel_preview.py pins it as
+ *  the body's length, 0 for an empty file), since UTF-8 bytes that decode to nothing and number more than zero are exactly the
+ *  three of a BOM; the URL viewer's streamed read counts its bytes itself (readTextCapped). The line takes EMPTY_FILE's shape
+ *  and place (bomOnlyLine, below); `text` stays "" and Edit stays shown (a save writes the bytes back through the doors' BOM
+ *  rule, item 4). An answer with no Content-Length (a kernel from before the header, a proxy that dropped it) gets the empty
+ *  file's words, as before. */
+export const BOM_ONLY_FILE = "This file holds only a byte order mark.";
+/** The `.fileview-err` line for a BOM-only file (BOM_ONLY_FILE, above): the empty file's shape and place. */
+function bomOnlyLine(): HTMLElement {
+  const why = el("div", "fileview-err");
+  why.textContent = BOM_ONLY_FILE;
+  return why;
+}
+/** The pane's sentence over a picture whose bytes would not decode (imgFailed; plans/markdown-viewer.md Slice 7, item 3): the
+ *  seam's error() answers it while the pane shows, and the guide's pin reads it here (hoisted from the pane's builder in the
+ *  Slice 7 review's round 1). The pane shows it with the path as the hint and the Download offer under it; error() is the
+ *  sentence alone. */
+export const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";
 /** The note bar's line over a file the kernel decoded as Latin-1 (plans/markdown-viewer.md Slice 7, item 5): the kernel serves
  *  such a file re-encoded as UTF-8 under `X-Romp-Text-Utf8: 0`, and the Edit gate hides its button on that verdict, which said
  *  nothing to the reader. The line names the fact and its consequence in one sentence. Raised at every text landing whose
@@ -425,16 +447,28 @@ function emptyFileLine(): HTMLElement {
  *  the bar (contract C5). */
 export const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8.";
 /** The refusal Edit gives over pending changes on a file whose text holds a CR anywhere (plans/markdown-viewer.md Slice 7, item
- *  7; trackedRefusal): the editor rewrites the file's line endings as it loads the text. A CRLF is rewritten by norm before the
- *  mount; a lone CR by the editor's own document model (CodeMirror's EditorState.create, in its state package: a string document
- *  is split on CRLF, a lone CR or LF alike and its lines are joined back with LF), so both come back LF. Under pending changes
+ *  7; trackedRefusal): the editor rewrites the file's line endings as it loads the text. A CRLF and a lone CR are both rewritten
+ *  by norm before the mount, as the editor's own document model would rewrite them (CodeMirror's EditorState.create, in its
+ *  state package: a string document is split on CRLF, a lone CR or LF alike and its lines are joined back with LF), so both
+ *  come back LF. Under pending changes
  *  that is a save no record survives: a CRLF loses a character per ending, so every offset after it moves; a lone CR keeps its
  *  offset but becomes another character, so a record whose text crosses one no longer matches, and the save writes LF where
  *  the file had CR under records anchored to the disk bytes. Before this slice the refusal named CRLF alone and keyed on CRLF
  *  alone, so a CR-only file's pending changes went into an editor that rewrote every ending under them. Shown with the panel's
  *  own refusal after it (contract C5: `CR_REFUSAL + " " + pending.refusal`); the guide carries the words. Without pending
- *  changes the editor mounts as before and a save writes LF where the file had a lone CR (a pre-existing edge, recorded). */
+ *  changes the editor mounts as before, over the LF view of the text (norm), and the save door writes the lone CRs back where
+ *  the buffer has LF (eolCR, the CRLF restore's shape), so a CR-only file keeps its endings through an edit (the Slice 7
+ *  review's round 1; before, a save wrote LF where the file had CR, a data change the reader did not make). */
 export const CR_REFUSAL = "The editor rewrites this file's CR or CRLF line endings as it loads the text, and that would move the pending changes.";
+
+// The Raw view's line split (plans/markdown-viewer.md Slice 7, item 7): a CRLF (one ending, tried first), a lone CR or an
+// LF each end a row, in wrapNumberedHtml over the highlighted HTML and in codeBlock's gutter count, so the two stay in
+// step and no row's text carries a "\r"; the anchor map's rawIndex consumes whichever ending stands between two rows
+// (anchor-map.ts) and verifies every row against the source, and scrollToOffset counts a row over the source with the
+// same split when the map refuses. Before, both split on "\n" alone: a CR-only file was ONE row (the HTML parser turned
+// its CRs into breaks inside it), and a CRLF file's rows ended in a "\r" the parser rewrote. Declared here, above the
+// openFileView closure whose scrollToOffset reads it, and not beside the two builders below it (the Slice 7 review's round 1).
+const RAW_ROW_SPLIT = /\r\n|\r|\n/;
 /** The record of a place read from the body (readPlace), at the file's `mtimeNs` and the body's `scrollTop`: the
  *  place's span, offset, top-of-body flag and view, and nothing of its source, its neighbours or its lines. */
 export function rememberedPlaceOf(place: Place, mtimeNs: string, scrollTop: number): RememberedPlace {
@@ -1164,6 +1198,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
   let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
+  let textBytes: number | null = null;        // the last landing's body byte count, the answer's Content-Length (null when absent): read by the text paint for one question the decoded text cannot answer, whether a text that reads "" was a BOM alone (BOM_ONLY_FILE; plans/markdown-viewer.md Slice 7, item 6)
   let notUtf8 = false;                        // text/plain whose X-Romp-Text-Utf8 is exactly "0": the kernel decoded the bytes as Latin-1, so the text landing raises LATIN1_NOTICE (plans/markdown-viewer.md Slice 7, item 5). Its own flag, never !isText: an image or a PDF carries no header at all, and an old kernel that sends none leaves isText true (Edit off through !mtimeNs)
   // ── the media verdicts: a .png used to open as line-numbered mojibake — the fetch pipeline called
   // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
@@ -1219,6 +1254,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let dirty = false;
   let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
   //   CRLF→LF on assignment, so an untouched CRLF file would otherwise save with every ending rewritten
+  let eolCR = false;                          // a CR-only file (a lone CR at every ending, no LF anywhere): the editor's document model and the
+  //   textarea alike read a lone CR as a line break and give it back as LF, so the save door writes the CR back where the buffer has
+  //   LF, as it does a CRLF (Slice 7 of plans/markdown-viewer.md, item 7; the review's round 1: before, an edited CR-only file saved
+  //   with every ending rewritten, a data change the reader did not make). Exact by construction: with no LF in the file, every LF
+  //   the editor gives back came from a CR or a typed line break. A file mixing CR and LF has no one ending to restore.
   let ta: HTMLTextAreaElement | null = null;   // the FALLBACK surface (and the buffer pre-CodeMirror)
   // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5):
   // the records as the field holds them now and the decisions taken since the mount (editor-chunk.ts TrackHandle)
@@ -1558,8 +1598,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let editBlocked: string | null = null;
   // Pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry them
   // (chunkTracks false), or the file's line endings would: a CRLF or a lone CR anywhere in the text (Slice 7 of
-  // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF to LF before the mount and CodeMirror's
-  // document model rewrites a lone CR to LF as it loads the string), which moves or mismatches the offsets the records
+  // plans/markdown-viewer.md, item 7; CR_REFUSAL says how: norm rewrites a CRLF or a lone CR to LF before the mount, as
+  // CodeMirror's document model would as it loads the string), which moves or mismatches the offsets the records
   // hold, so a save could not fit them back. Both refuse in words, in place, like editBlocked. The
   // CR refusal states its consequence literally: it is copy the person acts on (docs/guide.md says the same). The
   // words for what `begin()` returned, or null when the editor may carry it — asked at the CLICK (so a refusal needs no
@@ -2262,6 +2302,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const dropLatin1Line = (): void => {
     if (note !== null && note.textContent === LATIN1_NOTICE) { note.remove(); note = null; }
   };
+  /** The line is the notice standing (the same words): a landing that would raise it again leaves the element as it is. */
+  const latin1LineStands = (): boolean => note !== null && note.textContent === LATIN1_NOTICE;
 
   // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
   // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
@@ -2273,7 +2315,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const imgFailed = () => {
     if (!wrap.isConnected) return;              // settled after a close/replace — paint nothing
     const why = el("div", "fileview-err");
-    why.textContent = "this image failed to decode — it may be mid-write or truncated";
+    why.textContent = DECODE_FAILED;            // the exported sentence (the guide's pin reads it there)
     const words = why.textContent;              // the sentence alone, taken before the hint and the button join the pane: error()'s answer, never read back off the body
     const hint = el("div", "fileview-err-hint");
     hint.textContent = path;
@@ -2387,7 +2429,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         body.replaceChildren(renderFellLine(fell), codeBlock(text, path, true));
         renderFell = fell;                    // recorded once the fallback stands (the header): a throw from the fallback leaves the previous paint and its record
       }
-      if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it; over a render that fell it stands above the RENDER_FELL line and the rows, the stacked order item 6 records (the review's round 6)
+      if (text === "") body.prepend(textBytes !== null && textBytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it; over a render that fell it stands above the RENDER_FELL line and the rows, the stacked order item 6 records (the review's round 6); a file whose bytes were a BOM alone (more than zero bytes decoding to "") says that instead, in the same place (BOM_ONLY_FILE; the review's round 1)
       viewError = null;                       // the paint stands (the Rendered box, the rows, or the line over the rows a failed render fell back to, whose word is mode() "raw"): no pane shows (Slice 7, item 3). After the swap, as renderFell is recorded: a throw from the fallback's own swap propagates past this line and leaves the previous paint, a failure pane's included, with its record, so error() keeps answering the pane the body still shows (the review's round 3)
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
@@ -2596,7 +2638,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       "The editor stays open: " + path.slice(cut + 1) + " has unsaved changes. Save or undo them, then try again.");
   // the editor's ask, then the actions' (ctx.guardClose): each names what it would drop, and the ask is put here
   closeGuard = () => confirmDiscard() && closeAsks.every((ask) => { const q = ask(); return q === null || askDiscard(q.question, q.kept); });
-  const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
+  const norm = (s: string): string => s.replace(/\r\n?/g, "\n");   // the editor's own view of any text: CodeMirror's document model and the textarea alike read a CRLF or a lone CR as a line break and give it back as LF (Slice 7 of plans/markdown-viewer.md, item 7)
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
   // contract is the window global the chunk registers). The URL derives from the page's own running
@@ -2840,6 +2882,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
     editing = true; dirty = false;
     eolCRLF = /\r\n/.test(text);
+    eolCR = /\r/.test(text) && !/\n/.test(text);   // every ending a lone CR (eolCR's comment): the save door writes them back
     renderBody();
     // The panel's edit-mode render. Its cards read editing() at render time (the caption that says to decide in the
     // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
@@ -2932,7 +2975,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (anyUndoneLanded(undone)) { noteBar(undoneLandedNote(undone, false)); return; }
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
     // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
-    const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : buf;
+    // (and a CR-only file's lone CRs the same way, eolCR: the editor gave every one back as LF)
+    const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : eolCR ? buf.replace(/\n/g, "\r") : buf;
     // the decisions this save carries (the tracked path below fills it): marked applied when the save lands, so a later
     // Save from the same editor sends only what came after
     let sent: EditDecisions | null = null;
@@ -3271,8 +3315,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // notice dress: a silent landing on the wrong row reads as the file's truth (CLAUDE.md, fail loudly).
   const scrollToLine = (n: number) => {
     const rows = body.querySelectorAll("code.hljs .fv-cl");
+    // Over an empty file (zero rows under the EMPTY_FILE line, item 6) the notice still says the line is not in the file, in the
+    // same one-line shape an offset open uses, and stops short of "showing the last line", since there is none (the Slice 7
+    // review's round 1: a line open of an empty file said nothing while an offset open raised its notice).
+    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + (rows.length ? "; showing the last line." : "."));
     if (!rows.length) return;
-    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
     (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
   let pendingLine: number | null = at !== null && "line" in at && at.line > 0 ? Math.floor(at.line) : null;
@@ -3363,7 +3410,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // try and swallows it (the review's round 2 corrected this list, which named the hooks).
   const fetchFile = () => {
     const my = ++fetchSeq;
-    type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
+    type Verdict = { isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean; bytes: number | null };
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
     // Whether this fetch's answer STANDS to land: its viewer is up (wrap.isConnected: a close removes the wrap, and a
@@ -3400,7 +3447,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
       // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
       // kernel that sends neither simply gets no Edit button).
-      v = { isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false };
+      v = { isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false, bytes: null };
       v.isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
         && r.headers.get("X-Romp-Text-Utf8") !== "0";
       v.mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
@@ -3416,6 +3463,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // isText true with Edit off through !mtimeNs. The text landing below says so in the note bar (LATIN1_NOTICE;
       // plans/markdown-viewer.md Slice 7, item 5).
       v.notUtf8 = ct.startsWith("text/plain") && r.headers.get("X-Romp-Text-Utf8") === "0";
+      // The served body's byte count, the kernel's Content-Length (tests/test_kernel_preview.py pins it as the body's length, 0 for
+      // an empty file), read for the one question the decoded text cannot answer: whether a text that reads "" was a BOM alone
+      // (BOM_ONLY_FILE; the browser's decode strips the one U+FEFF the kernel serves). Null when the header is absent or not a
+      // number: the empty file's words then, as before.
+      const len = r.headers.get("Content-Length");
+      v.bytes = len !== null && /^\d+$/.test(len) ? Number(len) : null;
       // THIS fetch's flags choose the body's shape; the viewer's own isImage/isPdf still say what shows now
       const { isImage, isPdf } = v;
       return isImage || isPdf ? r.blob() : r.text();
@@ -3423,7 +3476,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (!stands()) return;                                    // closed, replaced or overtaken while it was parked
       if (editing) { refetchAfterEdit = true; return; }         // the editor holds the truth; read again when it ends
       const got = v!;                                           // set with the headers above; a failure never reaches here
-      isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage;
+      isText = got.isText; notUtf8 = got.notUtf8; mtimeNs = got.mtimeNs; isImage = got.isImage; isPdf = got.isPdf; isSvgImage = got.isSvgImage; textBytes = got.bytes;
       settleDiskBar(my);                                        // the changed-on-disk bar goes with the landing that brings the moved file (or its own ask's)
       if (!notUtf8) dropLatin1Line();                           // a UTF-8 answer (or a media one) drops a Latin-1 line a previous landing raised: Edit is back, or the file is no text at all (Slice 7, item 5)
       if (t instanceof Blob) {
@@ -3466,8 +3519,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       // under the one-bar rule, being the answer to the person's own click. A reload's landing has no target and raises the
       // line again, after settleDiskBar above has dropped the changed-on-disk bar, so a Reload brings it back. Keyed on the
       // answer's header, never on the body or a timer; the one other raise is a format pick's, when its paint puts this text
-      // back over a failure pane whose paint dropped the line (pickFormat; the review's round 3).
-      if (notUtf8) noteBar(LATIN1_NOTICE);
+      // back over a failure pane whose paint dropped the line (pickFormat; the review's round 3). A landing that finds the line
+      // already standing with the same words (the Comments panel's poll-driven reload of the same file, the seam's reload)
+      // leaves that element as it is (latin1LineStands): the bar is a role=status live region, so a fresh element with the
+      // same words would be announced again by assistive technology at every reload (the review's round 1); the words are
+      // unchanged, so nothing is said again. The disk bar's Reload drops its bar first (settleDiskBar), so that landing raises
+      // afresh: the line's return is new information.
+      if (notUtf8 && !latin1LineStands()) noteBar(LATIN1_NOTICE);
       landTarget();                              // the open's target (the line's row, the offset's block a frame later) and its keyboard, over a body with a box; a reload's landing has neither
       if (reopenOutline) openOutline();
     })).catch((err) => land(() => {
@@ -3568,6 +3626,7 @@ export function openUrlView(href: string): void {
 
   const fmt = loadFmt();
   let text: string | null = null;
+  let bytes = 0;                                       // the streamed read's byte count (readTextCapped): a text reading "" from more than zero bytes was a BOM alone (BOM_ONLY_FILE; Slice 7, item 6)
   let renderFell: string | null = null;                // the message of the throw the last text paint fell on (renderBody's catch, as the local viewer's); null once a paint stands
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   for (const mode of ["rendered", "raw"] as const) {
@@ -3693,7 +3752,7 @@ export function openUrlView(href: string): void {
       body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
       renderFell = fell;
     }
-    if (text === "") body.prepend(emptyFileLine());    // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment)
+    if (text === "") body.prepend(bytes > 0 ? bomOnlyLine() : emptyFileLine());   // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment); one whose bytes were a BOM alone (the read counted them) says that instead (BOM_ONLY_FILE)
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
@@ -3758,7 +3817,7 @@ export function openUrlView(href: string): void {
     const got = await readTextCapped(r.body!, URL_TEXT_MAX_BYTES, ctrl.signal);   // read verdict: the body is there
     if (!wrap.isConnected) { ctrl.abort(); return; }
     if ("tooLarge" in got) { ctrl.abort(); fail(overCapWords(null, URL_TEXT_MAX_BYTES)); return; }
-    text = got.text;
+    text = got.text; bytes = got.bytes;
     renderBody();                                      // paints, and lands the fragment if this paint is rendered
   }).catch((err) => {
     // Only the TEARDOWN's abort is silent (the modal is gone, or a refusal already painted its words);
@@ -3790,14 +3849,6 @@ function startDownload(url: string, btn: HTMLButtonElement): void {
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-
-// The Raw view's line split (plans/markdown-viewer.md Slice 7, item 7): a CRLF (one ending, tried first), a lone CR or an
-// LF each end a row, in wrapNumberedHtml over the highlighted HTML and in codeBlock's gutter count, so the two stay in
-// step and no row's text carries a "\r"; the anchor map's rawIndex consumes whichever ending stands between two rows
-// (anchor-map.ts) and verifies every row against the source, and scrollToOffset counts a row over the source with the
-// same split when the map refuses. Before, both split on "\n" alone: a CR-only file was ONE row (the HTML parser turned
-// its CRs into breaks inside it), and a CRLF file's rows ended in a "\r" the parser rewrote.
-const RAW_ROW_SPLIT = /\r\n|\r|\n/;
 
 // Wrap mode's numbering. The flat sibling gutter cannot survive soft-wrapping — one logical line becomes
 // several visual lines and every number below it drifts — so wrap mode RESTRUCTURES instead of shipping a

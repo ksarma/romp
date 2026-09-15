@@ -263,7 +263,10 @@ test("installMdSanitizeHooks registers its two hooks ONCE however often it is ca
 
 test("setMdSanitizer (the node suites' seam, Slice 7 of plans/markdown-viewer.md): sanitizeMd sanitizes through the installed stand-in, hands it the one profile spread with RETURN_DOM, and returns the body the stand-in gave after the input post-pass and the caller's own pass; null puts the module-global DOMPurify back, which under node is the bare factory (no window.document: isSupported false, sanitize and addHook unassigned), so a call then throws instead of sanitizing", () => {
   const seen: Array<{ dirty: string; cfg: Record<string, unknown> }> = [];
-  const body = { childNodes: [], querySelectorAll: () => [] };
+  // the stand-in body goes through the shim like every fake here (the Slice 7 review's round 1): its childNodes edge and its method
+  // are hidden from enumeration, so a failing assertion over it dumps its serial and nothing that could hold a tree
+  const body = hideEdges({ childNodes: [], querySelectorAll: () => [] });
+  assert.deepEqual(Object.keys(body), ["_nid"], "the stand-in enumerates its serial alone: the childNodes edge and the method are hidden (before: both enumerable, outside the shim)");
   const fake = { addHook: () => { /* the hooks are DOMPurify's business; the stand-in has none */ }, sanitize: (dirty: string, cfg: Record<string, unknown>) => { seen.push({ dirty, cfg }); return body; } };
   setMdSanitizer(fake as unknown as Parameters<typeof setMdSanitizer>[0]);
   try {

@@ -472,7 +472,7 @@ test("the width watch is wired: each viewer opens one on the body it builds, eac
   assert.equal(opens.length, 1, "openUrlView watches its body as it builds it");
   assert.equal((VIEW.match(/const stampBodyWidth = watchBodyWidth\(body, \(w\) => \{/g) || []).length, 1,
     "openFileView watches its body where the reflow's per-frame fold lives, the fold on the watch's onWidth (the seam re-places the comments panel's cards once per animation frame)");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n[^\n]*\n[^\n]*\n[^\n]*\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n[^\n]*\n[^\n]*\n[^\n]*\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\([^\n]*\);[^\n]*\n)?\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);/,
     "openFileView: every paint stamps its fresh tables after the folds' restore, the keeper's and then a record's held past a Raw first paint, after the try's close (Slice 7 of plans/markdown-viewer.md, item 1: the swap sits inside the try; the fallback paint takes the same stamp; the review's round 2 made the catch three lines, the record after the fallback swap) (mdBlock rebuilt the root; no report follows a paint; the stamp returns at once on a Raw paint, which has no .fileview-md)");
   // openUrlView stamps between the folds' restore and the seat, the local viewer's order: the seat and the fragment landing
   // measure the fresh root, and a stamp after them would change the layout they had measured (review round 1 of the 4d-3
@@ -710,7 +710,10 @@ test("wrap mode: per-line rows split on CRLF, a lone CR and LF, spans rebalanced
   assert.match(VIEW, /\nconst RAW_ROW_SPLIT = \/\\r\\n\|\\r\|\\n\/;\n/, "one module-level regex, CRLF first, then a lone CR, then LF (contract C6)");
   assert.match(VIEW, /function wrapNumberedHtml\(html: string\): string \{\n  const lines = html\.split\(RAW_ROW_SPLIT\);\n  if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/, "the rows split on it, the trailing empty piece popped as before");
   assert.match(VIEW, /const wrap = el\("div", "fileview-code"\);\n  const lines = text\.split\(RAW_ROW_SPLIT\);\n  if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/, "the gutter branch's count splits the same way, so the two stay in step");
-  const rawView = VIEW.slice(VIEW.indexOf("\nconst RAW_ROW_SPLIT ="), VIEW.indexOf("\n// Land an in-document fragment on its target."));
+  // the regex is declared with the module's constants, above the openFileView closure whose scrollToOffset reads it (the Slice 7
+  // review's round 1 hoisted it from beside the two builders), so the Raw view's slice starts at the builders
+  assert.ok(VIEW.indexOf("\nconst RAW_ROW_SPLIT =") > 0 && VIEW.indexOf("\nconst RAW_ROW_SPLIT =") < VIEW.indexOf("\nexport function openFileView("), "declared above the closure that uses it");
+  const rawView = VIEW.slice(VIEW.indexOf("\n// Wrap mode's numbering."), VIEW.indexOf("\n// Land an in-document fragment on its target."));
   assert.ok(rawView.includes("function wrapNumberedHtml(") && rawView.includes("function codeBlock("), "the slice holds both functions");
   assert.doesNotMatch(rawView, /split\("\\n"\)/, "no LF-only split left in the Raw view's builders");
 });
@@ -1145,14 +1148,14 @@ test("an image 200 that fails to DECODE swaps to the failure pane: plain words +
     let pane: string[] = [];
     let armed: (() => void) | null = null;
     const imgBlock = (onDecodeFail: () => void): string => { armed = onDecodeFail; return "img"; };
-    const imgFailed = () => { pane = ["this image failed to decode — it may be mid-write or truncated", "Download"]; };
+    const imgFailed = () => { pane = ["this image failed to decode: it may be mid-write or truncated", "Download"]; };
     pane = [imgBlock(imgFailed)];              // the media branch renders the img, handler armed
     if (!decodes) armed!();                    // garbage bytes: the browser fires the img's error event
     return pane;
   };
   assert.deepEqual(sim(true), ["img"], "a decodable image just shows");
   assert.deepEqual(sim(false),
-    ["this image failed to decode — it may be mid-write or truncated", "Download"],
+    ["this image failed to decode: it may be mid-write or truncated", "Download"],
     "garbage bytes land on words + the way out");
   // source: the handler rides the img itself, armed BEFORE src so no event can slip past it
   const imgFn = VIEW.split("function imgBlock")[1].split("// The PDF body")[0];
@@ -1164,8 +1167,8 @@ test("an image 200 that fails to DECODE swaps to the failure pane: plain words +
   const failFn = (openFn.split("const imgFailed = ")[1] || "").split("\n  };")[0];
   assert.ok(failFn, "imgFailed lives in the open viewer's closure — it needs body and dlUrl");
   assert.match(failFn, /el\("div", "fileview-err"\)/);
-  assert.match(failFn, /failed to decode/);
-  assert.match(failFn, /mid-write or truncated/);
+  assert.match(failFn, /why\.textContent = DECODE_FAILED;/, "the sentence is the exported constant (hoisted in the Slice 7 review's round 1 for the guide's pin)");
+  assert.match(VIEW, /\nexport const DECODE_FAILED = "this image failed to decode: it may be mid-write or truncated";\n/, "its export line, the words the guide's pin reads");
   assert.match(failFn, /el\("div", "fileview-err-hint"\)/);
   assert.match(failFn, /hint\.textContent = path;/);
   assert.match(failFn, /el\("button", "fileview-btn fileview-err-dl"\)/);
@@ -1316,7 +1319,7 @@ test("source: where an open lands (Slice 6 of plans/markdown-viewer.md, item 4):
   assert.match(openFn, /const at: At \| null = opts\?\.at \?\? null;/);
   assert.match(openFn, /openLinkedFile\(p, sid \|\| null, ln > 0 \? \{ line: ln \} : x\.dataset\.frag \? \{ heading: x\.dataset\.frag \} : null\);/, "the body's delegate: data-line as { line }, data-frag as { heading }, a bare path as null");
   assert.match(openFn, /let pendingOffset: number \| null = at !== null && "offset" in at && at\.offset >= 0 \? Math\.floor\(at\.offset\) : null;/);
-  assert.match(openFn, /renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5); the Latin-1 line's raise stands between the paint and the spend (Slice 7, item 5)");
+  assert.match(openFn, /renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the landing spends the target and takes the keyboard through one gate over a body with a box (review round 5); the Latin-1 line's raise stands between the paint and the spend (Slice 7, item 5), guarded by the standing line (the review's round 1)");
   assert.match(openFn, /const landTarget = \(\): void => \{\n\s*if \(unmeasurable\(\)\) return;\n\s*if \(pendingLine !== null\) \{ const n = pendingLine; pendingLine = null; scrollToLine\(n\); \}\n\s*if \(pendingOffset !== null\) \{ const n = pendingOffset; pendingOffset = null; requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToSourceOffset\(n\); \}\); \}\n\s*if \(pendingHeading !== null && \(!isMd \|\| fmt\.md === "rendered"\)\) spendHeading\(\);\n\s*keyboardOnLanding\(\);\n\s*\};/,
     "spent at the landing like the line, scrolled the next frame (the heading landing's timing), before the keyboard");
   const sso = openFn.slice(openFn.indexOf("const scrollToSourceOffset = "), openFn.indexOf("let pendingOffset"));
@@ -1372,7 +1375,7 @@ test("source: changed on disk (Slice 6 of plans/markdown-viewer.md, item 5): the
   assert.match(probe, /const d = diskBar;\n\s*if \(!d \|\| !ownAsk\(my\) \|\| !diskBarUp\(\)\) return;/, "the re-arm answers the bar's ask or a newer fetch's failure, while the bar stands");
   assert.match(probe, /if \(d\.held && keyboardIdle\(\)\) d\.btn\.focus\(\{ preventScroll: true \}\);/, "a failed Reload puts the click's keyboard back on the re-armed button only while nothing holds it (review round 2: it took the keyboard from a box the reader had moved to during the flight, and Space fired Reload again)");
   assert.match(openFn, /const keyboardIdle = \(\): boolean => \{ const a = document\.activeElement; return \(a === null \|\| a === document\.body\) && !typingInPeerFrame\(\); \};/, "idle: this document's body or nothing, and no box being typed in a sibling frame");
-  assert.match(openFn, /isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "right after the landing applies the mtime, text and media alike");
+  assert.match(openFn, /isSvgImage = got\.isSvgImage; textBytes = got\.bytes;\n\s*settleDiskBar\(my\);/, "right after the landing applies the mtime, text and media alike (the byte count with them since the review's round 1)");
   assert.match(openFn, /body\.replaceChildren\(why\);\n\s*syncOutline\(\);[^\n]*\n\s*viewError = msg;[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*rearmDiskBar\(my\);/, "the failure landing fires the seam's hooks after the pane's paint and the Outline sync (Slice 7 of plans/markdown-viewer.md, item 3: error() set first, so a hook reads the pane's words) and re-arms the bar's own button AFTER both (review round 3: read before the paint, an element of the old body's content the reader had focused during the flight stood the re-arm down, and the paint's removal then left the keyboard on the document's body; the hooks move no keyboard, so the re-arm still reads it last)");
   assert.doesNotMatch(openFn, /rearmDiskBar\(my\);[^\n]*\n\s*(?:viewError = msg;|fireRendered\(\);)/, "never the hooks after the re-arm");
   assert.doesNotMatch(openFn, /rearmDiskBar\(my\);[^\n]*\n\s*const why = el\("div", "fileview-err"\);/, "never before the pane");
@@ -1490,7 +1493,7 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   // the local viewer's text paint, inside perfTimed (contract C7): try, the swap, the record cleared; catch, the record set, the line then the rows
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /perfTimed\("paint", \(\) => \{[^\n]*\n\s*if \(text === null\) return;[^\n]*\n\s*const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n/, "the place read, then the try");
-  assert.match(openFn, /try \{\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*const fell = fellMessage\(err\);\n\s*body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, path, true\)\);\n\s*renderFell = fell;[^\n]*\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
+  assert.match(openFn, /try \{\n\s*body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*const fell = fellMessage\(err\);\n\s*body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, path, true\)\);\n\s*renderFell = fell;[^\n]*\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\([^\n]*\);[^\n]*\n)?\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);[^\n]*\n\s*stampBodyWidth\(\);[^\n]*\n\s*syncOutline\(\);[^\n]*\n\s*fireRendered\(\);[^\n]*\n\s*shownText = text;\n\s*seat\(kept\);/,
     "the swap inside the try; the message through fellMessage (an Error's message with marked's report-this sentence cut, else the value's string); the line first, then codeBlock's rows, then the record, once the fallback stands (the review's round 2: recorded before the swap, a fallback throw left mode() saying raw over a standing box); the rest of the pass runs as for any text paint (the folds, the stamp, the Outline, the hooks once, shownText, the seat); A6's empty-file line may follow the try");
   assert.match(openFn, /\n\s*let renderFell: string \| null = null;/, "per-open state");
   assert.match(openFn, /mode: \(\) => \(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\) \? "media" : isMd && fmt\.md === "rendered" && renderFell === null \? "rendered" : "raw",/, "mode() answers raw while the record stands (the Rendered button stays pressed: fmt.md is untouched)");
@@ -1498,7 +1501,7 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
   // the URL viewer: the same try, the document's rows under the same line
   const urlFn = VIEW.split("export function openUrlView")[1].split("\nfunction startDownload(")[0];
   assert.match(urlFn, /\n\s*let renderFell: string \| null = null;/, "its own per-open record");
-  assert.match(urlFn, /const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n\s*\? mdBlock\(text, \{ kind: "url", href: loc \}\)[^\n]*\n\s*: codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*const fell = fellMessage\(err\);\n\s*body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, parts\.base, true\)\);\n\s*renderFell = fell;\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n)?\s*folds\.restore\(\);/,
+  assert.match(urlFn, /const kept = keptPlace\(\);[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*try \{\n\s*body\.replaceChildren\(fmt\.md === "rendered"\n\s*\? mdBlock\(text, \{ kind: "url", href: loc \}\)[^\n]*\n\s*: codeBlock\(text, parts\.base, true\)\);[^\n]*\n\s*renderFell = null;\n\s*\} catch \(err\) \{\n\s*const fell = fellMessage\(err\);\n\s*body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, parts\.base, true\)\);\n\s*renderFell = fell;\n\s*\}\n(?:\s*if \(text === ""\) body\.prepend\([^\n]*\);[^\n]*\n)?\s*folds\.restore\(\);/,
     "the URL viewer's renderBody: build and swap in one try, the line then the rows then the record in its catch (the local viewer's order), the folds' restore after (A6's empty-file line may stand between)");
   assert.equal((VIEW.match(/renderFellLine\(fell\)/g) || []).length, 2, "the two viewers' catches, and nothing else, paint the line");
   assert.equal((VIEW.match(/renderFellLine\(renderFell\)/g) || []).length, 0, "neither paints from the record: the record is written after the swap (the review's round 2)");
@@ -1512,18 +1515,22 @@ test("source: mdBlock keeps no try, no catch and no fallback; both viewers' rend
 test("source: a Latin-1 file's line (Slice 7 of plans/markdown-viewer.md, item 5): the verdict is its own flag off the header's VALUE \"0\" with the text/plain type, never !isText; applied with the other verdicts at the landing; the raise is one noteBar of the exported LATIN1_NOTICE between the text paint and landTarget, so a target's notice wins the row and a reload's landing raises it again after settleDiskBar; the Edit gate is unchanged", () => {
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(VIEW, /\nexport const LATIN1_NOTICE = "This file is not UTF-8 on disk, so it can be read here but not edited: a save would rewrite its bytes as UTF-8\.";\n/, "the exported sentence (contract C5)");
-  assert.match(openFn, /type Verdict = \{ isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean \};/, "one more field in the verdict shape");
-  assert.match(openFn, /v = \{ isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false \};/, "initialised with the others");
+  assert.match(openFn, /type Verdict = \{ isText: boolean; notUtf8: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean; bytes: number \| null \};/, "one more field in the verdict shape (and the body's byte count since the review's round 1, item 6's BOM-only line)");
+  assert.match(openFn, /v = \{ isText: false, notUtf8: false, mtimeNs: "", isImage: false, isPdf: false, isSvgImage: false, bytes: null \};/, "initialised with the others");
   assert.match(openFn, /\n\s*v\.notUtf8 = ct\.startsWith\("text\/plain"\) && r\.headers\.get\("X-Romp-Text-Utf8"\) === "0";\n/, "the header's value \"0\" with the text type: an image or a PDF carries no header, and an old kernel sends none");
   assert.doesNotMatch(openFn, /notUtf8 = !isText|notUtf8 = !v\.isText|notUtf8 = !got\.isText|notUtf8 = !\(/, "never the text verdict's negation");
   assert.match(openFn, /\n\s*let notUtf8 = false;/, "per-open state, beside isText");
-  assert.match(openFn, /isText = got\.isText; notUtf8 = got\.notUtf8; mtimeNs = got\.mtimeNs; isImage = got\.isImage; isPdf = got\.isPdf; isSvgImage = got\.isSvgImage;\n\s*settleDiskBar\(my\);/, "applied with the other verdicts, before the bar's settle");
+  assert.match(openFn, /isText = got\.isText; notUtf8 = got\.notUtf8; mtimeNs = got\.mtimeNs; isImage = got\.isImage; isPdf = got\.isPdf; isSvgImage = got\.isSvgImage; textBytes = got\.bytes;\n\s*settleDiskBar\(my\);/, "applied with the other verdicts (the byte count among them), before the bar's settle");
   const landing = openFn.slice(openFn.indexOf("const got = v!;"), openFn.indexOf("})).catch((err) => land(() => {"));
-  assert.match(landing, /text = t;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/,
+  assert.match(landing, /text = t;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const reopenOutline = parked && outline !== null;\n(?:\s*\/\/[^\n]*\n)*\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/,
     "the text landing: the paint, the raise, then the target's spend (the past-the-end line notice, raised inside landTarget, takes the row from the line; the offset and missing-section notices land a frame later and take it the same way); the parked landing's Outline re-open flag is read before the paint (the PR review's round 2)");
-  assert.ok(landing.indexOf("settleDiskBar(my);") >= 0 && landing.indexOf("settleDiskBar(my);") < landing.indexOf("if (notUtf8) noteBar(LATIN1_NOTICE);"), "the changed-on-disk bar's settle precedes the raise, so a Reload's landing brings the line back over the dropped bar");
+  assert.ok(landing.indexOf("settleDiskBar(my);") >= 0 && landing.indexOf("settleDiskBar(my);") < landing.indexOf("if (notUtf8 && !latin1LineStands()) noteBar(LATIN1_NOTICE);"), "the changed-on-disk bar's settle precedes the raise, so a Reload's landing brings the line back over the dropped bar");
+  // the guard (the Slice 7 review's round 1): a landing that finds the line standing with the same words leaves the element as it is,
+  // so a role=status bar is not re-announced at every poll-driven reload; the drop knows the line by the same words
+  assert.match(openFn, /\n  const latin1LineStands = \(\): boolean => note !== null && note\.textContent === LATIN1_NOTICE;\n/, "the standing-line read: the notice with the line's own words");
+  assert.equal((openFn.match(/latin1LineStands\(\)/g) || []).length, 1, "read at the landing's raise alone: the format pick's raise already requires no notice at all (note === null), and the drop keeps its own read");
   assert.equal((openFn.match(/noteBar\(LATIN1_NOTICE\)/g) || []).length, 2, "two raise sites: the text landing (a reload's landing runs it again) and the format pick over a replaced failure pane (pickFormat; the review's round 3, pinned below); nothing else re-raises it");
-  assert.equal((VIEW.match(/LATIN1_NOTICE/g) || []).length, 6, "the constant's definition, the flag's comment, the verdict's comment, the landing's raise, the format pick's raise over a replaced failure pane (pickFormat; the review's round 3) and the landing's clear (dropLatin1Line, which knows the line by its words; the review's round 1); no other reader in the viewer");
+  assert.equal((VIEW.match(/LATIN1_NOTICE/g) || []).length, 7, "the constant's definition, the flag's comment, the verdict's comment, the landing's raise, the format pick's raise over a replaced failure pane (pickFormat; the review's round 3), the landing's clear (dropLatin1Line, which knows the line by its words; the review's round 1) and the standing-line read the raise is guarded by (latin1LineStands; the manager's round 1); no other reader in the viewer");
   assert.match(openFn, /\n  const pickFormat = \(mode: "rendered" \| "raw"\): void => \{\n\s*const overPane = viewError !== null;[^\n]*\n\s*fmt\.md = mode; saveFmt\(fmt\); renderBody\(\);\n\s*if \(overPane && notUtf8 && viewError === null && note === null\) noteBar\(LATIN1_NOTICE\);\n\s*\};\n/, "the format pick (the review's round 3): the pane the paint replaces is read before the paint, and the line is raised again only when the paint stood over a pane (error() cleared), the header said Latin-1 and no other notice holds the row (a re-armed changed-on-disk bar keeps it)");
   assert.match(openFn, /b\.addEventListener\("click", \(\) => \{ pickFormat\(mode\); takeKeyboard\(\); \}\);/, "the bar's buttons pick through it, then take the keyboard");
   assert.match(openFn, /setMode: \(mode\) => \{ if \(!isMd \|\| editing\) return; pickFormat\(mode\); \},/, "and so does the seam's setMode (the Comments panel's switch to Raw)");
@@ -1543,7 +1550,7 @@ test("source: the Slice 7 review's round 1 (plans/markdown-viewer.md, the Slice 
   assert.equal((openFn.match(/dropLatin1Line\(\)/g) || []).length, 2, "two call sites: the landing, and the fetch chain's catch (the review's round 2: a Latin-1 line stood over a 404 or 413 pane saying the file could not be read)");
   const chainCatch = openFn.slice(openFn.indexOf("})).catch((err) => land(() => {"), openFn.indexOf("fetchFile();\n  return true;"));
   assert.match(chainCatch, /closeOutline\(\);[^\n]*\n\s*dropLatin1Line\(\);[^\n]*\n\s*body\.replaceChildren\(why\);/, "in the catch: after the popover's close and before the pane's swap, so the pane never stands under the line");
-  assert.match(openFn, /if \(notUtf8\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the raise is unchanged");
+  assert.match(openFn, /if \(notUtf8 && !latin1LineStands\(\)\) noteBar\(LATIN1_NOTICE\);\n\s*landTarget\(\);/, "the raise stands where it was, guarded by the standing line (the manager's round 1)");
 });
 
 test("source: the Slice 7 review's round 2 (plans/markdown-viewer.md, the Slice 7 note): both render catches record renderFell AFTER the fallback swap through one helper, fellMessage, which cuts marked's appended report-this sentence and names an Error with nothing else left by its name; the landing hold's comment names the passes after the try that can throw through into the chain's catch and not the hooks, whose own throws fireRendered swallows", () => {
@@ -1562,18 +1569,26 @@ test("source: the Slice 7 review's round 2 (plans/markdown-viewer.md, the Slice 
 test("source: an empty file's line (Slice 7 of plans/markdown-viewer.md, item 6): EMPTY_FILE is contract C5's text, the one constant with its own period; emptyFileLine builds the pane-dress div holding it alone; each viewer's text paint prepends it to the body when the text is \"\", right after the try's close and before the folds' restore, so it stands above whichever root the try left and the hooks, the Outline and the seat read the paint with it; the landing applies \"\" as it came (never null) and the Edit gate is unchanged, so Edit shows", () => {
   assert.match(VIEW, /\nexport const EMPTY_FILE = "This file is empty\.";\n/, "contract C5's text, exported for the guide's pin");
   assert.match(VIEW, /\nfunction emptyFileLine\(\): HTMLElement \{\n\s*const why = el\("div", "fileview-err"\);\n\s*why\.textContent = EMPTY_FILE;\n\s*return why;\n\}\n/, "the line: the pane dress, the sentence alone, no hint, no button");
-  assert.equal((VIEW.match(/if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);/g) || []).length, 2, "the two viewers' text paints, and nothing else, prepend the line");
+  assert.match(VIEW, /\nexport const BOM_ONLY_FILE = "This file holds only a byte order mark\.";\n/, "the BOM-only file's sentence (the manager's round 1 words), exported for the guide's pin, in the empty line's shape");
+  assert.match(VIEW, /\nfunction bomOnlyLine\(\): HTMLElement \{\n\s*const why = el\("div", "fileview-err"\);\n\s*why\.textContent = BOM_ONLY_FILE;\n\s*return why;\n\}\n/, "its line: the empty file's shape");
+  assert.match(VIEW, /\n\s*if \(text === ""\) body\.prepend\(textBytes !== null && textBytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);/, "the local viewer's text paint: the empty text from more than zero bytes was a BOM alone (the answer's Content-Length); absent, the empty file's words");
+  assert.match(VIEW, /\n\s*if \(text === ""\) body\.prepend\(bytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);/, "the URL viewer's: the streamed read's own byte count (readTextCapped)");
+  assert.equal((VIEW.match(/if \(text === ""\) body\.prepend\(/g) || []).length, 2, "the two viewers' text paints, and nothing else, prepend a line");
   assert.equal((VIEW.match(/emptyFileLine\(/g) || []).length, 3, "the builder and its two calls: no other site paints the sentence");
+  assert.equal((VIEW.match(/bomOnlyLine\(/g) || []).length, 3, "the same for the BOM-only line");
+  assert.doesNotMatch(VIEW, /BOM_ONLY_FILE[^\n]*\n[^\n]*textBytes === 3|textBytes === 3/, "keyed on bytes decoding to nothing yet numbering more than zero, the theorem, never on the number three");
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   const urlFn = VIEW.split("export function openUrlView")[1].split("\nfunction startDownload(")[0];
-  assert.match(openFn, /body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, path, true\)\);\n\s*renderFell = fell;[^\n]*\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);/,
+  assert.match(openFn, /\n\s*const len = r\.headers\.get\("Content-Length"\);\n\s*v\.bytes = len !== null && \/\^\\d\+\$\/\.test\(len\) \? Number\(len\) : null;\n/, "the byte count read off the kernel's Content-Length with the other headers, null when absent or not a number");
+  assert.match(openFn, /\n\s*let textBytes: number \| null = null;/, "per-open state, applied at the landing with the verdicts");
+  assert.match(openFn, /body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, path, true\)\);\n\s*renderFell = fell;[^\n]*\n\s*\}\n\s*if \(text === ""\) body\.prepend\(textBytes !== null && textBytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);[^\n]*\n\s*viewError = null;[^\n]*\n\s*folds\.restore\(\); restoreHeldFolds\(\);/,
     "the local viewer: after the try's close (the swap stood, or the catch painted its line and rows and recorded the message, the review's round 2) and before the folds' restore (contract C7's optional line): a prepend, so the line is the body's first child above the root, outside code.hljs and .fileview-md");
-  assert.match(urlFn, /body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, parts\.base, true\)\);\n\s*renderFell = fell;\n\s*\}\n\s*if \(text === ""\) body\.prepend\(emptyFileLine\(\)\);[^\n]*\n\s*folds\.restore\(\);/,
+  assert.match(urlFn, /body\.replaceChildren\(renderFellLine\(fell\), codeBlock\(text, parts\.base, true\)\);\n\s*renderFell = fell;\n\s*\}\n\s*if \(text === ""\) body\.prepend\(bytes > 0 \? bomOnlyLine\(\) : emptyFileLine\(\)\);[^\n]*\n\s*folds\.restore\(\);/,
     "the URL viewer: the same place (a document read through capped-read.ts can be empty)");
   assert.match(openFn, /\n\s*text = t;\n/, "the landing applies the text as it came: \"\" stays \"\"");
   assert.doesNotMatch(openFn, /text = t \|\| null|text = t === "" \? null|text = t \? t : null/, "never null for an empty file: null means not landed, to the seam and the panel");
   assert.match(openFn, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/, "the Edit gate unchanged: \"\" is text under an mtime, so Edit shows and the editor mounts over it");
   assert.match(VIEW, /\n {3}\*  An empty file answers "" \(never null: the body shows the EMPTY_FILE line above its empty root, and that is the content\) \*\//, "text()'s doc says so");
   assert.doesNotMatch(VIEW, /emptyFileLine\(\)[^\n]*fv-cl|"fileview-err fv-cl"/, "the line is never a row");
-  assert.doesNotMatch(VIEW, /text\.length === 0|text\.trim\(\) === ""|!text\.length/, "keyed on the text the landing applied being the empty string, never a byte count, a trim or a timer");
+  assert.doesNotMatch(VIEW, /text\.length === 0|text\.trim\(\) === ""|!text\.length/, "keyed on the text the landing applied being the empty string, never a trim or a timer (the byte count decides only WHICH words the empty text gets)");
 });
