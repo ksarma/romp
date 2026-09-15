@@ -146,10 +146,16 @@ class ParkedSendCarriesItsPressId(_ParkFixture):
 
     def test_handed_over_now_the_id_reaches_a_backend_that_identifies_its_copies_and_not_one_that_does_not(self):
         be = _IdBackend()
-        self.assertFalse(km._send_or_park(be, SID, "go", echo="human", qid=A))
+        # the fork's kept contract (4e Q1 rider, final ruling 17; tests/test_pr_watch.py pins it): a send handed over
+        # now returns the backend send's own result (these stand-ins answer True), "parked" only when it parks
+        got = km._send_or_park(be, SID, "go", echo="human", qid=A)
+        self.assertNotEqual(got, "parked")
+        self.assertTrue(got)
         self.assertEqual(be.calls, [("go", A)], "the copy enters the queue under the id it was pressed with")
         plain = _PlainBackend()
-        self.assertFalse(km._send_or_park(plain, SID, "go", echo="human", qid=A))
+        got = km._send_or_park(plain, SID, "go", echo="human", qid=A)
+        self.assertNotEqual(got, "parked")
+        self.assertTrue(got)
         self.assertEqual(plain.calls, ["go"], "a route whose copies carry no id takes the text alone")
         self.assertEqual(self.echoes, [("go", "human"), ("go", "human")])
 

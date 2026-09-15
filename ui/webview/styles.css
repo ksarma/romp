@@ -3357,7 +3357,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* Disabled — the emoji dialog's Clear with nothing to clear, a Move/Set while the kernel answers: dimmed,
    default cursor, no hover lift. Without these the button kept the live pointer cursor and hover wash and read
    as one whose click did nothing (review 2026-09-06; the lesson .picker-browse:disabled learned 2026-08-08).
-   The same 0.55 / default-cursor pair as .bg-stop:disabled and .apierror-retry:disabled. */
+   The same 0.55 / default-cursor pair as .bg-stop:disabled. */
 .picker-action:disabled { opacity: 0.55; cursor: default; }
 .picker-action:disabled:hover { background: transparent; }
 /* armed (auto-selected) when the typed name matches no session — Enter creates it;

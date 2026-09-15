@@ -2,8 +2,7 @@
 # `romp refresh --quiet` writes an audit row the kernel's drift check can read (T240d): when=quiet and
 # the checkout sha. Without them the check saw the checkout ahead of the kernel, read a row that
 # named no parked deploy, and posted an IMMEDIATE restart that pre-empted the quiet window this very
-# flag asked for. The immediate refresh keeps its row as it was. Fake manager + postal stand-ins. Here the
-# row carries `action: refresh` (bin/romp labels every stop or restart it asks for; tests/romp.bats pins it).
+# flag asked for. The immediate refresh keeps its row as it was. Fake manager + postal stand-ins.
 
 setup() {
     TEST_DIR="$(mktemp -d)"
@@ -28,7 +27,7 @@ import json, re, sys
 row = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
 assert row.get("when") == "quiet", row
 assert re.fullmatch(r"[0-9a-f]{8}", row.get("sha") or ""), row
-assert row.get("action") == "refresh", row   # the caller-attribution row, labeled so the kernel's cut ledger joins it
+assert "action" not in row, row          # still the caller-attribution row, not a kernel action row
 EOF
 }
 

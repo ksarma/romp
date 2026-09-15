@@ -18,6 +18,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { hideEdges } from "../test-dom-shim";   // the fake hides its edges at creation (the shim ratchet, ui/test-dom-shim.test.ts)
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
@@ -25,7 +26,7 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 class FakeEl {
   tagName: string; attrs: Record<string, string> = {}; _cls = new Set<string>(); dataset: Record<string, string> = {};
   isConnected = true; onerror: any = null; children: FakeEl[] = []; srcWrites = 0;
-  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  constructor(tag: string) { this.tagName = tag.toUpperCase(); hideEdges(this); }   // children and every object-valued field hide (ui/test-dom-shim.ts): a failing assertion dumps no tree; the Image subclass below calls super, so it is covered
   get src(): string { return this.attrs.src || ""; }
   set src(v: string) { this.srcWrites++; this.attrs.src = v; }   // a src write is a fetch, and hides the alt text until the response
   get alt(): string { return this.attrs.alt || ""; }

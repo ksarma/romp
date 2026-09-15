@@ -10,6 +10,7 @@ uuids, fake pids above pid_max, scripted `run` / `kill` seams, no real CLI."""
 import json
 import os
 import tempfile
+import threading
 import types
 import unittest
 from pathlib import Path
@@ -220,7 +221,10 @@ class CrashRows(unittest.TestCase):
     def test_heal_then_loop(self):
         d = tempfile.mkdtemp(); be = _backend(d)
         _reg(d, SID, "web")
-        sess = types.SimpleNamespace(sid=SID, name="web")
+        # the stand-in carries what the kept heal reads (fork PR 580's composition under MH1): the dead CLI's
+        # scope unit (None: nothing to ask, the plain heal line) and the queue the sealed reg write folds and closes
+        sess = types.SimpleNamespace(sid=SID, name="web", cli_scope_unit=None, _persist_lock=threading.Lock(),
+                                     _lock=threading.Lock(), _pending=[], _pending_meta=[], _queue_closed=False)
         with mock.patch.object(sb.SdkBackend, "_ensure", lambda self, sid, **k: None):
             be._heal_cut_session(sess)
             be._heal_cut_session(sess)

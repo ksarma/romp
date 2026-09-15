@@ -89,13 +89,26 @@ function kernelJs(name: string): string {
   assert.ok(!js.includes("\\"), name + " carries a backslash: Python would alter it — slice differently");
   return js;
 }
-// the pane controller, with the keys _landing() splices in from _PANE_ORDER
+// the pane controller, with the keys _landing() splices in from _PANE_ORDER. The kernel splices them inline
+// (`var KEYS=""" + json.dumps([k for k, _ in _PANE_ORDER]) + """;`, the placeholder-free form the 2026-09-15
+// upstream pull-in took, F2), so kernelJs()'s slice to the first triple quote would stop at `var KEYS=`: cut
+// at the splice instead and join the two literal halves with the keys parsed above (browse-route.test.ts's idiom)
 function collapseJs(): string {
   const at = KERNEL.indexOf("_PANE_ORDER = (");
   assert.ok(at > 0, "_PANE_ORDER not found in kernel.py — re-anchor");
   const keys = Array.from(KERNEL.slice(at, KERNEL.indexOf("\n\n", at)).matchAll(/\("(\w+)", "/g)).map((m) => m[1]);
   assert.ok(keys.includes("waiting") && keys.includes("files"), "the pane keys parsed from _PANE_ORDER: " + keys.join(","));
-  return kernelJs("_LANDING_COLLAPSE_JS").replace("__PANE_KEYS__", JSON.stringify(keys));
+  const open = '_LANDING_COLLAPSE_JS = """';
+  const at2 = KERNEL.indexOf(open);
+  assert.ok(at2 > 0, "_LANDING_COLLAPSE_JS not found in kernel.py: re-anchor");
+  const start = at2 + open.length;
+  const splice = '""" + json.dumps([k for k, _ in _PANE_ORDER]) + """';
+  const cut = KERNEL.indexOf(splice, start);
+  assert.ok(cut > start, "the pane-keys splice in _LANDING_COLLAPSE_JS moved: re-anchor (the inline json.dumps of _PANE_ORDER)");
+  const rest = cut + splice.length;
+  const js = KERNEL.slice(start, cut) + JSON.stringify(keys) + KERNEL.slice(rest, KERNEL.indexOf('"""', rest));
+  assert.ok(!js.includes("\\"), "_LANDING_COLLAPSE_JS carries a backslash: Python would alter it; slice differently");
+  return js;
 }
 // the landing CSS that hides a toggled-off pane — display:none, the property Firefox's focus refuses
 function paneCss(): string {

@@ -216,13 +216,16 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
     "const utreply = " + bodyHandler("utreply") + ";",
   ].join("\n"));
   const fn = new Function(
-    "el", "dot", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
+    "el", "notice", "todoFoldLabel", "applyFold", "rememberFold", "utDetailHint", "applyUtHint", "utHintFor", "UT_HINT_CLASS",
     "linkifyPrRefs", "prRepoFor", "isCoarsePointer", "renderingSid", "utDetailOpen", "linkifyPathTokens", "linkifyFileUris",
     "openPathLink", "vscodeApi", "activeId", "openPath", "linkifyUrls", "urlChip", "linkTarget",
     code + "\nreturn { renderTodo, showUserTodoReply, todoFileChip, todoLinkChip, openpath, utreply };");
   const el = (tag: string, cls?: string) => { const e = document.createElement(tag); if (cls) e.className = cls; return e; };
+  // renderTodo is ONE notice() (the notice vocabulary, 2026-09-08): the stub returns the turn the builder would, with the
+  // spec's cls and the body inside it, so the .ut-* queries below read the same tree; the fold label is a pass-through
+  const notice = (spec: any) => { const t = el("div", "turn turn-notice " + (spec.cls || "")); if (spec.body) t.appendChild(spec.body); return t; };
   const out = fn(
-    el, () => el("span", "dot ring"), () => undefined, () => undefined, hint.utDetailHint, hint.applyUtHint, hint.utHintFor, hint.UT_HINT_CLASS,
+    el, notice, () => undefined, () => undefined, () => undefined, hint.utDetailHint, hint.applyUtHint, hint.utHintFor, hint.UT_HINT_CLASS,
     () => undefined, () => null, () => false, SID, new Set<string>(), linkifyPathTokens,
     (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, sid: string | null) => linkifyPathTokens(node, sid),   // the detail's figure pass is not under test: its paths link the same way
     openPathLink, null, activeId,

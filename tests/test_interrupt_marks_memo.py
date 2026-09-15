@@ -515,9 +515,9 @@ class MemoAcrossTheCycle(_MemoHarness):
     def test_perf_reports_the_memo(self):
         turns = self._judge_turns()
         km._interrupt_marks(turns, SID, family="judge")
-        before = km._PERF_STATS.snapshot()["memos"]["intr_marks"]
+        before = km._PERF_STATS.snapshot()["memos"]["intrMarks"]
         km._interrupt_marks(turns, SID, family="judge")
-        after = km._PERF_STATS.snapshot()["memos"]["intr_marks"]
+        after = km._PERF_STATS.snapshot()["memos"]["intrMarks"]
         self.assertEqual(after["hit"], before["hit"] + 1)
         self.assertEqual(after["entries"], len(km._intr_marks_memo))
         self.assertEqual(set(after), {"hit", "miss", "evict", "entries"})

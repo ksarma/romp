@@ -162,42 +162,17 @@ class JudgeSettings(unittest.TestCase):
         for t in ("setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort", "setJudgeFast"):
             self.assertIn('msg.get("type") == "%s"' % t, ksrc)
 
-    # ---- fast judging (gear "Fast judging", the user 2026-08-09): Opus fast mode on judge calls ----
+    # ---- fast judging: the toggle's setter, read through the judge (the argv, /version and socket-op cases are
+    # FastJudging's below, the kernel setting's own class since upstream's #1292 landed) ----
     def test_judge_fast_default_off_and_setter(self):
         self.assertFalse(jd._judge_fast(), "fast judging is off by default")
         km._set_judge_fast("on"); jd._state_cache.clear()
         self.assertTrue(jd._judge_fast())
-        km._set_judge_fast(""); jd._state_cache.clear()
-        self.assertFalse(jd._judge_fast(), 'empty value clears the toggle')
+        km._set_judge_fast("off"); jd._state_cache.clear()
+        self.assertFalse(jd._judge_fast(), "off clears the toggle (the setter takes on and off only: an empty value is "
+                                           "refused unwritten and would leave it on)")
         km._set_judge_fast("bogus"); jd._state_cache.clear()
         self.assertFalse(jd._judge_fast(), "an unknown value is ignored, like the model/effort setters")
-
-    def test_fast_adds_the_settings_opt_in_for_opus_only(self):
-        # The CLI ignores fast entirely in non-interactive runs unless the flag-settings layer carries
-        # the fastMode opt-in — the same mechanism the sessions' own fast toggle rides. Opus-only: fast
-        # is an Opus research preview, so every other model's argv stays byte-identical with the toggle on.
-        import json as _json
-        from pathlib import Path as _P
-        (jd.STATE / "judge-fast").write_text("on")
-        jd._state_cache.clear()
-        cmd = jd._judge_cmd("opus", "SYS")
-        self.assertIn("--settings", cmd)
-        sp = _P(cmd[cmd.index("--settings") + 1])
-        self.assertEqual(_json.loads(sp.read_text()), {"fastMode": True}, "the opt-in file is the flag itself")
-        for m in ("sonnet", "haiku", "fable"):
-            self.assertNotIn("--settings", jd._judge_cmd(m, "SYS"), "%s never gets the fast opt-in" % m)
-
-    def test_fast_off_leaves_the_argv_alone(self):
-        self.assertNotIn("--settings", jd._judge_cmd("opus", "SYS"), "default off → no settings flag")
-
-    def test_version_and_gear_expose_fast(self):
-        self.assertFalse(km._version_info()["judgeFast"])
-        km._set_judge_fast("on"); jd._state_cache.clear()
-        self.assertTrue(km._version_info()["judgeFast"], "/version reports the live toggle for the gear")
-        import pathlib
-        html = (pathlib.Path(__file__).resolve().parent.parent / "ui" / "webview" / "gear.js").read_text()
-        self.assertIn("id=rs-judgefast", html)
-        self.assertIn("setJudgeFast", html)
 
 
 T_OLD, T_NEW = 1_700_000_000_000, 1_700_000_360_000

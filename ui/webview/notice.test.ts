@@ -62,7 +62,9 @@ test("open-by-default notices SEED openFolds once (the user's fold wins after): 
   assert.match(RENDER, /const noticeSeeded = new Set<string>\(\);/);
   assert.match(NOTICE, /if \(spec\.open && fkey && !noticeSeeded\.has\(fkey\)\) \{ noticeSeeded\.add\(fkey\); openFolds\.add\(fkey\); \}/);
   assert.match(RENDER, /open: true, key: "apierr:" \+ \(ev\.uuid \|\| \(activeId \|\| ""\)\), cls: "turn-apierror"/);
-  assert.match(RENDER, /gist: `\$\{done\} of \$\{ev\.tasks\.length\} done`, body, key, open: true, cls: "turn-todo"/);
+  // the to-do: ONE notice() for both stores, so the gist is settled in the tasks branch and read at renderTodo's one exit
+  assert.match(RENDER, /gist = `\$\{done\} of \$\{ev\.tasks\.length\} done`;/);
+  assert.match(RENDER, /return notice\(\{ src: "to-do", glyph: "todo", sev, gist, body, key, open: true, cls: "turn-todo", tip \}\);/);
   assert.match(RENDER, /body, open: owed,/);
 });
 

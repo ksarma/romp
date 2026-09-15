@@ -636,7 +636,7 @@ test("a create refused by parse lag holds its mark and retries on the frame even
   // …and the kernel PARKS the lag-refused create and retries it per pusher cycle (the file it is
   // waiting on is its own): a settled session emits no further frames, so the client-side re-post
   // alone starved — the park covers that; the client's frame-keyed belt covers a restart's lost park
-  assert.match(KERNELSRC, /with _create_lock:\s*\n\s+if not any\(_create_key\([^)]*\) == key for pk in _parked_creates\):\s*\n\s+_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/,
+  assert.match(KERNELSRC, /with _create_lock:\s*\n\s+if not any\(_parked_key\(pk\) == key for pk in _parked_creates\):\s*\n\s+_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/,
     "the park is under the create lock and once per key (upstream #1208; ruling S1 of the 2026-09-10 fold retired the fork's own park wrapper and its second lock)");
   assert.match(KERNELSRC, /def _retry_parked_creates\(\):/);
   assert.match(KERNELSRC, /_retry_parked_creates\(\)   # lag-parked comment creates ride every pusher cycle \(T106\)/);

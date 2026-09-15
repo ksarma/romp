@@ -309,7 +309,9 @@ class GateDifferential(unittest.TestCase):
 
     def test_03_a_second_ready_on_a_redial_socket_keeps_its_set_and_re_bases_its_tails(self):
         # the shim re-sends `ready` exactly once per redial in normal operation; if a second one arrives on the same
-        # socket the reset still keeps the set (the flag is never consumed) while the tails re-base as slice 1 designed
+        # socket the reset still keeps the set (the flag is never consumed) while the tails re-base as slice 1 designed,
+        # and the strip's dedup slot clears with the chat and status slots (upstream's #1240: a `ready` holds no strip
+        # either), so the connect push re-sends the strip once, the set still on it
         c = self._dial(REDIAL)
         km.Handler._dispatch_ws(_Self(lambda cl: km._push([cl], connect=True)), {"type": "ready"}, c)
         self.assertEqual(c["skeleton"], {S2, S3})
@@ -319,11 +321,14 @@ class GateDifferential(unittest.TestCase):
         self.assertEqual(c["skeleton"], {S2, S3}, "kept")
         self.assertEqual(c["skeletonOrder"], [S3, S2])
         self.assertEqual(c["echat"], {}, "the tails re-base")
-        self.assertFalse([k for k in c["sent"] if k[0] in ("chat", "status")], "the chat and status slots clear")
+        self.assertFalse([k for k in c["sent"] if k[0] in ("chat", "status", "taborder")],
+                         "the chat, status and strip slots clear (#1240)")
         self.assertEqual(self._tab_orders(c), [], "still no strip from the handler")
         km._push([c], connect=True)
         self.assertEqual(self._sessions(c), [S1, S4], "the held tabs re-sent whole, the skeleton ones not")
-        self.assertEqual(self._tab_orders(c), [], "the strip is unchanged, so its slot dedups it (the reset keeps that slot)")
+        to = self._tab_orders(c)
+        self.assertEqual(len(to), 1, "the strip's slot was cleared by the reset, so the connect push re-sends the strip once")
+        self.assertEqual(to[0]["skeleton"], [S3, S2], "with the kept set on it")
         self.assertEqual(c["skeleton"], {S2, S3}, "and the set stands")
 
     # ── the fresh-page path ──
@@ -452,7 +457,8 @@ class GateDifferential(unittest.TestCase):
         for k in ("skeleton", "skeletonOrder", "reconnect"):
             self.assertNotIn(k, fresh, k)
         self.assertEqual(fresh["echat"], {})
-        self.assertEqual(fresh["sent"], {("taborder",): 1}, "the chat and status slots go; the strip's slot stays")
+        self.assertEqual(fresh["sent"], {}, "all three slots go: chat, status and the strip's (upstream's #1240: a renderer "
+                                            "that just evaluated holds no strip either)")
         redial = {"reconnect": True, "redial": True, "skeleton": {S2}, "skeletonOrder": [S2], "echat": {S1: ("u0", 0)},
                   "sent": {("chat", S1): 1, ("status", S2): 1, ("taborder",): 1}}
         km._client_reset_chat_base(redial)
@@ -460,7 +466,8 @@ class GateDifferential(unittest.TestCase):
                          "a declared redial keeps its state for _resolve_reconnect to consume")
         self.assertIs(redial["redial"], True)
         self.assertEqual(redial["echat"], {}, "while the tails re-base, as slice 1 designed")
-        self.assertEqual(redial["sent"], {("taborder",): 1})
+        self.assertEqual(redial["sent"], {}, "the slot clear runs for a declared redial too: all three slots go, the strip's "
+                                             "included (#1240), so its next connect push re-sends the strip")
 
     # ── the source, so a later fold keeps the flag (condition 3) ──
     def test_07_source_pins_the_flag_its_rationale_and_the_strip_less_ready_handler(self):
@@ -478,8 +485,9 @@ class GateDifferential(unittest.TestCase):
         self.assertIn('if not client.get("redial"):', r)
         self.assertLess(r.index("with _client_lock(client):"), r.index('if not client.get("redial"):'), "under the slot lock")
         self.assertLess(r.index('if not client.get("redial"):'), r.index('client.pop("skeleton", None)'), "the pops sit under the guard")
-        self.assertLess(r.index('client.pop("reconnect", None)'), r.index('k[0] in ("chat", "status")'),
-                        "the slot clear follows, outside the guard: it runs for a redial too")
+        self.assertLess(r.index('client.pop("reconnect", None)'), r.index('k[0] in ("chat", "status", "taborder")'),
+                        "the slot clear follows, outside the guard: it runs for a redial too, and takes the strip's slot "
+                        "with the chat and status slots (upstream's #1240)")
         i = src.index('if msg and msg.get("type") == "ready":')
         handler = src[i:src.index("_consume_pending_reveal(client)", i)]
         self.assertIn("_client_reset_chat_base(client)", handler)

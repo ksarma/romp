@@ -576,7 +576,7 @@ class TodoIdsRideTheQueue(unittest.TestCase):
         s.resume_sid = None                          # no init ever streamed: the re-head arm
         s.enqueue(self.ANSWER, todo="ut-77778888")
         with s._lock:
-            fed = s._pending.pop(0)                  # the input generator feeds the entry…
+            fed = s._q_pop(0)[0]                     # the input generator feeds the entry…
         s.inflight = 1
         s._inflight_texts.append(fed)                # …and its twin carries it, id and all
         s._reconcile_stranded()

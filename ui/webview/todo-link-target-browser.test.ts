@@ -84,7 +84,7 @@ const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 ${fs.readFileSync(path.join(UI, "styles.css"), "utf8")}
 ${fs.readFileSync(path.join(UI, "files-pane.css"), "utf8")}
 </style></head><body class=fileview-pane><div id=files-empty></div>
-<div class="todo-card"><div class="ut-item"><div class="ut-line"><span class="ut-text" data-act="uttoggle" id="t-line">${TODO_TEXT}</span></div>
+<div class="turn turn-notice turn-todo"><div class="ut-item"><div class="ut-line"><span class="ut-text" data-act="uttoggle" id="t-line">${TODO_TEXT}</span></div>
 <div class="ut-detail open" id="t-detail">${TODO_TEXT}</div></div></div>
 <script>window.__posts=[];window.__hostPosts=[];window.acquireVsCodeApi=function(){return{postMessage:function(m){window.__posts.push(m);}}};</script>
 <script src=/dist/files.js></script><script src=/dist/chat.js></script></body></html>`;

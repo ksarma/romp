@@ -128,8 +128,12 @@ test("shell: the API health cell's listeners sit on the stable #rail-api and the
   assert.ok(start > 0, "_LANDING_APIH_JS exists");
   const js = K.slice(start, K.indexOf('"""', start + 24));
   assert.match(js, /var el=document\.getElementById\('rail-api'\);/);
-  assert.match(js, /el\.addEventListener\('click',function\(\)\{if\(pinned\)close\(\);else open\(\);\}\);/);
-  assert.match(js, /txt\.textContent=m\.text;/);            // children written, never the container
+  // the cell's click stops its own propagation first (upstream #1338: the cell sits inside the spend readout, whose
+  // own click opens the spend modal), then toggles the pinned detail
+  assert.match(js, /el\.addEventListener\('click',function\(ev\)\{if\(ev&&ev\.stopPropagation\)ev\.stopPropagation\(\);if\(pinned\)close\(\);else open\(\);\}\);/);
+  // the cell is repainted by ATTRIBUTE (its dot's state and its label; #1338), never rebuilt, so the listeners above
+  // survive every frame
+  assert.match(js, /function paintCell\(\)\{var mg=merged\(\);if\(el\.getAttribute\('data-dot'\)!==mg\.dot\)el\.setAttribute\('data-dot',mg\.dot\);/);
   assert.doesNotMatch(js, /el\.innerHTML/);
   assert.match(js, /tip\.addEventListener\('click',function\(ev\)\{/);
   assert.match(js, /getAttribute\('data-act'\)/);

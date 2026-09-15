@@ -374,21 +374,13 @@ class DriftWiring(unittest.TestCase):
             check()
             self.assertEqual(ran, ["restart"], "no sha on the row, no stand-down")
             # the CLI door (review find): `romp refresh --quiet` writes bin/romp's caller-attribution
-            # row, labeled `action: refresh` here (the cut ledger joins on it), now with when=quiet and
-            # the checkout sha; it parks the same way
+            # row — no action — now with when=quiet and the checkout sha; it parks the same way
             ran.clear()
             km._QUIET_PARKED_LOGGED[0] = ""
-            audit.write_text(json.dumps({"t": int(now - 60), "action": "refresh", "ppid": 4242, "parent": "bash",
-                                         "sid": "", "name": "", "tty": "/dev/pts/0", "tmux": "", "when": "quiet",
-                                         "sha": "f3dc387a"}) + "\n")
-            check()
-            self.assertEqual(ran, [], "a quiet CLI refresh for this sha is a parked deploy too")
-            # ...an UNLABELED quiet row (a bin/romp from before the label): the walk skips a row with no
-            # action, never taking it as the answer (review 2026-09-06), so it parks nothing here either
             audit.write_text(json.dumps({"t": int(now - 60), "ppid": 4242, "parent": "bash", "sid": "", "name": "",
                                          "tty": "/dev/pts/0", "tmux": "", "when": "quiet", "sha": "f3dc387a"}) + "\n")
             check()
-            self.assertEqual(ran, ["restart"], "a quiet row with no action is skipped, so nothing is parked")
+            self.assertEqual(ran, [], "a quiet CLI refresh for this sha is a parked deploy too")
             # a busy box (review find): fifty session self-closes write fifty end-on-idle rows after
             # the quiet row — the reader walks past them; the park is still live
             ran.clear()
@@ -460,8 +452,8 @@ class DriftWiring(unittest.TestCase):
         # the CLI door: bin/romp's own caller-attribution row says when=quiet and names the checkout
         # sha under --quiet (behavior pinned in tests/romp-refresh-audit.bats; the spelling here)
         rsrc = open(os.path.join(os.path.dirname(HERE), "bin", "romp")).read()
-        self.assertIn('_romp_restart_audit refresh "" "${2:-}"', rsrc)    # the flag reaches the helper's third slot
-        self.assertIn('RA_WHEN="${3:-}"', rsrc)
+        self.assertIn('_romp_restart_audit "" "${2:-}"', rsrc)    # no action on the row; the flag reaches the helper's second slot
+        self.assertIn('RA_WHEN="${2:-}"', rsrc)
         self.assertIn('if os.environ.get("RA_WHEN") == "--quiet":\n    # a PARKED restart', rsrc)
         self.assertIn('row["when"] = "quiet"', rsrc)
 

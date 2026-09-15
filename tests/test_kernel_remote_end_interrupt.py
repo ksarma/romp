@@ -18,7 +18,7 @@ registry, the live sessions and the thread names, never the polled remote names,
 pre-existing addressing model, shared by /send and /compact, and a separate defect.
 
 Real Handler on loopback (the tests/test_kernel_headless_ops.py pattern); only the two remote seams
-are stubbed (_host_for_sid, _remote_forward), and the local backend is a tripwire — a remote session
+are stubbed (_host_for_sid, _remote_forward_answer), and the local backend is a tripwire: a remote session
 must never reach it. SYNTHETIC fixtures only: host TESTHOST, an invented sid.
 """
 import json
@@ -75,13 +75,14 @@ class RemoteEndInterrupt(unittest.TestCase):
 
         def rec(r, p, b):
             crossed.append((r, p, b))
-            return far_reply
+            # _remote_forward_answer's contract: (status, parsed JSON or None, body text); status 0 is a dead tunnel
+            return (200, far_reply, json.dumps(far_reply)) if far_reply is not None else (0, None, "")
 
         def no_local(sid):
             self.fail("a remote session's control must not touch the local backend")
 
         with mock.patch.object(km, "_host_for_sid", lambda sid: dict(FAR)), \
-             mock.patch.object(km, "_remote_forward", rec), \
+             mock.patch.object(km, "_remote_forward_answer", rec), \
              mock.patch.object(km.Sessions, "backend_for", staticmethod(no_local)):
             code, resp = self._post(path, body)
         self.assertEqual(len(crossed), 1, "exactly one forward over the tunnel")

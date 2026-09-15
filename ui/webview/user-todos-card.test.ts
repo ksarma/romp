@@ -61,8 +61,8 @@ test("both sections auto-hide when empty", () => {
 test("a task-store error still shows the waiting-on-you section (no early return)", () => {
   const start = RENDER.indexOf("function renderTodo");
   const body = RENDER.slice(start, RENDER.indexOf("\nfunction ", start + 10));
-  const returns = body.match(/return turn;/g) || [];
-  assert.equal(returns.length, 1, "one exit: the error branch no longer returns before the todo section");
+  const returns = body.match(/return notice\(/g) || [];
+  assert.equal(returns.length, 1, "one exit, through notice(): the error branch no longer returns before the todo section");
   assert.ok(body.indexOf("if (ev.error)") < body.indexOf("Waiting on you"),
     "the error section precedes the waiting-on-you section");
 });

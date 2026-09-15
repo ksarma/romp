@@ -89,9 +89,13 @@ class TabsFirst(unittest.TestCase):
         same frames a second way: a strip sent through _send_client records its ("taborder",) key there."""
         # the liveness reads a strip built at ready would make: pinned, so should such a strip return, these
         # tests fail the same way with or without tmux on this machine
-        saved = (km._tmux_sessions, km._alive_sessions)
+        saved = (km._tmux_sessions, km._alive_sessions, km._send_feed_now)
         km._tmux_sessions = lambda: {}
         km._alive_sessions = lambda now, tmux: []
+        # the fork's connect-time feed serve (T3) is stubbed too: about 90 modules load the kernel under the shared
+        # romp_kernel module object, so a sibling's cached feed frame could let it send a `feed` frame and skip
+        # the stubbed connect push, and the marker below would not appear (an ordering red in the 2026-09-15 sweep)
+        km._send_feed_now = lambda c: False
         try:
             sent = []
             h = object.__new__(km.Handler)
@@ -99,7 +103,7 @@ class TabsFirst(unittest.TestCase):
             client = {"app": app, "wid": "w1", "alive": True, "send": lambda s: sent.append(json.loads(s))}
             km.Handler._dispatch_ws(h, {"type": "ready"}, client)
         finally:
-            km._tmux_sessions, km._alive_sessions = saved
+            km._tmux_sessions, km._alive_sessions, km._send_feed_now = saved
         return [m["type"] for m in sent], client.get("sent", {})
 
     def test_connect_ready_handler_sends_no_tab_order_of_its_own(self):

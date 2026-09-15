@@ -267,8 +267,8 @@ test("executed: the pane's model. Hidden rows are flagged and keep needs-you; th
   assert.deepEqual(actWords(m.rows[1], "infra"), { text: "Show", label: "Show api on the strip again", title: "Put api's tab back on the strip" });
   assert.deepEqual(actWords(m.rows[0], "infra"), { text: "Hide", label: "Hide web from the strip while infra is open",
     title: "Hide web's tab from the strip while infra is open; it stays in infra, listed under Hidden here, and its needs-you still shows on the header" });
-  assert.equal(rowWords(m.rows[1]).label, "api — hidden from the strip — needs you — Designing the notes schema", "a reader hears why the row sits under the fold");
-  assert.equal(rowWords(m.rows[0]).label, "web — working", "a shown row's label as before");
+  assert.equal(rowWords(m.rows[1]).label, "api; hidden from the strip; needs you; Designing the notes schema", "a reader hears why the row sits under the fold");
+  assert.equal(rowWords(m.rows[0]).label, "web; working", "a shown row's label as before");
 });
 
 test("pinned: render.ts. The host's delegate takes hide, show and toggle-hidden; the button passes the rendered state; the write is the one prune site; two keyed lists; focus follows a row across them; the fold is view state", () => {

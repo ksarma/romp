@@ -31,10 +31,11 @@ km = load_source("romp_kernel_panehiddenword", os.path.join(BIN, "romp-kernel"))
 # the shell's two ways of hiding a pane, as the served landing page carries them (setUp checks they are still there)
 DESKTOP_RULE = "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}"
 PHONE_RULES = (
-    "#chat-pane,#fleet-pane,#feed-pane,#files-pane,#tl-pane{display:contents!important}",
+    # six panes on the fork (F4: every pane list carries the Waiting pane, between feed and Files)
+    "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}",
     ".pane>iframe{position:static;inset:auto;width:100%;height:100%}",
     "iframe{position:static;display:none;width:100%;height:100%;border:0}",
-    "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-files.m-on{display:block}",
+    "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}",   # six panes too (F4)
 )
 
 

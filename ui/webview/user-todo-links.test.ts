@@ -116,8 +116,8 @@ test("the walk, executed over a todo's note: paths become marked spans with the 
   const spans = d.spans;
   assert.equal(spans.length, 3);
   assert.deepEqual(spans.map((s) => s.dataset.act), ["openpath", "openpath", "openpath"]);
-  assert.deepEqual(spans.map((s) => s.dataset.sid), [SID, SID, undefined], "a bare path carries the todo's session; a URI is absolute");
-  assert.deepEqual(spans.map((s) => s.dataset.rel), ["1", "1", undefined]);
+  assert.deepEqual(spans.map((s) => s.dataset.sid), [SID, SID, SID], "every span carries the todo's session, the URI's too (openPathLink(tok, open, !isUri, sid)); a URI's path is absolute, so no relative resolve reads it");
+  assert.deepEqual(spans.map((s) => s.dataset.rel), ["1", "1", undefined], "only the bare paths are relative: a URI names an absolute path");
   // "and/or" stayed prose; the sentence's closing ")." stayed outside the last link
   assert.deepEqual(d.texts, ["Please read ", " and/or ", " (see ", ")."]);
   assert.equal(d.textContent, "Please read docs/design.md and/or /tmp/notes-api/out.png (see file:///tmp/notes-api/notes.md).", "the text reads exactly as written");
@@ -212,12 +212,13 @@ test("waiting.ts links the text and the detail at BOTH sites (the row and the Re
 
 test("the list's delegate routes openpath from the ROW's sid and todo id, never the span's — click-safe across the per-frame rebuild", () => {
   const map = WAITING.slice(WAITING.indexOf("delegate(list, {"), WAITING.indexOf("// A tap anywhere that is NOT an armed Dismiss"));
-  // both ids come from the enclosing .ut-item: path-links.ts stamps data-sid on a bare path's span and NOT
-  // on a file:// URI's (an absolute path names no session), so a handler gated on the span's sid dropped
-  // every URI click (the 2026-09-06 review; waiting-detail-link.test.ts clicks all three shapes for real)
+  // both ids come from the enclosing .ut-item: path-links.ts used to stamp data-sid on a bare path's span and
+  // NOT on a file:// URI's, so a handler gated on the span's sid dropped every URI click (the 2026-09-06
+  // review; waiting-detail-link.test.ts clicks all three shapes for real). The walk stamps the URI span too
+  // since the 2026-09-15 pull-in (openPathLink(tok, open, !isUri, sid)); the row's ids stay the gate either way
   assert.match(map, /\n    openpath: \(x\) => \{\n\s*const row = x\.closest<HTMLElement>\("\.ut-item"\);\n\s*const p = x\.dataset\.path, sid = row\?\.dataset\.sid, tid = row\?\.dataset\.tid;\n\s*if \(p && sid && tid\) openTodoPath\(p, sid, tid, linkTarget\(x\)\);\n\s*\},/);
   const handler = map.slice(map.indexOf("\n    openpath: (x) => {"), map.indexOf("\n    },", map.indexOf("\n    openpath: (x) => {")));
-  assert.doesNotMatch(handler, /x\.dataset\.sid/, "the span's own sid is not the gate — a URI span has none");
+  assert.doesNotMatch(handler, /x\.dataset\.sid/, "the span's own sid is not the gate: the row's ids are");
   // the row carries both ids the handler reads
   assert.match(WAITING, /item\.dataset\.sid = w\.sid; item\.dataset\.tid = w\.todo\.id;/);
   // no per-node click binding anywhere near the links

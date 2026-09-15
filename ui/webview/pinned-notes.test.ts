@@ -369,7 +369,7 @@ test("paths and PR references link through the caller's linkers: the line pass o
   assert.match(RENDER_FN, /line: \(n\) => \{ linkTodoLinePaths\(n, s\.id\); linkifyPrRefs\(n, prRepoFor\(s\.id\)\); \},/);
   assert.match(RENDER_FN, /detail: \(n\) => \{ linkTodoDetailPaths\(n, s\.id\); linkifyPrRefs\(n, prRepoFor\(s\.id\)\); \},/);
   // …and a path link in the strip opens through the body delegate, like one on the todo card
-  assert.match(RENDER, /openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\)/);
+  assert.match(RENDER, /openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.turn-todo, #ut-reply-prompt, #pinned-notes"\)\)/);
 });
 
 test("a web address in a note's text and in its detail links through the REAL linkers (the URL pass, then the path walk, then the PR pass: the trio render.ts hands the strip): an anchor to a new tab in the row, in the fold's full text and in its detail, the sentence's punctuation outside, nothing linked twice", async () => {

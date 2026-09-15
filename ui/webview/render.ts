@@ -4150,7 +4150,7 @@ function renderCompacting(): HTMLElement {
 
 // LIVE session reconnect (the user 2026-07-06): an /effort switch has no SDK runtime control, so romp applies
 // it by RECONNECTING the session (resume = the CLI re-reads the transcript) — otherwise invisible in the chat.
-// While the reconnect is pending, an animated "Reloading session: applying <effort> effort…" element shows
+// While the reconnect is pending, an animated "Reloading session — applying <effort> effort…" element shows
 // (the romp-accent pulsing dots, the loader motif), so the user sees the "rereading transcript" step the TUI
 // narrates; it clears the instant the new client connects (kernel drops effortPending). Sibling of the
 // compacting element; appended before the queued bubble.

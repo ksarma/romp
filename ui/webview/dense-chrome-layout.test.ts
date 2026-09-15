@@ -165,7 +165,10 @@ test("a federated tab's host prefix and the close glyph keep their rendered size
 
 test("the list is capped at 100px while every row is closed, and the cap lifts the moment a row's details open", { skip }, () => {
   const { off, on, onOpen } = m!;
-  assert.equal(off.listMax, "none", "no cap by default: the panel's own min(50vh, 340px) is the bound");
+  // this fork keeps the default list's six-row cap (4e D2 at the 2026-09-15 pull-in: `.bg-list:not(:has(.bg-task.open))
+  // { max-height: 180px; }`, pinned by bg-tasks-layout.test.ts and dense-chrome.test.ts); upstream's sheet has no
+  // default cap, so there the panel's own min(50vh, 340px) was the bound
+  assert.equal(off.listMax, "180px", "the default cap is the fork's 180px six-row rule (D2), not upstream's none");
   assert.equal(on.listMax, "100px");
   near(on.list, 100, "six dense rows scroll inside the cap");
   assert.ok(off.list > 100, "the same rows stand taller than the cap by default: " + off.list.toFixed(1) + "px");

@@ -152,7 +152,7 @@ test("paths inside other words and punctuation: the ~/ form, the ./ form and a f
   const t = await line(src);
   assert.deepEqual(t.spans.map((s) => s.textContent), ["~/notes-api/README.md", "./notes/plan.md", "file:///tmp/TESTHOST/out%20dir/a.png"], "shown as written");
   assert.deepEqual(t.spans.map((s) => s.dataset.path), ["~/notes-api/README.md", "./notes/plan.md", "/tmp/TESTHOST/out dir/a.png"], "what a click opens");
-  assert.deepEqual(t.spans.map((s) => s.dataset.sid), [SID, SID, undefined], "a bare path carries the todo's session; a URI is absolute");
+  assert.deepEqual(t.spans.map((s) => s.dataset.sid), [SID, SID, SID], "every span carries the todo's session, the URI's too (path-links.ts openPathLink(tok, open, !isUri, sid)); a URI's path is absolute, so no relative resolve reads it");
   assert.deepEqual(t.texts, ["Approve ", ", then merge (see ", " or ", ")."]);
   assert.equal(t.textContent, src);
 });
@@ -166,7 +166,8 @@ test("a line with < or & reaches the DOM as characters: text set as text and spl
   // and no markup path exists in either host's todo rendering: textContent first, the linkers after
   const row = WAITING.slice(WAITING.indexOf("function rowEl("), WAITING.indexOf("function hostLine("));
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
-  const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));
+  const cardAt = RENDER.indexOf('const head = el("div", "ut-head");');
+  const card = RENDER.slice(cardAt, RENDER.indexOf("body.appendChild(row);", cardAt));   // the Waiting-on-you rows go into the notice body (W2: the card is one notice())
   const rmodal = RENDER.slice(RENDER.indexOf("function showUserTodoReply("), RENDER.indexOf('input.className = "ut-reply-input"'));
   for (const [name, src2] of [["waiting.ts rowEl", row], ["waiting.ts showReply", modal], ["render.ts todo card", card], ["render.ts showUserTodoReply", rmodal]] as const) {
     assert.ok(src2.length > 200, name + ": slice found");
@@ -301,7 +302,7 @@ test("the chat's todo card: a link in the line or the detail opens through the B
   let folds = 0;
   const body = new Elm("body");
   delegate(body as unknown as HTMLElement, { openpath: openpath as any, uttoggle: (() => { folds++; }) as any });   // once, on the stable root, as render.ts does
-  const card = new Elm("div"); card.className = "todo-card"; body.appendChild(card);
+  const card = new Elm("div"); card.className = "turn turn-notice turn-todo"; body.appendChild(card);   // the to-do notice's host class (W2)
   let { row, txt, d } = await chatCard(); card.appendChild(row);
   assert.equal(txt.spans[0].listeners.click, undefined, "nothing is bound on the span: the click is the delegate's");
   assert.equal(d.spans[0].listeners.click, undefined);
@@ -338,7 +339,7 @@ test("the transcript's per-span binder stops the click before the body delegate:
   assert.deepEqual(opened, [["docs/design.md", SID]], "opened once: the binder's stopPropagation kept the delegate out");
   assert.ok(!p.spans[0].classList.contains("romp-acted"), "the delegate never ran");
   // the delegated form, dispatched the same way, in each host the delegate serves
-  const card = new Elm("div"); card.className = "todo-card"; body.appendChild(card);
+  const card = new Elm("div"); card.className = "turn turn-notice turn-todo"; body.appendChild(card);   // the to-do notice's host class (W2)
   const q = await line("see docs/other.md", "p"); card.appendChild(q);
   dispatch(q.spans[0]);
   assert.deepEqual(opened, [["docs/design.md", SID], ["docs/other.md", SID]]);
@@ -373,10 +374,11 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
-  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the body delegate opens a path link in the todo card, the Reply modal or the pinned-notes strip, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
-  assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");
+  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.turn-todo, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the body delegate opens a path link in the todo card, the Reply modal or the pinned-notes strip, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
+  assert.match(RENDER, /return notice\(\{ src: "to-do", glyph: "todo", sev, gist, body, key, open: true, cls: "turn-todo", tip \}\);/, "the card is one notice() and its host class is the one the handler names (W2)");
   assert.match(RENDER, /overlay\.id = "ut-reply-prompt";/, "the modal's id, as the handler names it");
-  const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));
+  const cardAt = RENDER.indexOf('const head = el("div", "ut-head");');
+  const card = RENDER.slice(cardAt, RENDER.indexOf("body.appendChild(row);", cardAt));
   assert.match(card, /txt\.textContent = t\.text;\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);/);
   assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);
   assert.doesNotMatch(card, /bindPathLink\(|addEventListener\("click"/, "nothing on the card is bound per node");

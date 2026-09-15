@@ -238,15 +238,14 @@ class NamesMemoSweep(unittest.TestCase):
 class TmuxEchoStore(unittest.TestCase):
     def setUp(self):
         km._tmux_echo.pop(SID, None)
-        self._saved = km.sb.echo_text_key
+        self._saved = km.sb.echo_keys
 
     def tearDown(self):
-        km.sb.echo_text_key = self._saved
+        km.sb.echo_keys = self._saved
         km._tmux_echo.pop(SID, None)
 
     def test_a_send_landing_during_a_prune_survives_it(self):
         km._tmux_echo_add(SID, "first")
-        first_key = next(iter(km._tmux_echo[SID]))
         orig = self._saved
         writer = {}
 
@@ -255,8 +254,10 @@ class TmuxEchoStore(unittest.TestCase):
                 writer["t"] = _run(km._tmux_echo_add, SID, "second")
                 writer["t"].join(SETTLE)
             return orig(text)
-        km.sb.echo_text_key = staged
-        km._tmux_echo_prune(SID, {first_key}, set())     # was: RuntimeError, dictionary changed size during iteration
+        # the walk's mid-step seam is sb.echo_keys, read through _echo_landed_in (#1261, C12) for an echo whose uuid
+        # the transcript does not hold, so the landed echo is named by its text key, the form _atom_user_texts builds
+        km.sb.echo_keys = staged
+        km._tmux_echo_prune(SID, set(), {km.sb.echo_text_key("first")})     # was: RuntimeError, dictionary changed size during iteration
         writer["t"].join(WAIT)
         self.assertIsNone(writer["t"].box["exc"])
         self.assertEqual([a["_echo_text"] for a in km._tmux_echo_atoms(SID)], ["second"],

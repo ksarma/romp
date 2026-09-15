@@ -7,16 +7,18 @@ every queued text into the CLI's stdin the moment it is queued, so both sat in t
 the turn ended; the CLI drains every queued prompt it holds into ONE user message when it next reads that
 queue, so the agent received one message wearing both texts, the chat showed one bubble wearing both,
 and the client's "sending…" bubble for the first message — matched by exact text — never found its
-landing and stayed up until a ✕. Two fixes, both covered here:
+landing and stayed up until a ✕. Two fixes, the first covered here:
   * the feeder feeds ONE text and holds the rest until the CLI demonstrably TOOK it (SdkSession._untaken,
     cleared by _untaken_taken on an exact event: a turn frame after a feed from idle; a turn frame after
     the ResultMessage of the turn a mid-turn feed went into — the CLI's drain, and the next turn's first
     frame proves it; or the fed text's queued_command attachment landing in the transcript — a mid-turn
     splice, which lets the next text follow it into the same turn). Order is preserved and a todo answer
     keeps its shape and its id;
-  * every send carries the CLIENT's id for it (send_id → _QueueText.send_id, the echo's _send_id, the
-    landed record's stamped ids — kernel._note_send_landings), so the bubble is matched to its own copy
-    by id and a ✕ removes exactly the entry it was pressed on (unqueue / _cancel_backend_queued by id).
+  * every copy carries its own identity, upstream's qid (minted at the press or by send(), riding beside
+    the text in reg['queueMeta'], never on the entry), so the bubble is matched to its own copy by id and a
+    ✕ removes exactly the entry it was pressed on. That half is pinned by tests/test_queued_copy_identity.py
+    and tests/test_queued_copy_press_id.py, not here: the fork's pre-offer per-entry id form retired with the
+    2026-09-15 pull-in (4e Q1).
 The review round (2026-09-08) tightened four edges, each pinned below:
   * a turn romp did not feed is COUNTED: a turn frame at inflight 0 raises inflight (the CLI's drain of a
     mid-turn text, or a turn a notification started), so a text fed into that turn is mid-turn, not
@@ -151,7 +153,10 @@ def _iso(t):
 
 
 class OneFedTextAtATime(unittest.TestCase):
-    """The feed hold, end to end through the real inputs() closure and _on_message."""
+    """The feed hold, end to end through the real inputs() closure and _on_message. These cases assert the
+    TEXTS a hold, an exit re-head or a re-delivery leaves in the queue, its mirror and the fed-turn twin; the
+    copy's id riding with them (upstream's qid) is pinned by tests/test_queued_copy_identity.py::
+    IdentitySurvivesTheKernelsDeath::test_a_stranded_fed_copy_re_heads_the_queue_with_its_id."""
 
     class _Client:
         instances = []
@@ -489,7 +494,7 @@ class OneFedTextAtATime(unittest.TestCase):
         frame counts that turn and its result fires the reconnect, on the frame that proves the text
         left the queue. Nothing is re-fed and nothing is flagged: the message was delivered."""
         s, c1 = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
         s.request_reconnect()                          # an /effort change while busy: deferred to the turn's end
         self._wait(lambda: s._reconnect_when_idle, "the deferred reconnect armed")
@@ -554,7 +559,7 @@ class OneFedTextAtATime(unittest.TestCase):
         stranded turn it is: on a resumable conversation its echo is flagged 'never delivered' (the
         same flag-only branch every stranded turn takes there), never re-fed, never silently gone."""
         s, c1 = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
         self._result_frame(c1)
         self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
@@ -570,57 +575,6 @@ class OneFedTextAtATime(unittest.TestCase):
         echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
         self.assertTrue(echo.get("dropped"), "the loss is visible in the chat")
         self.assertTrue(any("never reached its CLI" in l for l in self.lines), "…and in the log")
-
-    def test_a_cancel_removes_exactly_its_own_entry_of_two_wearing_the_same_words(self):
-        """Two queued entries with identical text and different send ids: the ✕ pressed on the second
-        removes the second (unqueue by send_id), whatever index or text the click carried."""
-        s, c = self.s, self._first_turn()
-        s.enqueue("go ahead")                          # fed at once, untaken: the two below are held
-        self._wait(lambda: len(c.writes) == 2, "the first forwarded")
-        s.enqueue("go ahead", send_id="s-aaa")
-        s.enqueue("go ahead", send_id="s-bbb")
-        self._settle()
-        self.assertEqual([getattr(t, "send_id", "") for t in s.pending()], ["s-aaa", "s-bbb"])
-        got = s.unqueue(0, "go ahead", send_id="s-bbb")   # a stale index and the shared text: the id wins
-        self.assertEqual(getattr(got, "send_id", ""), "s-bbb")
-        self.assertEqual([getattr(t, "send_id", "") for t in s.pending()], ["s-aaa"], "the other entry stays")
-        # the kernel's cancel path resolves the same way, through the backend's pending list
-        self.assertIsNone(km._cancel_backend_queued(self.be, SID, 0, "go ahead", send_id="s-aaa"))
-        self.assertEqual(s.pending(), [], "…and removed exactly that entry")
-        # an id the queue does not hold misses: nothing is removed and no body fallback runs (the rule is
-        # pinned in tests/test_queued_sends_kernel.py, CancelBackendQueuedById and CancelParkedById)
-        self.assertTrue(km._cancel_backend_queued(self.be, SID, 0, "go ahead", send_id="s-zzz"))
-        # through send(): the backend-level unqueue drops the canceled entry's OWN echo, not the first
-        # echo wearing the words
-        self.assertTrue(self.be.send(SID, "go ahead", send_id="s-ccc"))
-        self.assertTrue(self.be.send(SID, "go ahead", send_id="s-ddd"))
-        self._settle()
-        self.assertEqual([getattr(q, "send_id", "") for q in s.pending()], ["s-ccc", "s-ddd"])
-        got = self.be.unqueue(SID, 0, "go ahead", send_id="s-ddd")
-        self.assertEqual(getattr(got, "send_id", ""), "s-ddd")
-        left = [a.get("_send_id") for a in self.be.live_atoms(SID) if a.get("_echo_text") == "go ahead"]
-        self.assertEqual(left, ["s-ccc"], "the other send's echo stays; the canceled one's is gone")
-        self.assertEqual([getattr(q, "send_id", "") for q in s.pending()], ["s-ccc"])
-
-    def test_the_send_id_rides_the_queue_entry_its_mirror_and_the_echo(self):
-        """send(sid, text, send_id=…) → the entry carries it, the reg mirror serializes it, the
-        echo carries it (for the chat's copy and the restart mirror), and a bare send stays bare."""
-        s, c = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "carry me", send_id="s-123"))
-        self.assertTrue(self.be.send(SID, "plain"))
-        self._wait(lambda: len(c.writes) == 2, "the first forwarded")
-        self._settle()
-        self.assertEqual(s.pending(), ["plain"])
-        q = (sb.read_reg(self.state, SID) or {}).get("queue")
-        self.assertEqual(q, ["plain"], "a bare send's mirror entry is the bare string")
-        self.assertEqual(getattr(s.fed_texts()[-1], "send_id", ""), "s-123", "the fed entry carries the id")
-        echoes = {a["_echo_text"]: a for a in self.be.live_atoms(SID) if a.get("_echo_text")}
-        self.assertEqual(echoes["carry me"].get("_send_id"), "s-123")
-        self.assertNotIn("_send_id", echoes["plain"])
-        mirror = {e["text"]: e for e in (sb.read_reg(self.state, SID) or {}).get("echoes", [])}
-        self.assertEqual(mirror["carry me"].get("sendId"), "s-123", "the restart mirror keeps it")
-        self.assertNotIn("sendId", mirror["plain"])
-
 
     def test_a_text_fed_into_the_drained_turn_is_mid_turn_and_waits_for_its_own_take(self):
         """The review's high finding: after the drained turn's first frame released the settled hold,
@@ -808,29 +762,6 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(len(self._fault_lines()), 1)
         self.assertTrue(s._untaken["fresh"], "fed from idle: the next turn's frame releases it as ever")
 
-    def test_a_redelivered_send_keeps_its_id_on_the_live_arm_as_on_the_reg_arm(self):
-        """A fresh CLI spawn re-delivers the typed sends the dead one held (_mark_dropped_echoes). The
-        live-session arm enqueued the text without its send id while the reg arm kept it: the re-queued
-        chip had no id, and its ✕ fell back to index and text. Both arms carry it now."""
-        be, s = self.be, self.s                         # registered in setUp, never started: the live arm
-        p = sb.transcript_path(self.cwd, SID)
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        open(p, "a").close()                            # readable and empty: the scan answers False (nothing landed)
-        now = int(time.time())
-        be._stash_live(SID, "echo:1", {"type": "user", "uuid": "echo:1", "session_id": SID, "t": now,
-                                       "author": "human", "_echo_text": "carry me", "_send_id": "s-77"})
-        be._mark_dropped_echoes(SID, s.pending())
-        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()], [("carry me", "s-77")],
-                         "the live arm's entry carries the id")
-        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), [{"text": "carry me", "sendId": "s-77"}],
-                         "…and its mirror")
-        be.sessions.pop(SID)                            # no session object: the boot reseed's reg arm
-        be._stash_live(SID, "echo:2", {"type": "user", "uuid": "echo:2", "session_id": SID, "t": now + 1,
-                                       "author": "human", "_echo_text": "carry me too", "_send_id": "s-78"})
-        be._mark_dropped_echoes(SID, ["carry me"])
-        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"),
-                         [{"text": "carry me", "sendId": "s-77"}, {"text": "carry me too", "sendId": "s-78"}])
-
     def test_the_queue_mirror_never_loses_an_entry_to_an_interleaved_persist(self):
         """_persist_queue snapshots under one lock and writes under another, from two threads: the
         feeder's post-pop persist (empty snapshot) racing an enqueue's persist (the new entry) could
@@ -963,11 +894,11 @@ class OneFedTextAtATime(unittest.TestCase):
         on CLI 2.1.263 emits the interrupted result and exits 30 ms later WITHOUT running the queued text).
         Its queue dies with it, so a settled hold's text is nowhere: not in a counter, not in the queue,
         no frame ever comes to release the hold. At the exit the hold is released and the text, whose
-        record the final transcript does not hold, goes back to the HEAD of the queue with its id, ahead
+        record the final transcript does not hold, goes back to the HEAD of the queue, ahead
         of what queued behind it, persisted for the next client; the chat shows it queued meanwhile; an
         idle death still settles 'waiting' (no crash heal: the CLI was between turns)."""
         s, c = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c.writes) == 2, "the note forwarded")
         s.enqueue("behind the note")
         c.phase = "after-result-1"
@@ -977,12 +908,11 @@ class OneFedTextAtATime(unittest.TestCase):
         self._push(c, _EOF)                              # the CLI exits: its stream ends, its queue with it
         self._wait(lambda: not s.thread.is_alive(), "the session thread ended with the stream")
         self.assertIsNone(s._untaken, "the hold is released at the exit")
-        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()],
-                         [("mid-turn note", "s-note"), ("behind the note", "")],
-                         "the note is back at the head, with its id, ahead of what waited behind it")
+        self.assertEqual([str(t) for t in s.pending()], ["mid-turn note", "behind the note"],
+                         "the note is back at the head, ahead of what waited behind it (its id rides too: the identity "
+                         "module's twin, IdentitySurvivesTheKernelsDeath)")
         mirror = sb._queue_texts((sb.read_reg(self.state, SID) or {}).get("queue"))
-        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in mirror],
-                         [("mid-turn note", "s-note"), ("behind the note", "")], "…and persisted for the next client")
+        self.assertEqual([str(t) for t in mirror], ["mid-turn note", "behind the note"], "…and persisted for the next client")
         self.assertEqual(self.be.pending_queued(SID), ["mid-turn note", "behind the note"],
                          "the chat shows both queued while no CLI runs")
         echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
@@ -997,7 +927,7 @@ class OneFedTextAtATime(unittest.TestCase):
                    "the new client fed the note")
         c2 = self._Client.instances[1]
         self.assertEqual(c2.writes[0][0], "mid-turn note")
-        self.assertEqual(getattr(s2.fed_texts()[0], "send_id", ""), "s-note", "the id rode along")
+        self.assertEqual(str(s2.fed_texts()[0]), "mid-turn note", "the note itself rode into the fed-turn twin")
         self._settle()
         self.assertEqual(len(c2.writes), 1, "what queued behind it still waits for its take")
         c2.phase = "resumed"
@@ -1012,7 +942,7 @@ class OneFedTextAtATime(unittest.TestCase):
         the kernel before the exit: the hold is still live, and re-feeding would land the text twice. The
         final transcript decides: found means taken, nothing goes back to the queue."""
         s, c = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c.writes) == 2, "the note forwarded")
         c.phase = "after-result-1"
         self._result_frame(c)
@@ -1029,7 +959,7 @@ class OneFedTextAtATime(unittest.TestCase):
         """The transcript unreadable at the exit: neither a proof of loss nor of a take. The echo takes the
         flag path ('never delivered', with restore), the queue gets nothing, and the log says why."""
         s, c = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c.writes) == 2, "the note forwarded")
         c.phase = "after-result-1"
         self._result_frame(c)
@@ -1133,14 +1063,14 @@ class OneFedTextAtATime(unittest.TestCase):
         left the queue alone, so the crash heal respawned with the nudge only and the agent was told to
         pick the work back up in an empty conversation. _reconcile_stranded's distinction applies: no
         conversation materialised, so the next client starts fresh and a re-feed cannot duplicate. The
-        text goes back to the head with its id, the heal's nudge ahead of it, and the new client is fed
+        text goes back to the head, the heal's nudge ahead of it, and the new client is fed
         the nudge, then the text once the nudge's turn showed."""
         s = self.s
         s.start()
         self._wait(lambda: s.client is not None, "the first connect")
         c = self._Client.instances[0]
         c.phase = "turn-1"
-        self.assertTrue(self.be.send(SID, "first composer send", send_id="s-first"))
+        self.assertTrue(self.be.send(SID, "first composer send"))
         self._wait(lambda: c.writes == [("first composer send", "turn-1")], "fed from idle")
         self.assertIsNotNone(s._untaken)
         self.assertIsNone(s.resume_sid, "no init streamed: no conversation")
@@ -1148,8 +1078,8 @@ class OneFedTextAtATime(unittest.TestCase):
         self._push(c, _EOF)                              # the crash, before the CLI's first write
         self._wait(lambda: not s.thread.is_alive(), "the thread ended")
         self.assertIsNone(s._untaken, "the hold is released at the exit")
-        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()],
-                         [("first composer send", "s-first")], "re-headed with its id, not flagged")
+        self.assertEqual([str(t) for t in s.pending()], ["first composer send"],
+                         "re-headed, not flagged (its id rides too: the identity module's twin)")
         echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "first composer send")
         self.assertFalse(echo.get("dropped"), "not a loss: it is queued again")
         self.assertTrue(any("before any conversation materialised" in l for l in self.lines), self.lines[-6:])
@@ -1167,7 +1097,7 @@ class OneFedTextAtATime(unittest.TestCase):
         self._wait(lambda: len(c2.writes) == 2, "the text fed once the nudge's turn showed")
         self.assertEqual(c2.writes[1][0], "first composer send")
         s2 = self.be.sessions[SID]
-        self.assertEqual(getattr(s2.fed_texts()[1], "send_id", ""), "s-first", "the id rode along")
+        self.assertEqual(str(s2.fed_texts()[1]), "first composer send", "the text itself rode into the fed-turn twin")
         self.assertFalse(any("re-delivering a typed send" in l for l in self.lines),
                          "the spawn's echo scan had nothing to add: the queue already held it")
 
@@ -1178,7 +1108,7 @@ class OneFedTextAtATime(unittest.TestCase):
         resumes, so a re-feed could duplicate. Flagged, not re-fed (passes before round 3 too: it guards
         the re-head from reaching a resumable conversation)."""
         s, c = self.s, self._first_turn()
-        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self.assertTrue(self.be.send(SID, "mid-turn note"))
         self._wait(lambda: len(c.writes) == 2, "the note forwarded")
         c.phase = "after-result-1"
         self._result_frame(c)
@@ -1444,71 +1374,56 @@ class OneFedTextAtATime(unittest.TestCase):
 
 
 class QueueEntryWire(unittest.TestCase):
-    def test_round_trip_keeps_both_ids_and_the_bare_shapes(self):
+    def test_round_trip_keeps_the_todo_and_the_bare_shapes(self):
+        """The codec is upstream's (4e Q3, Q6): a bare string stays bare, an answer serializes as {"text","todo"},
+        and the copy's own id never rides the entry (it lives in reg['queueMeta'], aligned with the list). A
+        persisted entry carrying the fork's retired per-entry id key is tolerated on read as its text alone and
+        never written back."""
         self.assertEqual(sb._queue_wire("plain"), "plain")
         self.assertEqual(sb._queue_wire(sb._QueueText("ans", "ut-1")), {"text": "ans", "todo": "ut-1"},
                          "an answer alone keeps the 2026-08-22 shape")
-        self.assertEqual(sb._queue_wire(sb._QueueText("msg", "", "s-1")), {"text": "msg", "sendId": "s-1"})
-        self.assertEqual(sb._queue_wire(sb._QueueText("both", "ut-2", "s-2")),
-                         {"text": "both", "todo": "ut-2", "sendId": "s-2"})
+        self.assertEqual(sb._queue_wire(sb._QueueText("msg")), "msg", "no todo: the bare string")
         back = sb._queue_texts(["plain", {"text": "ans", "todo": "ut-1"}, {"text": "msg", "sendId": "s-1"},
                                 {"text": "both", "todo": "ut-2", "sendId": "s-2"}, {"text": ""}, 7])
         self.assertEqual([str(t) for t in back], ["plain", "ans", "msg", "both"])
         self.assertEqual([getattr(t, "todo", "") for t in back], ["", "ut-1", "", "ut-2"])
-        self.assertEqual([getattr(t, "send_id", "") for t in back], ["", "", "s-1", "s-2"])
         self.assertIs(type(back[0]), str, "a bare entry stays a plain str")
+        self.assertIs(type(back[2]), str, "a retired per-entry id key reads as the text alone: tolerated, not carried")
+        self.assertEqual(sb._queue_wire(back[3]), {"text": "both", "todo": "ut-2"}, "...and is never written back")
+        self.assertEqual(sb._QueueText.__slots__, ("todo",), "the entry carries the todo alone: no id attribute exists")
         self.assertIs(sb._TodoText, sb._QueueText, "the answer-only name still resolves")
         self.assertEqual(sb._TodoText("t", "ut-3").todo, "ut-3")
 
 
-class TheKernelCarriesTheId(unittest.TestCase):
-    def test_backend_send_passes_the_id_only_to_a_backend_that_keeps_it(self):
+class TheKernelCarriesTheTodoAndTheQid(unittest.TestCase):
+    def test_backend_send_passes_the_todo_to_a_backend_that_keeps_it_and_the_qid_to_one_whose_send_takes_it(self):
+        """_backend_send(be, sid, text, user_todo=None, qid=None): a user-todo ANSWER's id rides as user_todo= to a
+        backend that declares queue_carries_todos; the copy's own id rides as qid= only to a backend whose send
+        SIGNATURE names the parameter (_takes_qid, upstream's #1224 gate: a flag beside it is not the gate); a
+        plain two-argument send gets the text alone. The qid half's twin is tests/test_queued_copy_press_id.py::
+        ParkedSendCarriesItsPressId::
+        test_handed_over_now_the_id_reaches_a_backend_that_identifies_its_copies_and_not_one_that_does_not."""
         calls = []
-        class _Keeps:
+        class _Keeps:                       # SdkBackend's shape: the todo flag and a send whose signature takes qid
             queue_carries_todos = True
-            queue_carries_send_ids = True
+            def send(self, sid, text, user_todo=None, qid=None):
+                calls.append(("keeps", text, user_todo, qid)); return True
+        class _TodoOnly:                    # the flag without the parameter: no qid, whatever **kw would swallow
+            queue_carries_todos = True
             def send(self, sid, text, **kw):
-                calls.append(("keeps", text, kw)); return True
+                calls.append(("todo-only", text, kw)); return True
         class _Plain:
             def send(self, sid, text):
                 calls.append(("plain", text)); return True
-        km._backend_send(_Keeps(), SID, "hi", None, "s-1")
-        km._backend_send(_Keeps(), SID, "ans", "ut-1", "s-2")
-        km._backend_send(_Plain(), SID, "hi", None, "s-3")
-        self.assertEqual(calls, [("keeps", "hi", {"send_id": "s-1"}),
-                                 ("keeps", "ans", {"user_todo": "ut-1", "send_id": "s-2"}),
+        q1, q2 = "echo:" + "1" * 32, "echo:" + "2" * 32
+        km._backend_send(_Keeps(), SID, "hi", None, q1)
+        km._backend_send(_Keeps(), SID, "ans", "ut-1", q2)
+        km._backend_send(_TodoOnly(), SID, "ans", "ut-1", q2)
+        km._backend_send(_Plain(), SID, "hi", None, q1)
+        self.assertEqual(calls, [("keeps", "hi", None, q1),
+                                 ("keeps", "ans", "ut-1", q2),
+                                 ("todo-only", "ans", {"user_todo": "ut-1"}),
                                  ("plain", "hi")])
-
-    def test_a_landed_record_is_stamped_with_the_ids_of_every_send_it_landed(self):
-        """_note_send_landings: two sends in order wearing the same words map to their two records in
-        order; a record that wears two sends' words (the CLI's fold) carries both ids; a send whose text
-        has not landed maps nothing."""
-        t0 = 1_700_000_000
-        live = [{"_echo_text": "ship it", "_send_id": "s-1", "t": t0 + 1, "uuid": "echo:1"},
-                {"_echo_text": "ship it", "_send_id": "s-2", "t": t0 + 2, "uuid": "echo:2"},
-                {"_echo_text": "first words", "_send_id": "s-3", "t": t0 + 3, "uuid": "echo:3"},
-                {"_echo_text": "Re: the ask — the reply", "_send_id": "s-4", "t": t0 + 3, "uuid": "echo:4"},
-                {"_echo_text": "still in the queue", "_send_id": "s-5", "t": t0 + 4, "uuid": "echo:5"}]
-        def user(uuid, t, content):
-            return {"type": "user", "uuid": uuid, "t": t, "message": {"role": "user", "content": content}}
-        turns = [{"atoms": [user("old", t0 - 50, "ship it")]},                       # before every send
-                 {"atoms": [user("r1", t0 + 5, "ship it"), user("r2", t0 + 6, "ship it"),
-                            user("r3", t0 + 7, [{"type": "text", "text": "first words"},
-                                                {"type": "text", "text": "Re: the ask — the reply"}])]}]
-        tx_text_t = {}
-        for turn in turns:
-            for a in turn["atoms"]:
-                for k in km._atom_user_texts(a):
-                    tx_text_t[k] = max(tx_text_t.get(k, 0), a["t"])
-        km._landed_send_ids.pop(SID, None)
-        km._note_send_landings(SID, live, turns, tx_text_t)
-        ids = {u: v["ids"] for u, v in km._landed_send_ids[SID].items()}
-        self.assertEqual(ids, {"r1": ["s-1"], "r2": ["s-2"], "r3": ["s-3", "s-4"]})
-        self.assertNotIn("old", ids, "a record before the send is never this send's")
-        # idempotent across builds: the same echoes map to the same records, nothing doubles
-        km._note_send_landings(SID, live, turns, tx_text_t)
-        self.assertEqual({u: v["ids"] for u, v in km._landed_send_ids[SID].items()}, ids)
-        km._landed_send_ids.pop(SID, None)
 
 
 if __name__ == "__main__":

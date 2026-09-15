@@ -6,11 +6,15 @@
 // page publishes as window.__rompPerf, so the cost of painting a large document shows in the hosting pane's
 // minute row and in `romp perf client`. The loader, the editor's surfaces, a picture, a PDF and the SVG Source
 // view are not paints of that kind and record nothing; a page with no collector, or one of another shape, paints
-// exactly as before. The stand-in has no DOM the sanitizer can run on, so the rendered view takes mdBlock's
-// bare-text fallback here; the bracket is what is under test, not the render.
+// exactly as before. The stand-in has no DOM the sanitizer can run on, so the rendered view is painted from an empty
+// body handed in through this fork's sanitizer seam (md-sanitize.ts setMdSanitizer, the node suites' idiom; without it
+// the fork's paint falls to the RENDER_FELL line over Raw rows, not to mdBlock's bare-text fallback as upstream's did);
+// the bracket is what is under test, not the render.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { createPerfTelemetry, type PerfDeps } from "./perf-telemetry";
+import { setMdSanitizer } from "./md-sanitize";   // the sanitizer seam the node suites install a stand-in through (Slice 7 of plans/markdown-viewer.md)
+import { hideEdges } from "../test-dom-shim";   // every stand-in hides its edges at creation (the shim ratchet, ui/test-dom-shim.test.ts)
 
 // ── a DOM stand-in with a tree: parentNode, insertBefore, remove, getElementById over it, and the query
 // methods mdBlock's post-passes call (nothing to find: the fallback text carries no headings or fences) ──
@@ -31,7 +35,7 @@ class El {
     toggle: (c: string, on?: boolean) => { if (on ?? !this.classes.has(c)) this.classes.add(c); else this.classes.delete(c); },
     contains: (c: string) => this.classes.has(c),
   };
-  constructor(public tagName: string) {}
+  constructor(public tagName: string) { hideEdges(this); }   // the node enumerates its primitives alone (ui/test-dom-shim.ts): a failing assertion dumps no tree
   get className(): string { return [...this.classes].join(" "); }
   set className(v: string) { this.classes = new Set(v.split(/\s+/).filter(Boolean)); }
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -65,6 +69,16 @@ class El {
   contains(n: El): boolean { let x: El | null = n; while (x) { if (x === this) return true; x = x.parentNode; } return false; }
   querySelectorAll(): El[] { return []; }
   querySelector(): El | null { return null; }
+  /** One compound selector per comma group (`tag#id.class`): the read this fork's paint makes over a media body's first
+   *  child (aimFrame's `iframe.fileview-frame` test, for a PDF's remembered page); descendant chains and attributes are not read here. */
+  matches(sel: string): boolean {
+    return sel.split(",").some((s) => {
+      const m = /^([a-zA-Z][\w-]*)?(#[\w-]+)?((?:\.[\w-]+)*)$/.exec(s.trim());
+      if (!m) return false;
+      return (!m[1] || m[1].toLowerCase() === this.tagName.toLowerCase()) && (!m[2] || m[2].slice(1) === this.id)
+        && (m[3].match(/\.[\w-]+/g) || []).every((c) => this.classes.has(c.slice(1)));
+    });
+  }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
   removeAttribute(k: string): void { this.attrs.delete(k); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
@@ -83,6 +97,13 @@ class El {
   click(): void { this.dispatch("click"); }
 }
 const docBody = new El("body");
+// ── the sanitizer's stand-in (md-sanitize.ts setMdSanitizer; Slice 7 of plans/markdown-viewer.md, item 1's first step) ──
+// DOMPurify has no document under node, so without the seam every Rendered paint here fell to the RENDER_FELL line over
+// Raw rows (`fileview-err` + `fileview-code`) and no case saw its `fileview-md` box. The cases read the body's row
+// classes and the collector, never the box's content, so the stand-in hands mdBlock an empty body, as
+// file-view-edit-races.test.ts's does: the real mintHeadingIds, the registered passes and the link passes run over it
+// and find nothing (a body with text would send the link walk through a tree walker this stand-in has not got).
+setMdSanitizer({ addHook: () => { /* the hooks are DOMPurify's; the stand-in has none */ }, sanitize: () => new El("body") } as unknown as Parameters<typeof setMdSanitizer>[0]);
 function findById(n: El, id: string): El | null {
   if (n.id === id) return n;
   for (const c of n.childNodes) if (c instanceof El) { const hit = findById(c, id); if (hit) return hit; }
@@ -90,6 +111,7 @@ function findById(n: El, id: string): El | null {
 }
 const win: any = new EventTarget();
 win.parent = win;
+hideEdges(win);   // parent is an edge too (ui/test-dom-shim.ts): a dump of the window walks no cycle
 (globalThis as any).window = win;
 (globalThis as any).document = {
   createElement: (tag: string) => new El(tag),
@@ -106,6 +128,7 @@ const store = new Map<string, string>();
   setItem: (k: string, v: string) => { store.set(k, String(v)); },
   removeItem: (k: string) => { store.delete(k); },
 };
+(globalThis as any).location = { protocol: "http:", href: "http://localhost/feed" };   // this fork's viewer reads it (preview.ts canPreview: the web host's own-tab openers)
 
 // ── fixtures: a notes-api world, synthetic throughout ──
 const ROOT = "/tmp/notes-api";
@@ -171,7 +194,12 @@ function card(): Card {
   assert.equal(wrap.id, "romp-fileview");
   const root = wrap.children[0];
   const bar = root.children[0];
-  const body = root.children[root.children.length - 1];
+  // this fork's file viewer puts the body in a ROW beside the Comments aside (4e V6, plans/file-review.md Slice 1): the
+  // card's last child is `.fileview-main` and the body is its `.fileview-body` child; the URL viewer's card still
+  // ends in the body itself, as upstream's does
+  const last = root.children[root.children.length - 1];
+  const body = last.classList.contains("fileview-body") ? last : last.children.find((c) => c.classList.contains("fileview-body"))!;
+  assert.ok(body !== undefined, "the body: the card's last child, or inside its .fileview-main row");
   assert.equal(body.className, "fileview-body");
   const acts = bar.children.find((c) => c.classList.contains("fileview-acts"))!;
   const btn = (label: string) => { const b = acts.children.find((c) => c.tagName === "button" && c.textContent === label); assert.ok(b, "the " + label + " button"); return b!; };
@@ -297,7 +325,11 @@ test("a picture, a PDF and the SVG Source view are not paints of the text body: 
     assert.deepEqual(rows(svg.body), ["fileview-code"], "the Source view is the highlighted XML, from the fetched bytes");
     assert.deepEqual(frames(perf), [], "nor is the Source view");
     const pdf = await openFile(PAPER);
-    assert.deepEqual(rows(pdf.body), ["fileview-frame"], "a PDF is the browser's own viewer in a frame");
+    // this fork's pdfBlock hands the frame in its column from the first paint (`.fileview-pdffall`, so a notice can go
+    // above the frame later without re-inserting it; file-view-pdf-frame.test.ts pins the shape); upstream's body is the
+    // bare frame
+    assert.deepEqual(rows(pdf.body), ["fileview-pdffall"], "a PDF is the browser's own viewer in a frame, in the frame's column");
+    assert.equal(pdf.body.children[0].children.map((c) => c.className).join(","), "fileview-frame", "the column holds the frame alone");
     assert.deepEqual(frames(perf), [], "nor is a PDF");
   } finally {
     delete win.__rompPerf;
