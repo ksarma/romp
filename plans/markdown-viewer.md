@@ -6352,7 +6352,7 @@ regions layer's wrap of a `<picture>`'s img and the margin layout's scroll lock 
 paragraph with their scenes and follow-ups, the code they name byte-identical to 462ad3ccf (file-comments-regions.ts,
 region-geometry.ts, `mirrorScroll` and `writeScroll`) and the record checked true of it this round. Pre-existing,
 identical on main, routed (low, found by the check for figures, hooks and the seam): `awaitBytes` (file-comments.ts,
-unchanged since 462ad3ccf; the slice's three lines naming it are comments) runs on every applied status whose file
+unchanged since 462ad3ccf; every line the slice adds naming it is a comment) runs on every applied status whose file
 mtime is not the view's and re-arms the 15 s deadline each time (`clearTimeout`, then a fresh `setTimeout`), while
 `askReload` asks one fetch per mtime, so in the one case the deadline is kept for, a reload that neither lands nor
 fails through the seam's `error()` (a kernel from before this slice, or a stalled network), a stream of statuses under
@@ -6413,12 +6413,12 @@ the wait on the line through `waitFor`) with a 120-character token as the messag
 and the Files pane at 380 by 600, and holds the line's and the body's scroll widths to their client widths and the
 computed overflow-wrap to "anywhere": red over the archive (computed "normal"; the line and the body 470 px past their
 boxes in the two modals and 449 px in the pane, whose body is the pane's full width) and green at the fix (0 on all
-three; the line 90 to 125 px tall in the modals, 86 to 120 in the feed), the ordinary-words control fitting on both
-trees; item 1's sentence on the dress says so. Item 3's `reloadOut` (the mechanism in item 3): the bytes row's Reload
-over a standing pane re-filed the failure row off that pane as soon as the status ask landed, the fetch still out,
-with no loader for the read in flight and no deadline row if it stalled (low); `reloadView()` is now the one door for
-every re-fetch the panel asks and sets the record, the viewer's next paint other than a reflow clears it, the head's
-clause stands down while it is set, and `refresh(slot)`'s end leaves the "bytes" mark to an armed wait;
+three; the line 90 to 125 px tall in the chat modal and the pane, 86 to 120 in the feed), the ordinary-words control
+fitting on both trees; item 1's sentence on the dress says so. Item 3's `reloadOut` (the mechanism in item 3): the
+bytes row's Reload over a standing pane re-filed the failure row off that pane as soon as the status ask landed, the
+fetch still out, with no loader for the read in flight and no deadline row if it stalled (low); `reloadView()` is now
+the one door for every re-fetch the panel asks and sets the record, the viewer's next paint other than a reflow clears
+it, the head's clause stands down while it is set, and `refresh(slot)`'s end leaves the "bytes" mark to an armed wait;
 file-comments-changes-review2.test.ts (23, two new, three re-aimed) is red over the archive at five assertions naming
 "before round 4" (its tests 10, 12, 15, 16 and 17), and the hook's one-line pin is re-aimed in
 file-comments-behavior.test.ts (22), file-view-text-size.test.ts (33) and
@@ -6495,6 +6495,59 @@ over a `git archive` of 9c4fceac5 at the assertion its file's report names (the 
 the module's stage rule over that tree's plan under the mutation), every re-aimed pin red there by construction, the
 typecheck clean after every edit, and the round's full runs (the full npm test, CI's tools step, the pytest modules)
 recorded in the build report outside the repo.
+
+**Review round 5** (2026-09-15). The review of the branch at 30b34a0db over main 462ad3ccf, under the plan of rounds 1
+to 4 (the branch read by the round's checks and the finding round 4's re-check left open read again, every finding
+checked by one second reader for a low and by two for a medium or a high, the fixes made one hand per file, one
+consolidation commit, "Slice 7: review round 5 fixes") and the rule round 1 judged by. No behaviour changed this
+round: its findings are two corrections to this note, a doc comment at one site for two pre-existing edges, and two
+closures of pre-existing edges already on the books. The corrections, each in its place above: the round 4 paragraph
+gave the token line's height at the dress fix as 90 to 125 px "in the modals", where the chat modal and the pane
+measure 90 to 125 and the feed modal 86 to 120 (the build report's numbers, and a fresh headless run's over the three
+surfaces); the sentence names the surfaces, the paragraph re-filled at width with its line count kept, every later
+line number of this note unmoved. The round 3 paragraph counted the slice's lines naming `awaitBytes` as three, all
+comments, a count true at that round and one short since round 4's comment at `refresh(slot)`'s end; the clause now
+says every line the slice adds naming it is a comment, which holds at this head (four such lines; this round's comment
+at `bytesLate` describes the method without naming it). Closed as recorded, no words added: the regions layer's wrap
+of a `<picture>`'s img (raised a fourth time, from a fresh Chromium probe over this head and 462ad3ccf, the label
+leaving at the panel's open and returning at its close on both), its record in the round 2 paragraph,
+file-comments-regions.ts byte-identical to 462ad3ccf and the record checked true of it this round (`figureAnchor`
+climbing both wrappers, the label's `load` handler removing it, `tagNameOf` answering IMG); and the map's one source
+table keyed on the text alone, which round 4's re-check listed as not fixed, the state the rule for a pre-existing
+edge intends (recorded and routed, not fixed): its record in the round 4 paragraph, `sourceCache` and `sourceTable`
+byte-identical to 462ad3ccf and the slice's four hunks in anchor-map.ts nowhere near them, checked true of this head;
+the re-check's landing of paragraph 26 for the second Rendered click and the paragraph's 29 are two probes'
+measurements, both in the build report, and the paragraph keeps the probe it quotes. Pre-existing, identical on main,
+not a new defect (low; two titles from the checks for figures, hooks and the seam and for comments regressions, one
+mechanism, the round 3 paragraph's `awaitBytes` routing): since round 4 the bytes row's Reload over a standing pane
+reaches the re-arm that paragraph records. With its fetch stalled and the poll re-asking status each tick (a sidecar a
+session keeps writing), every status arms the 15 s deadline afresh, so the loader stands at the head of the cards with
+no row and no Reload for as long as statuses land under 15 s apart, the body's pane saying only the earlier failure,
+and the row files 15 s after the last status: measured in headless Chromium at this head, 13 statuses over 32 s with
+the loader up and no row throughout and the row 15.0 s after the writes stopped, the same over a healthy view whose
+file moved under the poll, and the same on 462ad3ccf; a quiet poll files the row at 15 s as item 3 says. Before round
+4 this path filed the failure row at the first status, the misleading words round 4 fixed, and never reached the
+re-arm. The follow-up stands as round 3 routed it (arm once per reload asked, or re-arm only on a new file mtime, with
+the mock-timer scene it names), not taken in the fifth of six rounds: one timer per wait against one per status is
+main's deadline semantics, reviewed afresh if changed. Pre-existing, recorded, not changed (low, the check for
+comments regressions): the late-failure variant of item 3's deadline-tail sibling. The row's Reload whose fetch stalls
+past 15 s and then fails leaves the deadline row's tail, "the view still shows the earlier text", over the new pane's
+words: paintAll's head needs the wait, which `bytesLate` ended, and `syncFailedRow` reads failure rows alone; measured
+in headless Chromium at this head, the 500 released after the deadline, the pane and `error()` reading the new words
+and the row unchanged 3 s later, where the same fetch failing at once or at 5 s re-words the row (the controls).
+9c4fceac5 re-worded the row off the new pane (its row was a failure row filed at the status, the round 4 bug), and
+462ad3ccf ends the same sequence with no row at all (its `refresh` finally dropped the "bytes" mark at the status's
+landing, so `bytesLate` filed nothing) while filing the same tail over a pane under a quiet poll: the tail is
+pre-existing, the path to it new since round 4. A tail read off `error()` at the tick or at the later pane's paint
+needs new wording (BYTES_FAILED_TAIL's "that failure" refers to parenthesised words the deadline row lacks): the
+owner's wording decision round 4 recorded, which stands. Both edges are named at the site since this round:
+`bytesLate`'s doc comment in file-comments.ts says the timer is armed afresh by every status that lands while the wait
+is up and that the row's tail is not re-read against a pane that lands after the deadline, pre-existing, recorded here
+and routed; no behaviour changed, no test added (nothing to fail before), and the ledger's `where:` line names the
+comment. Left open from the earlier rounds: `trackedEdit.begin()` reading `seedOf(status)` without `textCurrent`, the
+`where:` line's length, and a fetch the panel did not ask over a standing pane (item 3's first recorded edge). Tests,
+by file, this round: none added, none changed; the typecheck clean after the comment, and the round's full runs (the
+full npm test, CI's tools step, the pytest modules) recorded in the build report outside the repo.
 
 ### Slice 8: a cell and a code line are commentable from Rendered (ruling 2026-09-07, decision 7)
 
