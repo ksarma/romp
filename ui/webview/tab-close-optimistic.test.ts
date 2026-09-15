@@ -233,13 +233,16 @@ test("closeTabLocally drops the tab, THEN records the close — in that order", 
   // declared beside tabMeta, NOT down by dismissSession: renderTabs reads it and can run before the module
   // finishes evaluating, which would make a `const` down there a temporal-dead-zone throw.
   assert.match(RENDER, /const tabMeta = new Map[\s\S]{0,900}?const closingTabs = new Map<string, number>\(\);/);
-  assert.match(RENDER, /const CLOSE_ACK_MS = 15_000;/);
+  // fifteen seconds by default, read through tab-order.ts readCloseAckMs so a lab can shorten the backstop (the served split
+  // test waits past it in seconds); tab-order.test.ts pins the default and the knob
+  assert.match(RENDER, /const CLOSE_ACK_MS = readCloseAckMs\(\(k\) => \{ try \{ return localStorage\.getItem\(k\); \} catch \{ return null; \} \}\);/);
 });
 
 test("the strip skips a just-closed tab on BOTH passes (order AND the tabMeta placeholder pass)", () => {
   // the tabMeta pass is the one that drew the swirl: an id the kernel still lists with no session behind it
-  assert.match(RENDER, /for \(const id of order\) \{ if \(!seen\.has\(id\) && !closingTabs\.has\(id\)\)/);
-  assert.match(RENDER, /for \(const id of tabMeta\.keys\(\)\) \{ if \(!seen\.has\(id\) && !closingTabs\.has\(id\)\)/);
+  assert.match(RENDER, /for \(const id of order\) \{ if \(!seen\.has\(id\) && stripLists\(id\)\)/);
+  assert.match(RENDER, /for \(const id of tabMeta\.keys\(\)\) \{ if \(!seen\.has\(id\) && stripLists\(id\)\)/);
+  assert.match(RENDER, /function stripLists\(id: string\): boolean \{\s*\n\s*return !closingTabs\.has\(id\) && \(order\.includes\(id\) \|\| tabMeta\.has\(id\)\);/, "the closing set is read through the strip's one membership rule (T357 fix)");
 });
 
 test("every close path is optimistic — the in-page ✕, a dead read-only tab, and the kernel's confirmClose", () => {

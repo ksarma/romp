@@ -8,7 +8,10 @@ the click detail from it, with no fetch and no timer.
 The rule these tests pin: every field moves on one named event and never on a clock, so two computes over
 the same world are byte-identical and send nothing. Synthetic fixtures only (a private synthetic sid family,
 the notes-api demo's web / api / tests names, no paths or error text in any frame)."""
+import contextlib
+import errno
 import inspect
+import io
 import json
 import os
 import tempfile
@@ -37,7 +40,7 @@ MDOT = "·"
 
 
 def _frame_keys():
-    return {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked", "since", "tmux", "sessions", "seq", "hosts", "quiet", "errs"}
+    return {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked", "since", "sessions", "seq", "hosts", "quiet", "errs", "host"}
 
 
 class Reference(unittest.TestCase):
@@ -77,23 +80,26 @@ class _Fixture(unittest.TestCase):
         self._send = km._send_to_app
         self._backend_for = km.Sessions.__dict__["backend_for"]
         self._color = km._name_color
-        self.sess, self.live, self.errs, self.tmux_sids, self.colors = [], {}, {}, set(), {}
-        km._alive_sessions = lambda now, tmux: list(self.sess)
+        self.sess, self.live, self.errs, self.colors = [], {}, {}, {}
+        km._alive_sessions = lambda now, live_map: list(self.sess)
         km._api_last_failed = lambda p: self.errs.get(p)
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
-        km.Sessions.backend_for = staticmethod(lambda sid: km._TMUX if sid in self.tmux_sids else object())
+        km.Sessions.backend_for = staticmethod(lambda sid: object())   # the frame reads no backend since the tmux count went (2026-09-11)
         km._name_color = lambda sid: self.colors.get(sid)
         # the frame's quiet and errs flags ask the SDK backend through km._sdk (T301): patched, so no test builds a
         # real SdkBackend in-process (its boot reconcile thread and catalog fetch); `self.backend` is what it answers
         self.backend, self.sdk_calls = None, []
         self._sdk = km._sdk
         km._sdk = lambda: (self.sdk_calls.append(1), self.backend)[1]
+        self._self_host = km._self_host
+        km._self_host = lambda: "TESTHOST"   # the frame names this kernel (T316); synthetic, never the machine's real name
         km._APIH_LAST[0] = None
         km._retry_suppress_cache.clear()
 
     def tearDown(self):
         km._sdk = self._sdk
+        km._self_host = self._self_host
         km.jd.STATE = self._state
         km._alive_sessions = self._alive
         km._api_last_failed = self._last
@@ -239,13 +245,6 @@ class States(_Fixture):
         self.assertFalse(rows[SID[1]]["suppressed"])
         self.assertEqual(self.frame()["waiting"], 2, "the interrupt says nothing about the API: still counted")
 
-    def test_tmux_backed_sessions_are_counted_for_the_coverage_line(self):
-        self.add(0)
-        self.add(1)
-        self.add(2, err={"status": 500, "category": "server_error"})
-        self.tmux_sids = {SID[1], SID[2]}
-        self.assertEqual(self.frame()["tmux"], 2)
-
     def test_rows_carry_name_and_color(self):
         self.colors[SID[0]] = {"bg": "#3366cc", "fg": "#ffffff"}
         self.add(0, retry={"status": 429})
@@ -254,7 +253,7 @@ class States(_Fixture):
 
     def test_a_latched_row_reads_retrying_while_its_session_is_working(self):
         # The retry prompt (romp's own, or a human's) was accepted and the turn is open, no api_retry frame yet;
-        # for a tmux session that is the whole internal retry. The word follows the live state; the latch only
+        # for a terminal session of the time that was the whole internal retry. The word follows the live state; the latch only
         # keeps the row counted, and its since stays the record's time.
         self.add(0, state="working", err={"status": 529, "category": "overloaded"})
         f = self.frame()
@@ -371,6 +370,50 @@ class NoFlap(_Fixture):
         self.assertEqual(got, [], "nothing sent since boot")
 
 
+class PauseDoorRefusal(_Fixture):
+    """The detail's pause button sends setGlobalRetryPaused on the shell socket and disables itself until a frame
+    whose seq moved answers it (_LANDING_APIH_JS pendSeq). The writer behind the door is a read-modify-write over
+    the pause file; when that file exists but cannot be read it refuses, and the press must hear it: a warn frame
+    on its own socket (the shell routes it to the notification center, tests/test_kernel_pane_rail.py), the file
+    untouched, and a seq the DOOR moves (the writer publishes nothing on a refusal: the cycle's engage and lift meet
+    the same refusal every pass, with no button to release) so the button repaints the truth (still paused) instead
+    of staying acknowledged. Before, the fault folded to an empty file and a Resume during a spend pause wrote
+    {"paused": false} with no liftedAt: the next cycle re-engaged on the standing record and the press read as
+    ignored."""
+
+    def test_a_press_over_an_unreadable_pause_file_is_refused_on_its_socket_and_the_seq_moves(self):
+        km._set_retry_paused(True, reason="spend", bills="key")
+        path = Path(self.td.name, "retry-paused.json")
+        before = path.read_bytes()
+        seq0 = self.frame()["seq"]
+        got = []
+        client = {"app": "shell", "wid": "w1", "alive": True, "send": lambda raw: got.append(json.loads(raw))}
+        real = Path.read_text
+
+        def faulting(p, *a, **k):                        # the pause file alone; every other read delegates
+            if p.name == "retry-paused.json":
+                raise OSError(errno.EMFILE, "too many open files")
+            return real(p, *a, **k)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(Path, "read_text", faulting):
+            km.Handler._dispatch_ws(None, {"type": "setGlobalRetryPaused", "value": False}, client)
+        self.assertEqual([m["type"] for m in got], ["warn"], got)
+        self.assertEqual(got[0]["text"], "Couldn't change the pause: its file could not be read; nothing was changed \u2014 retry")
+        self.assertEqual(path.read_bytes(), before, "nothing was written")
+        self.assertTrue(km._retry_paused_on(), "still paused: the truth the button repaints")
+        self.assertEqual(self.frame()["seq"], seq0 + 1, "the door moved the seq for the press: the shell's pendSeq acknowledgment clears")
+        self.assertIn("retry-pause: the pause file could not be read ([Errno %d] too many open files); nothing changed"
+                      % errno.EMFILE, err.getvalue())
+        got.clear()
+        with contextlib.redirect_stderr(err):
+            km.Handler._dispatch_ws(None, {"type": "setGlobalRetryPaused", "value": False}, client)
+        self.assertEqual(got, [], "the read works: the press lands, and a landed press sends no frame")
+        self.assertFalse(km._retry_paused_on())
+        self.assertIn("liftedAt", json.loads(path.read_text()), "the Resume over a spend pause records its ruling")
+        self.assertIn("retry-pause: the pause file reads again; this write lands", err.getvalue(), "the episode's end, said once")
+        self.assertEqual(self.frame()["seq"], seq0 + 2, "the landed write is the next event")
+
+
 class FrameShape(_Fixture):
     def test_the_frame_and_its_rows_carry_exactly_the_documented_keys(self):
         self.add(0, retry={"status": 429, "error": "the wire's text", "requestId": "req_x"})
@@ -407,25 +450,34 @@ class Wiring(unittest.TestCase):
                   "_end_on_idle_sweep", "_deferral_sweep_tick", "_auto_nudge_tick", "_interrupt_block_tick",
                   "_usage_poll_tick", "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
                   "_clear_done_working_notes",
-                  "_unreadable_store_warns", "_tab_list_tmux")   # the two further cycle jobs this kernel runs, quiet too
+                  "_unreadable_store_warns")   # the further housekeeping stage this kernel runs (jobs.unreadableStores), quiet too
 
-    def test_the_frame_is_built_in_the_jobs_block_after_this_cycle_s_pause_decisions(self):
+    def test_the_frame_is_built_in_the_pushers_cycle_and_the_pause_decisions_on_the_jobs_thread(self):
+        # the housekeeping split (2026-09-13): the frame stays with the push (it feeds the shell's cell every cycle); the pause
+        # decisions run on the jobs thread in their order (limit, spend, resume), and the frame reads them at most one jobs
+        # pass (JOBS_PASS_S) old, the staleness the design accepted
         src = inspect.getsource(km._pusher_cycle_jobs)
-        self.assertIn("_api_health_push(_api_health_frame(now, tmux))", src)
-        self.assertLess(src.index("_auto_resume_retry(now, tmux)"), src.index("_api_health_push(_api_health_frame"))
+        self.assertIn("_api_health_push(_api_health_frame(now, live_map))", src)
+        jobs = inspect.getsource(km._jobs_pass)
+        self.assertLess(jobs.index("_auto_pause_on_limit()"), jobs.index("_auto_pause_on_spend_limit(now, live_map)"))
+        self.assertLess(jobs.index("_auto_pause_on_spend_limit(now, live_map)"), jobs.index("_auto_resume_retry(now, live_map)"))
+        self.assertNotIn("_api_health", jobs, "the frame is the pusher's, never the jobs thread's")
         self.assertNotIn("_api_health", inspect.getsource(km._cached_feed), "not gated by the feed's sig / rebuild floor")
 
     def test_the_jobs_block_runs_the_frame_after_the_pause_decisions(self):
-        # the executing twin of the pin above: a frame built before _auto_resume_retry would carry the pause the
-        # same cycle lifts, so the cell would read paused one cycle late on every lift
+        # the executing twin of the pin above: the jobs pass decides the pauses in order, the pusher's cycle builds and
+        # sends the frame; a frame built before _auto_resume_retry within one list would have carried the pause the same
+        # pass lifts, which the two lists keep apart
         order = []
         quiet = {nm: (lambda *a, **k: None) for nm in self.OTHER_JOBS}
         with mock.patch.multiple(km, **quiet), \
                 mock.patch.object(km, "_auto_pause_on_limit", side_effect=lambda: order.append("limit")), \
-                mock.patch.object(km, "_auto_pause_on_spend_limit", side_effect=lambda now, tmux: order.append("spend")), \
-                mock.patch.object(km, "_auto_resume_retry", side_effect=lambda now, tmux: order.append("resume")), \
-                mock.patch.object(km, "_api_health_frame", side_effect=lambda now, tmux: order.append("frame") or {"type": "apiHealth"}), \
+                mock.patch.object(km, "_auto_pause_on_spend_limit", side_effect=lambda now, live_map: order.append("spend")), \
+                mock.patch.object(km, "_auto_resume_retry", side_effect=lambda now, live_map: order.append("resume")), \
+                mock.patch.object(km, "_api_health_frame", side_effect=lambda now, live_map: order.append("frame") or {"type": "apiHealth"}), \
                 mock.patch.object(km, "_api_health_push", side_effect=lambda f: order.append("push:" + f["type"])):
+            km._jobs_pass(T_STORM, {})
+            self.assertEqual(order, ["limit", "spend", "resume"], "the jobs pass: the pause decisions in order, no frame")
             km._pusher_cycle_jobs(T_STORM, {}, True)
         self.assertEqual(order, ["limit", "spend", "resume", "frame", "push:apiHealth"])
 
@@ -486,7 +538,7 @@ class Detail(unittest.TestCase):
         # sentence are gone, and the state machine's word never reaches the user
         self.assertNotIn("API %s this machine" % MDOT, self.JS)
         self.assertNotIn("No session is waiting on the API.", self.JS)
-        self.assertIn("429 = the API told us to slow down (rate limit)", self.JS)
+        self.assertIn("['r429','429','rate limit: the API told us to slow down']", self.JS)   # T340: the token in its ink, the words beside it
 
     def test_the_pause_button_is_the_chat_card_s_and_acknowledges_before_the_round_trip(self):
         self.assertIn("'Resume all auto-retries'", self.JS)
@@ -510,10 +562,12 @@ class Detail(unittest.TestCase):
         self.assertIn("data-act=reveal data-sid=", self.JS)
         self.assertIn("else{hint=NOTSENT;dirty=true;}", row, "a dead socket is said here too")
 
-    def test_the_coverage_line_appears_only_under_a_tmux_guard(self):
-        self.assertIn("if(m.tmux>0)h+=", self.JS)
-        self.assertIn("seen through their transcripts only", self.JS)
-        self.assertIn(", so a retry in progress there shows only when it fails or recovers.", self.JS)
+    def test_no_terminal_coverage_line_is_drawn(self):
+        # T331 (the user 2026-09-10, removing the terminal backend): the popup no longer says how many terminal
+        # sessions are seen through their transcripts; the frame's terminal count went with the kernel side (T332;
+        # a federation field older peers may still send, which the rail ignores)
+        self.assertNotIn("m.tmux", self.JS)
+        self.assertNotIn("seen through their transcripts only", self.JS)
 
     def test_the_detail_renders_from_the_last_frame_and_the_history_is_the_one_read(self):
         # the cell and the frame's reading render from the last frame only; the History section is the one fetch,
@@ -524,7 +578,10 @@ class Detail(unittest.TestCase):
         # T301: every attached host's document rides the same read, through the kernel's relay, kept per host
         self.assertIn("names.forEach(function(h){fetchDoc(h?", self.JS)
         self.assertIn("names.forEach(function(h){fetchDoc(h?'/remote/'+encodeURIComponent(h)+'/api-health':'/api-health')", self.JS)
-        self.assertNotIn("setInterval", self.JS)
+        # the one timer is the read-age label's minute tick (T316 review): it re-words one span while the tip or the detail is open
+        self.assertEqual(self.JS.count("setInterval("), 1)
+        self.assertIn("setInterval(ageTick,60000)", self.JS)
+        self.assertNotIn("fetch", self.JS[self.JS.index("function ageTick"):self.JS.index("function disarmAge")], "the tick reads nothing: nothing polls the history")
         self.assertNotIn("setTimeout", self.JS)
         self.assertIn("window.__rompApiHealth=function(m){", self.JS)
         self.assertIn("LAST=m;", self.JS)
@@ -663,8 +720,11 @@ class Detail(unittest.TestCase):
         self.assertNotIn("'blocked'", self.JS)
         self.assertNotIn("blocked", self.JS.split("data-act=reveal")[0].split("var PAUSE")[1] if "var PAUSE" in self.JS else "", "the amber state is never called blocked")
         self.assertNotIn("\u2014", self.JS)
+        # the words a reader SEES: the code lines without their `//` comments (upstream's own comment on the
+        # 429 cell spells "colour"; it renders nothing, and upstream's text stands as landed)
+        code_only = "\n".join(l.split("//", 1)[0] for l in self.JS.splitlines())
         for british in ("colour", "behaviour", "cancelled", "summarise"):
-            self.assertNotIn(british, self.JS)
+            self.assertNotIn(british, code_only)
         self.assertIn("(r.kind==='retrying'?'retrying':'stopped')", self.JS)
 
 

@@ -6,7 +6,7 @@ allowed-tools: Bash
 
 # Romp Postal Service (messaging peer sessions)
 
-Only applies inside a romp session (a tmux session tagged `@romp`, or an SDK-backed romp session). A plain Claude Code session has no peers, so ignore this.
+Only applies inside a romp session. A plain Claude Code session has no peers, so ignore this.
 
 ## Tools
 
@@ -34,7 +34,7 @@ Nothing to set up in peer mode (the default): every machine runs its own bus, cr
 - Name things exactly: files by path, sessions by name, the same term each time. Mark verified vs. suspected, and whose ask it is.
 - End with the reply you need, or that none is. One point per message; when brevity and clarity conflict, clarity wins.
 
-**An isolation refusal is final.** A mailbox toggled off is a boundary the user drew. If `send_message` refuses because a mailbox is off (yours or the recipient's), do NOT reroute the content through any other door — the kernel's `/send` route, tmux keystrokes, shared files, another peer as relay. Report the refusal to the user and stop; only they lift the isolation. (The kernel also refuses postal-shaped mail to isolated sessions on every route, but the rule is about intent, not shape: rerouting the same content as plain text is the same violation.)
+**An isolation refusal is final.** A mailbox toggled off is a boundary the user drew. If `send_message` refuses because a mailbox is off (yours or the recipient's), do NOT reroute the content through any other door — the kernel's `/send` route, shared files, another peer as relay. Report the refusal to the user and stop; only they lift the isolation. (The kernel also refuses postal-shaped mail to isolated sessions on every route, but the rule is about intent, not shape: rerouting the same content as plain text is the same violation.)
 
 **Prefer postal over Claude Code's native cross-session messaging.** romp peers are discovered only through the postal service's `list_agents`. Claude Code (2.1.224+) also ships its own `ListAgents` and `SendMessage` tools, which list the account's Anthropic cloud sessions and this session's own subagents: a different system, and a cloud session in that list is easy to mistake for a romp peer (the user 2026-09-08, who found one there that read like a session of theirs). For romp peers, always message through the postal tools: postal mail declares a kind, is tracked until answered, respects the user's per-host trust boundaries, and shows up on their dashboard; a native cross-session send bypasses all of that and is invisible to them. The recommended setting is `"permissions": { "deny": ["ListAgents"] }` in the Claude Code settings, so the only list of agents a session sees is romp's; `SendMessage` must stay allowed, because continuing a subagent uses it, and it stays the right tool for your own subagents and in-session teammates.
 

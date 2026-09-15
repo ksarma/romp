@@ -60,9 +60,9 @@ class _World(unittest.TestCase):
         km._sdk = lambda: None
         self.injected = []
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
             self.injected.append({"sid": sid, "text": text, "user_todo": user_todo})
-            return True
+            return False                                 # handed over now (upstream's contract, 2026-09-15)
         km._send_or_park = fake_send_or_park
         km._file_comments_call = lambda path, verb, args=None, fence=None: ({"ok": True, "verb": verb, "logged": True}, None)
         self.tid = km._add_user_todo(SID, FIRST, self.fp)

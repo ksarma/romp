@@ -17,6 +17,7 @@ import { viewTagUnion } from "./session-views";
 import { parseTabGroups, planStrip, setSectionCollapsed, setHidden, homeSectionOf, neighborOfFolded, headWords, type StripItem, type TabSection } from "./tab-groups";
 import { sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoPhrase, sectionDoorTitle } from "./tab-state";
 import { snapshotModel, snapshotHeading, rowWords, actWords, hiddenFoldWords, hiddenNeeds, standInPip, type SnapModel } from "./tab-snapshot";
+import { statusChip } from "./status-chip";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
 import { hostPrefix } from "./host-prefix";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
@@ -66,7 +67,7 @@ class FakeEl {
   tag: string; id = ""; className: string; children: FakeEl[] = []; parent: FakeEl | null = null;
   dataset: Record<string, string> = {}; attrs: Record<string, string> = {}; listeners: Record<string, Function[]> = {};
   textContent = ""; title = ""; tabIndex = -1; type = ""; disabled = false; scrollTop = 0; draggable = false;
-  style: Record<string, string> = { display: "", background: "", color: "" };
+  style: Record<string, any> = { display: "", background: "", color: "", setProperty(k: string, v: string) { (this as Record<string, string>)[k] = v; } };   // setProperty: the row's --chip-bg (T322)
   classList: { add: (...c: string[]) => void; remove: (...c: string[]) => void; contains: (c: string) => boolean; toggle: (c: string, on?: boolean) => void };
   constructor(tag: string, cls = "") {
     this.tag = tag; this.className = cls;
@@ -135,7 +136,7 @@ type Hooks = {
   calls: string[]; delegates: Array<{ root: FakeEl; handlers: Record<string, (node: FakeEl, ev: Event) => void> }>;
   winCap: Function[]; winBub: Function[]; writes: any[];
   FakeEl: typeof FakeEl; doc: FakeDoc;
-  snapshotModel: typeof snapshotModel; snapshotHeading: typeof snapshotHeading; rowWords: typeof rowWords;
+  snapshotModel: typeof snapshotModel; snapshotHeading: typeof snapshotHeading; rowWords: typeof rowWords; statusChip: typeof statusChip;
   rowStillOpen: typeof rowStillOpen; installSnapshotEscape: typeof installSnapshotEscape; reconcileRows: typeof reconcileRows;
   homeSectionOf: typeof homeSectionOf; neighborOfFolded: typeof neighborOfFolded; setSectionCollapsed: typeof setSectionCollapsed;
   headWords: typeof headWords; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
@@ -192,6 +193,7 @@ function lift(): (H: Hooks) => Api {
     const ageColorReadable = (s) => "age-" + Math.floor(s);
     const hostNameNodes = (name) => [document.createTextNode(name)];
     const snapshotModel = H.snapshotModel, snapshotHeading = H.snapshotHeading, rowWords = H.rowWords;
+    const statusChip = (w, tag) => H.statusChip(w, tag, document);   // the shared status chip, built in the fake document (T322b)
     const rowStillOpen = H.rowStillOpen, installSnapshotEscape = H.installSnapshotEscape, reconcileRows = H.reconcileRows;
     const homeSectionOf = H.homeSectionOf, neighborOfFolded = H.neighborOfFolded, setSectionCollapsed = H.setSectionCollapsed;
     const tabGroups = () => H.groups;
@@ -202,6 +204,7 @@ function lift(): (H: Hooks) => Api {
     const setHidden = H.setHidden, sectionTodoFlag = H.sectionTodoFlag, sectionTodoPhrase = H.sectionTodoPhrase, sectionDoorTitle = H.sectionDoorTitle, standInPip = H.standInPip;
     const hiddenFoldWords = H.hiddenFoldWords, hiddenNeeds = H.hiddenNeeds, actWords = H.actWords, repeatedClick = H.repeatedClick;
     const tabEmojiNode = () => null;
+    const ringSwitch = () => () => true;   // the ring switches the folded pip reads (widgets since 2026-09-14): every ring on here
     const tagChip = (label) => { const c = el("span", "tag-chip"); c.textContent = label; return c; };
     const dragImageBlank = () => el("div"); const hideTabTip = () => {};
     // the nav trail: the class a stub that keeps the deps render.ts hands it; the landing's helpers inert
@@ -248,7 +251,7 @@ function world(active = "web", groups = parseTabGroups(null), ids = ["web", "api
   const H: Hooks = { content, bar, composer, sendBtn: new FakeEl("button"), sessions, ledgers, tabMeta: new Map([["tests", { name: "tests", color: null }]]),
     closingTabs: new Map(), views: new Map(), lastStripItems: plan.items, order: ids, collapsed: plan.folded, nowMs: T0 * 1000, pickerOpen: false,
     calls: [], delegates: [], winCap: [], winBub: [], writes: [], FakeEl, doc: DOC,
-    snapshotModel, snapshotHeading, rowWords, rowStillOpen, installSnapshotEscape, reconcileRows, homeSectionOf, neighborOfFolded, setSectionCollapsed,
+    snapshotModel, snapshotHeading, rowWords, statusChip, rowStillOpen, installSnapshotEscape, reconcileRows, homeSectionOf, neighborOfFolded, setSectionCollapsed,
     headWords, sectionPip, sectionPipMembers, sectionPipTitle, setHidden, sectionTodoFlag, sectionTodoPhrase, sectionDoorTitle, standInPip, hiddenFoldWords, hiddenNeeds, actWords, repeatedClick,
     groups, navDeps: null };
   const api = lift()(H);
@@ -300,10 +303,15 @@ test("executed: the view paints one row per member from the model: heading, keye
   const host = content.byId("tab-snapshot")!;
   assert.ok(host, "the host hangs off #content");
   assert.equal(host.getAttribute("role"), "region"); assert.equal(host.style.display, "");
-  assert.equal(host.getAttribute("aria-label"), "infra: 2 sessions; click one to open it");
+  assert.equal(host.getAttribute("aria-label"), "Overview of infra: 2 sessions; click one to open it");
   const head = host.children[0];
-  assert.deepEqual([head.tag, head.className, head.children.map((c) => c.className)], ["h2", "snap-head", ["snap-swatch", "snap-name", "snap-count"]]);
-  assert.equal(head.children[0].style.background, "#4EC9B0"); assert.equal(head.children[1].textContent, "infra"); assert.equal(head.children[2].textContent, "2 sessions");
+  // "Overview of <the tag's ordinary chip> <count>" (T322): the words, the chip slot holding tagChip's pill, the count
+  assert.deepEqual([head.tag, head.className, head.children.map((c) => c.className)], ["h2", "snap-head", ["snap-of", "snap-chip-slot", "snap-count"]]);
+  assert.equal(head.children[0].textContent, "Overview of");
+  const chip = head.children[1].children[0];
+  assert.ok(chip.has("snap-chip"), "the chip carries the view's class: " + chip.className); assert.equal(chip.text(), "infra", "the tag's name in the chip");
+  assert.ok(chip.has("tag-chip"), "built by tagChip (the world's stub marks its pills): " + chip.className);
+  assert.equal(head.children[2].textContent, "2 sessions");
   const items = rowsOf(host);
   assert.deepEqual(items.map((i) => [i.getAttribute("role"), i.dataset.id]), [["listitem", "web"], ["listitem", "api"]], "keyed by the session id, in strip order");
   const [web, api_] = items.map((i) => i.children[0]);
@@ -317,8 +325,8 @@ test("executed: the view paints one row per member from the model: heading, keye
   assert.equal(web.children[2].textContent, "Add the notes list page");
   assert.deepEqual([web.children[3].dataset.t, web.children[3].textContent, web.children[3].style.color], [String(T0 - 40), "40s ago", "age-40"], "the model carries the epoch; the renderer formats it");
   assert.equal(web.children[4].textContent, "editing the list page");
-  assert.deepEqual(api_.children.map((c) => c.className), ["snap-pip", "snap-sess", "snap-flag needs", "snap-now", "snap-when"], "an idle session the feed files under needs-you: no pip, the word");
-  assert.equal(api_.children[2].textContent, "needs you");
+  assert.deepEqual(api_.children.map((c) => c.className), ["snap-pip", "snap-sess", "chip chip-needsInput", "snap-now", "snap-when"], "an idle session the feed files under needs-you: no pip, the bar's Blocked chip (T322b)");
+  assert.deepEqual([api_.children[2].tag, api_.children[2].textContent], ["span", "Blocked"], "the shared status chip, a span inside the row's button");
   assert.equal(H.delegates.length, 1, "one delegate, on the stable host, installed with it");
   assert.equal(H.delegates[0].root, host);
 });
@@ -357,7 +365,7 @@ test("executed: a push that changes nothing a row shows moves nothing: the same 
   assert.equal(after[0], webItem, "web's node stands");
   assert.deepEqual([after[1].children[0].className, after[1].children[0].getAttribute("aria-label")], ["snap-row loading", "tests; opening"], "a placeholder tab (its meta alone) is a loading row");
   assert.equal(after[1].children[0].querySelector(".snap-now")!.textContent, "opening…");
-  assert.equal(host.getAttribute("aria-label"), "infra: 2 sessions; click one to open it");
+  assert.equal(host.getAttribute("aria-label"), "Overview of infra: 2 sessions; click one to open it");
 });
 
 test("executed: focus survives the push that changes the rows: a moved row is re-focused on its own node, a removed row hands focus to the row in its place", () => {
@@ -635,13 +643,13 @@ test("executed: the nav trail records the reader's spot while the view shows: th
 test("pinned: the wiring the lifted slices cannot reach: showActive's branch, the exits, setActive's pick, the strip's follow", () => {
   // showActive: while a section shows, every transcript is hidden, the reader's place held, the composer disabled with a
   // placeholder that says what to do; the transcript path hides the host first
-  assert.match(SHOW, /if \(snapView && renderSnapshot\(\)\) \{\s*\n\s*for \(const v of views\.values\(\)\) v\.el\.style\.display = "none";/);
+  assert.match(SHOW, /if \(snapView && renderSnapshot\(\)\) \{\s*\n\s*setSnapMode\(true\);[^\n]*\n\s*for \(const v of views\.values\(\)\) v\.el\.style\.display = "none";/, "the mode switch first (the message box goes, no tab selected), then the views hide");
   assert.match(SHOW, /const av = activeId \? views\.get\(activeId\) : null;\s*\n\s*if \(av && !snapKeep\) snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};/, "the reader's place, once per visit");
   assert.match(SHOW, /if \(av && snapKeep && snapKeep\.v !== av\) \{\s*\n\s*snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick;\s*\n\s*snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};\s*\n\s*\}/, "the active changed under the view (the session being read closed): the survivor's place is held instead");
   assert.match(SHOW, /if \(ta\) \{ ta\.disabled = true; ta\.placeholder = "Pick a session above to write to it"; \}/);
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? liveSession\(activeId\) : null;/, "a transcript showing: the view hidden, its place written back");
   const loading = SHOW.slice(SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), SHOW.indexOf("} else if (!empty) {"));
-  assert.match(loading, /if \(ta\) \{ ta\.disabled = false; ta\.placeholder = composerRestingPlaceholder\(\); \}/, "a pick that lands on a still-loading tab takes the box back from the view's disabled state");
+  assert.match(loading, /if \(ta\) \{ ta\.disabled = false; setComposerAskMode\(\); \}/, "a pick that lands on a still-loading tab takes the box back from the view's disabled state (the placeholder through its one owner, 2026-09-10)");
   assert.match(RENDER, /if \(snapView\) \{ sl\.replaceChildren\(\); return; \}/, "no session's statusline chip under a section list");
   assert.match(RENDER, /if \(!activeId \|\| skeletonTabs\.ids\.has\(activeId\) \|\| !liveAsks\.has\(activeId\) \|\| snapView\) \{/, "no live ask card under it");
   assert.match(RENDER, /const s = activeId && !snapView \? liveSession\(activeId\) : null;/, "no background-task box under it");
@@ -667,9 +675,9 @@ test("pinned: the wiring the lifted slices cannot reach: showActive's branch, th
 });
 
 test("pinned: the sheet: the shown header's wash and the stand-in's mark on the tab-group rules; the view's two sizes, tokens only, the tab's state colors on the pip", () => {
-  assert.match(CSS, /\.tab-group-head\.snap-shown \{ background: var\(--accent-wash\); \}/, "the shown section's header wears the accent wash");
+  assert.match(CSS, /\.tab-group-head\.snap-shown \{ color: var\(--fg\); background: var\(--tab-active-bg\); box-shadow: inset 0 0 0 1\.5px var\(--chip-bg, transparent\); \}/, "the shown section's row wears the SELECTED TAB's box (T322): its fill token and its inset identity ring");
   assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/, "the header folds, so its cursor promises the click");
-  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline; text-decoration-color: var\(--accent\);/, "the stand-in's mark: the tag's chip accent-underlined");
+  assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline/, "the stand-in wears no mark of its own (T322): the tab's highlight says which session is active");
   const block = CSS.slice(CSS.indexOf("#tab-snapshot {"), CSS.indexOf(".snap-when {") + 200);
   assert.ok(block.length > 200, "the sheet was found");
   assert.deepEqual([...new Set(block.match(/font-size: [^;]+/g))], ["font-size: 0.82em"], "one sub-line size, the header's; the rest inherit the body");
@@ -680,9 +688,32 @@ test("pinned: the sheet: the shown header's wash and the stand-in's mark on the 
   assert.match(block, /\.snap-pip\.retrying \{ background: var\(--st-retrying-bg\); \}/, "the same status token the tab and the folded header's pip use");
   assert.match(block, /\.snap-row:hover \{ border-color: var\(--accent\); background: var\(--accent-wash\); \}/);
   assert.match(block, /\.snap-row:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
-  assert.match(block, /\.snap-flag\.needs \{ border-color: transparent; background: var\(--st-blocked-bg\); color: var\(--st-blocked-fg\); \}/, "needs you in the status red, not the accent");
+  assert.doesNotMatch(block, /\.snap-flag/, "no pill of the view's own (T322b): the state words are the shared status chip, .chip / .chip-<state>");
   const stripped = block.replace(/\/\*[\s\S]*?\*\//g, "").replace(/var\([^)]*\)/g, "V");
   assert.equal(stripped.match(/#[0-9a-fA-F]{3,8}\b/g), null, "no raw color: the light theme needs no override");
+});
+
+test("executed: the row's state words are the SHARED status chip (T322b): the awaiting row wears chip-awaitingBg with 'Awaiting <word>' from the status's kind and count, the needs-you row the bar's Blocked; the pip stays; a count change re-texts the chip", () => {
+  const { api, content, sessions } = world();
+  sessions.set("tests", { name: "tests", color: null, status: { state: "awaitingBg", sinceEpoch: (T0 - 900) * 1000, awaitingKind: "agents", awaitingCount: 3, awaitingItems: [] }, events: [] });
+  api.set({ lastStripItems: [{ head: { name: "infra", localId: "g2", color: "#4EC9B0", ids: ["web", "api", "tests"] }, folded: false, active: true, hidden: [] }, { id: "web" }, { id: "api" }, { id: "tests" }], snapView: "infra" });
+  api.renderSnapshot();
+  const host = content.byId("tab-snapshot")!;
+  const [web, api_, tests] = rowsOf(host).map((i) => i.children[0]);
+  assert.deepEqual(tests.children.map((c) => c.className), ["snap-pip waiting", "snap-sess", "chip chip-awaitingBg", "snap-now", "snap-when"], "the green pip stays; the chip beside the name");
+  assert.deepEqual([tests.children[2].tag, tests.children[2].textContent], ["span", "Awaiting 3 agents"], "the bar's words: the kind, agreeing in number");
+  assert.equal(tests.getAttribute("aria-label"), "tests; Awaiting 3 agents", "spoken as shown");
+  assert.deepEqual([api_.children[2].className, api_.children[2].textContent], ["chip chip-needsInput", "Blocked"], "on you: the feed's column word, the bar's chip");
+  assert.equal(web.querySelector(".chip"), null, "a working row says it with the pip alone");
+  assert.equal(host.querySelector(".snap-flag"), null, "no pill of the view's own");
+  // new information: the kind and count change → the button stands, the chip re-texts
+  const m1 = api.get().snapModel;
+  sessions.set("tests", { ...sessions.get("tests"), status: { ...sessions.get("tests").status, awaitingKind: "job", awaitingCount: 1 } });
+  api.renderSnapshot();
+  assert.notEqual(api.get().snapModel, m1, "a chip change is a model change");
+  assert.equal(rowsOf(host)[2].children[0], tests, "the button stands");
+  assert.equal(tests.querySelector(".chip")!.textContent, "Awaiting watch");
+  assert.equal(tests.getAttribute("aria-label"), "tests; Awaiting watch");
 });
 
 test("executed: the guide describes the fold rule and the view", () => {

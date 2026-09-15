@@ -47,6 +47,7 @@ from pathlib import Path
 # The tmux launcher picks the first unused colour; for an SDK session we pick deterministically by a
 # stable hash of the sid (the launcher's own fallback when all are taken), so the session gets a
 # consistent colour without cross-backend "used" bookkeeping.
+import importlib
 import importlib.util
 _HERE = Path(__file__).resolve().parent
 _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE / "loadsource.py"))
@@ -60,6 +61,42 @@ _pal = load_source("romp_palette", _HERE / "palette.py")
 # A copy already loaded under this name is REUSED, never re-executed: the module holds process state (the
 # helper's TTL memo), and load_source, like load_module(), would run the file again into that object.
 _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", _HERE / "credentials.py")
+# The stored Claude logins a session can be billed to beside the machine's own (logins.py, T346): the registry
+# of labels and organisations under STATE/logins, the pick vocabulary "login" | "key" | "login:<id>", and the
+# held token store. Loaded the same way, one copy for the kernel and the backend.
+_logins = sys.modules.get("romp_logins") or load_source("romp_logins", _HERE / "logins.py")
+
+
+class CLIConnectionErrorLike(RuntimeError):
+    """A host launch or attach refusal, raised out of the connect like the SDK's own CLIConnectionError so
+    the launch-error path records it (T315)."""
+
+
+_HT_LOCK = threading.Lock()
+
+
+def _ht():
+    """kernel/host_transport.py (the per-session host's kernel side, T315), loaded on first use: the
+    hosts are a setting, and a kernel with the setting off never needs the module. Loaded under a lock and
+    checked for completeness: the boot reconcile's thread and a session's thread reach here together at
+    boot, and load_source registers the module before its body has run, so an unguarded second caller saw
+    a half-built module (AttributeError on session_hosts_on, the first served run of T315)."""
+    m = sys.modules.get("romp_host_transport")
+    if m is not None and hasattr(m, "HostTransport"):
+        return m
+    with _HT_LOCK:
+        m = sys.modules.get("romp_host_transport")
+        if m is not None and hasattr(m, "HostTransport"):
+            return m
+        # the SDK package FIRST, whole: host_transport.py imports the SDK's Transport submodule at its top, and
+        # a session thread importing the package at the same moment (its own `from claude_agent_sdk import`)
+        # deadlocked on the two module locks taken in opposite orders (the first served run of T315). With
+        # the package imported here, the submodule import inside the load finds it loaded.
+        try:
+            importlib.import_module("claude_agent_sdk")
+        except Exception:
+            pass
+        return load_source("romp_host_transport", _HERE / "host_transport.py")
 # The by-text KEY RULES (session_backend.echo_text_key, and command_text_key for a slash send): the one
 # normalization under which an input echo's text is compared with a transcript record's, shared with the
 # kernel's _atom_user_texts so the landing scan below can never find what prune_live cannot retire. The
@@ -71,6 +108,12 @@ _keys = (sys.modules.get("romp_session_backend")
          or load_source("romp_session_backend_keys", _HERE / "session_backend.py"))
 echo_text_key = _keys.echo_text_key
 command_text_key = _keys.command_text_key
+# The event model's AUTHOR rule (author_of, is_interrupt_record), for the boot scan that asks whether a
+# LATER human turn went through after a send (_input_landed_after, 2026-09-11): a transcript record is read
+# there exactly the way the kernel's parse authors its atom, so "a genuine-human turn" means one thing on
+# both sides of the restart. The kernel's own copy when it is loaded (the _cred idiom); standalone, the file
+# under its own name.
+_em = sys.modules.get("romp_event_model") or load_source("romp_event_model_echo", _HERE / "event_model.py")
 echo_keys = _keys.echo_keys                  # both keys of a text, the "either key" rule written once
 
 
@@ -1107,6 +1150,19 @@ _COMMAND_NAME_ANY_RE = re.compile(r"<command-name>([^<]*)</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>([\s\S]*?)</command-args>")
 _LOCAL_STDOUT_RE = re.compile(r"^\s*<local-command-stdout>([\s\S]*?)</local-command-stdout>")
 _CMD_WRAP_RE = re.compile(r"^\s*<(?:command-(?:name|message|args|contents)|local-command-(?:stdout|caveat))>")
+# The harness's OWN skill load, twin of the event model's is_skill_load_wrapper (the user 2026-09-10): the
+# CLI loads a skill for the model by itself as a command wrapper with a BARE name, a <skill-format> tag and no
+# <command-args> slot (a typed skill in the new format carries the tag too, with its slot and its slash);
+# nobody typed it, so it is never the command-flagged human atom (which opened a segment of its own on the
+# live tail exactly as the file adapter did). It falls to the wrapper-noise skip below. ONE definition: the
+# event model's, read through the module binding _human_input_record already reads, so the two adapters cannot
+# drift on this shape (the other wrapper regexes above are twins because msg_to_atom predates the binding).
+
+
+def _is_skill_load_wrapper(text):
+    return _em.is_skill_load_wrapper(text)
+
+
 # The Skill tool's INSTRUCTIONS payload — twin of the event model's SKILL_CONTENT_RE/SKILL_MD_CAP (the
 # user 2026-07-08). On the STREAM it arrives as a plain UserMessage (the isMeta flag exists only on the
 # transcript record), so as a raw user atom it rendered as a fully-expanded note box for the whole live
@@ -1131,6 +1187,8 @@ def _command_invocation(text):
     record that BEGINS with a command wrapper (_CMD_WRAP_RE), never from prose that quotes it. Read by
     msg_to_atom for the live atom and by _landed_texts for the landing scan, so the scan finds a slash
     send under exactly the text the kernel's prune retires its echo by."""
+    if _is_skill_load_wrapper(text):
+        return None                              # the harness loading a skill for the model: not an invocation
     mcmd = _COMMAND_NAME_RE.match(text) or (_COMMAND_NAME_ANY_RE.search(text)
                                             if _CMD_WRAP_RE.match(text) else None)
     if not mcmd:
@@ -1660,10 +1718,12 @@ def append_resume_fork(state_dir: Path, sid: str, from_fsid: str, to_fsid: str, 
 #                          "sid": romp sid when about a session, "name": its name then, ...flat fields}.
 #                         Kinds this file writes: reconcile.boot (the sweep's summary, every boot, ledger only),
 #                         reconcile.orphan-reaped, reconcile.scope-stopped, reconcile.duplicate-cli, crash.heal,
-#                         crash.loop, drain.unjoined. Every kind that IS a problem also lands on the backend's
-#                         problem ring (the dashboard's bell and error center) as its prose, and on the kernel
-#                         log as `<prose> ;; problem-row {json}` so a log reader parses the same object with
-#                         `line.rsplit(PROBLEM_ROW_MARK, 1)[1]`.
+#                         crash.loop, drain.unjoined. Every kind but the boot summary is written through
+#                         problem_row: its row carries the prose as `text`, and the kernel log gets
+#                         `<prose> ;; problem-row {json}` so a log reader parses the same object with
+#                         `line.rsplit(PROBLEM_ROW_MARK, 1)[1]`. Every one of those but drain.unjoined also
+#                         lands on the backend's problem ring (the dashboard's bell and error center) as its
+#                         prose; the drain rows are written as the kernel exits, when the ring has no reader.
 #   turns.jsonl           one row per settled turn (SdkSession._turn_ledger_row): the event stamps the latency
 #                         and redo-cost figures read. Every stamp is an EVENT's time: fedT is the feed pop
 #                         (the turn left the queue for the CLI's stdin), firstOutT the first streamed work atom,
@@ -2022,6 +2082,9 @@ def acct_digest() -> str:
 # written to disk (STATE/api-health.json: the per-bucket state plus a bounded transition tail, rewritten
 # whole and atomically on each), so the history survives a restart while the per-request events do not:
 # persisting every attempt would add a write per API call for a window that empties itself in 17
+# The T316 ledger persists per-BIN counts (five integers per bin, three bounded tiers), never an attempt:
+# it reaches disk on the first event of a minute at most, so a day of the picture survives a restart at
+# the cost of one small write a minute.
 # minutes, and a restart already announces itself through bootId/complete — every bucket comes back
 # `unknown` (an empty ring is no evidence) with its transitions continuous across the boot.
 #
@@ -2144,6 +2207,9 @@ def api_health_auth_label(source, *, salt: str, key_fp: str = "", launched_keyed
       login:<12 hex>   apiKeySource absent or 'none' (a subscription login); the material is the
                        account digest the usage bars already stamp (acct_digest)
       login:unknown    …with no readable account
+      login:<12 hex>   …a session billed to a STORED login (T346) hands its record id as the material,
+                       so that login is its own bucket, distinct from the machine's (the card names it
+                       by its label: ApiHealth.auth_label remembers the display beside the label)
       key:<12 hex>     'ANTHROPIC_API_KEY' with a launch fingerprint handed in (`key_fp` and
                        `launched_keyed`): no production caller does since 2026-09-08 (romp holds no key)
       key:env          'ANTHROPIC_API_KEY' the CLI found on its own (the kernel holds no material)
@@ -2298,6 +2364,108 @@ def api_health_series(events, now: float, window: int, bin_s: int = 60) -> dict:
         out[k][i] += 1
     out.update({"binS": bin_s, "from": round(start, 3)})
     return out
+
+
+# The per-bin LEDGER behind the dashboard's histograms (T316, the user 2026-09-10, who wanted the popup to show the past
+# 24 hours and a detail view with 1 hour / 24 hours / 7 days): the event ring holds only the windows' span, so every
+# attempt is also folded into three tiers of fixed-width bins the moment it lands, the way the spend ledger keeps its
+# hour buckets (T293): one-minute bins for the last hour, five-minute bins for the last 24 hours, hourly bins for the
+# last 7 days. Five counters per bin (successes, 429, 5xx with 529, no connection, another status). Bounded: at most
+# 60 + 288 + 168 = 516 bins per bucket, so under about 100 KB per bucket in memory when every bin has traffic and about
+# 17 KB in the state file (about 33 bytes a bin); buckets (auth x family) are few. Persisted in api-health.json with the state and restored at
+# boot, so a restart keeps the day's picture. Additive to the payload: a reader that ignores `ledger` sees the
+# document it always saw.
+API_HEALTH_LEDGER_TIERS = (("minute", 60, 60), ("fiveMin", 300, 288), ("hour", 3600, 168))   # name, seconds per bin, bins kept
+API_HEALTH_LEDGER_CLASSES = ("ok", "rateLimited", "serverErrors", "noStatus", "other")
+
+
+def api_health_ledger_class(kind, cls) -> int:
+    """The counter an event lands in: successes, 429 attempts, 5xx (529 included), no connection, another status."""
+    if kind == "ok":
+        return 0
+    if cls == "429":
+        return 1
+    if cls in ("529", "5xx"):
+        return 2
+    if cls == "none":
+        return 3
+    return 4
+
+
+def api_health_ledger_add(ledger: dict, key: str, t: float, kind, cls) -> None:
+    """Fold one event into every tier of `ledger[key]` ({tier: {binStart: [5 counts]}}) and drop the bins that fell
+    out of the tier's span, and any bin MORE THAN ONE BIN past this event's (a clock that stepped back left it; the
+    event's own time is the best "now" there is; a neighbouring bin stays, since two threads' stamps can straddle a
+    boundary and land out of order). Pure over its arguments; the caller holds the aggregator's lock."""
+    i = api_health_ledger_class(kind, cls)
+    tiers = ledger.setdefault(key, {})
+    for name, bin_s, keep in API_HEALTH_LEDGER_TIERS:
+        bins = tiers.setdefault(name, {})
+        start = int(t // bin_s) * bin_s
+        row = bins.get(start)
+        if row is None:
+            row = bins[start] = [0, 0, 0, 0, 0]
+        row[i] += 1
+        lo = start - (keep - 1) * bin_s          # the tier's span ends at this bin: older bins go, whatever their number,
+        hi = start + bin_s                       # so sparse traffic keeps only the span's bins (never a sawtooth of stale ones);
+        for k in [k for k in bins if k < lo or k > hi]:   # a bin PAST this event's (stamped before a clock step back) goes too,
+            del bins[k]                          # or it would resurface as a phantom bar when the clock reaches it (review find)
+
+
+def api_health_ledger_view(tiers: dict | None, now: float) -> dict:
+    """The dense payload form of one bucket's ledger at `now`: per tier, `binS`, `from` (the first bin's start) and
+    one integer array per class, oldest first, the last bin the one that holds `now`, zeros where nothing landed.
+    Bins newer than `now` (a clock that went back) are left out rather than drawn in the future."""
+    out = {}
+    for name, bin_s, keep in API_HEALTH_LEDGER_TIERS:
+        bins = (tiers or {}).get(name) or {}
+        last = int(now // bin_s) * bin_s
+        first = last - (keep - 1) * bin_s
+        cols = [[0] * keep for _ in API_HEALTH_LEDGER_CLASSES]
+        for start, row in bins.items():
+            if first <= start <= last:
+                j = (start - first) // bin_s
+                for c in range(len(API_HEALTH_LEDGER_CLASSES)):
+                    cols[c][j] += int(row[c]) if c < len(row) else 0
+        tier = {"binS": bin_s, "from": first}
+        for c, cname in enumerate(API_HEALTH_LEDGER_CLASSES):
+            tier[cname] = cols[c]
+        out[name] = tier
+    return out
+
+
+def api_health_ledger_parse(raw) -> tuple:
+    """A persisted ledger ({bucket: {tier: {"<start>": [counts]}}}) back into memory: (ledger, skipped). Anything
+    malformed (a non-dict, an unknown tier, a start that is not an integer, a row that is not a list of counts) is
+    skipped and counted, never raised: this runs at boot."""
+    ledger, bad = {}, 0
+    if not isinstance(raw, dict):
+        return ledger, (1 if raw is not None else 0)
+    names = {n: (b, k) for n, b, k in API_HEALTH_LEDGER_TIERS}
+    for key, tiers in raw.items():
+        if not (isinstance(key, str) and key and isinstance(tiers, dict)):
+            bad += 1
+            continue
+        out = {}
+        for name, bins in tiers.items():
+            if name not in names or not isinstance(bins, dict):
+                bad += 1
+                continue
+            rows = {}
+            for start, row in bins.items():
+                try:
+                    st = int(start)
+                    ok = isinstance(row, list) and 1 <= len(row) <= len(API_HEALTH_LEDGER_CLASSES) and all(
+                        isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in row)
+                except (TypeError, ValueError):
+                    ok = False
+                if not ok:
+                    bad += 1
+                    continue
+                rows[st] = list(row) + [0] * (len(API_HEALTH_LEDGER_CLASSES) - len(row))
+            out[name] = rows
+        ledger[key] = out
+    return ledger, bad
 
 
 API_HEALTH_SEVERITY = {"unknown": 0, "healthy": 1, "recovering": 2, "degraded": 3, "thrashing": 4}
@@ -2494,7 +2662,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 TEST_ROOT_PREFIX = "romp-tests-"
-TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"    # tests/conftest.py writes it at mint time
+TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"    # tests/__init__.py writes it at mint time (conftest.py did until 2026-09-14)
 TEST_ROOT_TOMBSTONE = ".sweeping"                   # a root renamed to <name>.sweeping is ours to finish deleting
 TEST_ROOT_SWEEP_BUDGET_S = 30.0                     # per boot; the rest waits for the next boot's sweep
 
@@ -2503,16 +2671,24 @@ def _rmtree_stubborn(root: str) -> None:
     """rmtree that gets past a child with its permission bits cleared (a 000-mode directory some suite
     tests create and restore only in a finally that an os._exit skipped): on the first failure at a
     path, restore owner rwx on it and its parent and retry that step once. Raises on a second failure
-    so the caller can leave the tombstone standing and say so."""
+    so the caller can leave the tombstone standing and say so. Only `root` and directories inside it
+    are re-moded: the root's parent is not ours, and a chmod of a symlink would land on its target."""
     def onexc(func, path, exc):
         # `func` is whichever os call failed (3.12's fd-based rmtree hands over os.open, os.scandir,
         # os.rmdir, os.unlink with their own signatures), so it is not called back: the subtree at
         # `path` is removed again plainly after the chmod, and a second failure raises.
-        try:
-            os.chmod(os.path.dirname(path), 0o700)
-            os.chmod(path, 0o700)
-        except OSError:
-            pass
+        # Re-mode only directories of the tombstone's own tree. rmtree hands over the root or a
+        # descendant, so the parent is outside the tree exactly when `path` is the root (a failed
+        # rmdir of the root, or a root a peer already removed, must not chmod the system temp dir);
+        # and os.chmod follows a symlink, so a link inside a read-only child is left alone (its
+        # target may be anywhere). Unlink needs the parent's write bit, never the entry's own mode,
+        # so a non-directory never needed the chmod.
+        for p in ([os.path.dirname(path)] if path != root else []) + [path]:
+            if os.path.isdir(p) and not os.path.islink(p):
+                try:
+                    os.chmod(p, 0o700)
+                except OSError:
+                    pass
         if os.path.isdir(path) and not os.path.islink(path):
             shutil.rmtree(path)
         elif os.path.lexists(path):
@@ -2525,9 +2701,10 @@ def _rmtree_stubborn(root: str) -> None:
 
 def sweep_dead_test_roots(tmpdir: str, log=None, budget_s: float = TEST_ROOT_SWEEP_BUDGET_S) -> int:
     """Remove the test suite's `romp-tests-*` temp roots under `tmpdir` whose OWNER IS DEAD; return the
-    count removed. tests/conftest.py mints one root per run, redirects TMPDIR into it and removes it
-    at run end — but a run that dies without reaching that removal (pytest-timeout's os._exit, a kernel
-    restart cutting the tool shell, the cut-turn reaper's kill) leaves the whole root standing, and on
+    count removed. The tests package (tests/__init__.py; conftest.py until 2026-09-14) mints one root
+    per run, redirects TMPDIR into it and removes it at exit — but a run that dies without reaching
+    that removal (pytest-timeout's os._exit, a kernel restart cutting the tool shell, the cut-turn
+    reaper's kill) leaves the whole root standing, and on
     a shared machine those roots piled into millions of files that the next boot's /tmp cleanup spent
     39 minutes deleting (2026-09-10). Nothing in the dead run can clean up, so the kernel does, from
     boot reconcile — AFTER the session pass and on its own thread (a dead pile is minutes of rmtree;
@@ -2607,7 +2784,10 @@ class ApiHealth:
         self._seen: dict = {}            # (sid, message_id) -> t; dedupes the CLI's one-frame-per-block replies
         self._seq = 0
         self._last_event_at = None
+        self._ledger: dict = {}          # bucket key -> {tier: {binStart: [5 counts]}}: the histograms' bins (T316)
+        self._ledger_minute = None       # the minute bin of the last event: a change is the rollover that writes the state file
         self._salt = None                # lazily read/minted: nothing is written until a label is needed
+        self._labels: dict = {}          # auth label -> a stored login's display label (T346): the card names the bucket by it
         # bucket key -> {"state", "since", "why", "evidence", "auth", "family"}: the persisted half of
         # the derivation's input is (state, since); the rest is what the newest transition recorded
         self._last_state: dict = {}
@@ -2697,13 +2877,21 @@ class ApiHealth:
         except OSError:
             pass
 
-    def auth_label(self, source, *, key_fp: str = "", launched_keyed: bool = False) -> str:
-        """api_health_auth_label with this install's salt and the account digest the usage bars use."""
+    def auth_label(self, source, *, key_fp: str = "", launched_keyed: bool = False,
+                   login_id: str = "", display: str = "") -> str:
+        """api_health_auth_label with this install's salt and the account digest the usage bars use. A
+        session billed to a STORED login (T346) hands its record id as the login material instead, so that
+        login is its own bucket (login:<salted digest of the id>), and its display label is remembered
+        here for the card, which names a bucket by label when several share a family."""
         acct = ""
         if not source or str(source).strip().lower() == "none":
-            acct = acct_digest()
-        return api_health_auth_label(source, salt=self.salt(), key_fp=key_fp,
-                                     launched_keyed=launched_keyed, acct=acct)
+            acct = login_id or acct_digest()
+        label = api_health_auth_label(source, salt=self.salt(), key_fp=key_fp,
+                                      launched_keyed=launched_keyed, acct=acct)
+        if login_id and display and acct == login_id:
+            with self._lock:
+                self._labels[label] = display
+        return label
 
     # ---- ingestion (each on the session's own thread) ----
     def _push(self, ev: AhEvent):
@@ -2711,6 +2899,14 @@ class ApiHealth:
             self._ring.append(ev)
             self._seq += 1
             self._last_event_at = ev.t if self._last_event_at is None else max(self._last_event_at, ev.t)
+            api_health_ledger_add(self._ledger, "%s|%s" % (ev.auth, ev.family), ev.t, ev.kind, ev.cls)
+            minute = int(ev.t // 60)
+            if self._ledger_minute is None or minute > self._ledger_minute:
+                # the ledger reaches disk on a NEW minute's first event (monotone: two threads whose stamps straddle a
+                # boundary and land out of order do not write twice, review find), so a restart loses at most the
+                # current minute's counts; a transition rewrites the same file anyway
+                self._ledger_minute = minute
+                self._write_state_locked()
             if self._seq % 256 == 0:
                 self._evict_locked(ev.t)
 
@@ -2823,13 +3019,16 @@ class ApiHealth:
                     bad += 1
                     continue
                 recs[key] = {"state": st, "since": since, "why": rec.get("why") or "", "evidence": rec.get("evidence"),
-                             "auth": rec.get("auth"), "family": rec.get("family")}
+                             "auth": rec.get("auth"), "family": rec.get("family"),
+                             "label": rec.get("label") if isinstance(rec.get("label"), str) else ""}
                 per[key] = []
                 for r in rec.get("transitions") or []:
                     if self._row_ok(r):
                         per[key].append(r)
                     else:
                         bad += 1
+            ledger, lbad = api_health_ledger_parse(doc.get("ledger"))   # the histograms' bins (T316), malformed ones skipped
+            bad += lbad
             if bad and self._log:
                 self._log("api-health: %d malformed row(s) skipped at boot (%s)" % (bad, API_HEALTH_STATE_FILE))
             # one stamp, at the tail's millisecond precision, for the restart rows, the seeded since and the payload's
@@ -2845,6 +3044,7 @@ class ApiHealth:
             self.boot_stamp = at
             filed = False
             with self._lock:
+                self._ledger = ledger
                 self._transitions.extend(rows)
                 for key, rs in per.items():
                     self._by_bucket[key] = deque(rs, maxlen=API_HEALTH_TRANSITIONS_KEEP)
@@ -2860,6 +3060,8 @@ class ApiHealth:
                         filed = True
                     self._last_state[key] = {"state": "unknown", "since": at, "why": API_HEALTH_RESTART_WHY,
                                              "evidence": ev, "auth": auth, "family": fam}
+                    if rec.get("label"):
+                        self._labels[auth] = rec["label"]     # a stored login's display name survives the restart with its bucket
                 if filed:
                     self._write_state_locked()
         except Exception as e:   # loud, and the backend still comes up
@@ -2892,8 +3094,11 @@ class ApiHealth:
         doc = {"schema": API_HEALTH_SCHEMA,
                "transitions": list(self._transitions),
                "buckets": {k: {"state": v["state"], "stateSince": v["since"], "why": v["why"], "evidence": v["evidence"],
-                               "auth": v["auth"], "family": v["family"],
-                               "transitions": list(self._by_bucket.get(k, ()))} for k, v in self._last_state.items()}}
+                               "auth": v["auth"], "family": v["family"], "label": self._labels.get(v["auth"], ""),
+                               "transitions": list(self._by_bucket.get(k, ()))} for k, v in self._last_state.items()},
+               # the histograms' bins (T316): {bucket: {tier: {"<start>": [counts]}}}, bounded by the tiers' spans
+               "ledger": {k: {n: {str(st): row for st, row in bins.items()} for n, bins in tiers.items()}
+                          for k, tiers in self._ledger.items()}}
         tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -2946,29 +3151,36 @@ class ApiHealth:
             events = list(self._ring)
             seq, last_at = self._seq, self._last_event_at
             known = {k: dict(v) for k, v in self._last_state.items()}
+            ledgers = {k: {n: dict(b) for n, b in tiers.items()} for k, tiers in self._ledger.items()}
         by_bucket: dict = {}
         for e in events:
             by_bucket.setdefault("%s|%s" % (e.auth, e.family), []).append(e)
         derived = []
-        for key in sorted(set(by_bucket) | set(known)):
+        for key in sorted(set(by_bucket) | set(known) | set(ledgers)):
             evs = by_bucket.get(key, [])
             prev = known.get(key)
-            auth, fam = (evs[0].auth, evs[0].family) if evs else (prev["auth"], prev["family"])
+            if evs:
+                auth, fam = evs[0].auth, evs[0].family
+            elif prev:
+                auth, fam = prev["auth"], prev["family"]
+            else:   # a bucket the ledger alone remembers (T316): its key names it
+                auth, fam = key.split("|", 1) if "|" in key else (key, "unknown")
             st = api_health_state(evs, now, (prev["state"], prev["since"]) if prev else None, cfg)
             wins = {str(w): api_health_counts(evs, now, w, uptime_s) for w in cfg["windows"]}
             series = api_health_series(evs, now, max(cfg["windows"]))   # the graph's per-minute bins (T301)
+            ledger = api_health_ledger_view(ledgers.get(key), now)        # the histograms' three tiers (T316)
             last_err = None
             for e in reversed(evs):
                 if e.kind != "ok":
                     last_err = {"at": round(e.t, 3), "status": e.status, "category": e.category or None,
                                 "class": e.cls, "kind": e.kind}
                     break
-            derived.append((key, auth, fam, prev, st, wins, last_err, series))
+            derived.append((key, auth, fam, prev, st, wins, last_err, series, ledger))
         buckets = {}
         worst, worst_key = "unknown", None
         filed = False
         with self._lock:
-            for key, auth, fam, prev, st, wins, last_err, series in derived:
+            for key, auth, fam, prev, st, wins, last_err, series, ledger in derived:
                 cur = self._last_state.get(key)
                 if cur != prev:
                     rec = cur                    # a concurrent read filed this bucket first: its record stands
@@ -2982,11 +3194,11 @@ class ApiHealth:
                            "why": st["why"] if st["why"] is not None else ((prev or {}).get("why") or ""),
                            "evidence": st["evidence"] if st["evidence"] is not None else (prev or {}).get("evidence")}
                     self._last_state[key] = rec
-                buckets[key] = {"auth": auth, "family": fam, "windows": wins,
+                buckets[key] = {"auth": auth, "family": fam, "label": self._labels.get(auth, ""), "windows": wins,
                                 "state": rec["state"], "stateSince": round(rec["since"], 3),
                                 "evidence": rec["evidence"], "why": rec["why"],
                                 "transitions": list(self._by_bucket.get(key, ())),
-                                "lastError": last_err, "series": series}
+                                "lastError": last_err, "series": series, "ledger": ledger}
                 if API_HEALTH_SEVERITY[rec["state"]] > API_HEALTH_SEVERITY[worst] or worst_key is None:
                     worst, worst_key = rec["state"], key
             if filed:
@@ -3017,10 +3229,30 @@ def read_reg(state_dir: Path, sid: str) -> dict | None:
     return reg if isinstance(reg, dict) else None
 
 
+def _reg_absent_for_write(path) -> bool:
+    """Whether a reg WRITER may build a fresh {sid} record at `path`: only when the stat says ENOENT, a genuinely absent
+    file. Every other stat error (EACCES on sdk/, ELOOP on a symlink-loop path, ENOTDIR, EIO) is a reg that exists or a
+    path that cannot hold one, and a write there guts the record or lands in the wrong place; never Path.exists(), which
+    answered False on all of them on CPython 3.14 and on ELOOP on every interpreter (2026-09-14). This is the WRITERS' rule;
+    the readers' missing set (kernel _REG_MISSING_ERRNOS and postal REG_MISSING_ERRNOS: ENOENT, ENOTDIR, EBADF, ELOOP) is
+    wider on purpose: a reader treats a loop as no record, a writer never builds one there."""
+    try:
+        path.stat()
+        return False
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
     """read_reg for a READ-MODIFY-WRITE on one reg FIELD: {} when the reg genuinely does not
-    exist (a fresh session — an empty base is correct), None when the reg EXISTS but would not
-    read (a transient failure). A None caller MUST skip its write: rebuilding a list field from
+    exist (ENOENT, a fresh session: an empty base is correct), None when the reg EXISTS but would not
+    read (EACCES, EIO, torn JSON: transient) OR its path cannot hold a reg (ELOOP, ENOTDIR: these will
+    not heal, and the caller's skipped write is still the right answer, since a write there lands
+    nowhere a reader looks). The writers' rule is _reg_absent_for_write; the READERS' missing set is
+    wider (the kernel's _REG_MISSING_ERRNOS: ENOENT, ENOTDIR, EBADF, ELOOP), on purpose: a reader
+    treats a loop as no record, a writer never builds one there. A None caller MUST skip its write: rebuilding a list field from
     an empty base and persisting it silently wipes the field — bgLedger/bgLedgerEnded, pushNotes,
     taskWrites, sessionCrons all carried this shape (the 2026-09-01 field-level gutting class,
     the field-sized sibling of _update_reg's whole-reg guard). Losing one update is the far
@@ -3028,7 +3260,7 @@ def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
     reg = read_reg(state_dir, sid)
     if reg is not None:
         return reg
-    return None if _reg_path(state_dir, sid).exists() else {}
+    return {} if _reg_absent_for_write(_reg_path(state_dir, sid)) else None
 
 
 def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
@@ -3175,6 +3407,36 @@ BOOT_RESUME_CONCURRENCY = max(1, int(os.environ.get("ROMP_BOOT_RESUME_CONCURRENC
 # Backstop ONLY (never the mechanism): a CLI that wedges before init would otherwise hold its slot
 # forever and trap the whole sweep — after this long the sweep proceeds anyway, loudly.
 BOOT_RESUME_SLOT_S = float(os.environ.get("ROMP_BOOT_RESUME_SLOT_S", "180"))
+# The UserPromptSubmit hook's WALL-TIME CAP (2026-09-12). The SDK runs SdkSession._prompt_submit_hook
+# for every prompt a session receives and REFUSES the prompt when the hook misses the CLI's own hook
+# deadline (about 30 s), instead of failing open — under a host load of 100 to 300 on 64 cores the
+# hook's reg read stalled past it and six sessions missed messages for 14 to 76 minutes each. The
+# hook now gives up FIRST: its body runs under asyncio.wait_for with this cap (env
+# ROMP_PROMPT_HOOK_TIMEOUT_S, read at call time so a test can set it; default 8 s) and answers a
+# timeout with {} — the prompt runs. The matcher-level deadline handed to the SDK for this hook
+# (PROMPT_HOOK_SDK_TIMEOUT_S, when the installed HookMatcher takes one) sits far above it, so the
+# inner cap is always the one that fires and the SDK's refusal never is.
+PROMPT_HOOK_TIMEOUT_S_DEFAULT = 8.0
+PROMPT_HOOK_SDK_TIMEOUT_S = 120.0
+# How often (wall clock, at most) an ORDINARY prompt may cost the gate a stat of the reg — the
+# backstop that catches a sessionCrons writer this session object never saw (see the prompt-cache
+# note above _prompt_submit_hook). Only a moved mtime costs a read.
+CRON_PROMPTS_REFRESH_S = 60.0
+
+
+def prompt_hook_timeout_s() -> float:
+    """The prompt hook's cap in seconds, read from ROMP_PROMPT_HOOK_TIMEOUT_S at call time; a value
+    that will not parse, or is not positive, falls to PROMPT_HOOK_TIMEOUT_S_DEFAULT."""
+    raw = os.environ.get("ROMP_PROMPT_HOOK_TIMEOUT_S", "")
+    try:
+        v = float(raw) if raw.strip() else PROMPT_HOOK_TIMEOUT_S_DEFAULT
+    except ValueError:
+        return PROMPT_HOOK_TIMEOUT_S_DEFAULT
+    return v if v > 0 else PROMPT_HOOK_TIMEOUT_S_DEFAULT
+# Boot RE-ATTACHES to live session hosts (T315) are socket connects and a replay of a few hundred small records,
+# not the launch of a claude process, so they do not take the spawn stagger's slots: they run on a wider bound of
+# their own (the restart-path work, 2026-09-11: twelve attaches paced three at a time cost 4 s of a 20 s restart).
+BOOT_ATTACH_CONCURRENCY = max(1, int(os.environ.get("ROMP_BOOT_ATTACH_CONCURRENCY", "8")))
 
 # The rename ping (the user 2026-08-24): a renamed session hears its OWN new name — one line ahead
 # of whatever next enters it (send() below), never a wake of its own. Same [romp] mechanics-notice
@@ -3238,6 +3500,23 @@ def fed_text_opener(text: str) -> str:
     return "injected" if "<!-- romp-injected -->" in (text or "") else "human"
 
 
+# The bus banner's per-message marker, event_model's one detector (its POSTAL_RE; the fallback is the same pattern
+# for a stand-in event_model in tests).
+_POSTAL_MID_RE = getattr(_em, "POSTAL_RE", None) or re.compile(r"<!--\s*romp-msg-id:\s*(\S+?)\s*-->")
+
+
+def postal_mids(text) -> list[str]:
+    """The postal message ids a fed text carries — its `<!-- romp-msg-id: <id> -->` markers, in order, deduped. A
+    non-empty answer says the text is a bus BANNER (SdkBackend.deliver): peer mail, whose only durable copy is the
+    bus's maildir and which has no input echo, so a loss of it has nothing to flag and must go back to the bus by
+    these ids (SdkSession._return_stranded_mail, 2026-09-12)."""
+    out: list[str] = []
+    for m in _POSTAL_MID_RE.findall(text or ""):
+        if m not in out:
+            out.append(m)
+    return out
+
+
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
 # account being out of usage: `claude` refuses the handshake and exits with the limit in its own words
 # ("You've hit your session limit · resets 1:10pm (America/Los_Angeles)"). romp used to swallow that
@@ -3264,7 +3543,7 @@ _LAUNCH_LIMIT_RE = re.compile(
 SDK_MISSING_TEXT = (
     "the Claude Code backend's Agent SDK isn't installed, so this session can't run — its messages are being kept, "
     "not sent. Install it with bin/romp-sdk-setup (it prints the OS package to add if one is missing), "
-    "then restart romp. Claude Code (tmux) sessions are unaffected.")
+    "then restart romp.")
 
 
 def sdk_importable() -> bool:
@@ -3475,19 +3754,18 @@ def sdk_unavailable_text(state_dir, verdict=None, started_missing=True) -> str:
     v = verdict or sdk_venv_verdict(state_dir)
     if v["kind"] == "present" and started_missing:
         return ("the Claude Code backend's Agent SDK was set up for Python %s after romp started, so this session can't "
-                "run yet. Its messages are being kept, not sent. Restart romp to use it. Claude Code (tmux) "
-                "sessions are unaffected." % v["running"])
+                "run yet. Its messages are being kept, not sent. Restart romp to use it." % v["running"])
     if v["kind"] != "mismatch":
         return SDK_MISSING_TEXT
     return ("the Claude Code backend's Agent SDK was set up for Python %s, but romp is running on Python %s, so this "
-            "session can't run. Its messages are being kept, not sent. %s Claude Code (tmux) sessions are unaffected."
+            "session can't run. Its messages are being kept, not sent. %s"
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v)))
 
 
 # The plain session-creation refusal, the same words as the kernel's SDK_SETUP_HINT (which the kernel
 # passes in as `default`, so the two never drift apart in the process that matters).
 SDK_SETUP_REFUSAL = ("Session not created: the Claude Code backend's Agent SDK isn't installed. "
-                     "Run bin/romp-sdk-setup, then try again. (Claude Code (tmux) sessions still work.)")
+                     "Run bin/romp-sdk-setup, then try again.")
 
 
 def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
@@ -3501,11 +3779,11 @@ def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
     v = verdict
     if v["kind"] == "present":
         return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s after romp "
-                "started. Restart romp, then try again. (Claude Code (tmux) sessions still work.)" % v["running"])
+                "started. Restart romp, then try again." % v["running"])
     if v["kind"] != "mismatch":
         return default
     return ("Session not created: the Claude Code backend's Agent SDK was set up for Python %s, but romp is "
-            "running on Python %s. %s (Claude Code (tmux) sessions still work.)"
+            "running on Python %s. %s"
             % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v, then="restart romp and try again")))
 
 
@@ -3942,17 +4220,49 @@ def lease_census(ps_lines: list[str], lastsids: list[str], own_pid: int, leases:
             row("lease.cli-without-lease", "CLI pid %d on conversation %s is a live kernel's child (pid %d) with no valid lease; kept, not reaped"
                 % (pid, (fsid or "")[:8], ppid), pid, lease, fsid)
             continue
-        orphans.append(pid)
         if lease is not None:
             why = states.get(pid)
+            if why == "holder-gone" and (lease.get("holder") or {}).get("kind") == "host":
+                # a per-session HOST died: its CLI's stdin hit end-of-file and it is finishing its turn, then
+                # exits on its own (T315); the session's next connect waits for that exit and replays the
+                # journal. Never reaped mid-turn.
+                owned[pid] = "host-gone-finishing"
+                row("lease.holder-gone", "CLI pid %d of session %s lost its host; it finishes its turn on stdin end-of-file and is not reaped"
+                    % (pid, str(lease.get("sid") or "")[:8]), pid, lease, fsid)
+                continue
+            orphans.append(pid)
             row("lease." + why, "CLI pid %d of session %s has a lease that does not hold (%s); reaped as an orphan"
                 % (pid, str(lease.get("sid") or "")[:8], why.replace("-", " ")), pid, lease, fsid)
+            continue
+        orphans.append(pid)
     for pid, lease in by_pid.items():
         if pid in clis:
             continue
+        # The lease's process is not among the CLIs whose argv names a CURRENT conversation id. Two cases: the
+        # process is gone (or the pid was reused: the start time differs) — a dead lease; or it is alive with
+        # the lease's own identity, an SDK CLI whose argv names a conversation the registry has moved past (a
+        # /clear flips lastSid while the running CLI still carries its --resume of the old id). The lease's
+        # identity is the authority there: valid → owned; not valid → an orphan with the lease's reason.
+        if start(pid) is not None and start(pid) == str(lease.get("start") or ""):
+            why = states.get(pid)
+            if why == "valid":
+                owned[pid] = "lease"
+                if version and str(lease.get("version") or "") != version:
+                    row("lease.version-skew", "lease of session %s (pid %d) was written by code version %s; this kernel runs %s"
+                        % (str(lease.get("sid") or "")[:8], pid, lease.get("version") or "unknown", version), pid, lease)
+            elif why == "holder-gone" and (lease.get("holder") or {}).get("kind") == "host":
+                owned[pid] = "host-gone-finishing"
+                row("lease.holder-gone", "CLI pid %d of session %s lost its host; it finishes its turn on stdin end-of-file and is not reaped"
+                    % (pid, str(lease.get("sid") or "")[:8]), pid, lease)
+            else:
+                orphans.append(pid)
+                row("lease." + why, "CLI pid %d of session %s has a lease that does not hold (%s); reaped as an orphan"
+                    % (pid, str(lease.get("sid") or "")[:8], why.replace("-", " ")), pid, lease)
+            continue
         row("lease.no-live-process", "lease of session %s names pid %d, which is not a live CLI of that session; lease dropped"
             % (str(lease.get("sid") or "")[:8], pid), pid, lease)
-    dead = [str(lease.get("sid")) for pid, lease in by_pid.items() if pid not in clis]
+    dead = [str(lease.get("sid")) for pid, lease in by_pid.items()
+            if pid not in clis and pid not in owned and pid not in orphans]
     return {"orphans": orphans, "owned": owned, "dead_leases": dead, "problems": problems}
 
 # ENDING A CUT TURN'S WHOLE TREE (T276, the user 2026-09-08). Reaping the orphaned CLI alone left its Bash
@@ -3971,6 +4281,8 @@ _SESSION_SCOPE_RE = re.compile(r"romp-session-([0-9a-fA-F]{1,8})-(\d+)-\d+\.scop
 SCOPE_LIST_ARGV = ["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
                    SESSION_SCOPE_PREFIX + "*.scope"]
 SCOPE_STOP_TIMEOUT = 15.0     # systemd's own stop: SIGTERM to the cgroup, SIGKILL at its TimeoutStopSec
+HOST_SCOPE_LIST_ARGV = ["systemctl", "--user", "list-units", "--all", "--plain", "--no-legend", "--no-pager",
+                        "romp-host-*.scope"]   # the per-session hosts' own scopes (T315)
 TREE_KILL_GRACE = 1.0         # seconds for SIGTERM to land on the tree before SIGKILL
 
 
@@ -4772,7 +5084,9 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
 
     Four keys ride here, all per-session:
     - `apiKeyHelper: ""` (2026-09-08, `no_helper`): a LOGIN-billed launch disables the box's apiKeyHelper for
-      this one process. In the CLI's precedence the helper outranks every login form, so without this a
+      this one process, the machine's own login and a STORED login alike (T346; the stored login's token rides
+      the launch's environment since 2026-09-14, docs/reference.md "Several Claude logins", where a helper
+      would outrank it). In the CLI's precedence the helper outranks every login form, so without this a
       login pick on a helper box would bill the key; the empty string is the value the CLI takes as unset
       (null falls through to the settings files), verified on Claude Code 2.1.257 with a marker-writing
       helper. romp holds no key of its own, so this is the whole of what a Billing pick does at launch.
@@ -4890,7 +5204,7 @@ def read_sdk_defaults(state_dir: Path) -> dict:
     Parsed once per file identity: a stat (about 2 us) stands in for the open and parse (about 30 us) on
     every later read until the file changes, keyed by the file's identity (inode, mtime, ctime, size),
     so a write, the atomic writer's or a hand edit's, is seen on the next read and
-    nothing is timed. The read reached the per-row path on 2026-09-09 (unpicked_auth under every
+    nothing is timed. The read reached the per-row path on 2026-09-09 (the unpicked billing fallback under every
     live_sessions row on a keyless box, once per pusher cycle) and measured at +58% per row uncached
     (review round 1). A copy is returned: callers merge into the dict before writing it back."""
     p = _defaults_path(state_dir)
@@ -4913,6 +5227,8 @@ def read_sdk_defaults(state_dir: Path) -> dict:
     return dict(d)
 
 
+# the explicit machine default per state root, cached on sdk-defaults.json's (mtime, size): explicit_default_auth (T380)
+_EXPLICIT_DEFAULT_CACHE: dict = {}
 _defaults_lock = threading.Lock()   # serializes the read-modify-writes below: the kernel thread (set_model, the
 #                                     parked-op replay) and the SDK loop thread (_revert_model) both write the file
 
@@ -5060,60 +5376,6 @@ def _declared_auth(state_dir) -> tuple:
         return a, "pick"
     v = _expected_auth()
     return v, ("env" if v else "")
-
-
-def unpicked_auth(state_dir, key: bool) -> str:
-    """The side a session whose reg holds NO Billing pick bills: the one fallback behind
-    SdkSession.effective_auth, SdkBackend.default_auth (the dormant twin) and the judges' billing
-    (judge.py _judge_auth reads it through the kernel's _UNPICKED_AUTH_FN wire, and mirrors it for the
-    standalone judge), so the badge, the judge billing and the spend readers agree. The key when Claude
-    Code's settings carry an apiKeyHelper (`key`, the caller's SdkBackend.key_available: romp holds no
-    key of its own, and a configured helper bills every unpicked session whatever the box declares, so
-    the key comes before the declaration); else the side the box expects (_declared_auth): a remembered
-    gear pick's side (a login pick is re-seeded into every new reg, and an unpicked reg under one
-    predates the pick and launches the same way), except a remembered KEY pick on a box whose settings
-    carry no helper, which spawn sets aside (it seeds nothing, so the inertness it would grant protects
-    nothing) and under which ROMP_EXPECTED_AUTH speaks again; else the declaration; else the login. Before
-    the declaration was read here, every session on an apiKeyHelper box reported 'login' as its intent:
-    the fallback then knew only a key romp itself held, none on such a box, and took that for a login (the
-    user 2026-09-09) while the CLI's own report said the key. A session a spawn would create is
-    new_session_auth's question: the
-    seed a spawn writes comes first there."""
-    if key:
-        return "key"
-    exp, src = _declared_auth(state_dir)
-    if src == "pick" and exp == "key":
-        return _expected_auth() or "login"
-    return exp or "login"
-
-
-def seeded_auth(defaults: dict, key: bool, unavailable=None) -> str:
-    """The `auth` spawn seeds into a new reg absent an explicit pick: the remembered gear pick (set_auth's
-    durable trace in the defaults), except a pick the box cannot bill, which is set aside (the picker greys that
-    choice, so a re-seed would apply a pick the user cannot make): with `unavailable`, the backend's
-    pick_unavailable (upstream #1147, symmetric), a login pick with no signed-in login or under a managed
-    helper as well as a key pick with no apiKeyHelper; without it, what a standalone caller can read, the key
-    pick on a box whose Claude Code settings carry no apiKeyHelper (`key` false). "" when nothing is seeded.
-    One rule for spawn and for new_session_auth, so the picker's default and the reg a spawn writes cannot
-    disagree."""
-    a = defaults.get("auth")
-    if a not in ("login", "key"):
-        return ""
-    if unavailable is not None:
-        return "" if unavailable(a) else a
-    return a if (a == "login" or key) else ""
-
-
-def new_session_auth(state_dir, key: bool, unavailable=None) -> str:
-    """The side a session spawned now with no explicit pick would bill: the seed spawn would write
-    (seeded_auth), else the unpicked rule (unpicked_auth). The kernel's one reader of a row that reports
-    nothing takes this (_auth_avail's picker default), one function, one order (review round 1, 2026-09-09:
-    the two kernel readers of the time read the declaration before the key while the backend read it after,
-    so a keyed box declaring login seeded the picker on Login for sessions that launched keyed);
-    _bills_login, the spend pause's reader of such a row, reads not _auth_key_present() instead (the
-    2026-09-10 fold, ruling K2). `unavailable`: the backend's pick_unavailable when the caller has one
-    (seeded_auth)."""
-    return seeded_auth(read_sdk_defaults(Path(state_dir)), key, unavailable) or unpicked_auth(state_dir, key)
 
 
 # ---------------------------------------------------------------------------
@@ -5329,7 +5591,12 @@ def queue_meta_from_reg(reg: dict) -> list:
     entries = [m for m in raw if isinstance(m, dict) and isinstance(m.get("text"), str)] if isinstance(raw, list) else []
 
     def ident(m):
-        return {"qid": m["qid"], "qts": m.get("qts")} if isinstance(m.get("qid"), str) and m["qid"] else None
+        if not (isinstance(m.get("qid"), str) and m["qid"]):
+            return None
+        out = {"qid": m["qid"], "qts": m.get("qts")}
+        if isinstance(m.get("paths"), list) and m["paths"]:
+            out["paths"] = [str(x) for x in m["paths"] if isinstance(x, str)]   # the attachment list survives a restart with the copy (T373 fold)
+        return out
 
     # the mirror lists EVERY position (text alone for an id-less copy): align the mirrored run as one block of the
     # queue — the boot paths that edit reg['queue'] by text (a notice prepended, a re-delivered send appended)
@@ -5394,6 +5661,10 @@ def _wake_feeder(loop, wake) -> None:
 # unit recorded), so the pre-read cannot key on it (kernel-3, 2026-09-10).
 _UNREAD = object()
 
+_RESTAMPS: dict = {}   # {sid: (previous spawnedAt, new)} where this process moved a reg's epoch: the kernel's build counts the
+#                        still-running work between the two (a survivor's work a re-stamp dropped) once per entry and pops it;
+#                        seeded here, at the stamp, because at a boot the reg moves before the first build (2026-09-14)
+
 
 class SdkSession:
     """One long-lived SDK client running in its own thread + asyncio loop."""
@@ -5421,6 +5692,13 @@ class SdkSession:
         self.name = reg.get("name", self.sid)
         self.cwd = reg.get("cwd") or os.path.expanduser("~")
         self.mode = reg.get("mode") or "acceptEdits"
+        # The recurring-cron PROMPT CACHE (2026-09-12): the prompt hook's common path touches no file
+        # (see the note above _prompt_submit_hook). Seeded from the reg this session was built from;
+        # every sessionCrons writer on this object re-reads it, and a 60 s mtime backstop covers the rest.
+        self._cron_prompts: frozenset = frozenset()
+        self._cron_prompts_at = 0.0                 # monotonic stamp of the last (attempted) refresh
+        self._cron_prompts_mtime = None             # the reg file's st_mtime_ns the cache was read at
+        self._cron_prompts_seed(reg)
         # The PROCESS GENERATION stamp: session-scoped timers live in THIS CLI process's memory, so
         # every armed-timer record carries the generation that armed it (procGen). A recorded timer
         # whose generation is still the live one WILL be fired by the CLI itself — the kernel must
@@ -5470,6 +5748,17 @@ class SdkSession:
         self._oom_baseline: int | None = None
         self._cli_exit_code: int | None = None
         self.inflight = 0
+        # the per-session host (T315): the live HostTransport while attached; `detached` latches a deliberate
+        # detach (the kernel leaving, the host keeping the CLI) so _on_session_gone never reads it as a crash;
+        # `_host_end_grace` is the bound the next `end` carries (kill sets the short one)
+        self._host = None
+        self._host_intent = False          # set before the host attach or spawn begins, so a drain mid-attach detaches
+        self._host_is_attach = False       # the current host connect is an ATTACH (a replay-bearing hello)
+        self._deliberate_connect = False   # this connect is a deliberate reconnect inside a live thread: a fresh CLI marks no echoes
+        self._host_attach_retries = 0
+        self.detached = False
+        self._host_end_grace = None
+        self._host_ack_t = 0.0
         # The TEXTS of turns fed to the current client whose ResultMessage hasn't landed — the fed-turn
         # twin of `inflight` (append at feed, cleared at the authoritative settle), all on the loop
         # thread. Exists for the reconnect teardown: a turn fed into a client being torn down is in NO
@@ -5632,17 +5921,28 @@ class SdkSession:
         #   Billing row's live truth; restored with the flag so the hover stays honest across restarts
         self.auth = reg.get("auth") if reg.get("auth") in ("login", "key") else ""   # the user's
         #   per-session auth pick (the user 2026-08-08: some sessions on the personal login, some on
-        #   the work key). "" = no explicit pick → effective_auth() falls to unpicked_auth (the key when
-        #   the box's apiKeyHelper bills it, else the box's ROMP_EXPECTED_AUTH declaration, else the login).
+        #   the work key). "" = no explicit pick → effective_auth() preserves the pre-selector world.
+        # WHICH login a login pick bills (T346): a stored login's record id (logins.py), "" for the
+        # machine's own. Read only beside auth == "login"; a junk value reads as the machine's login.
+        self.auth_login = SdkBackend.reg_login(reg) if self.auth == "login" else ""
         self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
         #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
         self._launched_keyed = False  # whether the launch MEANT the key side: the box's apiKeyHelper bills this
         #   process (launch_keyed in _options; romp holds and injects no key). _note_auth_source compares the
         #   init's apiKeySource against THIS, so a CLI that lands on the other side (a stale login, a helper a
         #   login pick meant to suppress) is flagged loudly instead of silently billing the wrong account
-        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched plain because the box has
-        #   no apiKeyHelper and no signed-in login to fall to (_options; with a login the pick falls to it,
-        #   pick_fall): Claude Code's own credential resolution is what pays, said once per process in the log
+        self._launched_unkeyed_pick = False  # an explicit API-key pick that launched with NOTHING injected
+        #   because romp holds no key source (_options): Claude Code's own credential — its apiKeyHelper
+        #   or its login — is what pays, said once per process in the log
+        # The stored login whose helper the last launch carried (T346; "" = the machine's own), and which stored
+        # login the CLI actually signed in with, from the init's evidence: None until an init lands, the record id
+        # when its helper answered, "" when the CLI signed in with another credential. Both PERSISTED on the reg row
+        # (launchedLogin, authLoginLive: the apiKeyAuth pattern) and restored here, so a hosted re-attach mid-turn,
+        # which replays no init, keeps the feed's refusal gate, the served-reply clear and the spend rows on the
+        # credential that answered; every fresh launch (_options) resets both before its init lands (review 2026-09-11).
+        self._launched_login = str(reg.get("launchedLogin") or "")
+        _all = reg.get("authLoginLive")
+        self.auth_login_live = _all if isinstance(_all, str) else None
         self._pick_fell_said = ""    # the pick whose fall to the other side _options has said for THIS
         self._pick_unknown_said = ""     # the 'cannot tell, launching with the pick as is' row: once per session and pick
         #   session (once per session, not per reconnect; the user 2026-09-08)
@@ -5698,6 +5998,15 @@ class SdkSession:
         #   total when the deltas were written (`usage: this.totalUsage`) and is the TURN's own total
         #   on the current CLI — diffing it under-counted every turn but the first (the user
         #   2026-09-06). Which counter is which, and the measurement: _turn_usage.
+        self._spend_unknown_open = False   # True from an attach-unknown seed until the first LIVE result: every replayed
+        #                                    record meanwhile is the lifetime so far and advances the watermarks (T354)
+        self._spend_seed_epoch_seen = False   # an orphan drain: a record of the watermark's own epoch has been replayed, so
+        #                                       a different epoch from here on is a NEWER one (_spend_redelivered)
+        self._spend_baseline = "fresh"     # what the watermarks stand on: "fresh" (a new CLI process: zero, or the
+        #                                    resumed transcript's cost-state record), "attach-pending" (a host attach:
+        #                                    the surviving CLI's watermark is read from the registry at the first
+        #                                    result), "seeded" (read, and it named this CLI), "attach-unknown" (no
+        #                                    matching watermark: the first result's total is the lifetime's) (T354)
         self._spend_first_result = False   # True from a connect until its first result settles: that result's
         #   delta is checked against SANE_TURN_USD (an info-line trace; see the constant), and the init
         #   handler may re-seed the watermarks while it is still True (a cwd correction; _seed_spend_watermarks)
@@ -5909,10 +6218,26 @@ class SdkSession:
         meta = self._pending_meta.pop(idx) if idx < len(self._pending_meta) else None
         return text, meta
 
-    def _pop_for_feed_locked(self):
-        """The head copy leaves for the CLI (the input generator, under self._lock): its identity moves to the
-        fed ledger, where the landing is paired with it. Returns (text, meta)."""
-        text, meta = self._q_pop(0)
+    def _locate_locked(self, idx: int, expect, qid) -> int:
+        """The slot a click means (under self._lock), the way unqueue reads it: the copy wearing `qid` when one is
+        named (an id no copy wears is -1, never a neighbour), else `idx` when the text there is `expect`, else the
+        first copy whose text is `expect`; -1 when nothing matches."""
+        if qid:
+            return next((i for i, m in enumerate(self._pending_meta)
+                         if isinstance(m, dict) and m.get("qid") == qid and i < len(self._pending)), -1)
+        if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
+            return next((i for i, q in enumerate(self._pending) if q == expect), -1)
+        return idx if 0 <= idx < len(self._pending) else -1
+
+    def _wake_feeder(self):
+        loop, wake = self.loop, self._input_wake
+        if loop is not None and wake is not None:
+            loop.call_soon_threadsafe(wake.set)
+
+    def _pop_for_feed_locked(self, idx: int = 0):
+        """The copy at `idx` (the feed slot, the head) leaves for the CLI (the input generator, under
+        self._lock): its identity moves to the fed ledger, where the landing is paired with it. Returns (text, meta)."""
+        text, meta = self._q_pop(idx)
         if meta and meta.get("qid"):
             self._fed_meta.append({"qid": meta["qid"], "qts": meta.get("qts"), "text": text, "t": int(time.time())})
             del self._fed_meta[:-64]                       # bounded: a landing is paired within a turn or two
@@ -5924,7 +6249,7 @@ class SdkSession:
         with self._lock:
             if len(self._pending_meta) != len(self._pending):
                 return None
-            return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts")}
+            return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"), **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {})}
                     for t, m in zip(self._pending, self._pending_meta)]
 
     def qids_for_landing(self, uuid_: str, texts, t=None):
@@ -5977,7 +6302,8 @@ class SdkSession:
         with self._lock:
             self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]
 
-    def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, todo: str = ""):
+    def enqueue(self, text: str, qid: str | None = None, qts: int | None = None, paths: list | None = None,
+                todo: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
         before the loop is ready too (the generator drains _pending on its first pass). `qid`/`qts`:
@@ -5995,7 +6321,10 @@ class SdkSession:
                 return False
             if qid:
                 self._fed_meta = [f for f in self._fed_meta if f.get("qid") != qid]   # back in the queue: not fed (a re-delivery)
-            self._q_append(text, {"qid": qid, "qts": qts} if qid else None)
+            meta = {"qid": qid, "qts": qts} if qid else None
+            if meta is not None and paths:
+                meta["paths"] = [str(x) for x in paths if isinstance(x, str) and x]   # the attachments the send carried, beside its id (T373 fold)
+            self._q_append(text, meta)
             loop, wake = self.loop, self._input_wake
         self._persist_queue()
         _wake_feeder(loop, wake)
@@ -6027,8 +6356,10 @@ class SdkSession:
         """The texts FED to the current client whose ResultMessage has not landed (`_inflight_texts`,
         oldest first); thread-safe. A mid-turn send lives here from the inputs() pop until the turn
         settles: the CLI holds it, queued behind the running turn, to splice at the next tool boundary.
-        The observable twin of `inflight`, for diagnostics and tests; nothing gates on it (prune_live
-        floors no echo, so there is nothing to shield a fed echo from — its docstring)."""
+        The observable twin of `inflight`, for diagnostics and tests, and since 2026-09-11 one of the
+        settle's "still owed" reads (SdkBackend.settle_echoes): an echo whose text is fed and unsettled is
+        waiting on the CLI, never a loss, however the transcript's floor has moved (prune_live itself still
+        floors no echo — its docstring)."""
         with self._lock:
             return list(self._inflight_texts)
 
@@ -6093,25 +6424,19 @@ class SdkSession:
             self._persist_queue()
         return item
 
-    def replace_queued(self, idx: int, text: str, expect: str | None = None) -> str | None:
-        """Replace the queued turn at `idx` IN PLACE — the chat's edit of a message that has not started
-        (the user 2026-09-08): same _pending position (the queue drains front-first, so the edited message
-        still goes where it would have), new words. `expect` verifies — and, on a shifted index,
-        re-locates — the exact old text UNDER the lock, exactly as unqueue does, so the input generator
-        consuming entries between the caller's snapshot and this swap can never rewrite the wrong
-        message. Returns the OLD text, or None on a miss: the entry is gone (fed to the CLI, where no
-        recall exists) and nothing was changed."""
+    def _adopt_queue_mirror(self, reg: dict) -> None:
+        """Take the registry mirror's queue as this session's, WHOLESALE, when it differs from the seed: texts
+        and their identities from reg['queue'] + reg['queueMeta'], the seed's own reading. Called by _ensure
+        right after the insert, before anything in memory has enqueued, so the mirror is the authority at that
+        moment whatever moved it between the constructor's reg read and the insert: an automatic message queued
+        behind a stand-down (an append) or the boot reconcile's resume nudge and death notices (a prepend; the
+        commit-17 review's second item, which an append-only adoption dropped)."""
+        texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
         with self._lock:
-            if expect is not None and not (0 <= idx < len(self._pending) and self._pending[idx] == expect):
-                idx = next((i for i, q in enumerate(self._pending) if q == expect), -1)
-            if not (0 <= idx < len(self._pending)):
-                return None
-            old = self._pending[idx]
-            # the edited words keep the ask the old entry answered (_QueueText.todo): the position and the
-            # copy's identity (_pending_meta) stay where they were, only the text changes
-            self._pending[idx] = _QueueText(text, getattr(old, "todo", "")) if getattr(old, "todo", "") else text
-        self._persist_queue()
-        return old
+            if texts == list(self._pending):
+                return
+            self._pending = texts
+            self._pending_meta = queue_meta_from_reg(reg)
 
     def _persist_queue(self):
         """Mirror _pending to the registry (reg['queue']) so queued turns survive a kernel death —
@@ -6141,7 +6466,7 @@ class SdkSession:
                     return
                 snap = list(self._pending)
                 metas = list(self._pending_meta)
-            qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts")} if isinstance(m, dict) and m.get("qid") else {"text": t}
+            qmeta = [{"text": t, "qid": m["qid"], "qts": m.get("qts"), **({"paths": m["paths"]} if m.get("paths") else {})} if isinstance(m, dict) and m.get("qid") else {"text": t}
                      for t, m in zip(snap, metas)]        # every position, so the restore aligns the run as a block
             try:
                 self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap], queueMeta=qmeta)
@@ -6173,7 +6498,20 @@ class SdkSession:
     def _signal_cli(self, sig, action):
         """Deliver an escalated interrupt as a real signal to this session's own CLI (the child of THIS
         kernel resuming our sid — find_session_cli can't match anything else). Loud on every outcome:
-        the whole bug was a stop that vanished without a trace."""
+        the whole bug was a stop that vanished without a trace. Under a host (T315) the rung is a request
+        to the host, which signals its own child: the kernel never knows the CLI's pid."""
+        if self.detached:
+            self.backend._log("interrupt (%s): %s escalation skipped: the session is detached, its host keeps the turn" % (self.name, action))
+            return
+        host = self._host
+        if host is not None and self.loop is not None:
+            name = "INT" if sig == signal.SIGINT else "KILL"
+            if self.inflight > 0:
+                self._interrupted = True
+            self.loop.call_soon_threadsafe(lambda: asyncio.ensure_future(host.signal(name)))
+            self.backend._log("interrupt (%s): escalated to %s, sent to the session's host" % (self.name, action))
+            self.backend._poke()
+            return
         pid = self.backend._session_cli_pid(self)
         if pid is None:
             self.backend._log("interrupt (%s): %s escalation found no CLI process — nothing to signal" % (self.name, action))
@@ -6239,8 +6577,11 @@ class SdkSession:
     def shutdown(self):
         self.ended = True                    # first: a dying session's loop may be closed, and the end must land
         _call_on_loop(self.loop, self._wake_set)   # break the receive loop even if idle (no msg coming)
-        if self.client:
-            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_interrupt()))   # stop an in-flight turn promptly
+        if self.client and not self.detached:
+            # stop an in-flight turn promptly. NOT for a detached session (T315): the interrupt is a control
+            # request the SDK writes to the transport, and under a host that reaches the CLI's stdin before the
+            # detach and aborts the very turn the host exists to keep (the commit 2-3 review's first finding)
+            _call_on_loop(self.loop, lambda: asyncio.ensure_future(self._do_interrupt()))
 
     def _wake_set(self):
         if self._wake is not None:
@@ -6783,6 +7124,9 @@ class SdkSession:
         what the session's own shape is compared against when a reconnect's redundancy is decided after the
         landing (the mode as the CLI last confirmed it, the live switch included)."""
         return {"effort": self._launched_effort, "mode": self._launched_mode, "auth": self._launched_auth,
+                # the stored login the running CLI carries (T346, _stamp_launch_login: "" for the machine's own and
+                # for the key), the shape's `login` key, so a pick of another stored login reads as a change
+                "login": (getattr(self, "_launched_login", "") or "") if self._launched_auth == "login" else "",
                 "env": self._launched_env}
 
     def _settle_withdrawal(self, surface: str, how: str = "withdrawn") -> None:
@@ -7087,8 +7431,12 @@ class SdkSession:
             # helper, which must not wear the dots forever). A billing pick made during the spawn of the
             # OTHER side stays pending for the reconnect its own request armed (review round 2, 2026-09-09;
             # effort's rule above, applied to billing)
-            if (self._launched_auth is None or self._auth_pending == self._launched_auth
-                    or self._launched_unkeyed_pick):
+            # ...and, for a login pick, when the launch carried the stored login the pick names (T346: a pick of another
+            # stored login made during this spawn stays pending for its own reconnect, as a pick of the other side does)
+            if (self._launched_auth is None or self._launched_unkeyed_pick
+                    or (self._auth_pending == self._launched_auth
+                        and (self._auth_pending != "login"
+                             or (getattr(self, "_launched_login", "") or "") == (getattr(self, "auth_login", "") or "")))):
                 self._auth_pending = ""
                 self.backend._update_reg(self.sid, authPending=False)
                 self.backend._poke()
@@ -7217,8 +7565,100 @@ class SdkSession:
                 self._q_prepend(stranded, self._unfeed_locked(stranded))   # back at the head under their own ids
             self._persist_queue()                  # the fresh inputs() drains _pending on its first pass
         elif stranded:
+            # Peer mail FIRST (2026-09-12): a bus banner has no echo for the flag path below to flip
+            # (SdkBackend.deliver: it is not composer input), so on this branch it was DROPPED outright — no
+            # queue entry, no flag, no log line, no word to the bus, whose only durable copy had been retired on
+            # `injected: true` (which means "queued in kernel memory", nothing more). Fifteen messages to two
+            # sessions vanished that way in twenty minutes, each fed to a client that a model-pin rebuild tore
+            # down before the turn resulted, every sender told "delivered". The banner names its messages; hand
+            # them back to the bus by id — _return_stranded_mail. Everything else fed keeps the flag path.
+            self._return_stranded_mail(stranded)
             self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending(), refeed=False)
         self.backend._poke()
+
+    def _return_stranded_mail(self, stranded) -> None:
+        """Hand every POSTAL banner in `stranded` (fed to the abandoned client, never resulted) back to the bus by
+        message id, so the mail re-delivers under its ORIGINAL identity instead of vanishing (2026-09-12).
+
+        The bus's put-back is its `restore` — the roll-back its not-injected push already takes: cur/<mid> moves
+        back to new/, the exec row is retracted, the session is woken. It is reached through
+        SdkBackend.postal_restore, which the kernel installs (a POST to the bus's /restore). The answer is the set
+        of ids the bus HOLDS: the ones it put back, plus (2026-09-14) the ones it could not answer for (its cur/ could
+        not be read; the claim stands and its own retry puts them back), named in the answer's `.held` (a set subclass;
+        set arithmetic drops the attribute, so it is read off the answer before any `set(res)`). AUTHORITATIVE about
+        the bus's own files: a PARTIAL answer names the ids
+        gone from the bus's box (recalled by its sender, swept), which are never re-fed on this side's say-so. An
+        answer that put back NONE of them means this bus never held the banner: nothing removes a live session's
+        cur/ file (recall reads new/ only; the orphan sweep skips live boxes), so the ids are a session's whose
+        maildir sits on another host's bus, the wake-router having forwarded the banner here, and the banner text
+        is the last copy of the mail. That banner is RE-HEADED in the queue under its own id, the same as one the
+        bus could not take back at all (no hook installed, a bus that could not be reached, refused, or gave no
+        answer): the not-resumable branch's path. The resumable branch refuses re-feeds because a duplicate of the
+        person's own words is a visible defect; a banner landing twice in the resumed conversation beats a peer
+        told "delivered" for mail nobody read, and the duplicate is accepted only when the transcript scan cannot
+        rule it out: a banner _text_landed FINDS in the transcript (the CLI wrote its user record before the
+        teardown) is left where it is, since the resumed conversation carries it and a put-back would deliver the
+        same mail twice; a False or None answer proceeds, a miss being no proof of loss. Never raises; one log line
+        per banner names its ids and their fate."""
+        mail = [(t, postal_mids(t)) for t in stranded if isinstance(t, str)]
+        mail = [(t, mids) for t, mids in mail if mids]
+        if not mail:
+            return
+        hook = getattr(self.backend, "postal_restore", None)
+        rehead = []
+        for text, mids in mail:
+            # Landed before the teardown? A stream error or timeout can tear the client down AFTER the CLI wrote
+            # the banner's user record; the resumed conversation then carries it, and a put-back would deliver the
+            # same mail twice. True is definitive (the banner keys to itself, markers included, under
+            # echo_text_key); False or None proceeds, a miss being no proof of loss (the abandoned client may
+            # still have been flushing the record). Review fix, 2026-09-12.
+            seen = self.backend._text_landed(self.sid, text)
+            if seen is True:
+                self.backend._log("stranded mail (%s): a banner fed to the abandoned client landed in the transcript "
+                                  "before the teardown; the resumed conversation carries it, not handed back (%s)"
+                                  % (self.name, ", ".join(mids)))
+                continue
+            back, why, held_by_bus = None, "no bus hook is installed", set()
+            if callable(hook):
+                try:
+                    res = hook(self.sid, list(mids))
+                    if res is None:
+                        why = "the bus gave no answer"
+                    else:
+                        back = set(res)
+                        held_by_bus = set(getattr(res, "held", ()) or ())   # ids the bus holds under an unreadable cur/ (2026-09-14)
+                except Exception as e:
+                    why = "the bus could not be asked (%r)" % (e,)
+            if back is None:
+                rehead.append(text)
+                self.backend._log("stranded mail (%s): a banner fed to the abandoned client never resulted, and %s; "
+                                  "re-heading it (%s) so the new client is fed it"
+                                  % (self.name, why, ", ".join(mids)), problem=True)
+                continue
+            gone = [m for m in mids if m not in back]
+            if len(gone) == len(mids):
+                # The bus put back NONE of them. Nothing removes a live session's cur/ file (recall reads new/
+                # only; the orphan sweep skips live boxes and touches new/ only), so this bus never held them:
+                # a session whose maildir sits on another host's bus (the wake-router forwarded the banner
+                # here). The banner text is the last copy of the mail; re-head it, the no-answer path.
+                rehead.append(text)
+                self.backend._log("stranded mail (%s): a banner fed to the abandoned client never resulted, and the "
+                                  "bus holds none of its ids (%s); re-heading it so the new client is fed it"
+                                  % (self.name, ", ".join(mids)), problem=True)
+                continue
+            put_back = [m for m in mids if m in back and m not in held_by_bus]
+            held_here = [m for m in mids if m in held_by_bus]
+            self.backend._log("stranded mail (%s): a banner fed to the abandoned client never resulted%s%s%s"
+                              % (self.name,
+                                 ("; handed back to the bus by id for re-delivery (%s)" % ", ".join(put_back)) if put_back else "",
+                                 ("; held by the bus under a PENDING fault (its cur/ cannot be read; the sender's receipt reads "
+                                  "pending, the bus's retry puts them back once it reads): %s" % ", ".join(held_here)) if held_here else "",
+                                 ("; no longer in the bus's box, not re-fed: %s" % ", ".join(gone)) if gone else ""),
+                              problem=bool(held_here))
+        if rehead:
+            with self._lock:
+                self._q_prepend(rehead, self._unfeed_locked(rehead))   # back at the head under their own ids
+            self._persist_queue()
 
     # ---- async internals (run inside the quarantined loop) ----
 
@@ -7699,9 +8139,29 @@ class SdkSession:
             return "login"
         if self.auth == "key":
             return "key"
+        # no pick of its own: the machine's EXPLICIT default when one is set and billable (T380: the Billing
+        # flyout's Default group; an unpicked session follows it, at once in the status and at its next launch),
+        # else the helper rule
+        explicit = getattr(self.backend, "explicit_default_auth", None)   # getattr: test doubles
+        if explicit:
+            side = explicit()
+            # a stored login as the default (the user 2026-09-14) is judged on its own record, as a pick of it would be
+            lid = getattr(self.backend, "explicit_default_login", lambda: "")() if side == "login" else ""
+            if side and not (self.backend.auth_unavailable_why(side, lid) if lid else self.backend.auth_unavailable_why(side)):
+                return side
         if key is None:
             key = self.backend.key_available
-        return unpicked_auth(self.backend.state_dir, key)
+        return "key" if key else "login"
+
+    def effective_login(self) -> str:
+        """WHICH login this session bills when effective_auth() reads login (the status's authLogin and authLabel): its
+        own pick's stored login, else the stored login the explicit machine default names when it has no pick of its
+        own (the user 2026-09-14), "" for the machine's own login or the key."""
+        if self.auth in ("login", "key"):
+            return (getattr(self, "auth_login", "") or "") if self.auth == "login" else ""
+        if self.effective_auth() != "login":
+            return ""
+        return getattr(self.backend, "explicit_default_login", lambda: "")()
 
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
@@ -7771,21 +8231,40 @@ class SdkSession:
         finally:
             self._cur_ask_fut = None
 
+    def _fresh_cli_stamp(self, spawned_at: int, cli_ident: str = "", mark_echoes=True) -> None:
+        """The FRESH-CLI block, run ONCE PER CLI: stamp spawnedAt (the kernel's bg-tasks box drops unfinished tasks that
+        predate the live CLI, they died with the old one and their completion notifications can never arrive; the judge's
+        _cli_epoch is the same gate) with `cli_ident`, the identity of the CLI the epoch belongs to ("pid:start" under a host,
+        "" for a kernel child), clear any stale awaiting overlay the old CLI's death stranded (the Stop hook that clears it
+        died too), and mark the dropped echoes (the SPAWN half; boot half: _reseed_echoes): a fresh CLI means whatever held
+        any earlier send is gone. Both heals previously ran only at KERNEL boot, so a session restart inside a live kernel
+        kept ghost '25 background tasks' / waiting displays that read as a wedged session (the user 2026-07-10).
+        WHO calls it, and when (2026-09-14, the spawnedAt fix and its follow-up's rounds): under a session host, the
+        backend's _on_host_hello, when the host's hello names a CLI whose identity differs from the reg's `spawnedAtCli`,
+        with the host's own spawn time (the host is the authority for when ITS CLI spawned); the connect loop, at the
+        connect, for a kernel child (hosts off), with now. Never keyed on the connect's ROAD or on a lease pre-read: a
+        spawned host whose handshake fails after the CLI is up is attached by the next iteration, and the stamp must land
+        exactly once for that CLI whichever iteration first sees it; a kernel restart RE-ATTACHES to the CLI still running
+        under its host, whose identity the reg already names, so nothing here runs (its epoch, its background launches, its
+        awaiting and its held sends all stand; before the fix every boot re-stamped every attached session, re-arming the
+        planner's persisted memo and the evidence gate and reading the live CLIs' running tasks as ghosts). `mark_echoes` is
+        False on a DELIBERATE reconnect inside a live thread (the waker's effort or model change), whose forwarded sends land
+        through the resume."""
+        prev = (read_reg(self.backend.state_dir, self.sid) or {}).get("spawnedAt")
+        self.backend._update_reg(self.sid, spawnedAt=int(spawned_at), spawnedAtCli=str(cli_ident or ""))
+        if isinstance(prev, int) and not isinstance(prev, bool) and prev > 0 and int(spawned_at) != prev:
+            _RESTAMPS[self.sid] = (prev, int(spawned_at))   # the kernel's build counts what the move dropped, once (memos
+            #                                                  ghostDropped.restamped), then clears the entry
+        self.backend._heal_stale_awaiting(self.sid)
+        if mark_echoes:
+            try:
+                self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending())
+            except Exception as e:                       # bookkeeping over the live tail: a raise here is no launch fault, the
+                self.backend._log("dropped-echo marking (%s) failed: %s: %s" % (self.name, type(e).__name__, e))   # connect goes on
+
     def _run(self):
         try:
-            # A FRESH CLI is about to spawn for this sid: stamp when (the kernel's bg-tasks box drops
-            # unfinished tasks that predate the live CLI — they died with the old one, their completion
-            # notifications can never arrive) and clear any stale awaiting overlay the old CLI's death
-            # stranded (the Stop hook that clears it died too). Both previously healed only at KERNEL
-            # boot, so a session restart inside a live kernel kept ghost '25 background tasks' /
-            # waiting displays that read as a wedged session (nimbus, the user 2026-07-10).
-            self.backend._update_reg(self.sid, spawnedAt=int(time.time()))
-            self.backend._heal_stale_awaiting(self.sid)
-            # The SPAWN half of the dropped-echo marking (boot half: _reseed_echoes): a fresh CLI means
-            # whatever held any earlier send is gone. An echo neither in self._pending (delivered to the
-            # new CLI) nor landed has no holder left — flag it so the chat says "never delivered".
-            self.backend._mark_dropped_echoes(self.sid, self.pending_meta() or self.pending())
-            asyncio.run(self._amain())
+            asyncio.run(self._amain())               # the fresh-CLI block runs inside: at the host's hello, or at a kernel child's connect
         except Exception as e:                       # surfaced for debugging; never crash kernel
             # The TRACEBACK too, not just the type and message: a bare "KeyError: <uuid>" names no line,
             # so a crash that killed a session left nothing to fix it by. The error center shows the
@@ -7916,7 +8395,8 @@ class SdkSession:
                     # turn-end events. Mid-turn forwards keep flowing (inflight > 0), so the
                     # in-flight turn can still finish; the wedged/rewind holds above are untouched.
                     blocked = blocked or (self.inflight == 0 and self.backend.drain_holding())
-                    item, _meta = self._pop_for_feed_locked() if (self._pending and not blocked) else (None, None)
+                    fi = 0 if (self._pending and not blocked) else -1
+                    item, _meta = self._pop_for_feed_locked(fi) if fi >= 0 else (None, None)
                     # starting from idle, not mid-turn. inflight counts the CLI's own turns too (a turn
                     # frame at inflight 0 raises it, _on_message), so a text fed while the CLI runs a turn
                     # romp did not feed (the drain of a mid-turn text, a notification-started turn) is
@@ -7969,7 +8449,16 @@ class SdkSession:
         # incoming message, leaking the client + its claude subprocess).
         while not self.ended:
             self._wake.clear()
-            self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it)
+            # a DELIBERATE reconnect (the waker tore the last client down for an effort or model change: _reconnect armed and
+            # no attach retry pending) hands the same conversation to a fresh client and its forwarded sends land through the
+            # resume, so the fresh-CLI block below stamps the epoch and heals the awaiting but does NOT mark held echoes
+            # dropped; a thread-top spawn, a crash heal (a new thread) and a respawn after an incomplete attach have no
+            # holder left for an unlanded send, and mark (round two of the spawnedAt fix, 2026-09-14)
+            deliberate = bool(self._reconnect) and not self._host_attach_retries
+            self._deliberate_connect = deliberate    # read by _on_host_hello, where the block runs under a host
+            self._reconnect = False
+            self._reset_reconnect_state()   # every request is served by this connect (a held pick rides it); read
+            #   AFTER `deliberate`, since the reset clears _reconnect under the hold lock too
             self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
             # a move's turn-less result was owed by the client this iteration replaces; the new one will
             # never emit it, and a standing arm keeps _on_message from counting the CLI's own turns
@@ -8000,6 +8489,13 @@ class SdkSession:
             #   its read, so a '/fast off' set_fast sends inside a flagged compose is this connection's own
             #   send, and its expectation must survive to the first init; the clear ran after _options until
             #   round 7 and wiped it, so that init's stale "on" flipped the badge back
+            # The launch-login stamp (T346) and the fresh-CLI block are decided per CLI, never per connect road and never at a
+            # lease pre-read: under a host at the host's hello (_on_host_hello, keyed on the CLI identity the hello names
+            # against the reg's spawnedAtCli), for a kernel child at the connect below. A pre-read the lease outran stamped a
+            # fresh CLI's login onto a survivor (the reverse race) or withheld it from a launch (the host gone in between);
+            # a stamp at the connect's outcome missed a host whose CLI came up and whose handshake then failed, since the
+            # retry ATTACHED to that fresh CLI and nothing stamped for its life (the spawnedAt fix's rounds, 2026-09-14).
+            # _options builds the options only.
             try:
                 opts = self.backend._options(self, ClaudeAgentOptions)
             except Exception as e:
@@ -8011,12 +8507,37 @@ class SdkSession:
             # itself, from the one read of the ask it composed the flag-settings file with: review round 6)
             connected = False
             try:
-                async with ClaudeSDKClient(options=opts) as client:
+                transport = None
+                self._host_is_attach = False             # the transport's attach branch alone sets it True (every other road spawns)
+                if self.backend.session_hosts_on() or self.backend._host_lease_applies(self):
+                    # T315: the CLI runs under a per-session host; this client speaks to it over the host's
+                    # socket (attach to a live host, or spawn one), never to a child of its own. A LIVE host lease
+                    # is attached whatever the setting says (the setting governs new spawns): turning it off with a
+                    # host alive must never start a second CLI beside the host's
+                    self._host_intent = True
+                    transport = await self.backend._host_transport_for(self, opts, (AssistantMessage, ResultMessage, SystemMessage))
+                    if transport is None:
+                        self._host_intent = False        # the setting is off: a kernel child after all
+                async with ClaudeSDKClient(options=opts, transport=transport) as client:
                     connected = True
-                    # the CLI's own scope unit, while its pid is alive to read; before `self.client = client`
-                    # so the handshake-then-push adjacency the opening-state pin protects stays intact (it
-                    # needs only the client's pid, not the assignment)
-                    self._record_cli_scope(client)
+                    self._host_attach_retries = 0   # consecutive incomplete attaches, as the stand-down's docstring
+                    #   promises: a recovered timeout earlier in this object's life never counts toward a later bound
+                    if self._host is None:
+                        # a KERNEL CHILD (hosts off): the SDK spawned a CLI of this client's own, which dies with the client,
+                        # so every connect that gets here is a fresh CLI and the block runs at the connect (an iteration that
+                        # never gets here, a missing binary, a bad cwd, a transport fault, a rewind refused before the
+                        # handshake, moves nothing): the launch-login stamp (T346) and the fresh-CLI block, with now as the
+                        # epoch and no CLI identity. Under a HOST the block ran at the hello inside the connect above
+                        # (_on_host_hello), once per CLI, whatever this iteration's road (the spawnedAt fix's follow-up)
+                        self.backend._stamp_launch_login(self)
+                        self._fresh_cli_stamp(int(time.time()), "", mark_echoes=not deliberate)
+                        # the CLI's own scope unit, while its pid is alive to read; before `self.client = client`
+                        # so the handshake-then-push adjacency the opening-state pin protects stays intact (it
+                        # needs only the client's pid, not the assignment). A kernel child only: under a host the
+                        # client's transport is the host's socket with no local process to read, and the CLI's
+                        # scope is the host's own (romp-host-<sid8>-<t>.scope, _spawn_host), which the OOM
+                        # attribution does not read yet, so the read's "could not be recorded" line says nothing
+                        self._record_cli_scope(client)
                     self.client = client
                     # The handshake IS the "this session is open" event (snapshot `connected`, the flip
                     # the kernel's opening chip stands down on) — push THIS session now. Left to the
@@ -8025,7 +8546,9 @@ class SdkSession:
                     # create, the ready chip landing at 5-12s with the cycle).
                     self.backend._push_session(self.sid)
                     self._connected.set()   # the control channel exists from here (move() waits on this)
-                    self.backend._lease_open(self, client)   # ownership by lease (T305): pid + start time, heartbeat
+                    if self._host is None:
+                        self.backend._lease_open(self, client)   # ownership by lease (T305): pid + start time, heartbeat
+                    #   (under a host the HOST holds the lease)
                     self._seed_spend_watermarks()   # a fresh CLI process starts its cumulative counters at
                     #   zero, or at what it restores from the resumed transcript's cost-state record
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
@@ -8113,6 +8636,26 @@ class SdkSession:
                 if self._rewind_armed and not connected:
                     self._rewind_failed(e)
                     continue
+                host = self._host
+                if (not connected and host is not None and getattr(host, "hello", None) is not None
+                        and getattr(host, "_init_pending", False) and getattr(host, "exit_info", None) is None):
+                    # the attach reached the host (hello) but the connect did not complete (the initialize timed
+                    # out): the host and its CLI live on; detach (the transport's close already did) and try
+                    # again, bounded — never the crash heal, whose resume would put a second CLI beside the host's
+                    self._host_attach_retries += 1
+                    self.backend._log("host (%s): attach did not complete (%s); retry %d" % (self.name, type(e).__name__, self._host_attach_retries))
+                    if self._host_attach_retries <= 3:
+                        self.inflight = 0
+                        self._reconnect = True
+                        continue
+                    # past the bound on a host that still lives: stand down, never the crash heal (whose resume
+                    # would put a second CLI beside the host's) and never a launch error for a CLI that is up.
+                    # `break`, not `continue`: a continue re-entered the loop's head and attached the same lease
+                    # again with the counter fresh, four more timeouts and another row every few minutes, forever
+                    # (the commit-10 review's second item); the thread ends here and nothing automatic restarts it
+                    # while the attach-failed marker names this host (see _ensure)
+                    self._host_stand_down(e)
+                    break
                 if not connected:
                     # The CLI never came up. RECORD why, where the user can see it: this thread is about
                     # to die, and everything downstream of it (_on_session_gone settling 'waiting') is
@@ -8121,10 +8664,56 @@ class SdkSession:
                 raise
             finally:
                 # the client has closed (the SDK's own close ends the process), or never opened: the
-                # lease is dropped either way — only a kernel DEATH leaves one behind (T305)
-                self.backend._lease_close(self)
+                # lease is dropped either way — only a kernel DEATH leaves one behind (T305). Under a host
+                # the lease is the host's: a detach leaves it, an `end` makes the host remove it.
+                if self._host is None and not self._host_intent:
+                    self.backend._lease_close(self)
+                else:
+                    if self._host is not None and getattr(self._host, "exit_info", None) is None:
+                        self.backend._write_host_ack(self, force=True)   # still attached to a live CLI: the last ack
+                    self._host = None
+                    self._host_intent = False
+                # the attach flag lives ONE connect (M1 of 1450's review): a reconnect in this thread that never enters
+                # _host_transport_for (hosts off with no lease and no host directory: an effort or auth switch after a
+                # rollback) must seed fresh, not wait for a watermark the kernel child never has; left True, the first
+                # turn recorded nothing and the watermark was then written under an empty CLI identity, once per connect
+                self._host_is_attach = False
             if self.ended or not self._reconnect:
                 break        # drain ended on its own (process exit) or we're shutting down → done
+
+    def _host_stand_down(self, exc) -> None:
+        """Four attaches reached a live host and none completed (the initialize timed out each time: a wedged
+        host, or a CLI that never answers): the host keeps the CLI, and this session stands down from it: a
+        `host.attach-failed` problem row, the state settled `waiting` (on its host; the next send connects and
+        tries the attach again), the thread's exit marked a detach so the session-gone path neither heals nor
+        settles, and no crash-resume nudge: the CLI never died (the commit-8 review's item 3)."""
+        st = self.backend.state_dir
+        problem_row(st, "session %s: could not complete an attach to its live session host after %d tries (%s); the host keeps "
+                    "the CLI; the next message tries again" % (self.name, self._host_attach_retries, type(exc).__name__),
+                    "host.attach-failed", sid=self.sid, name=self.name, log=self.backend._log, tries=self._host_attach_retries)
+        lease = read_lease(st, self.sid)
+        if _ht().host_lease_state(lease, time.time()) == "attach":
+            try:
+                # the marker _ensure reads: no automatic revival (the timer sweep, a boot, a heal) attaches this host
+                # again; a user's send or a change of the lease clears it (new information, not a timer). Keyed by
+                # the LEASE's holder identity, the same reading _attach_stand_down_holds makes; written only while
+                # the lease is a live host's, so a host that left in the meantime is walked as the orphan it is
+                # (never a marker naming no host; the commit-12 review's fifth item)
+                self.backend._update_reg(self.sid, hostAttachFailed={"host": self.backend._holder_ident(lease),
+                                                                      "t": time.time(), "tries": self._host_attach_retries})
+            except Exception as e:
+                self.backend._log("host (%s): stand-down marker write failed: %s" % (self.name, e))
+        else:
+            self.backend._log("host (%s): the host's lease no longer holds at the stand-down; no marker, the next connect "
+                              "walks the orphan road" % self.name)
+        self._host_attach_retries = 0
+        self.inflight = 0
+        self.detached = True
+        self._reconnect = False
+        try:
+            append_state(st, self.sid, "waiting")
+        except Exception as e:
+            self.backend._log("host (%s): stand-down state write failed: %s" % (self.name, e))
 
     def _rewind_failed(self, exc):
         """The CLI refused a rewind connect. Drop the one-shot flag (never re-offer a target the CLI just
@@ -8382,6 +8971,17 @@ class SdkSession:
             row["isError"] = ie
         if isinstance(usd, (int, float)) and not isinstance(usd, bool):
             row["usd"] = round(float(usd), 6)
+        cum = getattr(self, "_turn_cumulative", None)     # the CLI's own cumulative total_cost_usd at this result (T354):
+        if isinstance(cum, (int, float)) and not isinstance(cum, bool):   # the repair and the audits read the staircase off it
+            row["cumulativeUsd"] = round(float(cum), 6)
+        if getattr(self, "_turn_redelivered", False):
+            row["redelivered"] = True                      # a replayed result the ledger already held: folded nothing (T354)
+        jo = getattr(self, "_turn_journal_offset", None)
+        if isinstance(jo, int) and jo >= 0:
+            row["journalOffset"] = jo                      # the host journal record this result came from
+        bl = getattr(self, "_turn_baseline", None)        # a first result's baseline: fresh, seeded, attach-unknown (T354)
+        if isinstance(bl, str) and bl:
+            row["spendBaseline"] = bl
         if isinstance(turn_u, dict):
             for k, kk in (("input_tokens", "tokIn"), ("output_tokens", "tokOut"),
                           ("cache_read_input_tokens", "tokCacheR"), ("cache_creation_input_tokens", "tokCacheW")):
@@ -8510,57 +9110,6 @@ class SdkSession:
             if _lg:
                 _lg("api-health: retry ingest failed: %s" % e)
 
-    def _ah_note_assistant(self, msg) -> None:
-        ah = getattr(self.backend, "api_health", None)
-        if ah is None:
-            return
-        if getattr(msg, "parent_tool_use_id", None):
-            return   # a subagent's response: its retries never reach us, so its `ok`s are not counted either
-        if getattr(msg, "error", None):
-            # the give-up's own frame: model is '<synthetic>', the status arrives with the ResultMessage
-            self._ah_gaveup = {"category": str(msg.error), "family": self._ah_family(), "t": time.time()}
-            return
-        m = str(getattr(msg, "model", None) or "")
-        if "claude" not in m.lower():
-            return   # injected / synthetic assistant records are not API responses
-        try:
-            ah.note_ok(time.time(), auth=getattr(self, "auth_label", "unknown") or "unknown",
-                       family=model_family(m), sid=self.sid,
-                       message_id=getattr(msg, "message_id", None) or getattr(msg, "uuid", None))
-        except Exception as e:
-            _lg = getattr(self.backend, "_log", None)
-            if _lg:
-                _lg("api-health: ok ingest failed: %s" % e)
-
-    def _ah_note_result(self, msg) -> None:
-        """The settle ends the turn (the counter behind turns/turnsRetrying) and completes a pending
-        give-up marker. `api_error_status` is defined only when `is_error` is true (the SDK's own comment,
-        types.py:1247-1249), so is_error GATES the read. is_error + a status + no marker files a give-up
-        in that status counter (the error AssistantMessage was not seen); is_error + a null status + no
-        marker files nothing — the CLI's other error results (max turns, budget, execution) are not API
-        failures; a pending marker with a null status is completed by its own category string."""
-        pend = getattr(self, "_ah_gaveup", None)
-        self._ah_gaveup = None
-        turn = getattr(self, "_ah_turn", 0)
-        self._ah_turn = turn + 1
-        sidechain = bool(getattr(msg, "parent_tool_use_id", None))
-        is_error = bool(getattr(msg, "is_error", False))
-        status = getattr(msg, "api_error_status", None) if is_error else None
-        status = status if isinstance(status, int) and not isinstance(status, bool) else None
-        ah = getattr(self.backend, "api_health", None)
-        if ah is None or sidechain:
-            return
-        if pend is None and status is None:
-            return
-        try:
-            ah.note_gaveup(time.time(), auth=getattr(self, "auth_label", "unknown") or "unknown",
-                           family=(pend or {}).get("family") or self._ah_family(), status=status,
-                           category=(pend or {}).get("category") or "", sid=self.sid, turn=turn)
-        except Exception as e:
-            _lg = getattr(self.backend, "_log", None)
-            if _lg:
-                _lg("api-health: give-up ingest failed: %s" % e)
-
     def _seed_spend_watermarks(self, resume_sid=None):
         """Reset the spend watermarks for the CLI process a connect just started: zero for a fresh
         process, or, when the resumed transcript carries a `cost-state` record, the counters that record
@@ -8577,6 +9126,20 @@ class SdkSession:
         self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
         self._last_usage_totals = {}  # and its cumulative token counters
         self._spend_first_result = True
+        self._spend_baseline = "fresh"
+        self._spend_unknown_open = False   # no unknown window on a fresh seed (the follow-up's second round, low 3)
+        self._spend_seed_epoch_seen = False
+        self._spend_seed_session = ""
+        self._replay_cli = ""         # a dead CLI's replay is over once a connect seeds
+        if getattr(self, "_host_is_attach", False) and getattr(self, "_host", None) is not None:
+            # a host ATTACH (T315), and only with the host transport in hand (the flag alone is not trusted, M1 of
+            # 1450's review): the CLI process SURVIVED the kernel, so its counters continued and its first
+            # result's total_cost_usd is the process lifetime's, not this turn's. Zero here recorded that lifetime as
+            # one turn at every restart (T354: 21 restarts, a staircase of $436 to $953 rows on one session). The
+            # watermark the previous kernel persisted on the registry is read at the first result, when the host's
+            # hello has named the CLI (_seed_from_reg_cost_state); until then nothing is folded.
+            self._spend_baseline = "attach-pending"
+            return
         sid = resume_sid or self.resume_sid
         if not sid:
             return
@@ -8588,6 +9151,130 @@ class SdkSession:
         self.backend._log("spend: %s resumes a transcript with a cost-state record: watermarks seeded at its "
                           "totals (cumulative $%.2f) so the first result records only this turn"
                           % (self.name, cs["total"]), problem=False)
+
+    def _cli_ident(self) -> str:
+        """The CLI process this session speaks to, as "pid:start" from the host's hello (a hosted session), or ""
+        when there is no host or no hello yet: a plain kernel child dies with the kernel, so its identity never
+        matters to a watermark (a fresh process seeds zero)."""
+        t = getattr(self, "_host", None)
+        hello = getattr(t, "hello", None) if t is not None else None
+        c = (hello or {}).get("cli") if isinstance(hello, dict) else None
+        if isinstance(c, dict) and c.get("pid"):
+            return "%s:%s" % (c.get("pid"), c.get("start"))
+        return str(getattr(self, "_replay_cli", "") or "")   # an orphan replay: the dead CLI the seed named, so the
+        #                                                       watermark it persists stays under that identity
+
+    def _seed_for_dead_cli(self, cli: str) -> None:
+        """Before a dead host's journal tail is replayed (T354 review, M7): its result rows carry that CLI's cumulative
+        total, and the replay drains them through the result branch before the connect's own seed runs, so a zero
+        watermark folded the dead process's whole lifetime as one turn. The registry's watermark seeds when it names
+        that CLI (`cli` is its pid:start from the lease, or from hostAck when it names this host), else the first
+        replayed result records nothing. The connect's seed after the replay starts the fresh spawn at zero as ever."""
+        self._last_cost_total = 0.0
+        self._last_usage_totals = {}
+        self._spend_first_result = True
+        self._spend_baseline = "attach-pending"
+        self._spend_seed_session = ""
+        self._spend_seed_epoch_seen = False
+        self._replay_cli = str(cli or "")
+        self._seed_from_reg_cost_state(cli=cli, dead=True)
+
+    def _seed_from_reg_cost_state(self, cli=None, dead: bool = False) -> bool:
+        """A host attach's watermark (T354): the registry's `costState`, written by the kernel at every result with
+        the CLI's identity, seeds the watermarks when it names THIS surviving CLI process, so the first result records
+        only its own turn. No matching watermark (a kernel before this fix wrote none, or another CLI's) leaves the
+        baseline "attach-unknown": the first result's total is the process lifetime's and records nothing. Returns
+        True when seeded. `cli` names the process when the caller knows it (a dead host's replay, `dead`); by
+        default it is the surviving CLI the host's hello named."""
+        cli = self._cli_ident() if cli is None else str(cli or "")
+        how = "replaying the journal of its dead CLI" if dead else "attached to its surviving CLI"
+        reg = read_reg(self.backend.state_dir, self.sid) or {}
+        cs = reg.get("costState") if isinstance(reg.get("costState"), dict) else None
+        if cs and cli and str(cs.get("cli") or "") == cli and isinstance(cs.get("total"), (int, float)) and cs["total"] >= 0:
+            self._last_cost_total = float(cs["total"])
+            toks = cs.get("tokens") if isinstance(cs.get("tokens"), dict) else {}
+            self._last_usage_totals = {k: int(v) for k, v in toks.items() if isinstance(v, (int, float))}
+            self._spend_baseline = "seeded"
+            self._spend_unknown_open = False
+            self._spend_seed_session = str(cs.get("session") or "")   # the epoch the watermark's totals belong to
+            self.backend._log("spend: %s %s (%s): watermarks seeded at the registry's "
+                              "cumulative $%.2f so the first result records only this turn" % (self.name, how, cli, cs["total"]),
+                              problem=False)
+            return True
+        self._spend_baseline = "attach-unknown"
+        self._spend_unknown_open = True
+        self.backend._log("spend: %s %s (%s) with no matching watermark on record (%s): its "
+                          "first result's total is the process lifetime's, so that result records no spend; the "
+                          "watermark is written from it" % (self.name, how.replace("its surviving", "a surviving").replace("its dead", "a dead"), cli or "unnamed",
+                                                             "none recorded" if not cs else "recorded for %s" % (cs.get("cli") or "?")),
+                          problem=False)
+        return False
+
+    def _spend_result_tag(self):
+        """The journal tag the host transport queued for the result being handled (T354, round four of the fix's
+        review): {"offset", "replay"}, popped in order, one per result. None for a plain kernel child, or a hosted
+        session whose transport queued none (a result the transport never saw). The consumer reads the transport
+        through the SDK's buffered stream a record ahead, so the transport's CURRENT offset is never the handled
+        record's own; the tag is."""
+        t = getattr(self, "_host", None)
+        tags = getattr(t, "result_tags", None) if t is not None else None
+        if not tags:
+            return None
+        try:
+            return tags.popleft()
+        except (IndexError, AttributeError):
+            return None
+
+    def _spend_redelivered(self, tag, total, session_id="") -> bool:
+        """Is this result one an earlier kernel already folded? From the record's own journal position (round four of
+        1450's review): a replayed record (its offset before the journal's next at the attach) folds nothing, moves no
+        watermark and marks its row, WHATEVER its total, since the kernel that died folded what it saw and the ack it
+        left lags by at most a second; a live record is never a redelivery, and a live total below the watermark folds
+        whole as a counter reset. An orphan journal's replay (the dead-CLI seed in hand, no kernel ever saw the tail
+        past the ack) keeps the watermark comparison: at or below the dead CLI's watermark was folded, above it was
+        not."""
+        if tag is None:
+            return False
+        if not tag.get("replay"):
+            return False
+        t = getattr(self, "_host", None)
+        orphan = getattr(t, "journal_dir", None) is not None and getattr(t, "hello", None) is None
+        if orphan:
+            # the dead CLI's watermark is the line, with two exceptions (the lows of the fix's round five): a seed that
+            # named no watermark (attach-unknown) knows no line, so every replayed record folds nothing rather than
+            # every ascending step after the first folding its delta (the watermark advances with each, the fix's
+            # second round); and a record from another session epoch is not comparable to the watermark's totals, so
+            # it is judged by its POSITION in the tail (the follow-up's second round): before the watermark epoch's own
+            # records it is OLDER (a /clear the dead kernel bracketed, its post-clear watermark on record: folded, so
+            # it folds nothing); after them it is NEWER (a /clear the dead kernel never folded past: live, and a total
+            # below the watermark folds whole as the counter reset it is, the new epoch's watermark from there)
+            if getattr(self, "_spend_baseline", "") == "attach-unknown":
+                return True
+            seed_epoch = str(getattr(self, "_spend_seed_session", "") or "")
+            if seed_epoch and session_id:
+                if str(session_id) == seed_epoch:
+                    self._spend_seed_epoch_seen = True
+                elif getattr(self, "_spend_seed_epoch_seen", False):
+                    return False                     # a newer epoch: live
+                else:
+                    return True                      # an older epoch: folded before the dead kernel's /clear
+            return float(total) <= float(self._last_cost_total)
+        return True
+
+    def _persist_cost_state(self, total) -> None:
+        """The watermark on the registry, every result (T354): the CLI's cumulative total, the token watermarks and
+        the CLI's identity, so the next kernel's attach to the same process seeds from it. The registry is the
+        kernel's own file (hostAck lives there too); a failed write costs the seed, never the fold."""
+        try:
+            self.backend._update_reg(self.sid, costState={"total": float(total), "tokens": dict(self._last_usage_totals),
+                                                           "cli": self._cli_ident(), "t": int(time.time()),
+                                                           # the epoch a live result named, else the watermark's own (a drain
+                                                           # of duplicates alone must not erase the epoch the next drain's
+                                                           # guard compares against: the follow-up's second round, low b)
+                                                           "session": str(getattr(self, "_spend_session_id", "") or
+                                                                          getattr(self, "_spend_seed_session", "") or "")})
+        except Exception as e:
+            self.backend._log("spend (%s): costState write failed: %s" % (self.name, e), problem=False)
 
     async def _drain(self, client, AssistantMessage, ResultMessage, SystemMessage):
         """The receive loop. Every streamed message goes through _handle_stream_message, which keeps
@@ -8730,6 +9417,65 @@ class SdkSession:
                               problem=True, key=("feed-hold-scan", self.sid))
             return isinstance(msg, ResultMessage)
         return seen is True
+    def _ah_note_assistant(self, msg) -> None:
+        ah = getattr(self.backend, "api_health", None)
+        if ah is None:
+            return
+        if getattr(msg, "parent_tool_use_id", None):
+            return   # a subagent's response: its retries never reach us, so its `ok`s are not counted either
+        if getattr(msg, "error", None):
+            # the give-up's own frame: model is '<synthetic>', the status arrives with the ResultMessage
+            self._ah_gaveup = {"category": str(msg.error), "family": self._ah_family(), "t": time.time()}
+            return
+        m = str(getattr(msg, "model", None) or "")
+        if "claude" not in m.lower():
+            return   # injected / synthetic assistant records are not API responses
+        # a served reply on a STORED login (T346) is the deciding event that clears its refusal: the record was
+        # marked refused on an auth error or an unused helper, and this response proves the login works again
+        # (once per session; the registry write is idempotent)
+        _lv = getattr(self, "auth_login_live", None)
+        if _lv and not getattr(self, "_login_cleared", False):
+            self._login_cleared = True
+            try:
+                _logins.clear_refused(self.backend.state_dir, _lv)
+            except Exception:
+                pass
+        try:
+            ah.note_ok(time.time(), auth=getattr(self, "auth_label", "unknown") or "unknown",
+                       family=model_family(m), sid=self.sid,
+                       message_id=getattr(msg, "message_id", None) or getattr(msg, "uuid", None))
+        except Exception as e:
+            _lg = getattr(self.backend, "_log", None)
+            if _lg:
+                _lg("api-health: ok ingest failed: %s" % e)
+
+    def _ah_note_result(self, msg) -> None:
+        """The settle ends the turn (the counter behind turns/turnsRetrying) and completes a pending
+        give-up marker. `api_error_status` is defined only when `is_error` is true (the SDK's own comment,
+        types.py:1247-1249), so is_error GATES the read. is_error + a status + no marker files a give-up
+        in that status counter (the error AssistantMessage was not seen); is_error + a null status + no
+        marker files nothing — the CLI's other error results (max turns, budget, execution) are not API
+        failures; a pending marker with a null status is completed by its own category string."""
+        pend = getattr(self, "_ah_gaveup", None)
+        self._ah_gaveup = None
+        turn = getattr(self, "_ah_turn", 0)
+        self._ah_turn = turn + 1
+        ah = getattr(self.backend, "api_health", None)
+        if ah is None or getattr(msg, "parent_tool_use_id", None):
+            return
+        is_error = bool(getattr(msg, "is_error", False))
+        status = getattr(msg, "api_error_status", None) if is_error else None
+        status = status if isinstance(status, int) and not isinstance(status, bool) else None
+        if pend is None and status is None:
+            return
+        try:
+            ah.note_gaveup(time.time(), auth=getattr(self, "auth_label", "unknown") or "unknown",
+                           family=(pend or {}).get("family") or self._ah_family(), status=status,
+                           category=(pend or {}).get("category") or "", sid=self.sid, turn=turn)
+        except Exception as e:
+            _lg = getattr(self.backend, "_log", None)
+            if _lg:
+                _lg("api-health: give-up ingest failed: %s" % e)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
         if getattr(self, "inflight", None) == 0 and getattr(self, "_lock", None) is not None \
@@ -8766,6 +9512,12 @@ class SdkSession:
             self._ping_feeding = False
             if self._input_wake is not None:
                 self._input_wake.set()   # same-loop thread — the settle path sets it the same way
+        if isinstance(msg, ResultMessage):
+            # the journal tag the transport queued for this RESULT record is popped here, first, for every result
+            # without exception (round five of 1450's review): popped only inside the spend fold's total > 0 gate, a
+            # zero-cost result (a /clear's own), a turn-less result the move settle consumes, or a handler failure
+            # left its tag at the head and every later result read the PREVIOUS record's tag for the transport's life
+            self._result_tag = self._spend_result_tag()
         if getattr(self, "_untaken", None) is not None \
                 and self._untaken_taken(msg, AssistantMessage, ResultMessage, SystemMessage):
             # the CLI took the last fed text (an exact event — see _untaken_taken): the next queued text
@@ -8831,9 +9583,15 @@ class SdkSession:
                     # The CLI zeroed total_cost_usd and modelUsage at this instant (a /clear resets both,
                     # same lifecycle); reset the spend watermarks on the EVENT rather than waiting for the
                     # next result to read below them (review find on #956, 2026-09-07). The shrunken-counter
-                    # rule in _turn_usage / the cost delta stays as the backstop for a reset we did not see.
+                    # rule in _turn_usage / the cost delta stays as the backstop for a reset we did not see, on
+                    # every LIVE result; only a record inside a host's replay window is read as a redelivery.
                     self._last_cost_total = 0.0
                     self._last_usage_totals = {}
+                    if getattr(self, "_spend_baseline", "fresh") == "attach-pending":
+                        # a /clear as the first turn after an attach (MEDIUM of 1450's round two): the deferred seed
+                        # from the registry would have restored the pre-clear cumulative over this zero at the first
+                        # paid result; the counter IS zero now, so the pending seed is retired and the baseline fresh
+                        self._spend_baseline = "fresh"
                     loaded_sid = None   # zero IS the seed here: the cwd re-seed below stands down (the loaded
                     #                     file may carry a record the /clear saver wrote as it abandoned it)
                 # A RESUME landing on a NEW fsid = a fresh-headed fork: record the old->new lineage
@@ -8862,7 +9620,10 @@ class SdkSession:
                 self.backend._log("sdk %s: adopting CLI cwd %r (registry had %r)" % (self.sid[:8], cli_cwd, self.cwd))
                 self.cwd = cli_cwd
                 self.backend._update_reg(self.sid, cwd=cli_cwd)
-                if loaded_sid and getattr(self, "_spend_first_result", False):   # getattr: __new__-built test doubles
+                if loaded_sid and getattr(self, "_spend_first_result", False) \
+                        and getattr(self, "_spend_baseline", "fresh") == "fresh":   # getattr: __new__-built test doubles
+                    # (a seed from the registry, or the dead-CLI seed a replayed tail carries, is not clobbered by an
+                    # init record inside that tail whose cwd differs from the registry's: low a of 1450's review)
                     # The connect-time seed read the transcript under the REGISTRY's cwd; the CLI loaded the
                     # one under ITS cwd (the same keying). No result has settled since the connect, so re-seed
                     # from the file the CLI opened: a registry variant that holds no transcript left the seed
@@ -9107,33 +9868,106 @@ class SdkSession:
                 # (The scheduled refreshes above cannot run before this synchronous step: nothing yields.)
                 total = getattr(msg, "total_cost_usd", None)
                 if isinstance(total, (int, float)) and total > 0:
-                    delta = total - self._last_cost_total if total >= self._last_cost_total else total
-                    self._last_cost_total = float(total)
                     first = getattr(self, "_spend_first_result", False)   # getattr: __new__-built test doubles
-                    self._spend_first_result = False   # the watermark moved: the process's first result is in
+                    baseline = getattr(self, "_spend_baseline", "fresh")
+                    if first and baseline == "attach-pending":
+                        # a host attach's first result: the host's hello has named the surviving CLI by now, so the
+                        # registry's watermark for that process can be read (T354)
+                        self._seed_from_reg_cost_state()
+                        baseline = self._spend_baseline
+                    # a REDELIVERED result (M2 of 1450's review, reshaped by its round two): hostAck is written at
+                    # most once a second while the watermark moves per result, so a kernel death leaves processed
+                    # results past the acknowledged offset and the attach's replay hands them over again (the whole
+                    # journal, when the ack names another host). Redelivery is decided from the JOURNAL POSITION the
+                    # transport tracks, never from the total: a record inside the replay window (before the offset
+                    # the host's hello named as its next, or any record of an orphan journal's replay) is a replay,
+                    # and a replay at or below the offset acknowledged at the attach, or at or below the watermark,
+                    # is one the ledger already holds. A LIVE total below the watermark is a counter reset (a /clear
+                    # the kernel did not see, a resumed cost-state seed against a print-mode CLI) and folds whole, as
+                    # it always did; read from the total alone, a reset latched the session at $0 for the process's life
+                    tag = getattr(self, "_result_tag", None)          # popped at the top of _on_message for every result
+                    duplicate = self._spend_redelivered(tag, total, str(getattr(msg, "session_id", "") or ""))
+                    # the UNKNOWN window (the fix's second round): with no watermark on record, every replayed record is
+                    # the lifetime so far and advances the watermarks to its total (a whole-journal replay, the attach
+                    # whose hostAck names another host, hands over several); the first LIVE result closes the window and
+                    # records its own delta. Keyed on the connect's first result alone, the watermark stayed at the first
+                    # replay's total and the next live result folded the span
+                    unknown = baseline == "attach-unknown" and (first or (duplicate and getattr(self, "_spend_unknown_open", False)))
+                    if not duplicate:
+                        self._spend_unknown_open = False
+                    epoch = str(getattr(msg, "session_id", "") or "")
+                    seed_epoch = str(getattr(self, "_spend_seed_session", "") or "")
+                    if not duplicate or unknown or (epoch and epoch == seed_epoch):
+                        # the CLI's session epoch (a /clear moves it): a live record names it; a replayed record names the
+                        # replayed epoch, which is the watermark's only when the replay IS its source (the unknown window)
+                        # or when it is the seed's own (the seeded road: persisted, so the next drain's guard has it;
+                        # an OLDER epoch's replay must not overwrite it). A record without one keeps the epoch on record
+                        # (the follow-up's second round, lows 1 and 2)
+                        self._spend_session_id = epoch or str(getattr(self, "_spend_session_id", "") or "")
+                    if unknown or duplicate:
+                        delta = 0.0       # unknown: the lifetime's total, this turn's share unknowable; duplicate: already folded
+                    else:
+                        delta = total - self._last_cost_total if total >= self._last_cost_total else total
+                    if not duplicate or unknown:
+                        # a replayed result under an UNKNOWN baseline still names the lifetime the watermark starts
+                        # from (live 2026-09-11 22:38Z, the fix's first boot: every session's replayed first result
+                        # left the watermark at zero, and its next live result folded the whole cumulative once)
+                        self._last_cost_total = float(total)
+                    self._spend_first_result = False   # the watermark moved (or a duplicate was seen): the process's first result is in
                     # the tokens: THIS turn's counts, from whichever result counter is a running total —
                     # the two are not the same kind (see _turn_usage; the flat `usage` is per-turn now)
-                    turn_u = self._turn_usage(msg)
+                    if duplicate:
+                        keep = dict(self._last_usage_totals)
+                        turn_u = self._turn_usage(msg)
+                        turn_u = {k: 0 for k in (turn_u or {})} if isinstance(turn_u, dict) else turn_u
+                        if not unknown:
+                            self._last_usage_totals = keep   # the token watermarks are not moved down either (an unknown
+                            #                                  baseline keeps the map's totals: they start the watermark)
+                    else:
+                        turn_u = self._turn_usage(msg)
+                    if unknown:       # the token watermarks moved with the map; the lifetime's counts are not this turn's
+                        #   (a record without the modelUsage map leaves the token watermark empty, and the next live result's
+                        #   map folds whole: the map is the only cumulative count a result carries, so no line here can do
+                        #   better; the dollar watermark is right either way. Noted in the fix's second round)
+                        turn_u = {k: 0 for k in (turn_u or {})} if isinstance(turn_u, dict) else turn_u
+                    self._turn_cumulative = float(total)          # the turn row carries the CLI's own cumulative (T354)
+                    self._turn_baseline = baseline if first else None
+                    self._turn_redelivered = duplicate            # the turn row says so (a flag the repair can trust)
+                    self._turn_journal_offset = tag.get("offset") if tag else None
                     self._turn_spend = (delta, turn_u)   # for the turn ledger row the finally writes (T304)
+                    self._persist_cost_state(self._last_cost_total)   # the watermark the next kernel's attach seeds from (T354)
                     self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
-                                               sid=self.thread_of or self.sid)   # the rail's spend —
+                                               sid=self.thread_of or self.sid,
+                                               login=getattr(self, "_launched_login", "") or "")   # the rail's spend —
                     #   a comment THREAD bills its owning session (T144: whole-session truth for the
                     #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                     #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                     #   honest on a mixed host (see _record_spend)
                     if first and delta > SANE_TURN_USD:
-                        # A first-after-connect delta above the mark: on the CLI as probed a resumed process
-                        # starts its counters at zero (SANE_TURN_USD), so this is the turn's own cost, recorded
-                        # as is and traced as an INFO line, not a problem: the figure is right and there is
-                        # nothing for the user to act on. It is wrong only if a CLI that restores cost history
-                        # read a different file than the connect-time seed (last_cost_state). After the record,
-                        # so a raising log callback costs the line and never the count.
-                        self.backend._log("spend: %s's first result after connect cost $%.2f, above %.0f USD for "
-                                          "one turn (the CLI's cumulative total: $%.2f). Recorded as is: a resumed "
-                                          "CLI process starts its cost at zero, so this is the turn's own cost. It "
-                                          "would be wrong only if a CLI that restores cost history read a different "
-                                          "transcript than the connect-time seed (last_cost_state)."
-                                          % (self.name, delta, SANE_TURN_USD, total), problem=False)
+                        # A first-after-connect delta above the mark, traced as an INFO line, not a problem: the figure
+                        # is right and there is nothing for the user to act on. The text names which process this is
+                        # (T354): a FRESH process starts its counters at zero, so the delta is the turn's own; a
+                        # SURVIVING process (a host attach) was seeded at the registry's watermark, so the delta is the
+                        # turn's own too, and it would be wrong only if that watermark named the wrong process. After
+                        # the record, so a raising log callback costs the line and never the count.
+                        if baseline == "seeded":
+                            self.backend._log("spend: %s's first result after a host attach cost $%.2f, above %.0f USD "
+                                              "for one turn (the surviving CLI's cumulative total: $%.2f, its watermark "
+                                              "seeded from the registry at $%.2f). Recorded as is: the turn's own cost "
+                                              "over the seed." % (self.name, delta, SANE_TURN_USD, total, total - delta),
+                                              problem=False)
+                        else:
+                            self.backend._log("spend: %s's first result after connect cost $%.2f, above %.0f USD for "
+                                              "one turn (the CLI's cumulative total: $%.2f). Recorded as is: a fresh "
+                                              "CLI process starts its cost at zero, so this is the turn's own cost. It "
+                                              "would be wrong only if a CLI that restores cost history read a different "
+                                              "transcript than the connect-time seed (last_cost_state)."
+                                              % (self.name, delta, SANE_TURN_USD, total), problem=False)
+                    elif unknown:
+                        self.backend._log("spend: %s's %s after a host attach carries the surviving CLI's "
+                                          "cumulative total ($%.2f) with no watermark on record: this turn's own cost is "
+                                          "unknowable and nothing was folded; the watermark is set from here"
+                                          % (self.name, "first result" if first else "replayed result", total), problem=False)
             finally:
                 # T304: one durable row per settled turn (turns.jsonl, see the ledger note by
                 # append_turn_row) — the event stamps the restart monitors read. In the finally, ahead of
@@ -9146,6 +9980,10 @@ class SdkSession:
                 except Exception as e:
                     self.backend._log("turn ledger (%s): %s" % (self.name, e), problem=False)
                 self._turn_spend = None          # spent with the row, like the feed stamps below
+                self._turn_cumulative = None
+                self._turn_baseline = None
+                self._turn_redelivered = False
+                self._turn_journal_offset = None
                 self._fed_t = None               # the turn's feed stamps are spent (see _turn_ledger_row)
                 self._first_out_t = None
                 # THE SETTLE — everything that makes the turn over for the kernel — runs whatever the
@@ -9529,6 +10367,7 @@ class SdkSession:
                         slim.append(c)
                 if slim != prev.get("sessionCrons"):
                     self.backend._update_reg(self.sid, sessionCrons=slim, sessionCronsAt=int(nw))
+                    self._cron_prompts_refresh()       # the armed set moved under the gate's cache
         except Exception as e:
             self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
         # Reconcile the LAUNCH LEDGER against the payload's background_tasks — the per-turn snapshot
@@ -9624,6 +10463,7 @@ class SdkSession:
                     # cancels its own pending wakeup on stop, and keeping ours would fabricate a wake
                     cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
                     self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+                    self._cron_prompts_refresh()
                     return {}
                 delay = targs.get("delaySeconds")
                 prompt = str(targs.get("prompt") or "")[:500]
@@ -9651,9 +10491,65 @@ class SdkSession:
             else:
                 return {}
             self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+            self._cron_prompts_refresh()               # an arm or delete: the gate's cache follows it
         except Exception as e:
             self.backend._log("sched tool hook (%s): %s" % (self.name, e))
         return {}
+
+    # ── the recurring-cron PROMPT CACHE (2026-09-12) ─────────────────────────────────────────────
+    # _prompt_submit_hook runs for EVERY prompt a session receives, and the SDK REFUSES a prompt whose
+    # hook misses the CLI's hook deadline (about 30 s) instead of failing open. Its first step used to
+    # be a reg read on every prompt; under a host load of 100 to 300 on 64 cores (2026-09-11 21:00Z to
+    # 2026-09-12 00:00Z) that read stalled past the deadline and six sessions missed messages for 14 to
+    # 76 minutes each — the one failure the gate's own docstring forbids. So the gate answers an
+    # ORDINARY prompt from memory: this set holds the recurring-cron prompt heads (recurring_crons(reg)
+    # → prompt[:500], exactly what the gate matches on), seeded from the reg at construction, re-read
+    # by every sessionCrons writer on this object (the Stop hook's record, the scheduling-tool hook's
+    # arm and delete) and, once a minute at most, by a stat-then-read backstop when the reg's mtime
+    # moved (a writer this object never saw: the boot reconcile, a kernel-side prune). Only a prompt IN
+    # the set costs a read. A stale set errs on the side the gate was always built to err on: a
+    # schedule fires once more (a duplicate), never once less.
+
+    def _reg_mtime_ns(self):
+        """The reg file's st_mtime_ns, None when it cannot be read (absent reg, a fake backend)."""
+        try:
+            return _reg_path(self.backend.state_dir, self.sid).stat().st_mtime_ns
+        except Exception:
+            return None
+
+    def _cron_prompts_seed(self, reg, mtime=None):
+        """Rebuild the cache from a reg ALREADY IN HAND — a reseed never costs a read of its own.
+        `mtime` is the reg file's st_mtime_ns taken BEFORE that reg was read: stamping the pre-read
+        stat means any write landing after it shows as a change to the backstop. None stats now
+        (construction, where the caller read the reg moments ago)."""
+        if not isinstance(reg, dict):
+            return
+        self._cron_prompts = frozenset(str(c.get("prompt") or "")[:500] for c in recurring_crons(reg))
+        self._cron_prompts_at = time.monotonic()
+        self._cron_prompts_mtime = self._reg_mtime_ns() if mtime is None else mtime
+
+    def _cron_prompts_refresh(self):
+        """Stat, read, reseed — what every sessionCrons writer on this object runs after its write.
+        A reg that will not read leaves the cache as it was: the hook fails OPEN on a stale miss."""
+        try:
+            m = self._reg_mtime_ns()
+            reg = read_reg(self.backend.state_dir, self.sid)
+            if reg is not None:
+                self._cron_prompts_seed(reg, m)
+        except Exception:
+            pass
+
+    def _cron_prompts_backstop(self):
+        """The once-a-minute backstop body (runs OFF the loop thread): a read only when the reg's
+        mtime moved since the cache was seeded."""
+        if self._reg_mtime_ns() != self._cron_prompts_mtime:
+            self._cron_prompts_refresh()
+
+    def _reg_read_stamped(self):
+        """(st_mtime_ns before the read, read_reg_for_rmw's answer): the gate's own read, run off the
+        loop thread so the hook's cap can interrupt a stall."""
+        m = self._reg_mtime_ns()
+        return m, read_reg_for_rmw(self.backend.state_dir, self.sid)
 
     async def _prompt_submit_hook(self, inp, tool_use_id, context):
         """UserPromptSubmit: the RECURRING-CRON REPLAY GATE (T211, 2026-09-01). A resumed CLI
@@ -9670,52 +10566,89 @@ class SdkSession:
         slot the dead process genuinely never delivered still fires exactly once after a restart
         (the CLI's own catch-up becomes the recovery instead of the bug). Every uncertain path fails
         OPEN (unreadable reg, unparseable schedule, hook error → the prompt runs): a duplicate fire
-        costs a turn, a swallowed slot costs the schedule itself."""
+        costs a turn, a swallowed slot costs the schedule itself.
+
+        BOUNDED, and FILE-FREE for an ordinary prompt (2026-09-12; the prompt-cache note above): the
+        body runs under asyncio.wait_for with prompt_hook_timeout_s() (ROMP_PROMPT_HOOK_TIMEOUT_S,
+        default 8 s — well inside the SDK's deadline, which is the one that refuses the prompt), with
+        the reg read AND the cronDelivered write on a worker thread because wait_for can only
+        interrupt a body that yields: a blocking read or write on the loop thread would run the cap
+        out without ever tripping it. A timeout is logged as a problem (one counted ring row per
+        session for the whole stall, not a row per prompt) and answered {} — the prompt runs."""
+        cap = prompt_hook_timeout_s()
         try:
-            prompt = str((inp or {}).get("prompt") or "")
-            if not prompt:
-                return {}
-            reg = read_reg_for_rmw(self.backend.state_dir, self.sid)
-            if reg is None:
-                self.backend._log("cron dedupe (%s): reg unreadable — prompt allowed rather than "
-                                  "risking a swallowed schedule slot" % self.name, problem=True)
-                return {}
-            hits = [c for c in recurring_crons(reg)
-                    if str(c.get("prompt") or "") == prompt[:500] and str(c.get("cron") or "").strip()]
-            if not hits:
-                return {}
-            delivered = reg.get("cronDelivered")
-            delivered = dict(delivered) if isinstance(delivered, dict) else {}
-            now = time.time()
-            record, replay_of = {}, None
-            for c in hits:
-                slot = cron_prev_due(str(c.get("cron")), now)
-                if slot is None:
-                    return {}                  # a shape we can't reason about exactly → stand down
-                k = cron_slot_key(str(c.get("cron")), prompt[:500])
-                if float(delivered.get(k) or 0) >= slot:
-                    replay_of = slot           # this schedule's current slot already delivered
-                else:
-                    record[k] = slot
-            if record:
-                # Record AT the delivery moment; keys whose schedule left the armed set drop here
-                # (natural GC — the map can never outgrow the armed set + this delivery).
-                live = {cron_slot_key(str(c.get("cron")), str(c.get("prompt") or ""))
-                        for c in recurring_crons(reg)}
-                delivered = {k: v for k, v in delivered.items() if k in live}
-                delivered.update(record)
-                self.backend._update_reg(self.sid, cronDelivered=delivered)
-                return {}
-            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(replay_of))
-            self.backend._log("cron dedupe (%s): blocked a replayed schedule fire — its %s slot was "
-                              "already delivered (a fresh process re-fires passed slots on resume)"
-                              % (self.name, when), problem=False)
-            return {"decision": "block",
-                    "reason": "This scheduled prompt already ran for its %s slot — skipping the "
-                              "duplicate." % when}
+            return await asyncio.wait_for(self._prompt_submit_gate(inp), timeout=cap)
+        except asyncio.TimeoutError:
+            self.backend._log("cron dedupe (%s): the prompt hook ran past its %.2fs cap "
+                              "(ROMP_PROMPT_HOOK_TIMEOUT_S) — prompt allowed rather than left for the SDK "
+                              "to refuse at its own deadline" % (self.name, cap), problem=True,
+                              key=("prompt-hook-cap", self.sid))
+            return {}
         except Exception as e:
             self.backend._log("cron dedupe (%s): %s — prompt allowed" % (self.name, e))
             return {}
+
+    async def _prompt_submit_gate(self, inp):
+        """The replay gate proper — the body _prompt_submit_hook runs under its cap. Its first step
+        is a set lookup, not a read: only a prompt some armed recurring schedule carries goes on to
+        the reg (and that read is what the backstop and the writers keep the set faithful to)."""
+        prompt = str((inp or {}).get("prompt") or "")
+        if not prompt:
+            return {}
+        head = prompt[:500]
+        if head not in self._cron_prompts:
+            # The common path: no armed recurring schedule carries this prompt → no file is touched.
+            # Once a minute at most, a stat off the loop thread asks whether a writer this object
+            # never saw moved the reg; only a moved mtime costs a read. The slot is claimed BEFORE the
+            # stat so prompts arriving while it runs skip it instead of piling on.
+            if time.monotonic() - self._cron_prompts_at >= CRON_PROMPTS_REFRESH_S:
+                self._cron_prompts_at = time.monotonic()
+                await asyncio.to_thread(self._cron_prompts_backstop)
+            if head not in self._cron_prompts:
+                return {}
+        mtime, reg = await asyncio.to_thread(self._reg_read_stamped)
+        if reg is None:
+            self.backend._log("cron dedupe (%s): reg unreadable — prompt allowed rather than "
+                              "risking a swallowed schedule slot" % self.name, problem=True)
+            return {}
+        self._cron_prompts_seed(reg, mtime)        # a reseed for free, from the read just paid for
+        hits = [c for c in recurring_crons(reg)
+                if str(c.get("prompt") or "") == prompt[:500] and str(c.get("cron") or "").strip()]
+        if not hits:
+            return {}
+        delivered = reg.get("cronDelivered")
+        delivered = dict(delivered) if isinstance(delivered, dict) else {}
+        now = time.time()
+        record, replay_of = {}, None
+        for c in hits:
+            slot = cron_prev_due(str(c.get("cron")), now)
+            if slot is None:
+                return {}                  # a shape we can't reason about exactly → stand down
+            k = cron_slot_key(str(c.get("cron")), prompt[:500])
+            if float(delivered.get(k) or 0) >= slot:
+                replay_of = slot           # this schedule's current slot already delivered
+            else:
+                record[k] = slot
+        if record:
+            # Record AT the delivery moment; keys whose schedule left the armed set drop here
+            # (natural GC — the map can never outgrow the armed set + this delivery).
+            live = {cron_slot_key(str(c.get("cron")), str(c.get("prompt") or ""))
+                    for c in recurring_crons(reg)}
+            delivered = {k: v for k, v in delivered.items() if k in live}
+            delivered.update(record)
+            # Off the loop thread like the read: _update_reg is a lock wait, a read and a write, and
+            # the cap can only interrupt at an await. A write the cap cuts still lands (the worker
+            # finishes it), which is the outcome this {} was about to record: the prompt runs and
+            # the slot is on file, so the next resume's catch-up sees it as delivered.
+            await asyncio.to_thread(self.backend._update_reg, self.sid, cronDelivered=delivered)
+            return {}
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(replay_of))
+        self.backend._log("cron dedupe (%s): blocked a replayed schedule fire — its %s slot was "
+                          "already delivered (a fresh process re-fires passed slots on resume)"
+                          % (self.name, when), problem=False)
+        return {"decision": "block",
+                "reason": "This scheduled prompt already ran for its %s slot — skipping the "
+                          "duplicate." % when}
 
     # ---- subagent tracking (the transparency tmux never had) ----
 
@@ -10309,6 +11242,7 @@ class SdkSession:
         # value with the hold as its pending mark, never the picked value as if it applied (review round
         # 2, 2026-09-09). The picked values live in the session fields the reconnect's _options reads.
         running_effort = effort_from_launch_shape(self._launched_effort) if "effort" in held_of else ""
+        _el = self.effective_login()   # once per snapshot: authLogin and authLabel below read the same answer
         return {"state": state, "since": str(since) if since else "",
                 "model": model_label(self.model, self.chosen_model),
                 "effort": running_effort or self.effort,
@@ -10329,8 +11263,16 @@ class SdkSession:
                 # exists ("login"|"key"|""; _options decides both from pick_fall): the Billing menu keeps the
                 # pick check-marked and says which side bills, or that nothing was there to fall to (2026-09-08,
                 # the fall carried explicitly 2026-09-09)
-                "authPickUnavailable": self.backend.pick_unavailable(self.auth),
-                "authPickFell": self.backend.pick_fall(self.auth),
+                "authPickUnavailable": self.backend.pick_unavailable(self.auth, getattr(self, "auth_login", "")),
+                "authPickFell": self.backend.pick_fall(self.auth, getattr(self, "auth_login", "")),
+                # WHICH login this session bills (T346): the stored login's record id and its display label, its own
+                # pick's or, unpicked, the explicit default's (2026-09-14); "" for the machine's own (the kernel fills
+                # the machine's own label into the status push)
+                "authLogin": _el,
+                "authLabel": self.backend.login_display(_el),
+                # the init's EVIDENCE of which login answered (T346): the record id when the stored login's helper did,
+                # "" when the CLI fell back to the machine's own login, absent until an init lands
+                "authLoginLive": getattr(self, "auth_login_live", None),
                 "authLive": self.auth_live,   # what the CLI's init actually reported ("" until one
                 #   lands) — the Billing row says so when it disagrees with the launch intent above
                 #   (a key found via apiKeyHelper bills the key while `auth` still reads login)
@@ -10405,6 +11347,129 @@ def _path_bearing(text: str) -> bool:
     """True when `text` carries an image path the CLI's composer paste hook would extract (_IMG_PATH_RE).
     Read by kernel._tmux_echo_settle through sys.modules — the tmux route's floor; keep the name."""
     return bool(_IMG_PATH_RE.search(text or ""))
+
+
+def _records_from_mark(state_dir, sid: str, off, fsid, literals, cursor=None):
+    """The sid's transcript records from an echo's send-time mark to EOF, parsed, for the boot scans
+    (SdkBackend._text_landed, _input_landed_after): the file is the registry's current transcript (lastSid), the
+    start is the mark when it was measured on that file and fits it (else the file's start), lines are
+    streamed and pre-filtered on the record-type `literals` only — never on a text, which JSON
+    escaping can split — and a line that does not parse (a fragment the mark cut) is skipped. Raises
+    when the transcript cannot be read; each caller turns that into its None. Module functions over the
+    backend's state dir, not methods: the boot marker is bound onto bare stubs in tests, and a helper a stub
+    lacks would read as an unreadable transcript.
+    `cursor`, a dict the caller keeps across calls, makes a REPEATED scan resumable (the feed hold's take check,
+    SdkSession._untaken_taken, runs once per streamed frame; 2026-09-08 review): the scan starts at the cursor's
+    `scan_off` when it was recorded on this file (`scan_fsid`) and fits it, else at the mark; a line still being
+    written (no trailing newline) is not consumed, so a record the CLI was mid-write on is read whole next time;
+    and once the records are exhausted the cursor records where the scan stopped, after the last complete line.
+    A caller that returns early (a match) leaves the cursor where it was, so the next call re-reads from there."""
+    reg = read_reg(state_dir, sid) or {}
+    cur = str(reg.get("lastSid") or sid)
+    path = transcript_path(reg.get("cwd") or "", cur)
+    size = os.path.getsize(path)
+    start = 0
+    so = cursor.get("scan_off") if isinstance(cursor, dict) else None
+    if (isinstance(so, int) and not isinstance(so, bool) and cursor.get("scan_fsid") == cur and 0 <= so <= size):
+        start = so
+    elif (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
+            and str(fsid) == cur and 0 <= off <= size):
+        start = off
+    pos = start
+    if start < size:
+        with open(path, "rb") as f:
+            f.seek(start)
+            for raw in f:
+                if cursor is not None and not raw.endswith(b"\n"):
+                    break                          # a line still being written: read it whole next time
+                pos += len(raw)
+                if not any(lit in raw for lit in literals):
+                    continue
+                try:
+                    rec = json.loads(raw.decode(errors="replace"))
+                except ValueError:
+                    continue
+                if isinstance(rec, dict):
+                    yield rec
+    if isinstance(cursor, dict):
+        cursor["scan_off"], cursor["scan_fsid"] = pos, cur
+
+def _input_landed_after(state_dir, sid: str, t, off=None, fsid=None):
+    """Did a GENUINE HUMAN input land in the sid's transcript STRICTLY AFTER the send stamped `t`? The
+    boot marker's second question about a send whose text never landed (SdkBackend._mark_dropped_echoes): the
+    composer's messages travel one channel in order, so a later one recorded means the CLI took it
+    while this one was owed — this send is not waiting anywhere, and re-feeding it would run it after
+    the conversation has moved on. Three answers, like _text_landed's: True (found), False (readable,
+    none), None (unreadable — no evidence either way). Reads from the echo's mark, since anything
+    that could outrun the send was written after it; a record without a readable stamp cannot prove
+    "later" and is skipped; the human rule is the parse's (_human_input_record). Both record shapes a
+    message lands as are read: the native user record, and the queued_command ATTACHMENT a message fed
+    into a running turn gets as its only record (the parse authors that absorbed atom the same way and
+    it raises the live floor; a scan of user records alone re-fed a send the most common SDK landing had
+    already outrun — the review of the first cut). 2026-09-11."""
+    try:
+        floor = int(t or 0)
+        for rec in _records_from_mark(state_dir, sid, off, fsid, (b'"user"', b'"queued_command"')):
+            if not _human_input_record(rec):
+                continue
+            ts = _record_epoch(rec.get("timestamp"))
+            if ts is None or ts <= floor:
+                continue
+            return True
+        return False
+    except Exception:
+        return None
+
+
+def _human_input_record(rec: dict) -> bool:
+    """Is this transcript record a GENUINE HUMAN input — a message the person sent through the same channel a
+    composer send travels (stream-json on an SDK session) — as the kernel's parse would author it? Read by
+    _input_landed_after (2026-09-11). Two record shapes carry an input: the native USER record, and the
+    queued_command ATTACHMENT a message fed into a running turn is spliced in as (its only record —
+    event_model._absorbed authors it from the prompt with the attachment's own origin stamp). The verdict is
+    the event model's author_of with sdk_human on (an unmarked "sdk" prompt is the composer's), after the
+    same pre-reads the parse applies to a user record, in its order (event_model.atoms): a slash-command
+    WRAPPER is the human's command atom BEFORE any isMeta skip (some CLI versions mark it isMeta); the
+    command's own stdout is an assistant atom, the other wrappers and a Skill's instructions payload are
+    harness noise; an isMeta record (a skill payload, a postal delivery) and a compaction summary are
+    skipped; a tool_result line and the CLI's interrupt record (a STOP event, which _human_turn_floor
+    excludes too) are not messages the CLI took; a whitespace-only content yields no atom at all. Everything
+    the CLI or romp injects on its own — a task notification, a scheduled trigger, a teammate's message, a
+    nudge, relayed mail — reads as not-human here, exactly as it does in the chat. Mirrored rather than
+    shared: the parse's reading is inline in its record walk, so this stays in step with it the way
+    _landed_texts stays in step with the kernel's _atom_user_texts."""
+    typ = rec.get("type")
+    if typ == "attachment":
+        att = rec.get("attachment") or {}
+        if att.get("type") != "queued_command":
+            return False
+        c = att.get("prompt")
+    elif typ == "user":
+        c = (rec.get("message") or {}).get("content")
+    else:
+        return False
+    if isinstance(c, str):
+        blocks = [{"type": "text", "text": c}] if c.strip() else []
+    elif isinstance(c, list):
+        blocks = [b for b in c if isinstance(b, dict)]
+    else:
+        return False
+    if not blocks or any(b.get("type") == "tool_result" for b in blocks):
+        return False
+    text = _em._text_of(blocks)
+    if typ == "user":
+        if _em.is_skill_load_wrapper(text):
+            return False                                   # the harness loading a skill for the model (T333): nobody typed it
+        if _em.COMMAND_NAME_RE.match(text) or (_em.CMD_WRAP_RE.match(text) and _em.COMMAND_NAME_ANY_RE.search(text)):
+            return True                                    # the slash command the person typed, however marked
+        if _em.CMD_WRAP_RE.match(text) or _em.SKILL_CONTENT_RE.match(text) or rec.get("sourceToolUseID"):
+            return False                                   # its stdout, the other wrappers, a skill's payload
+        if rec.get("isMeta") or rec.get("isCompactSummary") or _em.is_interrupt_record(rec):
+            return False
+    if not text.strip():
+        return False
+    return _em.author_of(blocks, rec.get("promptSource") if typ == "user" else None, {}, True,
+                         _em._record_origin(rec)) == "human"
 
 
 def _landed_texts(rec: dict) -> set:
@@ -10662,16 +11727,26 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None, code_version=None):
+                 log=None, reconcile: bool = False, todo_lost=None, boot_at=None, code_version=None, boot_phase=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.code_version = str(code_version or "")   # the kernel's git sha, stamped on every lease this kernel
         #                                               writes (lease_census reports a skew as lease.version-skew)
         self._leases: dict = {}            # sid -> (session, lease dict): the leases this kernel holds (T305)
+        self._boot_attach_sids: set = set()   # sids the boot reconcile attached to a live host (T315)
+        self._host_spawning: set = set()   # sids with a host spawn in flight (one host per session, ever)
+        self._host_recently_ended: dict = {}   # sid -> host identity this kernel asked to end (its lease removal races a reconnect)
         self._lease_thread = None          # the heartbeat, started at the first lease, ends when none are held
         self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
         #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
         #                                    the catalog lives in the kernel; the backend never imports it
+        self.postal_restore = None         # kernel-installed: (sid, [mid, ...]) -> the set of ids the bus HOLDS: put back in
+        #                                    the session's new/, plus those held under an unreadable cur/, named in the
+        #                                    answer's `.held` (set arithmetic drops the attribute; read it off the answer
+        #                                    first) (kernel._bus_restore_mail → the bus's POST /restore);
+        #                                    raises when the bus could not be asked. Consulted ONLY by a resumable
+        #                                    reconnect that stranded a fed postal banner (_return_stranded_mail,
+        #                                    2026-09-12); None (a stand-in, an older kernel) → the banner is re-headed
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._owns_memo: dict = {}         # sid -> ((reg mtime_ns, size), owns?) — see owns()
@@ -10806,18 +11881,26 @@ class SdkBackend:
         #                                           overlap on one sid — an overlap let a stand-down's mark
         #                                           restore clobber the newer worker's watermark and the model
         #                                           heard the same notifications twice (2026-08-18 review)
+        self._boot_phase = boot_phase            # the kernel's boot-milestone hook (censusDone, attachDone), or None
+        self._boot_attach_pending = 0            # boot attaches whose hello (or death) has not landed yet
+        self._boot_attach_unsettled = set()      # their sids, for the boot row when the backstop writes it
+        self._boot_attach_lock = threading.Lock()
+        self._attach_sem = threading.Semaphore(BOOT_ATTACH_CONCURRENCY)   # boot re-attaches: socket connects, not launches
         self._spawn_sem = threading.Semaphore(BOOT_RESUME_CONCURRENCY)   # the ONE machine-wide spawn-stagger
         #                                           budget: boot reconcile's resume sweep AND the idle-queue
         #                                           drive's dormant spawns draw slots from this same semaphore
         #                                           (as two same-sized budgets they burst to 2x the cap after
         #                                           a restart — 2026-08-18 review); a spawn holds its slot
         #                                           until the CLI proves up or its thread dies
-        # Kernel-restart heal: nothing is running yet, so any alive session still reading awaiting:true is stale
-        # — its background tasks (and the Stop hook that clears the overlay) died with the previous kernel. Left
-        # uncleared it reads working/awaiting forever, climbing a ghost work-timer (reorder_bug 2026-06-24).
+        # Kernel-restart heal: an alive session still reading awaiting:true whose CLI died with the previous kernel
+        # is stale — its background tasks (and the Stop hook that clears the overlay) died too. Left uncleared it
+        # reads working/awaiting forever, climbing a ghost work-timer (reorder_bug 2026-06-24). Under session hosts
+        # the CLI SURVIVES the kernel (a valid host lease names it) and its awaiting is real: the heal skips it, as
+        # the connect thread's fresh-CLI block skips an attach (the spawnedAt fix's follow-up, 2026-09-14: every boot
+        # wiped a surviving CLI's real awaiting and read its held send as never delivered).
         regs = list_regs(self.state_dir)
         for reg in regs:
-            if reg.get("alive"):
+            if reg.get("alive") and not self._lease_survives(reg["sid"]):
                 self._heal_stale_awaiting(reg["sid"])
         self._reseed_echoes(regs)   # unlanded input echoes survive the restart (reg['echoes'] mirror)
         # Boot reconcile (reconcile=True: the KERNEL passes it at boot; tests and ad-hoc constructions
@@ -10899,16 +11982,22 @@ class SdkBackend:
                   "shape are not checked. Move any that a session should not see out of the manager's "
                   "environment (its service.env or service unit)." % ", ".join(names), problem=False)
 
-    def _note_seed_skipped(self, side: str = "key") -> None:
+    def _note_seed_skipped(self, side: str = "key", login_id: str = "") -> None:
         """Said ONCE per process and side, as a problem row: the remembered Billing default names a side this
         box cannot bill (the API key with no apiKeyHelper in Claude Code's settings; the login with none
         signed in, or under a managed helper), so new sessions are left unpicked (spawn) and bill the side
         that exists: the picker greys that choice on this box, and a pick the user made is being set aside
         without a word otherwise."""
-        if side in self._seed_skip_said:
+        said = _logins.pick_value(side, login_id)
+        if said in self._seed_skip_said:
             return
-        self._seed_skip_said.add(side)
-        if side == "key":
+        self._seed_skip_said.add(said)
+        if login_id:
+            # the remembered pick names a STORED login (T346) that is refused, expired, tokenless or gone
+            self._log("the remembered Billing pick is the %s login but %s, so new sessions start unpicked and bill "
+                      "whatever the CLI resolves; pick a login again to apply one"
+                      % (self.login_display(login_id), self.auth_unavailable_why("login", login_id)), problem=True)
+        elif side == "key":
             self._log("the remembered Billing pick is the API key but Claude Code's settings carry no apiKeyHelper, so "
                       "new sessions start unpicked and bill whatever the CLI resolves; configure apiKeyHelper in %s to "
                       "apply the pick" % os.path.join(_cred.claude_config_dir(), "settings.json"), problem=True)
@@ -10957,14 +12046,30 @@ class SdkBackend:
         lease = {"sid": str(sess.sid), "fsid": str(sess.resume_sid or sess.sid), "name": str(sess.name),
                  "pid": int(pid), "start": start, "holder": self._lease_holder(), "version": self.code_version,
                  "spawnedAt": int(now), "t": now}
+        refused = None
         with self._lock:
             self._leases[str(sess.sid)] = (sess, lease)
             if self._lease_thread is None or not self._lease_thread.is_alive():
                 # started UNDER the lock: an unstarted thread reads as not alive, so a second session
                 # connecting in the first's write window would otherwise adopt it too and both would call
                 # start() on one Thread (RuntimeError out of the connect; the review of T305, 2026-09-10)
-                self._lease_thread = threading.Thread(target=self._lease_beat_loop, name="sdk-lease-beat", daemon=True)
-                self._lease_thread.start()
+                t = threading.Thread(target=self._lease_beat_loop, name="sdk-lease-beat", daemon=True)
+                try:
+                    t.start()
+                except (RuntimeError, OSError) as e:   # the OS refused a thread ("can't start new thread")
+                    # Raised from here, inside the connect and after the handshake, the connect's handler
+                    # would crash-heal a CLI that is up and answering. This session runs unleased instead,
+                    # the missing-pid posture above: its entry goes, so no beat ever claims it, and the
+                    # slot stays empty so the next open tries the start again. Said outside the lock.
+                    self._leases.pop(str(sess.sid), None)
+                    self._lease_thread = None
+                    refused = e
+                else:
+                    self._lease_thread = t
+        if refused is not None:
+            self._log("lease (%s): the heartbeat thread could not start (%s); the session runs unleased and a boot "
+                      "judges it by parentage" % (sess.name, refused), problem=True)
+            return
         try:
             write_lease(self.state_dir, lease)
         except Exception as e:
@@ -11000,12 +12105,16 @@ class SdkBackend:
                 self._log("lease (%s): heartbeat write failed: %s" % (sess.name, err), problem=True)
         return len(items)
 
-    def _lease_beat_loop(self) -> None:
+    def _lease_beat_loop(self, sleep=None, now=None) -> None:
         """The heartbeat thread: one beat every LEASE_HEARTBEAT_S while any lease is held; exits when
-        none is (the next _lease_open starts a new one)."""
+        none is (the next _lease_open starts a new one). `sleep` and `now` are the test seams, resolved
+        at call time as _end_cli_tree's are, so a test steps a beat, the empty exit and the restart with
+        no second behind them; the thread target passes neither, so the kernel beats on the real clock."""
+        sleep = sleep or time.sleep
+        now = now or time.time
         while True:
-            time.sleep(LEASE_HEARTBEAT_S)
-            if self._lease_beat_once() == 0:
+            sleep(LEASE_HEARTBEAT_S)
+            if self._lease_beat_once(now=now()) == 0:
                 with self._lock:
                     if not self._leases:
                         self._lease_thread = None
@@ -11016,6 +12125,383 @@ class SdkBackend:
         sid = prob.get("sid") or sid_of.get(str(prob.get("fsid") or ""))
         problem_row(self.state_dir, prob.get("text") or prob.get("kind"), prob["kind"], sid=sid, log=self._log,
                     cliPid=prob.get("cliPid"), fsid=prob.get("fsid"))
+
+    # ── the per-session host (T315): attach or spawn, offsets, rows ──────────────────────────────
+    def session_hosts_on(self) -> bool:
+        return _ht().session_hosts_on(self.state_dir)
+
+    def _stamp_launch_login(self, sess, login_id=None) -> None:
+        """A CLI was LAUNCHED for `sess`: record the stored login the launch carries (`login_id`, the login's
+        IDENTIFIER, "" = the machine's own; None = the options last built for `sess`, _options_login) and
+        reset the init evidence to none (this process has said nothing yet), both persisted
+        (_persist_login_evidence, the one writer every login reader resolves against). Run once per CLI: at a
+        kernel child's connect from its options, and at a host's hello for a CLI the reg has not stamped, from
+        the hello's cli.login (the identifier the host's spec carried at the spawn, so a retry that attaches to
+        the CLI a failed handshake left running stamps the login the launch USED, not the one today's
+        availability would pick). Never for a CLI the reg already names: the running CLI's evidence, restored
+        from the reg, is about a process that is still there, and the login it carried is not recomputed (a
+        record refused by another session meanwhile must not move the attached session's spend rows onto the
+        machine's login; review 2026-09-11)."""
+        login_id = str((getattr(sess, "_options_login", "") if login_id is None else login_id) or "")
+        sess._launched_login = login_id
+        sess.auth_login_live = None
+        self._persist_login_evidence(sess, launchedLogin=login_id, authLoginLive=None)
+
+    def _host_lease_applies(self, sess) -> bool:
+        """A host holds (or held) this session: a live host lease must be attached, a dead host's journal
+        replayed, and a lease-less leftover (a host that ended unattended after its idle grace, removing its
+        lease, with records no kernel consumed) replayed and cleared, whatever the setting says now. Keyed on
+        the lease alone, the leftover was never entered with the setting off: its tail was lost and its
+        directory, hostAck and hostLogPos stood until the setting came back and the stale tail replayed into a
+        session that had run turns as a plain child since (the commit-8 review's item 1)."""
+        if _ht().host_lease_state(read_lease(self.state_dir, sess.sid), time.time()) in ("attach", "orphan"):
+            return True
+        hdir = _ht().host_dir(self.state_dir, sess.sid)
+        return (hdir / "identity.json").exists() or any(hdir.glob("journal-*.jsonl"))
+
+    def _kernel_identity(self) -> dict:
+        h = self._lease_holder()
+        h["version"] = self.code_version
+        return h
+
+    async def _host_transport_for(self, sess, opts, msg_classes):
+        """The HostTransport for `sess`'s connect: attach to the live host its valid lease names (a restart
+        survived), or, after replaying an orphan journal and waiting for a dead host's CLI to exit, spawn a
+        fresh host. Raises when a live CLI of ours holds the lease under a kernel (the single-writer rule)."""
+        ht = _ht()
+        # the attach flag is set True on the attach branch below and NOWHERE else, so every other road (the setting
+        # off, a spawn, a refusal) starts from False: a flag left by an earlier attach in this object's life made the
+        # next connect's seed wait for a registry watermark that a CLI dying with the kernel never has, so a rollback
+        # to hosts off recorded nothing for the fresh child's first turn, once per connect (T354 review, M6)
+        sess._host_is_attach = False
+        now = time.time()
+        lease = read_lease(self.state_dir, sess.sid)
+        state = ht.host_lease_state(lease, now)
+        hdir = ht.host_dir(self.state_dir, sess.sid)
+        if state == "orphan" and self._host_recently_ended.get(sess.sid) == self._holder_ident(lease):
+            # the host this kernel just asked to end (an effort change's reconnect, a kill): its lease removal
+            # races our reconnect; it ended, it did not die. Wait for the lease to go (bounded), then proceed.
+            deadline = time.time() + 5.0
+            while read_lease(self.state_dir, sess.sid) is not None and time.time() < deadline:   # loop-ok: bounded, on the lease's removal
+                await asyncio.sleep(0.1)
+            self._host_recently_ended.pop(sess.sid, None)
+            lease, state = None, "none"
+        if state == "orphan":
+            await self._host_orphan_recover(sess, opts, lease, msg_classes, died=True)
+            lease, state = None, "none"
+        elif state == "none" and lease is None and hdir.exists():
+            # a leftover directory with no lease: the host ended on its own (its idle grace, unattended) after
+            # records no kernel consumed. Replay that tail through the same road (no wait: no holder to wait
+            # for; no host.died row: nothing died), then clear the directory.
+            await self._host_orphan_recover(sess, opts, None, msg_classes, died=False)
+        # every road from here that is not an attach LAUNCHES a CLI (a kernel child, a fresh host); the launch stamp and
+        # the fresh-CLI block are made per CLI, not here: at the host's hello (_on_host_hello) or, for a kernel child,
+        # at the connect (2026-09-14)
+        hosts_on, hosts_value = _ht().session_hosts_read(self.state_dir)   # one read: the branch and its log agree
+        if state == "none" and not hosts_on:
+            # the kill switch: with the setting file saying off nothing SPAWNS a host, whatever happened to the last
+            # one; the session runs the plain SDK subprocess and the connect loop's finally closes a kernel lease.
+            # Hosts are on by default (T348), so this branch runs only when the file on this machine says off.
+            sess._host_intent = False
+            self._log("host (%s): the session-hosts file reads %r, not an on word; running the CLI as a kernel child"
+                      % (sess.name, hosts_value))
+            return None
+        if state == "attach":
+            sess._host_is_attach = True
+            reg = read_reg(self.state_dir, sess.sid) or {}
+            ack = reg.get("hostAck") if isinstance(reg.get("hostAck"), dict) else {}
+            holder = lease.get("holder") or {}
+            same_host = str(ack.get("host") or "") == "%s:%s" % (holder.get("pid"), holder.get("start"))
+            offset = int(ack.get("offset", -1)) if same_host else -1
+            t = self._new_host_transport(sess, ht.host_sock(self.state_dir, sess.sid), offset)
+            sess._host = t
+            self._log("host (%s): attaching to the live host (pid %s), replay from %d" % (sess.name, holder.get("pid"), offset + 1))
+            return t
+        if lease is not None and lease_state(lease, now) == "valid":
+            raise CLIConnectionErrorLike("a live CLI already holds this session's lease (held by a kernel); not starting a second")
+        with self._lock:
+            if sess.sid in self._host_spawning:
+                raise CLIConnectionErrorLike("a host spawn for this session is already in flight; not starting a second")
+            self._host_spawning.add(sess.sid)
+        try:
+            spec = ht.spawn_spec(opts, sess.sid, sess.name, self.state_dir, self.code_version, ht.session_host_grace_s(self.state_dir))
+            spec["login"] = str(getattr(sess, "_options_login", "") or "")   # the login IDENTIFIER this launch bills, echoed
+            #   in every hello as cli.login, so the kernel that first sees the CLI stamps the login the launch used (never a
+            #   token or key: those ride the env overlay, and the hello never carries them)
+            spec_path = ht.write_spawn_spec(self.state_dir, sess.sid, spec)
+            sock = ht.host_sock(self.state_dir, sess.sid)
+            try:
+                sock.unlink()
+            except OSError:
+                pass
+            proc = self._spawn_host(sess, spec_path)
+            deadline = time.time() + ht.SOCKET_WAIT_S
+            while not sock.exists():                          # loop-ok: a bounded wait on the socket appearing
+                if proc.poll() is not None:
+                    raise CLIConnectionErrorLike("the session host exited before serving its socket (code %s); see hosts/%s/host.log"
+                                                 % (proc.returncode, sess.sid))
+                if time.time() > deadline:
+                    # a host that never served is ended, or a resend would start a second host and two CLIs
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:
+                        pass
+                    raise CLIConnectionErrorLike("the session host did not serve its socket within %.0f s; it was ended" % ht.SOCKET_WAIT_S)
+                await asyncio.sleep(0.05)
+        finally:
+            with self._lock:
+                self._host_spawning.discard(sess.sid)
+        t = self._new_host_transport(sess, sock, -1)
+        sess._host = t
+        self._log("host (%s): started a session host (pid %d)" % (sess.name, proc.pid))
+        return t
+
+    def _new_host_transport(self, sess, sock, offset):
+        ht = _ht()
+        return ht.HostTransport(str(sock), kernel=self._kernel_identity(), ack=offset,
+                                end_grace=sess._host_end_grace or ht.sh.END_GRACE_DEFAULT_S,
+                                on_ack=lambda off, s=sess: self._write_host_ack(s),
+                                on_hello=lambda hello, s=sess: self._on_host_hello(s, hello),
+                                on_stderr=sess._on_cli_stderr,
+                                on_exit=lambda ex, s=sess: self._host_ended(s, ex),
+                                on_fault=lambda f, s=sess: self._log("host (%s): fault %s: %s" % (s.name, f.get("kind"), f.get("text")), problem=True))
+
+    def _spawn_host(self, sess, spec_path):
+        """Start bin/romp-session-host detached: in a transient scope of its own on Linux when scopes are on
+        (outside the service cgroup, like the CLI's), a plain new-session child elsewhere."""
+        ht = _ht()
+        launcher = str(Path(__file__).resolve().parent.parent / "bin" / "romp-session-host")
+        argv = [sys.executable, launcher, str(spec_path)]
+        if self.cli_scope and shutil.which("systemd-run"):
+            argv = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--unit=" + ht.host_scope_unit(sess.sid),
+                    "--description=romp session host %s" % sess.sid] + argv
+        errlog = open(str(Path(spec_path).parent / "host.stderr"), "ab")
+        return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errlog,
+                                start_new_session=True, close_fds=True)
+
+    @staticmethod
+    def _holder_ident(lease) -> str:
+        h = (lease or {}).get("holder") if isinstance(lease, dict) else None
+        h = h if isinstance(h, dict) else {}
+        return "%s:%s" % (h.get("pid"), h.get("start"))
+
+    async def _host_orphan_recover(self, sess, opts, lease, msg_classes, died: bool = True):
+        """A host is gone: `died` (its lease does not hold; a host.died row, and a wait for its CLI to be gone,
+        the lease's pid and start time, the process finishing its turn on stdin end-of-file) or ended unattended
+        (a lease-less leftover directory: a host.tail-replayed row, no wait). Either way the journal's tail past
+        hostAck is replayed through the ONE consumer path (a client over the replay transport, drained by the
+        session's own receive loop), then the host's directory and lease are cleared. hostAck is trusted only
+        when it names THIS host (the identity the host wrote at its start)."""
+        ht = _ht()
+        hdir = ht.host_dir(self.state_dir, sess.sid)
+        if died:
+            problem_row(self.state_dir, "the session host for %s died; its CLI finishes its turn, then the session resumes from "
+                        "the transcript after the journal is replayed" % sess.name, "host.died", sid=sess.sid, name=sess.name, log=self._log)
+        if isinstance(lease, dict):
+            try:
+                pid, start = int(lease.get("pid")), str(lease.get("start") or "")
+            except (TypeError, ValueError):
+                pid, start = None, ""
+            waited = 0
+            while pid and start and proc_start(pid) == start:   # loop-ok: the exact event is the CLI's exit
+                await asyncio.sleep(1.0)
+                waited += 1
+                if waited % 60 == 0:
+                    self._log("host (%s): still waiting for the dead host's CLI (pid %d) to finish its turn" % (sess.name, pid))
+        reg = read_reg(self.state_dir, sess.sid) or {}
+        ack = reg.get("hostAck") if isinstance(reg.get("hostAck"), dict) else {}
+        try:
+            ident = json.loads((hdir / "identity.json").read_text())
+            ident = "%s:%s" % (ident.get("pid"), ident.get("start"))
+        except Exception:
+            ident = None
+        offset = int(ack.get("offset", -1)) if (ack and ident and str(ack.get("host") or "") == ident) else -1
+        has_tail = any(True for _ in ht.sh.read_journal_dir(hdir, offset + 1)) if any(hdir.glob("journal-*.jsonl")) else False
+        if not died:
+            if has_tail:
+                # a row only when there IS a tail: a failed spawn's leftovers (an empty journal, an identity, no
+                # lease) are cleared quietly (the commit-8 review's item 4)
+                append_session_event(self.state_dir, "host.tail-replayed", sid=sess.sid, name=sess.name)
+                self._log("host (%s): the host ended unattended; replaying the journal's tail before resuming" % sess.name)
+            else:
+                self._log("host (%s): clearing a host directory with nothing past the acknowledged offset" % sess.name)
+        if has_tail:
+            from claude_agent_sdk import ClaudeSDKClient
+            # the tail's result rows carry the DEAD CLI's cumulative total_cost_usd and drain through the same result
+            # branch as a live turn, BEFORE the connect's seed runs (that seed follows the client handshake): seed
+            # the watermarks for that process first, from the registry's costState when it names it, else nothing
+            # is folded for the first replayed result (T354 review, M7: the dead lifetime folded as one turn)
+            cli = ""
+            if isinstance(lease, dict) and lease.get("pid") and lease.get("start"):
+                cli = "%s:%s" % (lease.get("pid"), lease.get("start"))
+            elif ack and ident and str(ack.get("host") or "") == ident:
+                cli = str(ack.get("cli") or "")
+            sess._seed_for_dead_cli(cli)
+            replay = ht.HostTransport.from_journal(hdir, ack=offset)
+            prev_host = getattr(sess, "_host", None)
+            sess._host = replay          # the session's transport for the drain (round five of 1450's review): the spend
+            #                              fold reads the replay's tags through sess._host, and with it None every replayed
+            #                              result read as live and a dead host's tail re-billed the dead CLI's spend
+            try:
+                async with ClaudeSDKClient(options=opts, transport=replay) as client:
+                    await self._replay_drain(sess, client, msg_classes)
+            except Exception as e:
+                self._log("host (%s): orphan journal replay ended on %s" % (sess.name, type(e).__name__))
+            finally:
+                sess._host = prev_host
+            self._log("host (%s): replayed the orphan journal from offset %d" % (sess.name, offset + 1))
+        remove_lease(self.state_dir, sess.sid)
+        shutil.rmtree(str(hdir), ignore_errors=True)
+        self._update_reg_dropping(sess.sid, drop=("hostAck", "hostLogPos"))
+
+    async def _replay_drain(self, sess, client, msg_classes):
+        AssistantMessage, ResultMessage, SystemMessage = msg_classes
+        await sess._drain(client, AssistantMessage, ResultMessage, SystemMessage)
+
+    def _write_host_ack(self, sess, force: bool = False) -> None:
+        """hostAck in the registry (the kernel is its only writer): the offset the kernel has consumed, at most
+        once a second, and always on detach. Acknowledged means received by this process, not persisted:
+        derived state is rebuilt from the transcript and the journal anyway."""
+        t = sess._host
+        if t is None or getattr(t, "hello", None) is None or getattr(t, "exit_info", None) is not None:
+            return                # no host, no hello yet, or a host that reported its exit (its ack is history)
+        now = time.time()
+        if not force and now - sess._host_ack_t < 1.0:
+            return
+        sess._host_ack_t = now
+        h = t.hello.get("host") or {}
+        c = t.hello.get("cli") or {}
+        try:
+            self._update_reg(sess.sid, hostAck={"host": "%s:%s" % (h.get("pid"), h.get("start")),
+                                                 "cli": "%s:%s" % (c.get("pid"), c.get("start")), "offset": int(t.ack_offset)})
+        except Exception as e:
+            self._log("host (%s): hostAck write failed: %s" % (sess.name, e))
+
+    def _host_ended(self, sess, ex: dict) -> None:
+        """The host's exit frame: the CLI is gone. File the host.log rows, then, for an end the kernel asked
+        for (or the host's own idle grace), clear the host's directory so the next connect spawns afresh
+        instead of walking the orphan road over a clean end's leftovers."""
+        self._log("host (%s): the CLI exited (%s, code %s)" % (sess.name, ex.get("cause"), ex.get("code")))
+        self._file_host_log_rows(sess)
+        t = sess._host
+        if t is not None and getattr(t, "hello", None):
+            h = t.hello.get("host") or {}
+            self._host_recently_ended[sess.sid] = "%s:%s" % (h.get("pid"), h.get("start"))
+        if ex.get("cause") in ("end", "end-forced", "eof-grace"):
+            shutil.rmtree(str(_ht().host_dir(self.state_dir, sess.sid)), ignore_errors=True)
+            self._update_reg_dropping(sess.sid, drop=("hostAck", "hostLogPos"))
+
+    def _on_host_hello(self, sess, hello: dict) -> None:
+        """Attached: the fresh-CLI decision (below), the `host.attached` session-events row (boot or later), then
+        every host.log line since the last attach that names a fault, a self-answered hook or a forced end
+        becomes a problem row (the host never writes the ledger itself). The host's open turn count becomes
+        this session's, so a host death after the attach is a mid-turn death, not an idle exit; and an attach
+        with nothing to replay settles the boot stagger's slot (no init record will arrive to do it).
+
+        The fresh-CLI decision (2026-09-14): the host is the authority for WHICH CLI it runs (cli.pid:cli.start,
+        the identity hostAck already keys on) and for WHEN it spawned (cli.spawnedAt, stamped once by the host
+        at the spawn). The reg's `spawnedAtCli` names the CLI its spawnedAt belongs to; the hello runs inside the
+        transport's connect, before the SDK's initialize, so the decision is made the first time this kernel
+        sees the CLI, whichever iteration and road got here. Equal identity: nothing (a survivor across the
+        kernel's restart, or a retry attaching to the CLI a failed handshake left running: one stamp per CLI).
+        A different identity with a spawn time: a fresh CLI, the launch-login stamp (cli.login, the identifier
+        the spec carried at the spawn; the options' login when a hello lacks it) and the fresh-CLI block with the
+        host's spawn time. A different identity WITHOUT a spawn time: a host running code older than the field,
+        whose CLI therefore predates this kernel; its identity is recorded and nothing else moves. No CLI
+        identity at all (a hello older than the identity itself): nothing stamped, said in the log, never a
+        raise out of the connect."""
+        boot = sess.sid in self._boot_attach_sids
+        self._boot_attach_sids.discard(sess.sid)
+        h, c, j = hello.get("host") or {}, hello.get("cli") or {}, hello.get("journal") or {}
+        if not isinstance(c, dict):
+            c = {}
+        self._fresh_cli_decision(sess, c)
+        try:
+            open_turns = int(hello.get("inflight") or 0)
+        except (TypeError, ValueError):
+            open_turns = 0
+        if open_turns > sess.inflight:
+            sess.inflight = open_turns
+        if getattr(sess, "_host_is_attach", False):
+            # an attach's hello has nothing to wait for (no init record follows a replay); a SPAWN's hello is
+            # the host's, not the CLI's, and the init record releases the boot-stagger slot as for any spawn
+            try:
+                sess._fire_boot_settled()
+            except Exception:
+                pass
+        append_session_event(self.state_dir, "host.attached", sid=sess.sid, name=sess.name, boot=boot,
+                             hostPid=h.get("pid"), cliPid=c.get("pid"), fsid=c.get("fsid"),
+                             replayFrom=int(sess._host.ack_offset) + 1 if sess._host else None, journalNext=j.get("next"),
+                             parked=len(hello.get("parked") or []))
+        self._file_host_log_rows(sess)
+
+    def _fresh_cli_decision(self, sess, cli: dict) -> None:
+        """The fresh-CLI decision at a host's hello (the rule in _on_host_hello's docstring), from the hello's `cli` dict."""
+        pid, start = cli.get("pid"), cli.get("start")
+        if pid is None or not start:
+            self._log("host (%s): the hello names no CLI identity; nothing stamped (a host older than the identity)" % sess.name)
+            return
+        ident = "%s:%s" % (pid, start)
+        reg = read_reg(self.state_dir, sess.sid) or {}
+        if ident == str(reg.get("spawnedAtCli") or ""):
+            return                                        # the CLI the reg's epoch already belongs to: a survivor, or a retry
+        spawned = cli.get("spawnedAt")
+        if isinstance(spawned, bool) or not isinstance(spawned, int) or spawned <= 0:
+            # a host running code older than the spawn-time field: its CLI predates this kernel (every host spawned by this
+            # code carries the field), so the epoch, the awaiting, the held sends and the launch login all stand
+            self._update_reg(sess.sid, spawnedAtCli=ident)
+            self._log("host (%s): the hello carries no CLI spawn time (older host code); CLI %s recorded, nothing stamped"
+                      % (sess.name, ident))
+            return
+        login = cli.get("login")
+        # the reading (the follow-up's read, 2026-09-14): an EMPTY string is an identifier, the machine's own login, and is
+        # stamped as such, because the host echoes what the launch billed; an ABSENT field means a host older than the field
+        # and falls to this iteration's options login
+        self._stamp_launch_login(sess, login_id=login if isinstance(login, str) else None)
+        sess._fresh_cli_stamp(spawned, ident, mark_echoes=not getattr(sess, "_deliberate_connect", False))
+        self._log("host (%s): a fresh CLI %s (spawned at %d); its epoch and launch login stamped" % (sess.name, ident, spawned))
+
+    def _file_host_log_rows(self, sess) -> None:
+        """host.log lines not yet filed become problem rows. The position is kept in the registry beside hostAck
+        (`hostLogPos: {host, pos}`, keyed by the host's identity), so a restart never re-files a row and a new
+        host's log starts from zero."""
+        p = _ht().host_dir(self.state_dir, sess.sid) / "host.log"
+        try:
+            lines = p.read_text().splitlines()
+        except OSError:
+            return
+        t = sess._host
+        h = (t.hello.get("host") or {}) if (t is not None and getattr(t, "hello", None)) else {}
+        ident = "%s:%s" % (h.get("pid"), h.get("start")) if h else ""
+        reg = read_reg(self.state_dir, sess.sid) or {}
+        kept = reg.get("hostLogPos") if isinstance(reg.get("hostLogPos"), dict) else {}
+        pos = int(kept.get("pos") or 0) if kept.get("host") == ident else 0
+        kinds = {"hook-self-answered": "host.hook-self-answered", "reader-behind": "host.reader-behind",
+                 "end-forced": "host.end-forced", "cli-spawn-failed": "host.spawn-failed"}
+        for ln in lines[pos:]:
+            try:
+                row = json.loads(ln)
+            except ValueError:
+                continue
+            kind = kinds.get(row.get("kind"))
+            if not kind:
+                continue
+            fields = {k: v for k, v in row.items() if k not in ("kind", "t")}
+            if kind == "host.hook-self-answered":
+                prose = ("the host answered a %s hook for %s itself after %s s with no kernel attached; the kernel never saw it"
+                         % (row.get("event") or "?", sess.name, row.get("parkedS")))
+            elif kind == "host.reader-behind":
+                prose = "the host's journal for %s fell behind the CLI's output" % sess.name
+            elif kind == "host.end-forced":
+                prose = "the host had to SIGKILL %s's CLI: it did not exit within the grace after stdin closed" % sess.name
+            else:
+                prose = "the host for %s could not spawn its CLI" % sess.name
+            problem_row(self.state_dir, prose, kind, sid=sess.sid, name=sess.name, log=self._log, t=row.get("t"), **fields)
+        if len(lines) != pos:
+            try:
+                self._update_reg(sess.sid, hostLogPos={"host": ident, "pos": len(lines)})
+            except Exception as e:
+                self._log("host (%s): hostLogPos write failed: %s" % (sess.name, e))
 
     def _session_cli_pid(self, session) -> int | None:
         """The live CLI pid for `session` — its LEASED CLI when the lease's pid is still that process
@@ -11158,6 +12644,24 @@ class SdkBackend:
                             sid8=(m.group(1).lower() if m else ""), cliPid=sp)
             except Exception as e:
                 self._log("cut-turn reap: stopping leftover %s failed: %s" % (unit, e))
+        # T315: a host's own scope (romp-host-<sid8>-<t>) outlives its host when the host died; stop those
+        # whose session has no VALID lease (a live host's lease is valid, so its scope stays)
+        try:
+            hl = run(HOST_SCOPE_LIST_ARGV, capture_output=True, text=True, timeout=10).stdout
+        except Exception:
+            hl = ""
+        if isinstance(hl, str) and hl.strip():
+            now = time.time()
+            leases = {str(l.get("sid")): l for l in list_leases(self.state_dir)}
+            for unit, sid8 in _ht().host_scope_units(hl.splitlines(), list(lastsids) + list(leases)).items():
+                lease = next((l for s, l in leases.items() if s[:8].lower() == sid8), None)
+                if lease is not None and lease_state(lease, now) == "valid":
+                    continue
+                try:
+                    run(["systemctl", "--user", "stop", unit], capture_output=True, text=True, timeout=SCOPE_STOP_TIMEOUT)
+                    stopped += 1
+                except Exception as e:
+                    self._log("cut-turn reap: stopping leftover host scope %s failed: %s" % (unit, e))
         return stopped
 
     def _boot_reconcile(self, regs: list[dict]) -> None:
@@ -11255,6 +12759,7 @@ class SdkBackend:
                 except Exception:
                     self._log("boot reconcile: orphan reap failed: %s" % traceback.format_exc())
             resumed, restored, notified = 0, 0, 0
+            attached_boot = 0
             to_start: list[str] = []   # sids to spawn — collected first, spawned STAGGERED below
             boot_t = int(time.time())
             down_t = newest_down_stop(self.state_dir)   # the previous kernel was stopped by `romp down`?
@@ -11284,7 +12789,21 @@ class SdkBackend:
                     # heals the same way for ones that respawn.
                     if r.get("effortPending") or r.get("modelPending"):
                         self._update_reg(sid, effortPending=False, modelPending=False)
-                    queued = _queue_texts(r.get("queue"))
+                    queued = _queue_texts(r.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
+                    if _ht().host_lease_state(read_lease(self.state_dir, sid), time.time()) == "attach":
+                        if self._attach_stand_down_holds(sid, r):
+                            # the last kernel stood down from this very host (four attaches never completed): a boot
+                            # is not new information; no attach, no count, no set entry (the commit-12 review's
+                            # fourth item). A message from the user or a change of the lease starts it again.
+                            self._log("boot reconcile: %s stays stood down from its live host (marked %s)"
+                                      % (r.get("name") or sid[:8], (r.get("hostAttachFailed") or {}).get("host")))
+                            continue
+                        # T315: a live host holds this session's CLI and its turn (a comment thread's too); attach,
+                        # whatever the setting says, no notice, no cut row
+                        attached_boot += 1
+                        to_start.append(sid)
+                        self._boot_attach_sids.add(sid)
+                        continue
                     if r.get("threadOf") and not queued:
                         # a comment THREAD is never auto-resumed at boot (the user 2026-09-01: threads
                         # persist on disk and come alive only on an explicit reply/branch; a deploy
@@ -11353,6 +12872,8 @@ class SdkBackend:
                 except Exception:
                     self._log("boot reconcile: session %s failed (sweep continues): %s"
                               % (r.get("sid"), traceback.format_exc()))
+            if attached_boot:
+                self._log("boot reconcile: attached to %d live session host(s) (their turns were never cut)" % attached_boot)
             if reaped or resumed or restored or notified or scopes_stopped:
                 self._log("boot reconcile: resumed %d cut turn(s), restored %d queued message(s), "
                           "notified %d session(s) of dead background tasks, reaped %d orphaned CLI(s) with their "
@@ -11363,9 +12884,10 @@ class SdkBackend:
             # recovered nothing is the baseline the restart monitors compare against; a boot with no
             # sessions at all measures nothing and writes nothing, so a read-only route's lazy backend
             # build leaves the state directory untouched); `resumed` counts the continuation notices queued
+            self._boot_milestone("censusDone")   # the process table, the leases and every registry row are read
             if alive:
                 append_session_event(self.state_dir, "reconcile.boot", sessions=len(alive), resumed=resumed,
-                                     restored=restored, notified=notified, reaped=reaped, scopesStopped=scopes_stopped,
+                                     restored=restored, notified=notified, reaped=reaped, scopesStopped=scopes_stopped, attached=attached_boot,
                                      toStart=len(to_start), durationS=round(time.time() - t_boot0, 3))
             # STAGGERED spawn (see BOOT_RESUME_CONCURRENCY): every reg above is already fixed —
             # queues persisted, heals applied — so even a death mid-stagger loses nothing (the next
@@ -11383,16 +12905,34 @@ class SdkBackend:
             # Compact each paid in full the reload the gate existed to avoid, leaving Skip as the only
             # option that did what the card said. Context is managed by hand for now. Every cut/queued
             # session resumes here, exactly as it did before the gate.
-            for sid in to_start:
-                slot = self._spawn_sem.acquire(timeout=BOOT_RESUME_SLOT_S)
+            to_start = [s for s in to_start if s in self._boot_attach_sids] + [s for s in to_start if s not in self._boot_attach_sids]
+            # the attaches this phase waits for, FROZEN with the count: a session a send started ahead of this loop has its
+            # hello discard its sid from _boot_attach_sids, and a per-iteration membership test then saw no attach, parked no
+            # callback, and the count never reached zero (two boots of 2026-09-11 said attachTimedOut with every hello landed)
+            attach_set = {s for s in to_start if s in self._boot_attach_sids}
+            with self._boot_attach_lock:
+                self._boot_attach_pending = len(attach_set)
+            if not self._boot_attach_pending:
+                self._boot_milestone("attachDone")       # nothing to attach: the phase is over before it began
+            for sid in to_start:                         # re-attaches first, then the cold launches
+                attach = sid in attach_set
+                # a RE-ATTACH (a live host holds the CLI) is a socket connect, first and on its own wider bound; a
+                # cold launch keeps the spawn stagger (the CPU burst the stagger exists for)
+                sem = self._attach_sem if attach else self._spawn_sem
+                slot = sem.acquire(timeout=BOOT_RESUME_SLOT_S)
                 if not slot:
                     self._log("boot reconcile: resume slot backstop expired (a CLI is wedged "
                               "pre-init?) — continuing the sweep anyway")
+                settled = (self._boot_attach_settled(sem.release if slot else None, sid) if attach
+                           else (sem.release if slot else None))
                 try:   # same per-session isolation as above: one bad spawn must not strand the rest
-                    self._ensure(sid, on_boot_settled=(self._spawn_sem.release if slot else None))
+                    if self._ensure(sid, on_boot_settled=settled) is None and attach:
+                        settled()                        # never started (stood down, dead): the phase must not wait on it
                 except Exception:
                     if slot:
-                        self._spawn_sem.release()   # the parked release never got attached — free the slot here
+                        sem.release()                    # the parked release never got attached — free the slot here
+                    if attach:
+                        self._boot_attach_count_down()
                     self._log("boot reconcile: spawn %s failed (sweep continues): %s"
                               % (sid, traceback.format_exc()))
         except Exception:
@@ -11402,6 +12942,43 @@ class SdkBackend:
         # dead pile of roots is minutes of rmtree that must never sit in front of them. Budgeted per
         # boot; the remainder waits for the next boot. Daemon: a kernel shutdown does not wait on it.
         self._start_test_root_sweep()
+
+    def _boot_milestone(self, kind: str) -> None:
+        """Tell the kernel a boot phase ended (censusDone: the process table, leases and registry rows are read;
+        attachDone: every boot re-attach has its hello or died). Best-effort: the hook is the kernel's, and a
+        raising hook must not touch the reconcile."""
+        try:
+            if self._boot_phase:
+                self._boot_phase(kind)
+        except Exception as e:
+            self._log("boot milestone %s: %s" % (kind, e))
+
+    def _boot_attach_count_down(self) -> None:
+        with self._boot_attach_lock:
+            self._boot_attach_pending -= 1
+            done = self._boot_attach_pending <= 0
+        if done:
+            self._boot_milestone("attachDone")
+
+    def _boot_attach_settled(self, release, sid=None):
+        """The on_boot_settled callback for one boot re-attach: frees its attach slot and counts the attach down;
+        fires exactly once (the session fires it at hello or at its thread's death, and the reconcile fires it
+        for a session it never started)."""
+        fired = []
+        if sid is not None:
+            getattr(self, "_boot_attach_unsettled", set()).add(sid)
+        def settled():
+            if fired:
+                return
+            fired.append(1)
+            getattr(self, "_boot_attach_unsettled", set()).discard(sid)
+            if release:
+                try:
+                    release()
+                except Exception:
+                    pass
+            self._boot_attach_count_down()
+        return settled
 
     def _start_test_root_sweep(self) -> None:
         def run():
@@ -11589,6 +13166,21 @@ class SdkBackend:
                 #                                     reconnect, raise — frees the sid for the next
                 #                                     parse's acceptance
 
+    @staticmethod
+    def cut_list(sessions) -> list:
+        """The turns a restart would CUT among `sessions`: every session with an in-flight turn that no host holds
+        (T315: a session under a host, or mid-attach by intent, is detached, never cut; T143: `ended` is not a filter,
+        a mid-shutdown session with a live turn is a cut too). The drain's ledger row and the deploy gates read this
+        one predicate (T352), so "would a restart now cut anything" is answered exactly as the drain would record."""
+        return [{"sid": s.sid, "name": s.name} for s in sessions
+                if s.inflight and getattr(s, "_host", None) is None and not getattr(s, "_host_intent", False)]
+
+    def would_cut(self) -> list:
+        """The turns a restart NOW would cut (cut_list over the live sessions): the converge gates' input (T352)."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        return self.cut_list(sessions)
+
     def drain(self, timeout: float = 2.0, kill=os.kill) -> dict:
         """Graceful-shutdown drain (the kernel's SIGTERM handler): stop every running session cleanly
         within `timeout` — interrupt any in-flight turn and close the SDK clients so the claude
@@ -11613,7 +13205,14 @@ class SdkBackend:
         # (mid-shutdown with a live turn: its CLI is reaped below all the same). The old
         # `and not s.ended` clause was a FILTER where a join was meant (T143: romp_cards counted 10
         # transcript-verified cuts against 7 ledger rows — the missing three were mid-shutdown).
-        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight]
+        # T315: a session under a host is DETACHED, not cut: the host keeps the CLI and its turn; the next kernel
+        # attaches. Latched before shutdown so the session's own teardown sends `detach`, never `end`.
+        for s in sessions:
+            if getattr(s, "_host", None) is not None or getattr(s, "_host_intent", False):
+                s.detached = True                       # by intent too: a session mid-attach must not be ended
+                if s._host is not None:
+                    s._host.detach_mode = True
+        cut = self.cut_list(sessions)
         inflight = len(cut)
         for s in sessions:
             try:
@@ -11630,6 +13229,8 @@ class SdkBackend:
         reaped = []
         reaped_sids = set()
         for s in unjoined:
+            if getattr(s, "detached", False):
+                continue                                 # its CLI is the host's to keep
             try:
                 pid = self._session_cli_pid(s)
                 if pid is None:
@@ -11650,10 +13251,15 @@ class SdkBackend:
                 pass                                     # exited between the join and the reap — fine
             except Exception:
                 self._log("drain: reap failed for %s: %s" % (s.name, traceback.format_exc()))
-        for s in unjoined:   # T304: the sessions the bound left closing, one ledger row each (the cut row's
-            #                 `unjoined` is the count alone); the process is exiting, so the ring is not asked
-            append_session_event(self.state_dir, "drain.unjoined", sid=s.sid, name=s.name,
-                                 inflight=int(bool(getattr(s, "inflight", 0))), reaped=(s.sid in reaped_sids))
+        for s in unjoined:   # T304: the sessions the bound left closing, one problem row each (the cut row's
+            #                 `unjoined` is the count alone): the row with its prose as `text` and the
+            #                 kernel-log line a reader parses, like every kind but the boot summary. ring=False:
+            #                 the process is exiting, so the bell has no reader left for the ring entry
+            problem_row(self.state_dir,
+                        "drain: session %s was still closing when the shutdown's wait ran out%s"
+                        % (s.name, "; its claude process was ended" if s.sid in reaped_sids else ""),
+                        "drain.unjoined", sid=s.sid, name=s.name, log=self._log, ring=False,
+                        inflight=int(bool(getattr(s, "inflight", 0))), reaped=(s.sid in reaped_sids))
         if sessions:
             names = [s.name for s in unjoined]
             self._log("drain: stopped %d session(s), %d in-flight turn(s) interrupted%s%s"
@@ -11996,7 +13602,7 @@ class SdkBackend:
         self._log("usage refresh: %d live session(s), none with a loop to run it on — the rail bars "
                   "keep their last reading" % len(live), problem=True)
 
-    def _record_spend(self, cost, usage=None, keyed=False, sid=None) -> None:
+    def _record_spend(self, cost, usage=None, keyed=False, sid=None, login="") -> None:
         """Accumulate a turn's total_cost_usd AND its token counts into spend.json, keyed by LOCAL date —
         the rail's spend readout where the subscription bars sat, under API-key auth (the user
         2026-08-04; tokens added the same day, who wanted them beside the dollars). Recorded on every
@@ -12015,7 +13621,11 @@ class SdkBackend:
         keyed split carried PER SID because that split is the point. Living inside the buckets, the
         maps inherit the prune and the atomic write; rows without bySid stay readable (lossless
         legacy, the T18 discipline). Inherited edge, unrecoverable here: a restart-killed turn
-        never emits its ResultMessage, so its cost is missing from every dimension alike."""
+        never emits its ResultMessage, so its cost is missing from every dimension alike.
+        PER-LOGIN ATTRIBUTION (T346, the user 2026-09-11: one accounting per login): a turn billed to a STORED
+        login (`login`, the record id the launch carried) additionally folds into the bucket's `byLogin` sub-map,
+        {id: {usd, turns, tok}}, carried forward on other turns like the key split; the spend detail sums it into
+        its "by login" line. The machine's own login and the key are the remainder, never a row here."""
         if not isinstance(cost, (int, float)) or cost <= 0:
             return
         u = usage if isinstance(usage, dict) else {}
@@ -12055,6 +13665,15 @@ class SdkBackend:
                                 "tokOut": int(ke.get("tokOut") or 0) + (_tok("output_tokens") if keyed else 0),
                                 "tokCacheR": int(ke.get("tokCacheR") or 0) + (_tok("cache_read_input_tokens") if keyed else 0),
                                 "tokCacheW": int(ke.get("tokCacheW") or 0) + (_tok("cache_creation_input_tokens") if keyed else 0)}
+                bl = e.get("byLogin") if isinstance(e.get("byLogin"), dict) else {}
+                if login:
+                    le = bl.get(login) if isinstance(bl.get(login), dict) else {}
+                    bl = dict(bl)
+                    bl[login] = {"usd": round(float(le.get("usd") or 0) + float(cost), 6),
+                                 "turns": int(le.get("turns") or 0) + 1,
+                                 "tok": int(le.get("tok") or 0) + tok_total}
+                if bl:   # carried forward on a machine-login or key turn, like the key split
+                    n["byLogin"] = bl
                 by = e.get("bySid") if isinstance(e.get("bySid"), dict) else {}
                 if sid:
                     se = by.get(sid) if isinstance(by.get(sid), dict) else {}
@@ -12082,6 +13701,20 @@ class SdkBackend:
             except Exception as ex:
                 self._log("spend record failed: %s" % ex)
 
+
+    def _persist_login_evidence(self, sess, **fields) -> None:
+        """Write the launch's login (launchedLogin) and the init's evidence (authLoginLive) onto the session's reg
+        row, the apiKeyAuth pattern: a hosted re-attach after a kernel restart replays no init, so without the row
+        the feed's refusal gate and the served-reply clear would run on nothing (review 2026-09-11). A session with
+        no reg row (a test double) writes nothing."""
+        try:
+            if _reg_path(self.state_dir, sess.sid).exists():
+                self._update_reg(sess.sid, **fields)
+        except Exception as e:
+            try:
+                self._log("auth (%s): could not persist the login evidence: %s" % (getattr(sess, "name", "?"), e))
+            except Exception:
+                pass   # a backend double without a log: the launch goes on
     def _note_auth_source(self, sess, source) -> None:
         """An init message named HOW its CLI authenticates — a PER-SESSION fact, not a backend one (the
         user 2026-08-08): with a real ANTHROPIC_API_KEY in the service env, only the sessions whose
@@ -12103,13 +13736,71 @@ class SdkBackend:
         The mismatch check compares against ROMP_EXPECTED_AUTH when the box declares one
         (_expected_auth) and the session carries no explicit per-session pick — a pick outranks
         the declaration — else against _launched_keyed as before; see the comment at the check."""
+        _ll = getattr(sess, "_launched_login", "") or ""
+        if _ll:
+            # A launch billed to a STORED login (T346) carried that login's setup-token in its own environment as
+            # CLAUDE_CODE_OAUTH_TOKEN, the box's helper disabled (the environment road, 2026-09-14). The init's source
+            # word is the EVIDENCE of what the CLI did with it, never the pick: ABSENT or 'none' is a bearer login, the
+            # token this launch handed over (a bearer in the environment outranks the machine's own credentials file in
+            # the CLI's precedence, and the machine's tokens were not restored into this launch), so the account billed
+            # is that login's subscription (auth_login_live names it); any KEY word ('apiKeyHelper', '/login managed
+            # key', 'user', 'project', 'temporary', ANTHROPIC_API_KEY) means the CLI took a key from somewhere and never
+            # used the token, the wrong account: said loudly, shown on the Billing row (authLoginLive ""), and the record
+            # marked refused so every menu leaves it out until the deciding event the other way, a served reply on
+            # that login (_ah_note_ok clears it).
+            _word = str(source or "").strip().lower()
+            if not _word or _word == "none":
+                source = "none"
+                sess.auth_login_live = _ll
+                sess._wrong_landing_reconnected = False   # the token answers again: a later wrong landing may take the fall
+                self._persist_login_evidence(sess, authLoginLive=_ll)
+            else:
+                # A key word: the CLI signed in with another credential. Said loudly naming what the CLI used, the record
+                # marked refused, and the session RECONNECTED so its next launch takes the documented fall (the key when
+                # a helper is configured, else the machine's own login, said in the status as authPickUnavailable and
+                # authPickFell) instead of running unflagged on whatever the CLI found; once per session, and only when
+                # there IS a fall (below). The session is not ended, since that would drop the user's conversation: it
+                # keeps running on the fallback side (or, with no fall, where it landed) with the Billing row saying so.
+                sess.auth_login_live = ""
+                used = "the CLI's %s credential" % str(source).strip()
+                why = "the token was not used and the CLI signed in with %s instead" % used
+                _logins.mark_refused(self.state_dir, _ll, why)
+                sess._launched_login = ""       # the evidence: this process does not bill the stored login
+                self._persist_login_evidence(sess, launchedLogin="", authLoginLive="")
+                # The reconnect relaunches onto the documented fall, read AFTER the refusal is recorded: the key when
+                # a helper is configured, else the machine's own login. With NOTHING to fall to the relaunch would
+                # carry the same failing helper, land wrong again and reconnect again, forever (review 2026-09-11:
+                # four rounds, four problem rows, no backoff), so the session stays where it landed, refused and
+                # flagged; and however many inits report a wrong landing, the reconnect is asked once per session.
+                try:
+                    fall = self.pick_fall("login", _ll)
+                except Exception:
+                    fall = ""
+                head = "auth (%s): the %s login's token was not used: %s; " % (sess.name, self.login_display(_ll), why)
+                if not fall:
+                    self._log(head + "nothing to fall to on this box, so the session stays where it landed, flagged",
+                              problem=True)
+                elif getattr(sess, "_wrong_landing_reconnected", False):
+                    self._log(head + "already reconnected once, staying put", problem=True)
+                else:
+                    self._log(head + "reconnecting onto the fallback side (%s)" % fall, problem=True)
+                    sess._wrong_landing_reconnected = True
+                    try:
+                        sess.request_reconnect()
+                    except Exception:
+                        pass
         keyed = bool(source) and str(source).strip().lower() != "none"
         # The /api-health bucket label, resolved here — once per init, from the init's own source word
         # and what THIS session was launched with — and cached on the session (api_health_auth_label).
         # romp records no key identity (it holds no key since 2026-09-08), so a CLI-found ANTHROPIC_API_KEY
         # labels key:env and a helper key:helper; the login's account digest labels the login side.
         try:
-            sess.auth_label = self.api_health.auth_label(source)   # romp records no key identity: the source word labels
+            # The bucket follows the EVIDENCE, never the pick: _launched_login names the stored login only when this
+            # launch carried its helper and the init said the helper answered (cleared just above on a wrong landing,
+            # "" on a fallback launch), so a session working on the machine's login or the key files there, not
+            # under the refused login's bucket (review 2026-09-11). romp records no key identity: the source word labels.
+            _lid = getattr(sess, "_launched_login", "") or ""      # getattr: __new__-built test doubles
+            sess.auth_label = self.api_health.auth_label(source, login_id=_lid, display=self.login_display(_lid))
         except Exception as e:
             self._log("api-health: auth label failed (%s): %s" % (sess.name, e))
         # The CLI landed on a DIFFERENT auth than EXPECTED — the expected side is the box-wide
@@ -12504,12 +14195,39 @@ class SdkBackend:
                 self._log("kernel wake failed: %s" % e)
 
     # ---- SDK option assembly (mirrors the tmux launch flags) ----
-    def _launch_shape(self, sess: SdkSession, auth=None) -> dict:
+    def _decide_auth(self, sess: SdkSession) -> tuple:
+        """(fell, side, login_id): the ONE decision a launch's billing rests on, shared with the status rows (authPickFell)
+        and with the settings-pick hold's launch shape (_launch_shape: the arm's stamp and the compose's name the same
+        side and the same stored login, so the guards compare like against like). WHICH login a login launch bills (T346):
+        the stored login's id when the pick names one AND the launch is not falling away from it (a refused, expired or
+        command-less stored login falls exactly as a dead machine login does: to the key when a helper is configured, else
+        to the machine's own login, said once per session by _options); "" = the machine's own login. NO pick of its own
+        (T380 review): the launch follows the machine's EXPLICIT default when one is set and this box can bill it, the rule
+        the status already uses (effective_auth / fallback_auth), so the readout and the launch agree (before, an unpicked
+        session read Login in its status and billed the key at launch, the helper unsuppressed); a STORED login as that
+        default (the user 2026-09-14) is followed by id; without one the launch stays plain and the CLI decides, as ever.
+        Reads only (pick_fall, the explicit default, the login records), no log line, so the arm may call it under the
+        settings-pick hold's rules (_arm_now computes the shape with the lock released)."""
+        auth_login = getattr(sess, "auth_login", "") or ""   # the stored login the pick names ("" = the machine's own)
+        fell = self.pick_fall(sess.auth, auth_login)
+        side = fell or sess.auth
+        login_id = auth_login if (side == "login" and not fell) else ""
+        if sess.auth not in ("login", "key"):
+            _exp = self.explicit_default_auth()
+            _exl = self.explicit_default_login() if _exp == "login" else ""
+            side = _exp if (_exp and not self.auth_unavailable_why(_exp, _exl)) else ""
+            if side == "login" and _exl:
+                login_id = _exl
+        return fell, side, login_id
+
+    def _launch_shape(self, sess: SdkSession, auth=None, login_id=None) -> dict:
         """The shape a connect composed NOW hands the CLI, the fields the setters' guards compare against: the
         effort launch shape, the permission mode, the billing side that launches ("key" only when the
         box's apiKeyHelper bills it; an explicit key pick with no helper launches plain and bills Claude
         Code's own credential resolution, so it is "login" here, and once a helper exists a key re-pick
-        reconnects, review round 1), and the per-session env as launched: the stored env minus the reserved
+        reconnects, review round 1), the stored login the launch carries (`login`, T346: "" for the machine's
+        own login and for the key; a pick of another stored login is a change of shape though the side word
+        is the same), and the per-session env as launched: the stored env minus the reserved
         names _options skips (set_env compares a pick, which the door already refuses those names to,
         against this same shape). ONE computation for the two stamps of _launching (review round 4,
         2026-09-10): the ARM stamps it the moment a reconnect is scheduled, so the spawn window the guards
@@ -12518,22 +14236,45 @@ class SdkBackend:
         "unchanged, no reconnect" with the badge left on, and a live pick out of bypass during a bypass
         spawn logged "applied live" with no client to take it); _options stamps what it composed, from the
         same helper, so a pick made between the two rides the connect and the stamp follows it. The
-        landing (_connect_landed) stamps the launched shape from it and closes the window. `auth` is the
-        billing pick as the caller read it (_options reads it ONCE and derives the shape, the helper suppression,
-        the env branch and the unkeyed-pick stamp from that one value; review round 7, 2026-09-10: it read
-        sess.auth again after the shape, with file I/O between, so a billing pick landing in the gap launched
-        the picked side while the stamp described the other); None reads it here. The billing side is read
-        after the fall a pick this box cannot bill takes (pick_fall, upstream's one-auth Billing picker: a login
-        pick with no login bills the key when a helper exists, a key pick with no helper bills a signed-in
-        login), so the arm's stamp and the compose's name the side _options launches; _options passes the
-        fallen side (the fall is idempotent) and says the fall once, in its log."""
-        pick = sess.auth if auth is None else auth
-        side = self.pick_fall(pick) or pick
+        landing (_connect_landed) stamps the launched shape from it and closes the window. `auth` and
+        `login_id` are the billing decision as the caller made it (_options decides ONCE, through _decide_auth,
+        and derives the shape, the helper suppression, the env branch and the stamps from that one decision;
+        review round 7, 2026-09-10: it read sess.auth again after the shape, with file I/O between, so a billing
+        pick landing in the gap launched the picked side while the stamp described the other); None decides it
+        here through the same helper, so the arm's stamp and the compose's name the side and the stored login
+        _options launches (the fall a pick this box cannot bill takes, pick_fall, and T380's explicit default
+        for an unpicked session are both inside the decision; _options says the fall once, in its log)."""
+        if auth is None:
+            _fell, side, login_id = self._decide_auth(sess)
+        else:
+            side = auth
         login = side == "login"
         reserved = ENV_RESERVED_NAMES + AUTH_ENV_NAMES
         return {"effort": effort_launch_shape(sess.effort), "mode": sess.mode,
                 "auth": "key" if (not login and self.key_available) else "login",
+                "login": str(login_id or "") if login else "",
                 "env": {k: v for k, v in sess.env_vars.items() if k not in reserved}}
+
+    def _prompt_hook_matcher(self, HookMatcher, sess: SdkSession):
+        """The UserPromptSubmit matcher, with the SDK-side hook deadline RAISED where nothing else raises it.
+        The CLI refuses a prompt whose hook misses that deadline — how six sessions went deaf under host
+        load on 2026-09-11 — so the hook's own cap (ROMP_PROMPT_HOOK_TIMEOUT_S, 8 s) must always fire first.
+        Under session hosts (the default since T348) _options's loop below already gives EVERY matcher the
+        host's HOOK_TIMEOUT_S (540 s), far above the cap, and only fills a `timeout` that is None — so
+        with hosts on this leaves it None and lets the host bound stand; with hosts OFF it passes
+        PROMPT_HOOK_SDK_TIMEOUT_S (120 s), so the SDK's default is never the deadline that fires.
+        HookMatcher takes `timeout` in claude-agent-sdk 0.2.152 (the installed version); an older venv's
+        HookMatcher refuses the keyword, and the matcher is then built without it — logged as a problem,
+        so the degraded deadline is visible rather than silent."""
+        if self.session_hosts_on():
+            return HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])
+        try:
+            return HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook], timeout=PROMPT_HOOK_SDK_TIMEOUT_S)
+        except TypeError:
+            self._log("prompt hook: this claude-agent-sdk's HookMatcher takes no timeout — the SDK's own "
+                      "hook deadline stays at its default; the hook's %.0fs cap still fails open"
+                      % PROMPT_HOOK_TIMEOUT_S_DEFAULT, problem=True, key="prompt-hook-matcher-timeout")
+            return HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])
 
     def _options(self, sess: SdkSession, ClaudeAgentOptions):
         from claude_agent_sdk import HookMatcher
@@ -12541,9 +14282,8 @@ class SdkBackend:
         # suppression (no_helper), the env branch and the unkeyed-pick stamp below all derive from this value, so
         # the launch and the stamps agree by construction; a set_auth landing after it compares against the
         # stamp and its own request launches the other side after this one lands
-        auth = sess.auth
-        # The side this launch bills: the pick, unless the box cannot bill it and CAN bill the other; then
-        # the launch falls to the side that exists (the user 2026-09-08: no login on the box means
+        # The side this launch bills: the pick, unless the box cannot bill it and CAN bill the other —
+        # then the launch falls to the side that exists (the user 2026-09-08: no login on the box means
         # everything bills the key, never a dead login; the mirror case, a key pick on a helper-less box
         # with a login, bills the login). Two picks fall this way: a stale login pick on a box whose
         # login is gone (or whose apiKeyHelper is MANAGED, which outranks the per-session layer the
@@ -12555,23 +14295,44 @@ class SdkBackend:
         # (authPickUnavailable): the user's intent is kept, the launch is honest about what it did. A
         # pick the box cannot bill with NOTHING to fall to (a key pick on a box with neither) launches
         # plain and the CLI decides, as before. Decided from the one read, before the shape: the shape,
-        # the suppression, the env branch and the stamps all follow the fallen side.
-        side = self.pick_fall(auth) or auth   # the ONE decision, shared with the status rows (authPickFell)
-        #   and with _launch_shape, so the shape stamped at the arm and the one composed here name the same side
-        if side == auth and auth in ("login", "key") and sess._pick_unknown_said != auth:
-            why = self.pick_unknown(auth)          # cannot tell just now: the pick stands, said once per session
+        # the suppression, the env branch and the stamps all follow the fallen side (and, for a stored
+        # login, its id: _decide_auth is the one decision, T346 and T380 inside it).
+        auth_login = getattr(sess, "auth_login", "") or ""   # the stored login the pick names ("" = the machine's own)
+        fell, side, login_id = self._decide_auth(sess)   # the ONE decision, shared with the status rows (authPickFell)
+        #   and with _launch_shape, so the shape stamped at the arm and the one composed here name the same side and login
+        picked = _logins.pick_value(sess.auth, auth_login)
+        # The environment road (2026-09-14; docs/reference.md "Several Claude logins"): a launch billed to a STORED login
+        # runs the record's token command NOW, the way the kernel runs the box's own helper (credentials.run_helper:
+        # /bin/sh, a whitelisted environment, stdin closed, stderr discarded, bounded), and hands the output to this one
+        # CLI as CLAUDE_CODE_OAUTH_TOKEN below. A command that fails is loud, never a quiet fall onto another account: the
+        # record is marked refused with the reason (every menu leaves it out, the status says the fall) and the decision
+        # is made again against the refusal, so this launch takes the same fall a dead machine login takes.
+        login_token = ""
+        if login_id:
+            try:
+                login_token = _logins.token_value(self.state_dir, login_id,
+                                                  lambda c: _cred.run_helper(c, label="the token command"))
+            except (_cred.CredentialError, ValueError) as e:
+                _logins.mark_refused(self.state_dir, login_id, "the token command did not answer: %s" % e)
+                self._log("auth (%s): the %s login's token command failed (%s): the record is marked refused and this "
+                          "launch takes the fall" % (sess.name, self.login_display(login_id), e), problem=True)
+                fell, side, login_id = self._decide_auth(sess)
+        if side == sess.auth and sess.auth in ("login", "key") and sess._pick_unknown_said != picked:
+            why = self.pick_unknown(sess.auth, auth_login)   # cannot tell just now: the pick stands, said once per session
             if why:
-                sess._pick_unknown_said = auth
+                sess._pick_unknown_said = picked
                 self._log("auth (%s): cannot tell whether this box can bill '%s' (%s); launching with the pick as is"
-                          % (sess.name, auth, why), problem=True)
-        if side != auth and sess._pick_fell_said != auth:
-            sess._pick_fell_said = auth
+                          % (sess.name, sess.auth, why), problem=True)
+        if fell and sess._pick_fell_said != picked:
+            sess._pick_fell_said = picked
             self._log("auth (%s): billing pick '%s' cannot apply: %s; billing the %s"
-                      % (sess.name, auth, self.auth_unavailable_why(auth),
-                         "API key" if side == "key" else "login"), problem=True)
-        shape = self._launch_shape(sess, auth=side)   # what this connect hands the CLI; stamped as _launching below
-        effort_shape = shape["effort"]
+                      % (sess.name, self.login_display(auth_login) if auth_login else sess.auth,
+                         self.auth_unavailable_why(sess.auth, auth_login),
+                         "API key" if side == "key" else ("machine's own login" if auth_login else "login")),
+                      problem=True)
         login = side == "login"
+        shape = self._launch_shape(sess, auth=side, login_id=login_id)   # what this connect hands the CLI; stamped as _launching below
+        effort_shape = shape["effort"]
         launch_keyed = shape["auth"] == "key"     # the box's helper bills this launch (no login pick, a helper configured)
         with sess._hold_write():
             # ONE read of the fast ask (review round 6, 2026-09-10; the review's regression-1): what the flag-
@@ -12599,6 +14360,16 @@ class SdkBackend:
             sess._launching = shape
             sess._connecting = True
             sess._launched_keyed = launch_keyed
+            # What a launch from THESE options carries ("" = the machine's own). For a LAUNCH the stamp records it as the
+            # launched login and resets the init evidence to none: a relaunch that stops carrying the helper (the login
+            # went unavailable, then a model or effort reconnect) must not keep the old init's word, or a revoked KEY's
+            # auth error would refuse the stored login and a reply served on the fallback would clear a real refusal.
+            # For an ATTACH to the CLI the reg already names nothing is stamped: no CLI launches, no init replays, and the
+            # evidence and the launched login stand as the reg restored them (review 2026-09-11, twice). The stamp is made
+            # per CLI: at a kernel child's connect from this value, at a host's hello from the login the spawn's spec carried
+            # (this value, written into the spec by the host road), so a retry attaching to a CLI a failed handshake left
+            # running stamps the login the launch used (2026-09-14). Stamped with the shape, under the same hold.
+            sess._options_login = login_id
             sess._launched_unkeyed_pick = side == "key" and not launch_keyed
         kw = dict(
             cli_path=self.claude_bin,
@@ -12625,7 +14396,7 @@ class SdkBackend:
             can_use_tool=sess._can_use_tool,
             hooks={"Stop": [HookMatcher(matcher=None, hooks=[sess._stop_hook])],          # awaiting overlay producer
                    # recurring-cron replay gate: a resumed CLI re-fires passed slots (T211)
-                   "UserPromptSubmit": [HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])],
+                   "UserPromptSubmit": [self._prompt_hook_matcher(HookMatcher, sess)],
                    "SubagentStart": [HookMatcher(matcher=None, hooks=[sess._subagent_start_hook])],  # live subagent
                    "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])],    #   count/types
                    # scheduling tools record their arm at the CALL moment, with the exact due time the
@@ -12797,16 +14568,27 @@ class SdkBackend:
         # box's apiKeyHelper for this one process through the per-session settings layer ("apiKeyHelper": "",
         # the value the CLI takes as unset; verified on 2.1.257): in the CLI's precedence the helper outranks
         # every login form, so without this a login pick on a helper box would bill the key. A key pick, or
-        # no pick, launches plain and the CLI runs the helper itself; romp injects no key, ever. `login` and
-        # `launch_keyed` are the one read's (the top of this compose), where a pick this box cannot bill has
-        # already fallen to the side it can (pick_fall) and been said once
+        # no pick, launches plain and the CLI runs the helper itself; romp injects no key, ever. `login`,
+        # `launch_keyed`, `login_id` and `login_token` are the one decision's (the top of this compose, _decide_auth),
+        # where a pick this box cannot bill has already fallen to the side it can and been said once
         fs = flag_settings_path(self.state_dir, sess.sid,
                                 ultracode=effort_shape[1], fast=fast_opt,
                                 env=env_vars, no_helper=login, log=self._log)
         if fs:
             kw["settings"] = fs
         # (what the launch MEANT, for _note_auth_source's per-init check, was stamped at the top with the shape)
-        if login or (side != "key" and not launch_keyed):
+        if login_id:
+            # A launch billed to a STORED login (T346): the token its command printed rides this ONE process as
+            # CLAUDE_CODE_OAUTH_TOKEN, exactly where the machine's own login tokens ride a login launch (the environment
+            # road, 2026-09-14: a setup-token through an apiKeyHelper hangs the CLI's request; in the environment it is
+            # accepted), with the box's helper disabled above (a helper outranks a bearer in the CLI's precedence). The
+            # machine's own tokens are NOT restored beside it (the first bearer found would bill the machine's account),
+            # and no romp file or log line ever holds the value. The door rules stand: env_request_error still refuses
+            # credential names from any client payload and the strip above still drops them from a stored session env.
+            # ANTHROPIC_API_KEY, which outranks a bearer too, cannot ride the child either: this overlay cannot unset an
+            # inherited variable, and the kernel's own environment never carries the name (check_boot_environment).
+            kw["env"] = dict(kw["env"], CLAUDE_CODE_OAUTH_TOKEN=login_token)
+        elif login or (side != "key" and not launch_keyed):
             # The login tokens claimed at boot ride every launch that bills the login: a login pick, and an
             # unpicked session on a box with no helper (its effective billing IS the login, and the judges'
             # login path restores the same tokens; review 2026-09-08: the first cut restored them for the
@@ -12816,10 +14598,18 @@ class SdkBackend:
             kw["env"] = dict(kw["env"], **startup_auth_env())
         else:
             kw["env"] = dict(kw["env"], **helper_fast_org_env(self._log, sess.cwd))
-        # (the launched shape, the fast flag this connect carries and the billing intent were stamped at the
-        # top, from the reads this compose was built from: review round 7. The CLI interprets literal
-        # '/fast on|off' sends only on a connection made with the flag, and set_fast reads _fast_unlocked to
-        # choose between the live send and an applying reconnect; the served check reads it against the ask)
+        # (the launched shape, the fast flag this connect carries, the billing intent and the login the options carry
+        # (_options_login) were stamped at the top, from the reads this compose was built from: review round 7. The
+        # CLI interprets literal '/fast on|off' sends only on a connection made with the flag, and set_fast reads
+        # _fast_unlocked to choose between the live send and an applying reconnect; the served check reads it against
+        # the ask)
+        if self.session_hosts_on():
+            # under a host, a hook the kernel cannot answer in time (a restart in progress) is answered by the
+            # host itself before the CLI's own 600 s budget cancels it; every matcher carries the bound
+            for matchers in (kw.get("hooks") or {}).values():
+                for m in matchers:
+                    if getattr(m, "timeout", None) is None:
+                        m.timeout = _ht().sh.HOOK_TIMEOUT_S
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
@@ -12852,28 +14642,30 @@ class SdkBackend:
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
         # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
-        # session): the seeded_auth rule, with upstream's availability check (pick_unavailable, symmetric
-        # since #1147); unset stays unset, and effective_auth's fallback (unpicked_auth) IS the pre-selector
-        # behavior.
-        if auth in ("login", "key"):
-            a = auth
-        else:
-            a = seeded_auth(d, self.key_available, self.pick_unavailable)
-            if not a and d.get("auth") in ("login", "key"):
-                # A REMEMBERED default the box cannot bill seeds nothing: a key default with no helper (review
-                # find, 2026-09-07), and since 2026-09-08 a login default with no signed-in login (or a managed
-                # helper), symmetric (the user: no login on the box means everything bills the key, never a
-                # dead login). Not because of the launch or the per-init check: both come out the same either
-                # way (nothing of romp's injected, and a wrong-side landing rings through the remembered pick
-                # in _declared_auth just as it would through a seeded one). Because the picker greys that
-                # choice on this box (_auth_avail), so a re-seed would apply a pick the user cannot make here,
-                # and because what the session SAYS about itself (Billing badge, judge billing) should read
-                # what it is: unpicked, billing the side that exists (unpicked_auth). A remembered pick set
-                # aside is said once, as a problem row. A re-seed is never an explicit pick (_declared_auth);
-                # an EXPLICIT `auth` from the picker still lands, above.
-                self._note_seed_skipped(d["auth"])
+        # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
+        a, lid = _logins.parse_pick(auth)       # "login:<id>" names a stored login (T346); junk reads as no pick
+        seeded = not a
+        if seeded:
+            a = d.get("auth") if d.get("auth") in ("login", "key") else ""
+            lid = SdkBackend.reg_login(d) if a == "login" else ""
+        if a and seeded and self.pick_unavailable(a, lid):
+            # A REMEMBERED default the box cannot bill seeds nothing: a key default with no helper (review
+            # find, 2026-09-07), and since 2026-09-08 a login default with no signed-in login (or a managed
+            # helper), symmetric (the user: no login on the box means everything bills the key, never a
+            # dead login). Not because of the launch or the per-init check: both come out the same either
+            # way (nothing of romp's injected, and a wrong-side landing rings through the remembered pick
+            # in _declared_auth just as it would through a seeded one). Because the picker greys that
+            # choice on this box (_auth_avail), so a re-seed would apply a pick the user cannot make here,
+            # and because what the session SAYS about itself — Billing badge, judge billing, cycling —
+            # should read what it is: unpicked, billing the side that exists. A remembered pick set aside
+            # is said once, as a problem row. A re-seed is never an explicit pick (_declared_auth); an
+            # EXPLICIT `auth` from the picker still lands.
+            self._note_seed_skipped(a, lid)
+            a = lid = ""
         if a:
             reg["auth"] = a
+            if lid:
+                reg["authLogin"] = lid          # the stored login this session bills (logins.py); absent = the machine's own
         # Per-session env is a per-spawn ask, never a remembered default (a var one session needed is
         # the last thing the NEXT session should silently inherit) — recorded only when asked for, so
         # the common env-less session carries no key and _options writes no settings file for it.
@@ -12969,6 +14761,8 @@ class SdkBackend:
             reg["effort"] = effort
         if parent.get("auth") in ("login", "key"):
             reg["auth"] = parent["auth"]
+            if parent["auth"] == "login" and SdkBackend.reg_login(parent):
+                reg["authLogin"] = SdkBackend.reg_login(parent)   # the fork bills the SAME login as its parent (T346)
         if parent.get("env"):
             # the reserved identity names never cross the copy: a parent reg from before
             # ENV_RESERVED_NAMES existed carries them (the _options apply seam skips them there),
@@ -13052,10 +14846,79 @@ class SdkBackend:
         self._poke()
         return True
 
+    def _lift_attach_stand_down(self, sid: str) -> None:
+        """A user's message is the word that starts a stood-down session again (T315): drop the registry's
+        hostAttachFailed marker before the ensure, so the attach is tried once more. Called by send() for a
+        message the USER typed only (send's `user` keyword; the composer, the phone, a user's `romp send`, a
+        comment reply, a parked user send replayed): romp's own automatic messages (the nudge, the awaiting
+        backstop, the debt reminder, the auto retry, a parked compaction) go through _ensure alone, like a
+        peer's postal mail, and are refused while the marker holds (the commit-12 review's second item). The
+        sweep, a boot and a heal stand down the same way. A separate step, not an argument to _ensure, whose
+        one-positional shape many tests stub."""
+        reg = read_reg(self.state_dir, sid) or {}
+        if isinstance(reg.get("hostAttachFailed"), dict):
+            self._update_reg_dropping(sid, drop=("hostAttachFailed",))
+
+    def _queue_behind_stand_down(self, sid: str, text: str, qid: str | None = None) -> bool:
+        """An automatic message for a session that stood down from its host: appended to the persisted queue
+        mirror (reg['queue'] + reg['queueMeta'], _persist_queue's shape) behind whatever is queued, so the
+        SdkSession the user's next message starts seeds it into _pending and delivers it in order. No thread,
+        no attach, no echo (a machine message has none). The chat's queued bubble reads the mirror for a
+        session that is not running (pending_queued_meta), so the message shows as queued. Returns False, having
+        written nothing, when the stand-down no longer holds under _reg_lock or a session object exists: a user's
+        lifting send raced the caller's unlocked check (the lift drops the marker under _reg_lock, and the session
+        it starts seeds its queue from the mirror), so the caller falls through to the live enqueue instead of
+        landing the text in a mirror the next _persist_queue overwrites (the commit-14 review's first item). No
+        by-text dedupe: two automatic messages with the same words are two messages, as on the live path (its
+        fourth item)."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None or not reg.get("alive"):
+                return False
+            marker = reg.get("hostAttachFailed")
+            lease = read_lease(self.state_dir, sid)
+            still = (isinstance(marker, dict) and _ht().host_lease_state(lease, time.time()) == "attach"
+                     and self._holder_ident(lease) == str(marker.get("host") or ""))
+            if not still or sid in self.sessions:
+                return False
+            # dict-aware like every other reg['queue'] rewrite: a persisted user-todo answer is a {"text","todo"} entry,
+            # which a strings-only filter here would erase (the 2026-08-22 sweep's rule); entries keep their shape
+            have = [e for e in (reg.get("queue") or []) if _queue_text(e)]
+            reg["queue"] = have + [text]
+            metas = [m for m in (reg.get("queueMeta") or []) if isinstance(m, dict)]
+            metas.append({"text": text, "qid": qid, "qts": int(time.time() * 1000)} if qid else {"text": text})
+            reg["queueMeta"] = metas
+            write_reg(self.state_dir, sid, reg)
+        self._log("host (%s): an automatic message queued behind the stand-down (%d queued); it rides the attach the "
+                  "user's next message makes" % ((reg.get("name") or sid[:8]), len(reg["queue"])))
+        self._wake_push()
+        return True
+
+    def _attach_stand_down_holds(self, sid: str, reg: dict | None = None) -> bool:
+        """True while the registry's hostAttachFailed marker still describes the world: the session's lease is
+        a LIVE host lease ('attach': its CLI and host alive, the beat fresh) held by the very host the marker
+        names. Anything else is new information and the marker is dropped on the way: another holder, a lease
+        that no longer holds (the host died or was killed: the orphan road must run, not a stand-down; the
+        commit-12 review's first item), no lease at all (a fresh spawn would succeed; its fifth item)."""
+        reg = reg if isinstance(reg, dict) else (read_reg(self.state_dir, sid) or {})
+        marker = reg.get("hostAttachFailed")
+        if not isinstance(marker, dict):
+            return False
+        lease = read_lease(self.state_dir, sid)
+        if _ht().host_lease_state(lease, time.time()) == "attach" and self._holder_ident(lease) == str(marker.get("host") or ""):
+            return True
+        self._update_reg_dropping(sid, drop=("hostAttachFailed",))   # _reg_lock, not self._lock
+        reg.pop("hostAttachFailed", None)
+        return False
+
     def _ensure(self, sid: str, on_boot_settled=None) -> SdkSession | None:
         """Start (or return the already-running) SdkSession for `sid`. `on_boot_settled` (the boot
         stagger's slot release) is parked on a FRESH spawn and fired once its CLI proves up or dies;
-        the no-spawn paths fire it immediately — no CPU burst will ever happen, so no slot is held."""
+        the no-spawn paths fire it immediately — no CPU burst will ever happen, so no slot is held.
+        A session that stood down from a live host it could not attach (the registry's hostAttachFailed
+        marker names that host, T315) is NOT started here while the marker holds (_attach_stand_down_holds:
+        a live host lease by that very host): a user's send lifts the marker first (_lift_attach_stand_down);
+        another holder, a dead lease or none is new information and the marker is dropped on the way in."""
         def _settled_now():
             if on_boot_settled:
                 try:
@@ -13072,6 +14935,13 @@ class SdkBackend:
                 _settled_now()
                 return None
             reg["sid"] = sid
+            if self._attach_stand_down_holds(sid, reg):
+                self._log("host (%s): standing down from a live host this kernel could not attach (marked %s); "
+                          "a message from the user or a change of the lease starts it again"
+                          % (reg.get("name") or sid[:8], (reg.get("hostAttachFailed") or {}).get("host")))
+                self._boot_attach_sids.discard(sid)   # never a boot=True host.attached row for an attach a later send makes
+                _settled_now()
+                return None
             if reg.get("threadOf") and reg.get("spawnedAt") and self.thread_wake_model is not None:
                 # A DORMANT comment thread (spawnedAt: it has run before — a fresh fork's FIRST connect
                 # keeps the model the dialog explicitly chose) registered on a SUPERSEDED full model
@@ -13089,7 +14959,8 @@ class SdkBackend:
                     reg["model"] = nm
                     reg["liveModel"] = _alias_label(nm)
                     self._update_reg(sid, model=nm, liveModel=_alias_label(nm))   # _reg_lock, not self._lock
-            if reg.get("threadOf"):
+            hosted = _ht().host_lease_state(read_lease(self.state_dir, sid), time.time()) == "attach"
+            if reg.get("threadOf") and not hosted:   # a thread whose host kept it alive lost nothing (T315)
                 # A dormant thread's DEAD LIFE, reported at its explicit wake. The boot sweep never
                 # resumes a thread for it (T223), so what the sweep tells a resumed top-level session
                 # — a question the kernel's death killed (pendingAsk, T214), background tasks that
@@ -13133,6 +15004,19 @@ class SdkBackend:
             s = SdkSession(self, reg)
             s.on_boot_settled = on_boot_settled
             self.sessions[sid] = s
+            # the queue mirror can move between the reg read above and this insert: an automatic message queued
+            # behind a stand-down (an append, under _reg_lock alone, seeing no session yet; the commit-15 review's
+            # third item) or the boot reconcile's notices (a prepend). Nothing in memory has enqueued yet (the
+            # caller's enqueue follows this return), so the mirror is adopted whole from a fresh read under
+            # _reg_lock now that the insert is visible: a later _persist_queue then writes back what the mirror
+            # held plus what memory adds. (An enqueue that races the window between this read and the caller's is
+            # the ordinary live path: it lands in memory and the next persist carries it.)
+            adopt = getattr(s, "_adopt_queue_mirror", None)    # a test stand-in for SdkSession may carry no queue
+            if adopt is not None:
+                with self._reg_lock:
+                    fresh = read_reg(self.state_dir, sid)
+                if fresh is not None:
+                    adopt(fresh)
             s.start()
             return s
 
@@ -13156,7 +15040,7 @@ class SdkBackend:
             return s.pending_meta()
         reg = read_reg(self.state_dir, sid) or {}
         texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
-        return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts")}
+        return [{"md": t, "qid": (m or {}).get("qid"), "qts": (m or {}).get("qts"), **({"paths": m["paths"]} if isinstance(m, dict) and m.get("paths") else {})}
                 for t, m in zip(texts, queue_meta_from_reg(reg))]
 
     def qid_for_landing(self, sid: str, uuid_: str, text: str, t=None):
@@ -13240,39 +15124,6 @@ class SdkBackend:
             self._wake_push_live(sid)                      # repaint without the echo so it stops reading as sent
         return text
 
-    def edit_queued(self, sid: str, idx: int, text: str, expect: str | None = None) -> str | None:
-        """Edit the queued turn at `idx` in place for an SDK session (the kernel's editQueued route) —
-        unqueue's twin: returns the OLD text, or None on a miss the caller surfaces loudly. The message's
-        optimistic echo (send()'s blue 'you' bubble, matched by its exact old text like unqueue does) is
-        re-worded too, so the live tail shows the edited message and the landing scan matches the record
-        the transcript will write. The kernel gates the chat's ✎ on the backend having `edit_queued`."""
-        with self._lock:
-            s = self.sessions.get(sid)
-        if not s:
-            return None
-        old = s.replace_queued(idx, text, expect)
-        if old is not None:
-            with self._live_lock:
-                for a in (self._live.get(sid) or {}).values():
-                    if a.get("_echo_text") != old:
-                        continue
-                    a["_echo_text"] = text
-                    m = a.get("message")
-                    if isinstance(m, dict):
-                        c = m.get("content")
-                        if isinstance(c, list):
-                            for b in c:
-                                if isinstance(b, dict) and b.get("type") == "text":
-                                    b["text"] = text
-                                    break
-                        elif isinstance(c, str):
-                            m["content"] = text
-                    self._touch_live(sid)                  # the reworded echo is a change to the tail (see _touch_live)
-                    break                                  # one echo per edited message
-            self._persist_echoes(sid)                      # the restart mirror carries the new words
-            self._wake_push()                              # repaint with them
-        return old
-
     def queue_recallable(self, sid: str) -> bool:
         """Can a ✕ on this session's queued bubble still win? False while a turn is running UN-HELD:
         there the input generator forwards a queued send to the CLI within milliseconds, and once it's
@@ -13294,13 +15145,32 @@ class SdkBackend:
                         or getattr(s, "_untaken", None) is not None   # held behind a fed text the CLI has not taken
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str, user_todo: str | None = None, qid: str | None = None) -> bool:
-        """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
-        it rides the queue entry (_QueueText) and the echo below, so the recall and the loss
-        machinery can reopen exactly that ask — the id travels with the message end to end.
-        `qid` is the copy's identity when the client minted one at the press (T252c; the kernel's
-        _send_with_id hands it over when the backend's send takes it): the echo key below, so the
-        queued copy, its echo and, through the fed ledger, the landed atom share one id."""
+    def send(self, sid: str, text: str, qid: str | None = None, user: bool = False, paths: list | None = None,
+             user_todo: str | None = None) -> bool:
+        """`user`: the text is a message the USER typed (the composer, the phone, an untagged `romp send`, a comment
+        reply or merge, a parked user send replayed, a compact click), the one word that retries a stood-down
+        attach (T315). Romp's own automatic messages (the default: the nudge, the awaiting backstop, the debt
+        reminder, the auto retry, a watch notice, a tagged `romp send`) are QUEUED while the stand-down holds:
+        the text lands in the persisted queue mirror (reg['queue'], the seed of the next start) without starting
+        the thread, so it rides the attach the user's next message makes, in order; True means accepted, as ever.
+        The stand-down refuses the ATTACH, never the message (the commit-13 review's first item: a refusal
+        dropped the nudge after its ledger row had said fired).
+        `user_todo` is the id of the user todo this text ANSWERS (the kernel's _send_with_id hands it by keyword):
+        it rides the queue entry (_QueueText) and the echo below, so the recall and the loss machinery can reopen
+        exactly that ask; the id travels with the message end to end. `qid` is the copy's identity when the client
+        minted one at the press (T252c; the kernel's _send_with_id hands it over when the backend's send takes it):
+        the echo key below, so the queued copy, its echo and, through the fed ledger, the landed atom share one id."""
+        if user:
+            self._lift_attach_stand_down(sid)     # the user's message is the word that retries a stood-down attach (T315)
+        else:
+            reg = read_reg(self.state_dir, sid)
+            if reg is not None and reg.get("alive") is False:
+                return False                      # a session the user ENDED refuses as ever: the alive check comes BEFORE
+            #   the stand-down, else a stood-down session the user ended kept 'accepting' automatic messages into a dead
+            #   reg's mirror (the commit-14 review's second item). Only the explicit flip (kill writes alive=False): a row
+            #   with no alive key (an echo mirror alone) and no row at all are _ensure's refusal, as before
+            if self._attach_stand_down_holds(sid, reg) and self._queue_behind_stand_down(sid, text, qid):
+                return True                       # queued behind the stand-down; a lift that raced the check falls through
         s = self._ensure(sid)
         if not s:
             return False
@@ -13330,7 +15200,7 @@ class SdkBackend:
             sent_t = int(time.time())
             sent_off, sent_fsid = self._transcript_mark(sid)
             try:
-                return s.enqueue(text, qid=key, qts=int(time.time() * 1000), todo=user_todo or "")
+                return s.enqueue(text, qid=key, qts=int(time.time() * 1000), paths=paths or None, todo=user_todo or "")
             except TypeError:                                # a stand-in session that takes the text alone: an id-less copy
                 return s.enqueue(text)
         s = self._enqueue_resolving(sid, s, attempt, "send")   # a queue the crash heal closed under the send: the replacement
@@ -13424,6 +15294,14 @@ class SdkBackend:
         except Exception as e:
             self._log("echo mirror (%s): registry write failed: %s" % (sid[:8], e))
 
+    def _lease_survives(self, sid: str) -> bool:
+        """Whether a live session host holds `sid`'s CLI across this kernel's restart: its lease reads 'attach' (the rule the
+        host road applies to choose the attach), so the boot-time heals leave what the surviving CLI still owns."""
+        try:
+            return _ht().host_lease_state(read_lease(self.state_dir, sid), time.time()) == "attach"
+        except Exception:
+            return False
+
     def _reseed_echoes(self, regs: list[dict]) -> None:
         """Kernel boot: re-create each alive session's persisted unlanded echoes in the live store, so a
         send in flight across the restart stays visible until its real record lands (then the normal
@@ -13459,10 +15337,15 @@ class SdkBackend:
                 if e.get("landed"):
                     atom["_landed"] = True           # already adjudicated landed: never re-scanned, never flagged
                 self._stash_live(reg["sid"], key, atom)
-            if self._live.get(reg["sid"]):
+            if self._live.get(reg["sid"]) and not self._lease_survives(reg["sid"]):
+                # a CLI that survived under its host still holds the sends the previous kernel handed it: nothing is
+                # dropped by the restart, so nothing is flagged (the fresh-CLI block's rule, applied at the boot)
                 _texts = _queue_texts(reg.get("queue"))     # dict-aware: an answer's {"text","todo"} entry is a position too
-                self._mark_dropped_echoes(reg["sid"], [{"md": t, "qid": (m or {}).get("qid")}
-                                                       for t, m in zip(_texts, queue_meta_from_reg(reg))])
+                try:
+                    self._mark_dropped_echoes(reg["sid"], [{"md": t, "qid": (m or {}).get("qid")}
+                                                           for t, m in zip(_texts, queue_meta_from_reg(reg))])
+                except Exception as e:                   # bookkeeping over the live tail, as at the spawn half: said, never a
+                    self._log("dropped-echo marking (%s) failed: %s: %s" % (reg["sid"][:8], type(e).__name__, e))   # boot fault
 
     def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
@@ -13476,6 +15359,12 @@ class SdkBackend:
         premature flag can never stick to a delivered message; and one the transcript scan below FINDS
         is not flagged in the first place (2026-09-06). The flag rides the registry mirror
         (_persist_echoes), so it survives further restarts.
+
+        A HUMAN send the transcript has OUTRUN — its text never landed, and a later genuine-human input
+        did (_input_landed_after) — takes the flag path even under refeed (2026-09-11): the composer's
+        messages travel one channel in order, so a later one recorded means the CLI took it while this
+        one was owed; the send is lost, not waiting, and a re-feed would run it after the conversation
+        moved on. The same event settles a live echo at every build (settle_echoes).
 
         `refeed=False` (2026-08-26, honoring _reconcile_stranded's documented policy): the RESUMABLE-
         reconnect caller takes the flag path ONLY — the abandoned client may still be flushing the record
@@ -13493,9 +15382,11 @@ class SdkBackend:
         # re-delivers a copy that is in fact queued.
         _queued = lambda a: _echo_queued_in(a, queued_texts)
         # The selection is under the live-tail lock; everything after it (the transcript scan, the
-        # queue re-add, the reg write) is not. This runs on the SESSION thread at spawn and at every
-        # reconnect, outside the connect's try — while the kernel thread's send() stashes an echo into
-        # the same dict. Unlocked, the comprehension raised RuntimeError there and the session thread
+        # queue re-add, the reg write) is not. This runs on the SESSION thread inside the connect loop, right after
+        # a fresh CLI is first seen (_fresh_cli_stamp) or at the boot reseed (_reseed_echoes); both callers catch and
+        # log a raise here as a bookkeeping fault, so it never reads as the CLI failing to come up. Meanwhile the
+        # kernel thread's send() stashes an
+        # echo into the same dict. Unlocked, the comprehension raised RuntimeError there and the session thread
         # died with no reconnect (2026-09-06).
         with self._live_lock:
             d = self._live.get(sid)
@@ -13525,7 +15416,7 @@ class SdkBackend:
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
         # and its content is regenerable machinery, not the user's words. A refeed=False caller
         # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
-        redeliver, landed = [], set()
+        redeliver, landed, outrun = [], set(), set()
         if refeed:
             for a in sorted(newly, key=lambda x: x.get("t") or 0):
                 if a.get("author") != "human":
@@ -13533,7 +15424,18 @@ class SdkBackend:
                 seen = self._text_landed(sid, a["_echo_text"], a.get("t"),
                                          a.get("_echo_off"), a.get("_echo_fsid"))
                 if seen is False:
-                    redeliver.append(a)
+                    # A send the transcript has OUTRUN is flagged, not re-fed (2026-09-11): a later human
+                    # message landed after it, and the composer's messages travel one channel in order, so
+                    # the CLI took that one while still owing this — the send is not waiting anywhere, and
+                    # a re-feed now would run it AFTER the conversation moved on, minutes or days later,
+                    # unasked (the user 2026-09-11, whose CLI wedged for five minutes and swallowed a send;
+                    # they kept working through it, and a restart would have re-sent the swallowed message
+                    # under the newer ones). Live, sdk_backend.settle_echoes rules on the same event at
+                    # every build; here the transcript is read directly, the way the landing is.
+                    if _input_landed_after(self.state_dir, sid, a.get("t"), a.get("_echo_off"), a.get("_echo_fsid")):
+                        outrun.add(a["_echo_text"])
+                    else:
+                        redeliver.append(a)
                 elif seen:
                     a["_landed"] = True                    # the verdict, for prune_live and the next boot
                     landed.add(a["_echo_text"])
@@ -13602,11 +15504,16 @@ class SdkBackend:
                 self.forget_fed(sid, a.get("uuid"))   # its landing will never come (T252c)
             with self._live_lock:
                 self._touch_live(sid)                  # a flag write outside the lock: still a change to the tail
-            self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
-                      "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
+            if a["_echo_text"] in outrun:
+                self._log("%s: a send never reached its conversation (the CLI took a later message while "
+                          "still holding it) — kept in the chat as never-delivered, not re-sent: %.80r"
+                          % (sid[:8], a["_echo_text"]), problem=True)
+            else:
+                self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
+                          "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
             if a.get("_todo"):
                 # a user-todo ANSWER lost its holder: hand the id it carries to the kernel so the
-                # ask can visibly return (round 2, 2026-08-22 — the drop was detected but nothing
+                # ask can visibly return (round 2, 2026-08-22: the drop was detected but nothing
                 # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
                 # echo at kernel death is COMMON and means delivered, not lost.
                 self._todo_lost(sid, a["_todo"], a["_echo_text"])
@@ -13653,44 +15560,18 @@ class SdkBackend:
         and the next call starts there, or returns at once when the file has not grown; a cursor from
         another file (the fsid changed) is ignored and the mark rule above applies."""
         try:
-            reg = read_reg(self.state_dir, sid) or {}
-            cur = str(reg.get("lastSid") or sid)
-            path = transcript_path(reg.get("cwd") or "", cur)
             # the plain key and, for a slash send, its words (echo_keys): the send's own record is the
             # CLI's wrapper, which _landed_texts reads as "/name args" the way the kernel's prune does
             want = set(echo_keys(text))
             floor = int(t or 0)
-            size = os.path.getsize(path)
-            start = 0
-            so = cursor.get("scan_off") if isinstance(cursor, dict) else None
-            if (isinstance(so, int) and not isinstance(so, bool) and cursor.get("scan_fsid") == cur
-                    and 0 <= so <= size):
-                start = so
-            elif (isinstance(off, int) and not isinstance(off, bool) and fsid is not None
-                    and str(fsid) == cur and 0 <= off <= size):
-                start = off
-            pos = start
-            if start < size:
-                with open(path, "rb") as f:
-                    f.seek(start)
-                    for raw in f:
-                        if not raw.endswith(b"\n"):
-                            break                          # a line still being written: read it whole next time
-                        pos += len(raw)
-                        if b'"user"' not in raw and b'"queued_command"' not in raw:
-                            continue
-                        try:
-                            rec = json.loads(raw.decode(errors="replace"))
-                        except ValueError:
-                            continue
-                        if not isinstance(rec, dict) or not (want & _landed_texts(rec)):
-                            continue
-                        ts = _record_epoch(rec.get("timestamp"))
-                        if floor and ts is not None and ts < floor:
-                            continue                       # an earlier record wearing the same words
-                        return True
-            if isinstance(cursor, dict):
-                cursor["scan_off"], cursor["scan_fsid"] = pos, cur
+            for rec in _records_from_mark(self.state_dir, sid, off, fsid, (b'"user"', b'"queued_command"'),
+                                          cursor=cursor if isinstance(cursor, dict) else None):
+                if not (want & _landed_texts(rec)):
+                    continue
+                ts = _record_epoch(rec.get("timestamp"))
+                if floor and ts is not None and ts < floor:
+                    continue                           # an earlier record wearing the same words
+                return True
             return False
         except Exception as e:
             if isinstance(cursor, dict):       # the caller's one log line names the fault (_untaken_taken)
@@ -14021,11 +15902,6 @@ class SdkBackend:
         inflight>0 (review of PR #923, 2026-09-04; verified against the installed binary, not the docs)."""
         return False
 
-    # send() can carry a user-todo ANSWER's id on the queue entry itself (send's user_todo →
-    # _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
-    # capability, and hands the plain two-argument send to any backend without it (tmux, fakes).
-    queue_carries_todos = True
-
     def _todo_lost(self, sid: str, tid: str, text: str) -> None:
         """Hand a possibly-undelivered user-todo ANSWER to the kernel's todo_lost seam — fired at
         the exact loss events: an echo drop-marked at boot/spawn/reconnect (_mark_dropped_echoes)
@@ -14091,11 +15967,82 @@ class SdkBackend:
                 reg = self._reg_for_flip(sid)
                 if reg:
                     reg["alive"] = False
+                    reg.pop("hostAttachFailed", None)   # a stand-down ends with the session (T315)
                     write_reg(self.state_dir, sid, reg)
             s = self.sessions.pop(sid, None)
         if s:
+            if s._host is not None:                # a kill is not graceful today: the host's `end` gets the short bound (T315)
+                s._host.end_grace = _ht().sh.END_GRACE_KILL_S
             s.shutdown()
+        else:
+            # no object (a session that stood down from its host, or one never started this life) while a live
+            # host still holds the CLI under its lease: the user's end must end it. The host gets `end` with the
+            # kill bound through its socket, the road the drain and a shutdown take, on a thread of its own; the
+            # host ends the CLI, removes its lease and leaves (the commit-14 review's second item)
+            self._end_host_by_lease(sid)
         self._poke()
+        return True
+
+    def _end_host_by_lease(self, sid: str) -> bool:
+        """`end` (the kill bound) to the live host a session's lease names, with no SdkSession attached: a
+        HostTransport connects, is refused nothing (a kernel is not attached; a `busy` answer means one is, and
+        that kernel's own kill road applies) and closes in end mode. Runs on a daemon thread: kill() is a route
+        handler and the end waits up to the bound. False when no live host lease holds."""
+        ht = _ht()
+        lease = read_lease(self.state_dir, sid)
+        if ht.host_lease_state(lease, time.time()) != "attach":
+            return False
+        sock = ht.host_sock(self.state_dir, sid)
+        ident = self._kernel_identity()
+        holder = (lease or {}).get("holder") or {}
+        holder_key = (holder.get("pid"), holder.get("start"))   # WHICH host this end is for (a later holder is a new host)
+        async def go():
+            t = ht.HostTransport(str(sock), kernel=ident, ack=-1, end_grace=ht.sh.END_GRACE_KILL_S)
+            try:
+                # a bounded hello: a host whose loop is stalled accepts the connection from the backlog and never
+                # writes hello (the lease TTL is 12 s; a live host answers in milliseconds)
+                await asyncio.wait_for(t.connect(), timeout=5.0)
+            except asyncio.TimeoutError:
+                self._log("host (%s): end by lease: no hello within 5 s; the host's loop is stalled (its lease lapses in %.0f s)"
+                          % (sid[:8], LEASE_TTL_S))
+                try:
+                    await t.close()
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                self._log("host (%s): end by lease failed: %s: %s" % (sid[:8], type(e).__name__, e))
+                return
+            await t.end_and_close()             # `end` with the kill bound, whatever the initialize gate says
+            with self._lock:                    # the host named by the lease has been told to end: a later End for the
+                self.__dict__.setdefault("_ended_hosts", {})[sid] = holder_key   # same holder opens no second socket
+        def run():
+            try:
+                asyncio.run(go())
+            except Exception as e:
+                self._log("host (%s): end by lease thread failed: %s" % (sid[:8], e))
+        with self._lock:
+            # check, create, register and START under one acquisition: a check-then-register with the lock released
+            # between let two Ends for one sid (the dashboard's and `romp end`) open two sockets, and the host's
+            # `busy` to the second landed as a false failure row (the commit-17 review's first item); an unstarted
+            # thread's is_alive() is False, so the start is inside the lock too
+            threads = self.__dict__.setdefault("_end_threads", {})
+            if self.__dict__.get("_ended_hosts", {}).get(sid) == holder_key:
+                # the first End's thread finished before the second arrived (a host answers `end` in milliseconds):
+                # the is_alive check below no longer sees it, and a second socket to a host already told to end landed
+                # as a false failure row (main's Python 3.11 job, 2026-09-12). The lease still names that host, so it
+                # has not gone yet; a NEW holder under the same sid is a new host and ends normally
+                self._log("host (%s): the live host (pid %s) was already told to end through its lease" % (sid[:8], holder.get("pid")))
+                return True
+            prev = threads.get(sid)
+            if prev is not None and prev.is_alive():
+                self._log("host (%s): an end through the lease is already under way" % sid[:8])
+                return True                     # one end thread per sid: a second End click starts no second socket
+            self._log("host (%s): kill with no session object; ending the live host (pid %s) through its lease"
+                      % (sid[:8], ((lease or {}).get("holder") or {}).get("pid")))
+            th = threading.Thread(target=run, name="end-host:" + sid[:8], daemon=True)   # kind:payload: the stack sample keeps the kind
+            threads[sid] = th
+            th.start()
         return True
 
     def running_sids(self) -> list:
@@ -14501,7 +16448,7 @@ class SdkBackend:
         with self._reg_lock:
             reg = read_reg(self.state_dir, sid)
             if reg is None:
-                if _reg_path(self.state_dir, sid).exists():
+                if not _reg_absent_for_write(_reg_path(self.state_dir, sid)):   # the writers' one rule (2026-09-14)
                     sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
                                      "gutting the reg\n" % (sid[:8], "/".join(sorted(fields) + list(drop))))
                     return
@@ -14541,8 +16488,23 @@ class SdkBackend:
             self._log("boot reconcile: %s had a move to its own folder pending — nothing to settle; cleared" % sid[:8])
             release()
             return "released"
-        at_new = os.path.exists(transcript_path(pend, fsid))
-        at_old = bool(cur) and os.path.exists(transcript_path(cur, fsid))
+        def _at(slug):
+            """True, False, or None when the slug's transcript cannot be stat'ed for a reason other than ENOENT (an unsearchable
+            folder): os.path.exists answered False there on every interpreter, and an unsearchable pending slug with the transcript
+            also at the old one read as a move that never happened and dropped cwdPending (the exists() fix's queued low, 2026-09-14)."""
+            try:
+                os.stat(transcript_path(slug, fsid))
+                return True
+            except FileNotFoundError:
+                return False
+            except OSError:
+                return None
+        at_new = _at(pend)
+        at_old = bool(cur) and _at(cur)
+        if at_new is None or at_old is None:
+            self._log("boot reconcile: %s has a move to %s pending and a folder that cannot be read (new %r, old %r): left pending"
+                      % (sid[:8], pend, at_new, at_old))
+            return "kept"                      # the flag stays for a person, the fork's word for it (move() reads the outcome)
         if at_new and not at_old:
             self._log("boot reconcile: %s was mid-move to %s — the transcript is there; finishing romp's half"
                       % (sid[:8], pend))
@@ -15269,10 +17231,14 @@ class SdkBackend:
         like set_effort and under its arm rule: at once when the session is quiet, else at the turn settle
         that finds it quiet; a pick held for live work waits for the settle that finds none, and auth_live
         is cleared at the arm. The CLI's next init confirms via apiKeySource (_note_auth_source flags a
-        landing on the wrong side)."""
-        if value not in ("login", "key"):
+        landing on the wrong side). "login:<id>" names a STORED login (T346): the side word is `login`, the
+        record id rides the reg (authLogin) and the session (auth_login), and a pick of another stored
+        login is a change of billing though the side word is the same, so every guard below compares the
+        side and the id together (the launch shape carries the id as `login`, _launch_shape)."""
+        side, login_id = _logins.parse_pick(value)   # "login" | "key" | "login:<id>" (a stored login, T346)
+        if not side:
             return False
-        why = self.auth_unavailable_why(value)
+        why = self.auth_unavailable_why(side, login_id)
         if why:
             # The pick names a side this box cannot bill: refuse, and SAY WHY, in the problem ring and in
             # the kernel's toast (the user 2026-09-08: a bare refusal left the reason to guesswork). The
@@ -15285,65 +17251,90 @@ class SdkBackend:
             # (the authority the usage bars trust); its default is permissive so a bare backend (tests, no
             # kernel wiring) keeps the old behavior.
             self.last_auth_refusal = why
-            self._log("auth: a %s pick cannot apply on this box: %s" % (value, why), problem=True)
+            self._log("auth: a %s pick cannot apply on this box: %s"
+                      % (("'%s' login" % self.login_display(login_id)) if login_id else value, why), problem=True)
             return False
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
         s = self.sessions.get(sid)
-        write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort:
-        #   every pick, the unchanged ones below included (review round 1); the guards decide only whether
-        #   THIS session reconnects
-        launching = (s._launching or {}).get("auth") if s else None
-        if s and s._launched_auth != value and (s._auth_pending == value or launching == value):
+        word = self.login_display(login_id) if login_id else side   # the stored login's display label (T346), else the side word
+        # the seed for the NEXT new session, like model/effort: every pick, the unchanged ones below included (review
+        # round 1); the guards decide only whether THIS session reconnects. Until the user sets the machine's default
+        # EXPLICITLY (set_auth_default, the Billing flyout's Default group, T380): from then on a per-session pick is
+        # about that session and moves no default. authLogin rides beside it: the stored login a login pick names, ""
+        # for the machine's own (written as "" so a plain pick clears an earlier stored one).
+        if not read_sdk_defaults(self.state_dir).get("authExplicit"):
+            write_sdk_default(self.state_dir, auth=side, authLogin=login_id)
+        # the pick, the side the connect in progress launches, the side the running process launched and the side a
+        # reconnect is applying, each as (side, stored login id): "" for the machine's own login and for the key
+        pick = (side, login_id)
+        launching = (s._launching or {}) if s else None
+        launching_pick = (launching.get("auth"), launching.get("login") or "") if launching else None
+        launched_pick = None
+        pending_pick = None
+        if s:
+            launched_pick = (s._launched_auth,
+                             (getattr(s, "_launched_login", "") or "") if s._launched_auth == "login" else "")
+            if s._auth_pending:
+                pending_pick = (s._auth_pending, (getattr(s, "auth_login", "") or "") if s._auth_pending == "login" else "")
+        if s and launched_pick != pick and (pending_pick == pick or launching_pick == pick):
             # ALREADY APPLYING (set_effort's guard for billing): pending on a reconnect that has not
             # landed, or the side the connect in progress is launching (_launching, review round 2); the
             # flags stay (or are set) for _connect_landed's clear
-            if s._auth_pending != value:
-                s.auth = value
-                s._auth_pending = value
-                self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)
-            if launching == value:
+            if pending_pick != pick:
+                s.auth = side
+                s.auth_login = login_id
+                s._auth_pending = side
+                s._wrong_landing_reconnected = False   # a new pick may take the documented fall again (review 2026-09-11)
+                self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)
+            if launching_pick == pick:
                 s._withdraw_held_pick("auth")   # a differing billing pick made during this spawn is moot (set_effort's note)
-            self._log("auth (%s): set to %s; already applying, no new request" % (s.name, value))
-        elif s and s._launched_auth == value and (launching is None or launching == value):
+            self._log("auth (%s): set to %s; already applying, no new request" % (s.name, word))
+        elif s and launched_pick == pick and (launching_pick is None or launching_pick == pick):
             # UNCHANGED, set_effort's guard for billing: the CLI this session runs launched on this side
             # (_launched_auth, the side _connect_landed stamped: "key" only when the box's apiKeyHelper billed
-            # the launch), and
+            # the launch) and, for a login, with this stored login (_launched_login, the launch-login stamp), and
             # no connect in progress is about to change it (_launching; review round 2: a revert in the
             # spawn window compared against the process being replaced). Nothing to apply, so no
             # reconnect. An unpicked session whose launch happened to land here (effective_auth's fallback)
             # takes the pick as its explicit intent in the reg, still without a reconnect: the process
             # already bills that side.
-            if s._auth_pending and s._auth_pending != value:
+            if pending_pick and pending_pick != pick:
                 # a DIFFERENT switch waits to apply: this reverts it, set_effort's revert for billing. The
                 # pending pick is withdrawn through the one withdraw routine (review round 3, 2026-09-09):
                 # the surface leaves the pending set and, when it was the only one pending, the hold and its
                 # reconnect end instead of relaunching the side the process already bills. auth_live is
                 # untouched: the CLI's report still describes the process that keeps running
-                reverted = s._auth_pending
-                s.auth = value
+                reverted = self.login_display(pending_pick[1]) if pending_pick[1] else pending_pick[0]
+                s.auth = side
+                s.auth_login = login_id
                 s._auth_pending = ""
-                self._update_reg(sid, auth=value, authPending=False)
+                self._update_reg(sid, auth=side, authLogin=login_id, authPending=False)
                 s._withdraw_held_pick("auth")
-                self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, value, reverted))
+                self._log("auth (%s): set to %s; the pending %s pick is withdrawn" % (s.name, word, reverted))
             else:
-                if s.auth != value or reg.get("auth") != value:
-                    s.auth = value
-                    self._update_reg(sid, auth=value)
+                if (s.auth != side or (getattr(s, "auth_login", "") or "") != login_id
+                        or reg.get("auth") != side or SdkBackend.reg_login(reg) != login_id):
+                    s.auth = side
+                    s.auth_login = login_id
+                    self._update_reg(sid, auth=side, authLogin=login_id)
                 if s._auth_pending or reg.get("authPending"):
                     s._auth_pending = ""
                     self._update_reg(sid, authPending=False)
-                self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, value))
+                self._log("auth (%s): set to %s; unchanged, no reconnect" % (s.name, word))
         else:
             # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW; see set_effort.
             # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
             # so a restart must restore "no init has landed yet", never the old side (both readers guard
-            # with isinstance(..., bool), so None reads as absent).
-            self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)
+            # with isinstance(..., bool), so None reads as absent). authLogin: the stored login a login pick
+            # names, "" for the machine's own (written as "" so a plain pick clears an earlier stored one).
+            self._update_reg(sid, auth=side, authLogin=login_id, authPending=True, apiKeyAuth=None)
             if s:
-                s.auth = value
-                s._auth_pending = value
+                s.auth = side
+                s.auth_login = login_id
+                s._auth_pending = side
+                s._wrong_landing_reconnected = False   # a new pick may take the documented fall again (review 2026-09-11)
                 outcome = s._note_reconnect_ask("auth")
                 # auth_live is NOT cleared here on a live session: the last init's report describes the
                 # process that keeps running until the reconnect, and the Billing row names it as what bills
@@ -15357,12 +17348,48 @@ class SdkBackend:
                 if s.loop is None or s.ended:
                     s.auth_live = ""
                 s.request_reconnect(pick="auth")
-                self._log("auth (%s): set to %s; %s" % (s.name, value, outcome))
+                self._log("auth (%s): set to %s; %s" % (s.name, word, outcome))
         if s:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
-            # nothing at all. One chip, every path.
-            self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
+            # nothing at all. One chip, every path; its word is the stored login's display label (T346),
+            # else the side word.
+            self._ack_cmd_chip(sid, "/auth", "/auth " + word, s.resume_sid)
+        return True
+
+    def set_auth_default(self, value: str) -> bool:
+        """Set the machine's DEFAULT billing (T380, the user 2026-09-12): the seed every new session and every
+        session with no pick of its own launches on (sdk-defaults.json `auth`, what spawn seeds a reg from and
+        default_auth and effective_auth fall to). Refuses a side this box cannot bill with the same reason a
+        per-session pick gets (auth_unavailable_why). Marks the default explicit (`authExplicit`), so a later
+        per-session pick no longer moves it; "auto" clears the flag and the seed (the helper rule again).
+        Touches no session's own pick: a session that follows the default shows the new side in its status at
+        once and launches on it next time. A STORED login ("login:<id>") is a default too since 2026-09-14 (the user:
+        the Set default billing submenu offers every billing the picks do), written with its id under authLogin and
+        judged on its own record as a pick of it would be; the machine's own login and the key write authLogin empty."""
+        if value == "auto":
+            # back to the helper rule (the key when an apiKeyHelper is configured, else the login): the flag
+            # clears and the seed empties, so a per-session pick seeds the default again as it did before
+            # authLogin cleared too: a per-session stored-login pick seeds it while the default is automatic, and a stale
+            # id here would ride the next explicit Login default into every new session (the merge read, 2026-09-12)
+            write_sdk_default(self.state_dir, auth="", authExplicit=False, authLogin="")
+            self._log("auth: the machine's default billing is automatic again (the helper rule)")
+            return True
+        side, lid = _logins.parse_pick(value)
+        if not side:
+            return False
+        why = self.auth_unavailable_why(side, lid)
+        if why:
+            self.last_auth_refusal = why
+            self._log("auth: the machine default cannot be %s on this box: %s" % (value, why), problem=True)
+            return False
+        # a STORED login (the user 2026-09-14) is written with its id; the machine's own login and the key write authLogin
+        # EMPTY, so a stored login a per-session pick seeded into the defaults while the default was automatic never becomes
+        # the machine default by inheritance (a seed carrying one would bill it silently, the 2026-08-12 wrong-account
+        # failure): an id here is always the user's explicit choice in the submenu
+        write_sdk_default(self.state_dir, auth=side, authExplicit=True, authLogin=lid)
+        self._log("auth: the machine's default billing is now %s (new sessions, and sessions with no pick of their own)"
+                  % (self.login_display(lid) if lid else side))
         return True
 
     def default_auth(self, reg: dict | None = None) -> str:
@@ -15376,33 +17403,95 @@ class SdkBackend:
         return self.fallback_auth()
 
     def fallback_auth(self) -> str:
-        """What an UNPICKED session bills on this box (upstream #1147's name for the one fallback; the rule is the
-        fork's unpicked_auth, slice-2 ruling 10): the key when an apiKeyHelper is configured, else the side the
-        box declares (ROMP_EXPECTED_AUTH, or a remembered gear pick it can apply), else the login. Falls to
-        whichever side exists, in BOTH directions (the user 2026-09-08: no login on the box means everything
-        bills the key, never a dead login): a box with neither and no declaration still reads login, the CLI's
-        own resolution, and the launch's auth check rings on what lands."""
-        return unpicked_auth(self.state_dir, self.key_available)
+        """What an UNPICKED session bills on this box. The machine's EXPLICIT default when one is set (T380: the
+        Billing flyout's Default group wrote sdk-defaults.json `auth` with `authExplicit`; a session with no pick
+        of its own FOLLOWS it, the review found only new sessions did) and this box can bill that side; else the
+        helper rule as before: the key when an apiKeyHelper is configured, else the login. Falls to whichever
+        side exists, in BOTH directions (the user 2026-09-08: no login on the box means everything bills the key,
+        never a dead login) — a box with neither still reads login, the CLI's own resolution, and the launch's
+        auth check rings on what lands."""
+        side = self.explicit_default_auth()
+        # a stored login as the default (the user 2026-09-14) is judged on its own record, as a pick of it would be; an
+        # unusable one reads "" here and the machine's own login is judged instead (the fall-through _auth_avail follows)
+        if side and not self.auth_unavailable_why(side, self.explicit_default_login() if side == "login" else ""):
+            return side
+        return "key" if self.key_available else "login"
 
-    def new_session_auth(self) -> str:
-        """new_session_auth over this backend's state dir, key availability (key_available) and availability check
-        (pick_unavailable): the side a session spawned now with no explicit pick would bill, for the kernel's one
-        reader of a row that reports nothing (_auth_avail's picker default; _bills_login's fallback reads not
-        _auth_key_present() instead). Called directly there, never through a getattr guard: a backend without
-        this method is a bug to surface, not a login box."""
-        return new_session_auth(self.state_dir, self.key_available, self.pick_unavailable)
+    @staticmethod
+    def reg_login(reg) -> str:
+        """The stored login a reg (or the remembered defaults) names under `authLogin`, "" when none or
+        junk. A record id only; whether that record still exists is auth_unavailable_why's question."""
+        v = (reg or {}).get("authLogin") if isinstance(reg, dict) else None
+        return v if isinstance(v, str) and _logins.ID_RE.match(v) else ""
 
-    def auth_unavailable_why(self, side: str) -> str:
+    def login_display(self, login_id: str) -> str:
+        """A stored login's display label (logins.display: the user's label, then the email, organisation
+        and kind word when known), "" for the machine's own login or an unknown id. Never a token."""
+        if not login_id:
+            return ""
+        rec = _logins.read_record(self.state_dir, login_id)
+        return _logins.display(rec) if rec else "login %s (record missing)" % login_id
+
+    def explicit_default_auth(self) -> str:
+        """The machine default the user set explicitly (sdk-defaults.json `auth` with `authExplicit` true), else
+        "". Read per status snapshot, so cached on the file's mtime and size: one stat per call. The cache is
+        module-level, keyed by the state root, not an attribute on the backend: the perf bench's stand-in backend
+        refuses any attribute it did not anticipate (CI, 2026-09-12). The stat key takes ino and ctime too: a same-size
+        rewrite whose mtime did not advance (review)."""
+        return self._explicit_default()[0]
+
+    def _explicit_default(self) -> tuple:
+        """(side, stored login id) of the explicit machine default: explicit_default_auth's read, the id the defaults
+        carry under authLogin beside an explicit login side ("" otherwise; whether that record is usable is
+        explicit_default_login's question). Cached on sdk-defaults.json's stat like the side."""
+        p = _defaults_path(self.state_dir)
+        try:
+            st = p.stat()
+            key = (st.st_mtime_ns, st.st_size, st.st_ino, st.st_ctime_ns)
+        except OSError:
+            key = None
+        cache = _EXPLICIT_DEFAULT_CACHE.get(str(self.state_dir))
+        if cache is not None and cache[0] == key:
+            return cache[1], cache[2]
+        d = read_sdk_defaults(self.state_dir) if key is not None else {}
+        side = d.get("auth") if (d.get("authExplicit") and d.get("auth") in ("login", "key")) else ""
+        lid = SdkBackend.reg_login(d) if side == "login" else ""
+        _EXPLICIT_DEFAULT_CACHE[str(self.state_dir)] = (key, side, lid)
+        return side, lid
+
+    def explicit_default_login(self) -> str:
+        """The STORED login the explicit machine default names (the user 2026-09-14: sdk-defaults.json `authLogin` beside
+        auth login and authExplicit), "" for the machine's own login, the key, an automatic default, or a stored login
+        this box cannot bill just now (refused, expired, command-less or removed: the default falls through to the
+        machine's own login, the rule _auth_avail's `default` follows). One record read per call beside the cached side."""
+        side, lid = self._explicit_default()
+        return lid if (side == "login" and lid and not self.auth_unavailable_why("login", lid)) else ""
+
+    def default_login(self, reg: dict | None = None) -> str:
+        """WHICH stored login a session bills when default_auth(reg) reads login: the reg's own pick's id, else the
+        explicit machine default's stored login when the reg has no pick of its own (the user 2026-09-14), "" for the
+        machine's own login or the key. The dormant twin of SdkSession.effective_login(); the judges ask it too
+        (the kernel wires it beside default_auth, judge._DEFAULT_LOGIN_FN)."""
+        a = (reg or {}).get("auth")
+        if a in ("login", "key"):
+            return SdkBackend.reg_login(reg) if a == "login" else ""
+        return self.explicit_default_login() if self.fallback_auth() == "login" else ""
+
+    def auth_unavailable_why(self, side: str, login_id: str = "") -> str:
         """Why this box cannot bill `side` ("login" | "key"), as ONE plain sentence for the refusal toast,
         the problem ring and the Billing menu's greyed option — "" when it can. The login side is the
         kernel's credential-store probe (login_ok) AND the absence of a managed apiKeyHelper (which
         outranks the per-session layer a login pick rides, so the pick could not disable it); the key
-        side is a configured apiKeyHelper (read, never run). One vocabulary for every surface, so the
-        picker, the tab menu and the log agree on the reason (the user 2026-09-08)."""
+        side is a configured apiKeyHelper (read, never run). A STORED login (`login_id`, T346) answers
+        for itself instead of the machine's account (its record must exist, hold a token, be unexpired
+        and not refused: logins.why_unavailable), under the same managed-helper bar. One vocabulary for
+        every surface, so the picker, the tab menu and the log agree on the reason (the user 2026-09-08)."""
         if side == "login":
             src, readable = self._helper_source_read()
             if readable and src == "managed":
                 return _cred.WHY_MANAGED_HELPER
+            if login_id:
+                return _logins.why_unavailable(_logins.record_state(self.state_dir, login_id))
             if self.login_ok() is False:        # None = the account file cannot be read just now: cannot tell,
                 return _cred.WHY_NO_LOGIN       #   never "no login" (review 2026-09-09)
             return ""
@@ -15424,17 +17513,20 @@ class SdkBackend:
             d["keyWhy"] = kw_
         return d
 
-    def pick_unavailable(self, auth: str) -> str:
+    def pick_unavailable(self, auth: str, login_id: str = "") -> str:
         """The explicit pick this box cannot bill, when `auth` names one: "login" for a login pick with no
         signed-in login (or under a managed helper), "key" for a key pick with no apiKeyHelper, "" for an
-        unpicked session or a pick the box can apply. The status field `authPickUnavailable`: the Billing
-        menu keeps the pick check-marked and its sub-line says which side the launch actually went to
-        (_options falls to the side that exists, never onto a login that does not; the user 2026-09-08)."""
-        if auth in ("login", "key") and self.auth_unavailable_why(auth):
+        unpicked session or a pick the box can apply. A login pick naming a STORED login (`login_id`) is
+        judged on that login alone (T346): the machine signing out leaves it untouched, and a refused or
+        expired stored login reads "login" here whatever the machine's account. The status field
+        `authPickUnavailable`: the Billing menu keeps the pick check-marked and its sub-line says which
+        side the launch actually went to (_options falls to the side that exists, never onto a login that
+        does not; the user 2026-09-08)."""
+        if auth in ("login", "key") and self.auth_unavailable_why(auth, login_id):
             return auth
         return ""
 
-    def pick_fall(self, auth: str) -> str:
+    def pick_fall(self, auth: str, login_id: str = "") -> str:
         """The side a launch with pick `auth` bills INSTEAD, or "" when it bills the pick: a login pick this box
         cannot bill falls to the key when a helper is configured, a key pick falls to the login when one is
         signed in and no managed helper outranks it. A pick with nothing to fall to launches plain (the CLI
@@ -15442,24 +17534,33 @@ class SdkBackend:
         unreadable settings) never receives a fall. The status field `authPickFell`, read by the tab hover
         and the Billing sub-line, and the one place _options decides (review 2026-09-09: the hover inferred a
         fall from authPickUnavailable alone and claimed one on a box with neither side)."""
-        fell = self.pick_unavailable(auth)
+        fell = self.pick_unavailable(auth, login_id)
         if fell == "login" and self.key_state() == "ok":
             return "key"
+        if fell == "login" and login_id:
+            # a dead STORED login with no key to fall to (T346): the launch bills the machine's own login
+            # when one is signed in (and no managed helper outranks the layer), said as "login" here, the
+            # side word the hover and the sub-line read; with nothing there either it launches plain
+            src, readable = self._helper_source_read()
+            if readable and src != "managed" and self.login_ok() is True:
+                return "login"
+            return ""
         if fell == "key":
             src, readable = self._helper_source_read()
             if readable and src != "managed" and self.login_ok() is True:
                 return "login"
         return ""
 
-    def pick_unknown(self, auth: str) -> str:
+    def pick_unknown(self, auth: str, login_id: str = "") -> str:
         """Why the box cannot tell whether it bills `auth` just now, or "": the operator's settings unreadable
-        (either side), or the account file unreadable (login). The launch says it once and keeps the pick."""
+        (either side), or the account file unreadable (login). The launch says it once and keeps the pick.
+        A stored login's availability is its own record (a file stat), never the machine's account file."""
         if auth == "key" and self.key_state() == "unknown":
             return self._helper_read_err or "Claude Code settings cannot be read"
         if auth == "login":
             if not self._helper_source_read()[1]:
                 return self._helper_read_err or "Claude Code settings cannot be read"
-            if self.login_ok() is None:
+            if not login_id and self.login_ok() is None:
                 return "the Claude login state (~/.claude.json) cannot be read"
         return ""
 
@@ -15483,7 +17584,8 @@ class SdkBackend:
         disk says this instant (the proof owns() and _ensure already take). None: NO reg file, which is
         durable, since this backend never unlinks a reg. A reg that EXISTS but would not read or parse
         RAISES (EMFILE, EIO, EACCES, torn JSON: the transient class owns() was repaired for on
-        2026-09-07), so the caller waits on a reader's fault instead of counting it as no record. The
+        2026-09-07; and ELOOP or ENOTDIR paths, which will not heal but are no record either way, so
+        the wait is the same answer), so the caller waits on a reader's fault instead of counting it as no record. The
         first version read through read_reg, which answers None for an unreadable reg exactly as for
         an absent one, and never looked at self.sessions: a running session whose reg would not read
         was classed as no record, its landing mail withheld, and its watch retired as ended (review
@@ -15705,6 +17807,7 @@ class SdkBackend:
         if st in ("working", "permission", "picker", "compacting", "retrying"):
             st = "waiting"
         lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
+        _dl = self.default_login(reg)   # once per row: the stored login the reg names, or the explicit default's (2026-09-14)
         return {"state": st,
                     "since": str(ls.get("t") or ""),
                     # not running (e.g. post-restart): prefer the last LIVE model we persisted
@@ -15715,8 +17818,10 @@ class SdkBackend:
                     "fastPending": False, "modePending": False, "modeSwitching": False,   # runtime-only: a dormant session has no reconnect in flight
                     "effort": reg.get("effort", ""),
                     "auth": self.default_auth(reg),
-                    "authPickUnavailable": self.pick_unavailable(reg.get("auth") or ""),   # same as snapshot()
-                    "authPickFell": self.pick_fall(reg.get("auth") or ""),
+                    "authPickUnavailable": self.pick_unavailable(reg.get("auth") or "", self.reg_login(reg)),   # same as snapshot()
+                    "authPickFell": self.pick_fall(reg.get("auth") or "", self.reg_login(reg)),
+                    "authLogin": _dl,                                        # the stored login a dormant reg names, or the default's (T346, 2026-09-14)
+                    "authLabel": self.login_display(_dl),
                     # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
                     # session's Billing row keeps telling it; absent = no init ever landed
                     "authLive": ("key" if reg.get("apiKeyAuth") else "login")
@@ -15899,8 +18004,9 @@ class SdkBackend:
 
         THE RULE: every site that adds, replaces, pops, flags or REWORDS an atom in `_live` calls this,
         once per call that changed something: _stash_live, _forward (its eviction included), unqueue (the
-        cancelled copy's echo), edit_queued (the echo's new words), dismiss_echo, prune_live,
-        retire_live_work, and the two flag writes _mark_dropped_echoes makes outside the lock (each takes
+        cancelled copy's echo), dismiss_echo, prune_live,
+        retire_live_work, settle_echoes (the overtaken flags, one bump per call that flagged), and the two
+        flag writes _mark_dropped_echoes makes outside the lock (each takes
         the lock for its bump). tests/test_live_tail_rev.py pins the set by source, so a new queue or echo
         mutator that touches `_live` fails that census until it bumps. Only a CHANGE bumps: a prune that
         retired nothing, a settle over echoes already marked, a queue miss and every read leave the
@@ -16013,6 +18119,79 @@ class SdkBackend:
             self._note_live_tail_race("prune_live")
         if echo_removed:
             self._persist_echoes(sid)   # keep the restart mirror in step (empty once everything landed)
+
+    def settle_echoes(self, sid: str, human_floor, still_queued=()) -> None:
+        """Mark every OVERTAKEN input echo `dropped` — the SDK twin of the kernel's _tmux_echo_settle, and
+        the LIVE half of the loss rule _mark_dropped_echoes applies at boot (2026-09-11). An echo is
+        overtaken when the transcript holds a genuine-human turn stamped STRICTLY LATER than its send
+        (`human_floor`, the kernel's _human_turn_floor; strictly and in whole seconds, so a send made in
+        the same second as another turn's record keeps its pending treatment) while its own text has
+        landed nowhere: the composer's
+        messages travel one channel in order, so the later one going through means the CLI took it while
+        still owing this one — a send that will never land, however alive the process holding it looked.
+        Until this rule an SDK echo was flagged only when its holder DIED (a spawn, a boot, a reconnect):
+        a CLI that wedged for five minutes, swallowed a send and then carried on (the user 2026-09-11)
+        left the echo painted as an ordinary sent bubble that resurfaced above every newer message, with
+        no way to clear it — dismiss_echo takes DROPPED echoes only, by design.
+
+        MARKING, never pruning: a dropped send's echo is the only visible record of the loss and stays
+        until the user dismisses it (prune_live's contract). Self-correcting like the boot flag: should
+        the text land after all, prune_live retires the echo, flag and all.
+
+        STANDS DOWN for a send still OWED somewhere: the backend's own queue (pending_queued_meta — the
+        copies by identity, so the lost first of two identical sends is not hidden by its queued twin);
+        the CLI's queue ledger (`still_queued`, the transcript's queue-operation fold the kernel hands
+        over, unfiltered so a queued nudge counts as waiting too); and the texts FED to the current client
+        whose turn has not settled (SdkSession.fed_texts): a message fed into a running turn is the CLI's
+        to record at its next boundary, and until the ResultMessage the order the floor stands in for is
+        still being written — the moments between the feed and the CLI's ledger record, and between its
+        dequeue and its user record, where the text is owed by nothing on disk (the review of the first
+        cut). The floor is a per-session clock: an OLDER queued sibling delivering stamps its record after
+        a younger send that is still genuinely waiting, overtaken but not lost — the queues outrank the
+        floor, and once they release the text the next build rules normally. Already-dropped and
+        already-landed echoes are left alone, so a quiet tail costs one pass and no write."""
+        # Whole seconds: an echo is stamped to the second (send: int(time.time())), a record to the
+        # millisecond, so a float compare read a record written in the SAME second as the send — the
+        # previous message's, landing as the user pressed enter twice in one second — as later than it,
+        # and flagged a send the CLI was taking. A later turn is a later second.
+        floor = int(float(human_floor or 0))
+        if not floor:
+            return
+        with self._live_lock:
+            d = self._live.get(sid)
+            if not d:
+                return
+            cands = [a for a in list(d.values())
+                     if a.get("_echo_text") and not a.get("command") and not a.get("dropped")
+                     and not a.get("_landed") and floor > int(float(a.get("t") or 0))]
+        if not cands:
+            return
+        own = self.pending_queued_meta(sid)
+        if own is None:
+            own = self.pending_queued(sid)             # identities untrusted: by text, the side that never flags a waiting send
+        owed = {echo_text_key(m.get("md") if isinstance(m, dict) else m) for m in (still_queued or [])}
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s is not None and hasattr(s, "fed_texts"):
+            owed |= {echo_text_key(t) for t in s.fed_texts() if isinstance(t, str)}   # fed, its turn not yet settled
+        owed.discard("")
+        flagged = []
+        for a in cands:
+            if _echo_queued_in(a, own) or any(k in owed for k in echo_keys(a["_echo_text"])):
+                continue                               # still owed somewhere → waiting, not lost
+            a["dropped"] = True
+            flagged.append(a)
+        if not flagged:
+            return
+        with self._live_lock:
+            self._touch_live(sid)                      # the flag writes above: one change to the tail
+        for a in flagged:
+            self.forget_fed(sid, a.get("uuid"))        # its landing will never come (T252c)
+            self._log("%s: a send never reached its conversation (the CLI took a later message while still "
+                      "holding it) — kept in the chat as never-delivered: %.80r"
+                      % (sid[:8], a["_echo_text"]), problem=True)
+        self._persist_echoes(sid)                      # the flag rides the mirror across a restart
+        self._wake_push()
 
     def retire_live_work(self, sid: str) -> None:
         """Drop the sid's live-tail WORK atoms (stream messages — not input echoes, not command feedback)
@@ -16163,7 +18342,7 @@ class SdkBackend:
         with self._reg_lock:                       # kernel + loop threads both write (queue mirror);
             reg = read_reg(self.state_dir, sid)    # unserialized RMWs would drop fields
             if reg is None:
-                if _reg_path(self.state_dir, sid).exists():
+                if not _reg_absent_for_write(_reg_path(self.state_dir, sid)):
                     # the reg EXISTS but would not read: writing {sid}+fields here GUTS it — no
                     # alive, no name — and a gutted reg vanishes from every listing until a full
                     # rewrite (the 2026-08-31 blink class). Losing one mirror update is the far
@@ -16296,7 +18475,9 @@ class SdkBackend:
         # append_machine_cut and _ensure run after it. What remains is the window between the verdict
         # and the hold (microseconds): a kill landing there is ended when the hold writes, so the nudge
         # goes to the reg of a session the heal's _ensure then finds not alive, and a later resume runs it.
-        cut = not sess.ended and sess.inflight > 0 and not sess._interrupted
+        # A DETACHED session (T315: its thread ends while a live host keeps the CLI and its turn) is no death
+        # at all: no cut, no seal, no heal, no idle settle; the pop below is the whole of it.
+        cut = not sess.ended and not sess.detached and sess.inflight > 0 and not sess._interrupted
         if cut:
             with sess._lock:
                 sess._queue_sealed = True
@@ -16326,7 +18507,7 @@ class SdkBackend:
             if err:
                 self._log("session %s: ended during its heal's scope read; its queue could not be written: %s"
                           % (sess.name, err))
-            if not sess.ended:
+            if not sess.ended and not sess.detached:
                 # process exited on its own while idle (crash / EOF): settle state; next send resumes
                 append_state(self.state_dir, sess.sid, "waiting")
         # the thread (and its claude subprocess) is gone, so any background work is too — clear a stale

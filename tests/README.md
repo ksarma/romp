@@ -44,28 +44,14 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
 - **`*.bats`** — the shell surfaces: `bin/romp`, the launch chain, hooks,
   postal CLI. Keep them GNU/BSD-portable (CI runs bats on ubuntu).
   Run: `bats tests/*.bats`.
-  Any test whose subject shells out to tmux must isolate the tmux socket
-  directory: `load tmux-private`, `tmux_private_socket_dir "$TEST_DIR"` in
-  setup (it exports `TMUX_TMPDIR` under the test dir and creates it first;
-  tmux 3.4 silently uses the machine's default socket directory when
-  `TMUX_TMPDIR` names a missing one), and `tmux_private_kill && rm -rf
-  "$TEST_DIR"` as the last line of teardown (the kill fails when the
-  directory is already gone, since a server started under it has then
-  leaked; it has to be teardown's final status, because bats swallows a
-  failing command mid-teardown). A tmux mock on PATH
-  covers only the tests that install one: on 2026-09-06 a full bats run
-  ran `romp-manager-ensure.bats` while the machine's default tmux server
-  was down, the real manager it starts ran `tmux start-server` on the
-  default socket, and for the rest of the day the machine's tmux server was
-  the test's, carrying the run's environment inside the service's cgroup.
-  The same helper call floors `ROMP_CLI_SCOPE=0`: under `ROMP_SUPERVISED`
-  (set by the service's unit, and inherited by a tool shell under a
-  self-hosted install) `bin/romp-manager` starts that server through
-  `systemd-run --scope` and the kernel spawns session CLIs the same way, so
-  a suite that starts the real manager would otherwise leave a transient
-  scope on the developer's user manager. Every suite that isolates tmux
-  inherits the floor; `romp-manager-tmux-scope.bats` turns the switch back
-  on only behind a fake `systemd-run` first on PATH. pytest's floor is
+  Any suite that starts the real manager or the launch chain floors
+  `ROMP_CLI_SCOPE=0` in setup: under `ROMP_SUPERVISED` (set by the service's
+  unit, and inherited by a tool shell under a self-hosted install) the kernel
+  spawns session CLIs through `systemd-run --scope`, so such a suite would
+  otherwise leave a transient scope on the developer's user manager. The
+  floor is `load cli-scope-floor` and `cli_scope_floor` in setup()
+  (`tests/cli-scope-floor.bash`; until 2026-09-11 it rode the retired
+  terminal backend's socket-directory helper). pytest's floor is
   `conftest.py`; `test_cli_scope_floor.py` pins both halves of it on the
   source, since a test that reads the value cannot tell the floor from
   `test_cli_scope.py`'s own import-time set.
@@ -111,33 +97,58 @@ Every bug fix or feature change lands with a test (repo rule). Five suites:
   `ROMP_UI_BENCH_TIMING=1` (a quiet machine, never CI) also asserts the timing
   relations the replays otherwise report as diagnostics.
 
-**Temp files and git are hermetic, suite-wide.** Two mechanisms, one per half.
-`tests/__init__.py` wraps `tempfile.mkdtemp` so every directory the test process
-mints is recorded and removed when the run ends (under pytest at session end,
-under `python -m unittest` at exit): the in-process half, covering the 300-odd
-module preambles and the per-test `mkdtemp()` calls nobody cleans up.
-`tests/conftest.py` covers what that hook cannot see — directories made by
-child processes (kernels, git, a shell's `mktemp -d`), `mkstemp` files,
-`os.mkdir` paths — by pointing the process temp dir (`tempfile.tempdir` and
-`TMPDIR`, so every child inherits it) at one private `romp-tests-*` root under
-the system temp dir and removing the root when the run ends (before both, a
-full run left ~5,600 entries in `/tmp` and over a million had piled up). Still
+**Temp files and git are hermetic, suite-wide.** Two mechanisms, one per half,
+both in `tests/__init__.py`, which every entry point imports first (pytest before
+`conftest.py`, `python -m unittest tests.test_x` before the module; a direct
+`python3 tests/test_x.py` gets it through the module's own `from romp_load
+import load_source`: imported under its bare name by a `test_*.py` run as a
+script, `tests/romp_load.py` puts the checkout on `sys.path` and imports the
+package (since 2026-09-14), so that import goes above the state preamble in
+every module, which `test_state_isolation_order.py` holds; only `cd tests &&
+python -m unittest test_x` has neither). It wraps
+`tempfile.mkdtemp` so every directory the test process mints is recorded and
+removed when the run ends (under pytest at session end, under `python -m
+unittest` at exit): the in-process half, covering the 300-odd module preambles
+and the per-test `mkdtemp()` calls nobody cleans up. And it covers what that
+hook cannot see — directories made by child processes (kernels, git, a shell's
+`mktemp -d`), `mkstemp` files, `os.mkdir` paths — by pointing the process temp
+dir (`tempfile.tempdir` and `TMPDIR`, so every child inherits it) at one private
+`romp-tests-*` root under the system temp dir, removed whole when the run ends
+(before both, a full run left ~5,600 entries in `/tmp` and over a million had
+piled up; until 2026-09-14 the root was `conftest.py`'s, so a bare unittest run
+had none, and one killed mid-run left everything it made loose; a direct run
+imported no package at all, and one module's left 86 loose `tmp*` directories in
+a fresh `TMPDIR`). `conftest.py`
+keeps the pytest side of that removal, with a survivor named (below). A run that
+dies before any removal (pytest-timeout's `os._exit`, a killed shell) leaves the
+root standing, so the package also writes an owner marker,
+`romp-tests-owner.json` naming the run's pid, into the root at mint time. The
+kernel's boot reconcile (`sweep_dead_test_roots` in `kernel/sdk_backend.py`)
+removes `romp-tests-*` roots under the system temp dir whose marker names a
+dead pid, renaming each to `<name>.sweeping` before deleting it so a partial
+delete leaves a tombstone the next boot finishes. A root without a marker (a
+foreign directory, a pre-marker root) is never touched by the sweep.
+`test_tempdir_hygiene.py`'s `BareRunLeavesNothing` runs a leaking module as a
+child in each bare shape, `python -m unittest` and a direct script, finished and
+killed, and counts what is left. Still
 clean up what you create — `with tempfile.TemporaryDirectory()`,
 `self.addCleanup(shutil.rmtree, ...)`, a `tearDownClass` for a class-level
 fixture — so a fixture is gone when its test is, not at exit; bats suites use
 `mktemp -d` in `setup` and `rm -rf` it in `teardown`, and stand in for any
-subject that detaches work (bin/romp's resume picker-check, reached through
-`ROMP_POSTAL_BIN`, re-created four to six test dirs per run by minting a
-serve-token after the teardown). Never give a tempfile call a literal
+subject that detaches work (a detached launcher probe once re-created four to
+six test dirs per run by minting a serve-token after the teardown). Never give
+a tempfile call a literal
 directory as its `dir` — by keyword or position, composed (`f"/tmp/{x}"`,
 `os.path.join("/tmp", x)`) or through a name bound to one — and never point
 `mktemp` (`-p`, `--tmpdir`, a `TMPDIR=` prefix) at a path under `/tmp`: that
 bypasses the redirect, and the hygiene test reads every test file for those
-shapes. The one test that must leave the root — an AF_UNIX socket whose path
-would not fit `sun_path` under a nested root — falls back to
-`ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir conftest recorded once per run
-before redirecting (an xdist worker inherits the controller's record), and
-removes what it made. A root that cannot be removed at run end (a child
+shapes. The tests that must leave the root — `tests/test_host_transport.py`'s
+AF_UNIX socket paths, which would not fit `sun_path` under a nested root — fall
+back to `ROMP_TESTS_SYSTEM_TMPDIR`, the system temp dir the package recorded
+once per run before redirecting (an xdist worker inherits the controller's
+record), and remove what they made with an `addCleanup` (a directory outside
+the root is outside the exit sweep's scope, so nothing else removes it; nine
+per run leaked before). A root that cannot be removed at run end (a child
 still writing under it, a 000-mode directory a test left behind) is named on
 stderr: `[tests] not removed at run end: <path>`, instead of the run ending
 green over it. The same conftest gives git no global or system config
@@ -217,31 +228,32 @@ the patterns, the scrub's cost and the hook end to end.
 relaunch reads from carries a shorter list.** Every module that boots a hermetic
 kernel (`bin/romp-kernel` under a lab's own `XDG_STATE_HOME`,
 `CLAUDE_CONFIG_DIR` and `ROMP_DIST_DIR`, at a free port with a synthetic serve
-token) builds its environment with `kernel_env` in `tests/test_ship_reship.py`,
+token) builds its environment with `kernel_env` in `tests/test_ship_reship_served.py`,
 never from a copy of the runner's. A run from a shell on a machine running romp
 carries the live kernel's exports, and a lab kernel that inherited them exited
 when the live manager restarted (`ROMP_MANAGER_PID`, the kernel's parent-death
 watchdog), bound where the live kernel serves (`ROMP_SERVE_HOST`) and dialled
 the machine's postal bus, or started one that nothing stops. From the runner
 `kernel_env` takes `PATH`, `HOME`, the `XDG_*` names and, of the floor
-`tests/conftest.py` sets for the run's children, `TMPDIR`, `TMUX_TMPDIR`,
+the suite sets for the run's children (`TMPDIR` the tests package's since
+2026-09-14, the rest `tests/conftest.py`'s), `TMPDIR`,
 `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_NOSYSTEM`, `ROMP_SERVICE_ENV_FILE`,
 `ROMP_SERVICE_ENV`, `ROMP_CLAUDE_BIN` and `ROMP_CLI_SCOPE`; over those go the
 lab's roots and seams, any seam the lab adds by keyword, and a postal bus of its
 own that is never started (`ROMP_POSTAL_PORT` at a free port,
 `ROMP_POSTAL_PEERS=0`, `ROMP_POSTAL_CLIENT_ONLY=1`). The served labs whose
-driver kills and relaunches the kernel (`test_ship_reship.py`,
+driver kills and relaunches the kernel (`test_ship_reship_served.py`,
 `test_dashboard_reload_served.py`) write the relaunch's command, environment and
 log to the lab's `cfg.json` through `relaunch_cfg`, and the environment in that
 file is narrowed once more by `relaunch_env`: the `ROMP_*` and `XDG_*` names,
-`CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, `TMPDIR`, `TMUX_TMPDIR`,
+`CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, `TMPDIR`,
 `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`, less the `ROMP_TESTS_*` names,
-which conftest exports for the run's own tests (such as
+which the tests package (conftest until 2026-09-14) exports for the run's own tests (such as
 `ROMP_TESTS_SYSTEM_TMPDIR` above) and no kernel reads. Nothing else a lab put in
 its kernel's environment reaches the file; each served lab plants a probe name
 in that environment and checks the written file for its absence. To give a lab
 kernel another name of the runner's, add the name to the list with its reason
-beside it. `LabKernelEnv` and `RelaunchEnv` in `tests/test_ship_reship.py` pin
+beside it. `LabKernelEnv` and `RelaunchEnv` in `tests/test_ship_reship_served.py` pin
 both functions; the served legs check the file itself.
 
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname

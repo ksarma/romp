@@ -79,6 +79,10 @@ export interface TabGroupsState {
    *  the browser's other panes with no gesture on them. From now on a key a later build adds rides an older
    *  build's round trip: read here, written back first, the known keys over it. Absent when the blob has none. */
   rest?: Record<string, unknown>;
+  /** the Sessions pane sections its lanes by tag too (T399, the user 2026-09-12): its own switch beside the strip's
+   *  `on`, in the one blob so the FOLDS (collapsed / expanded) are one truth for both surfaces; present only while on,
+   *  so the pane is as it was until the user turns it on and every earlier reader's blob shape is unchanged */
+  timeline?: boolean;
 }
 
 /** The section a union makes, as pins are matched and written against it. */
@@ -117,7 +121,7 @@ const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pi
  *  RETIRING A KEY: taking it out of this set is not enough. An unknown key rides `rest` and is written back by
  *  every pane for the life of the store, so a retired key needs a dropped-keys set beside this one that
  *  parseTabGroups leaves out of `rest` (none retired yet; round 2 of the tabhide review, 2026-09-08). */
-const KNOWN_KEYS: ReadonlySet<string> = new Set(["on", "collapsed", "expanded", "pinned", "hidden", "followed", "followedSeq"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["on", "collapsed", "expanded", "pinned", "hidden", "followed", "followedSeq", "timeline"]);
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:
  *  a corrupt entry may cost you a preference, never the dashboard). `unions` — the current tag
@@ -167,7 +171,8 @@ export function parseTabGroups(raw: string | null | undefined, unions: readonly 
     const rest: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o as Record<string, unknown>)) if (!KNOWN_KEYS.has(k)) rest[k] = v;
     return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned), hidden: pins(o.hidden),
-             ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}), ...(Object.keys(rest).length ? { rest } : {}) };
+             ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}), ...(Object.keys(rest).length ? { rest } : {}),
+             ...(o.timeline === true ? { timeline: true } : {}) };
   } catch {
     return fresh();
   }
@@ -190,6 +195,7 @@ export function writeTabGroups(st: TabGroupsState): void {
     const blob: Record<string, unknown> = { ...(st.rest || {}), on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned, hidden: st.hidden };
     if (st.followed && Object.keys(st.followed).length) blob.followed = st.followed;
     if (st.followedSeq && Object.keys(st.followedSeq).length) blob.followedSeq = st.followedSeq;
+    if (st.timeline === true) blob.timeline = true;   // the Sessions pane's switch rides the strip's writes (T399)
     localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob));
   } catch {
     /* quota / private mode → this preference just doesn't outlive the page */
@@ -755,6 +761,14 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   // keyboard — only when EVERY copy is; one copy on screen keeps it in the order
   for (const it of items) if ("id" in it) folded.delete(it.id);
   return { items, folded, sectioned };
+}
+
+/** The tabs a repaint REVEALS: the ids the strip shows now (its visible ids less the plan's folded ones) that the
+ *  last paint did not show (`prev`; null on the first paint, when every shown tab counts). render.ts re-arms the
+ *  idle prefetch on a non-empty answer, so a reveal is detected where the shown set is computed, whatever caused
+ *  the repaint (PR 1671 round four; the user 2026-09-14: hidden tabs are not built until shown, and shown ones are). */
+export function revealedTabs(prev: ReadonlySet<string> | null, shown: readonly string[]): string[] {
+  return prev ? shown.filter((id) => !prev.has(id)) : shown.slice();
 }
 
 /** The section a tab is homed in, from a rendered plan's items: the first header whose ids include it,

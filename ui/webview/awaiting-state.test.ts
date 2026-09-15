@@ -19,10 +19,12 @@ const FED = W("federation.ts");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "bin", "romp-kernel"), "utf8");
 
 test("the chat chip knows awaitingBg: its own await-green chip, label 'Awaiting', with the elapsed timer", () => {
-  assert.match(RENDER, /"awaiting" \| "awaitingBg" \|/);           // the ChipState union carries both meanings
-  assert.match(RENDER, /awaitingBg: "Awaiting",/);                 // CHIP_LABEL
-  // its own statusline branch: await-green chip + the wait's clock — but NO pulse (nothing computing here)
-  assert.match(RENDER, /\} else if \(s\.status\.state === "awaitingBg"\) \{[\s\S]*?chip chip-awaitingBg[\s\S]*?timer\.id = "work-timer";/);
+  assert.match(W("status-chip.ts"), /"awaiting" \| "awaitingBg" \|/);   // the ChipState union carries both meanings (status-chip.ts since T322b, beside its labels)
+  assert.match(W("status-chip.ts"), /awaitingBg: "Awaiting",/);   // CHIP_LABEL (status-chip.ts since T322b: the bar and the tag overview's rows import one map)
+  assert.match(RENDER, /import \{ CHIP_LABEL, chipWords, statusChip, type ChipState \} from "\.\/status-chip";/);
+  // its own statusline branch: the shared await-green chip (`chip chip-` + the state) + the wait's clock — but NO pulse (nothing computing here)
+  assert.match(RENDER, /\} else if \(s\.status\.state === "awaitingBg"\) \{[\s\S]*?statusChip\(chipWords\(s\.status\), "button"\)[\s\S]*?timer\.id = "work-timer";/);
+  assert.match(W("status-chip.ts"), /chip\.className = "chip chip-" \+ w\.state;/);
   assert.doesNotMatch(RENDER.split('state === "awaitingBg") {')[1].split("} else if")[0], /chip-pulse/);
   // the ticking clock covers it, same as working
   assert.match(RENDER, /if \(s\.status\.state === "working" \|\| s\.status\.state === "awaitingBg"\) \{\s*\n\s*const timer = document\.getElementById\("work-timer"\);/);
@@ -36,7 +38,9 @@ test("the chat tab dot matches the chip: await-green for awaitingBg, yellow for 
   // tests/test_tab_strip_pips.py — working/awaitingBg keep their classes
   const TS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-state.ts"), "utf8");
   assert.match(TS, /if \(st === "working"\) return "tab-dot";\s*\n\s*if \(st === "awaitingBg"\) return "tab-dot await";/);
-  assert.match(RENDER, /const dotCls = tabDotClass\(st\);\s*\n\s*if \(dotCls\) tab\.appendChild\(el\("span", dotCls\)\);/);
+  const TW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-widgets.ts"), "utf8");   // the dot is a WIDGET since T379: its render is the one rule's site
+  assert.match(TW, /const cls = tabDotClass\(status\.state\);/);
+  assert.match(RENDER, /composeTabWidgets\(tab, "before", s\.id \|\| "", s\.status, settings\.tabWidgets\);/, "the strip composes the before-the-name widgets (the dot) from the registry");
   assert.match(STYLES, /--st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;/);
   assert.match(STYLES, /\.chip-awaitingBg \{ background: var\(--st-awaitbg-bg\); color: var\(--st-awaitbg-fg\); \}/);
   assert.match(STYLES, /\.tab-dot\.await \{ background: var\(--st-awaitbg-bg\); \}/);
@@ -45,8 +49,13 @@ test("the chat tab dot matches the chip: await-green for awaitingBg, yellow for 
 test("the feed dot matches too: dotFor picks work/await per name, the dot retints in place", () => {
   // the kernel's feed payload carries the awaiting name list beside working; federation merges + prefixes it
   assert.match(KERNEL, /"working": working, "awaiting": awaiting,/);
-  assert.match(KERNEL, /if sess_awaiting_why and not who_working:\s*\n\s*awaiting\.append\(name\)/);
-  assert.match(KERNEL, /\{"type": "working", "names": feed\["working"\],\s*\n\s*"awaiting": feed\.get\("awaiting"\) or \[\]\}/);
+  // (T368: the per-session body records the dot name on its memoized entry; the fold appends it per build)
+  assert.match(KERNEL, /if sess_awaiting_why and not who_working:\s*\n\s*ent_awaiting = name/);
+  assert.match(KERNEL, /if entry\.get\("awaiting"\):\s*\n\s*awaiting\.append\(entry\["awaiting"\]\)/);
+  // T404 round two: the names come from the feed frame while it is built, and from _chat_dots_off (the same two signals off the
+  // sessions' parses) while the Task tracking switch has the feed unbuilt, so the chat's dots carry on
+  assert.match(KERNEL, /_dots_w, _dots_a = feed\["working"\], feed\.get\("awaiting"\) or \[\]/);
+  assert.match(KERNEL, /\{"type": "working", "names": _dots_w, "awaiting": _dots_a\}/);
   assert.match(FEED, /awaitingSet = new Set\(Array\.isArray\(m\.awaiting\) \? m\.awaiting : \[\]\);/);
   // dotFor still ranks work over await; the unreadable-state quarter follows (feed-status-pips.test.ts)
   assert.match(FEED, /workingSet\.has\(name\) \? "work" : awaitingSet\.has\(name\) \? "await"/);
@@ -55,8 +64,9 @@ test("the feed dot matches too: dotFor picks work/await per name, the dot retint
   assert.match(FEED, /else if \(st && has\) paint\(prev!\);/);
   assert.match(FEED, /d\.classList\.toggle\(k, st === k\);/);
   // every name-dot site routes through dotFor: cards, group cards, both modal headers, grouped
-  // headers, and the session-filter button (2026-08-08; its menu rows route via setWorkDot(label,…))
-  assert.equal((FEED.match(/setWorkDot\((?:a\._name|agent|nm), dotFor\(/g) || []).length, 6);
+  // headers, the session-filter button (2026-08-08; its menu rows route via setWorkDot(label,…)), and the
+  // focused-session section's head (T347)
+  assert.equal((FEED.match(/setWorkDot\((?:a\._name|agent|nm), dotFor\(/g) || []).length, 7);
   assert.match(FEEDCSS, /\.fwork-dot\.await \{ background: #54B204; \}/);
   assert.match(FED, /const ARRAY_ID = \["order", "names", "working", "awaiting", "stateUnknown", "live", "skeleton"\];/);   // + the tabOrder frame's live set (T258) + skeleton (2026-09-07: the reconnect strip's not-yet-loaded tabs ride the merged order)
   assert.match(FED, /if \(Array\.isArray\(f\.awaiting\)\) merged\.awaiting\.push\(\.\.\.f\.awaiting\);/);
@@ -96,7 +106,7 @@ test("the awaiting WHY lives in the background box, not the statusline (the user
   assert.match(RENDER, /if \(descs\.length > 1\)/);   // the no-rows fallback lists the legacy descriptions only when there are several
   assert.match(RENDER, /bg-await-note/);
   assert.match(RENDER, /const stopId = running \? tracked!\.id : \(it\.stoppable && id \? id : null\);/);   // (2026-09-10: computed once above the kind branches; a kernel-marked stoppable row offers Stop without a tracked task)
-  assert.match(RENDER, /return \{ id, status: "armed", caption: "armed", label: it\.label \|\| "a watch", since: it\.since,\s*\n\s*watchId: it\.watchId \|\| null, command: it\.detail \|\| null \};/, "a watch row: Cancel when the kernel has a handle, never Stop");
+  assert.match(RENDER, /return \{ id, status: "armed", caption: "armed", kind: "watches", label: it\.label \|\| "a watch", since: it\.since,\s*\n\s*watchId: it\.watchId \|\| null, command: it\.detail \|\| null \};/, "a watch row: Cancel when the kernel has a handle, never Stop");
   assert.match(STYLES, /\.bg-fold-head\.bg-await \{ --bgt: var\(--st-awaitbg-bg\); \}/);
 });
 
@@ -114,7 +124,7 @@ test("the awaited tasks wear the chip's green outline — exact launch-id match;
   // whenever a tracked task is named awaited — one toggle since the one-renderer cut (2026-09-06; the
   // kernel ships the ids only with a wait, so mid-turn the box wears its neutral border under a Working chip)
   assert.match(RENDER, /host\.classList\.toggle\("bg-awaited", !!why \|\| tasks\.some\(\(t\) => awaited\.has\(t\.id\)\)\);/);
-  assert.match(RENDER, /bgRow\(taskRowSpec\(t, awaited\.has\(t\.id\)\), sid\)/);   // the row spec carries the match (slice 2's one row renderer)
+  assert.match(RENDER, /leftovers\.map\(\(t\) => taskRowSpec\(t, awaited\.has\(t\.id\), services\.has\(t\.id\)\)\)/);   // the row spec carries the match (slice 2's one row renderer; the rows join their kind's section since T394)
   assert.match(RENDER, /\(t\.awaited \? " bg-awaited" : ""\)/);
   // the outline is the chip's await-green — the border/outline only; the status DOT rules are untouched
   assert.match(STYLES, /#bg-tasks\.bg-awaited \{ border-color: var\(--st-awaitbg-bg\); \}/);
@@ -149,7 +159,7 @@ test("awaited things show even while WORKING, and kernel watches feed the box (t
   // awaitingWhy — that arm made the box read "Awaiting" under a Working chip and left every other
   // in-flight row to the legacy list; awaitingWhy now means idle-and-waiting on every surface
   assert.doesNotMatch(KERNEL, /if not _aw and open_now:/);
-  assert.match(KERNEL, /_aw_items = _awaiting_items_payload\(_aw, sid, sess\["path"\], tmux\)/);   // under the build's own snapshot — no fresh liveness read on the working path
+  assert.match(KERNEL, /_aw_items = _awaiting_items_payload\(_aw, sid, sess\["path"\], live_map\)/);   // under the build's own snapshot — no fresh liveness read on the working path
   assert.match(KERNEL, /"awaitingItems": _aw_items,/);
   assert.match(KERNEL, /"working" if open_now else\n/);   // the state formula's ordering is intact
 });

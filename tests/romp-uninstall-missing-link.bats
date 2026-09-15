@@ -75,7 +75,8 @@ try:
 except (IOError, OSError, ValueError):
     print(0); raise SystemExit
 OURS = ("tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
-        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh")
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh",
+        "romp-track-bash-guard.mjs")
 n = sum(1 for rules in (s.get("hooks") or {}).values() for r in rules for h in r.get("hooks", [])
         if h.get("command", "").rsplit("/", 1)[-1] in OURS)
 print(n)

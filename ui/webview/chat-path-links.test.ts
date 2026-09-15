@@ -37,7 +37,7 @@ test("membership in pathLinks gates the link, and the map's value is the OPEN ta
   assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(span\.inCode && looksLikeBareFileName\(tok\)\)\) continue;/);   // inCode is the node's the token lies in (textUnits)
   assert.match(LINKS, /const fixed = !isUri && pathLinks \? pathLinks\[tok\] : undefined;/);
   assert.match(LINKS, /if \(!isUri && pathLinks && typeof fixed !== "string"\) continue;/);
-  assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks, walkOpts\)/);
+  assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks, walkOpts \? \{ \.\.\.FENCE_WALK, \.\.\.walkOpts \} : FENCE_WALK\)/);   // the chat's fenced-block options (2026-09-12) under a todo surface's own
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
   // (a surface with its own place, the file viewer, hands the walk a `resolve` for the target, a URI's decoded path and the fixed token alike; the chat passes none)
@@ -48,7 +48,8 @@ test("membership in pathLinks gates the link, and the map's value is the OPEN ta
   // …and the chat binds the click per span, off the span's own data (the walk marks; render.ts acts: openLinkedPath reads the
   // path, the rel bit and the session the span names; the walk takes the session and the todo surfaces' options)
   assert.match(RENDER, /const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
-  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts\)\) \{\n\s*bind\(link\);/);
+  assert.match(RENDER, /for \(const \{ el: link, open, verified, inPre \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts \? \{ \.\.\.FENCE_WALK, \.\.\.walkOpts \} : FENCE_WALK\)\) \{\n\s*bind\(link\);/,
+    "the chat's walk, with its fenced-block options (2026-09-12; file-uri-link.test.ts pins them) under a todo surface's own; bind: bindPathLink, or the identity under the delegated mode a todo card asks for");
 });
 
 test("file:// URIs are explicit absolute paths — never gated on the map", () => {

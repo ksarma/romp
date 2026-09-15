@@ -28,7 +28,6 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ["ROMP_TMUX_AVAILABLE"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"
 em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
 jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
@@ -1402,11 +1401,11 @@ class CommentOps(CommentBase):
         self._saved_sessions = km._sessions
         self._saved_reveal = km._reveal_chat_for
         self._saved_push_now = km._push_session_now
-        self._saved_tmux = km._tmux_sessions
+        self._saved_live_map = km._live_map
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
         km._sdk_ready = lambda: True
-        km._tmux_sessions = lambda: {}   # the create/promote doors' live snapshot (names reserved atomically) — never the box's tmux
-        p = self._write(PARENT, self._parent_records())
+        km._live_map = lambda: {}   # the create/promote doors' live snapshot (names reserved atomically) — never the machine's live sessions
+        p = self.parent_path = self._write(PARENT, self._parent_records())
         km._sessions = lambda now, window=None, forks=True: [
             {"sid": PARENT, "name": "parent", "path": str(p), "mtime": self.now}]
         km._reveal_chat_for = lambda client, msg: None
@@ -1418,7 +1417,7 @@ class CommentOps(CommentBase):
         km._sessions = self._saved_sessions
         km._reveal_chat_for = self._saved_reveal
         km._push_session_now = self._saved_push_now
-        km._tmux_sessions = self._saved_tmux
+        km._live_map = self._saved_live_map
         self._clear_defaults()   # the module shares one hermetic STATE — never leak across tests
         super().tearDown()
 
@@ -1448,6 +1447,38 @@ class CommentOps(CommentBase):
         row = km._comment_thread(PARENT, tid)
         self.assertEqual(row["status"], "open")
         self.assertEqual(row["anchorUuid"], "a1")
+
+    def _stub(self, name, value):
+        self.addCleanup(setattr, km, name, getattr(km, name))
+        setattr(km, name, value)
+
+    def test_a_parent_idle_past_the_discovery_window_still_takes_a_comment(self):
+        # the user 2026-09-14: a 4-day-idle session's popover said "no transcript for this session yet"
+        # while its chat rendered fine — _sessions' 48h horizon is caption/walk cost, not a permission.
+        # The door now resolves an SDK parent through its registry (cwd + lastSid) like build_session does.
+        km._sessions = lambda now, window=None, forks=True: []
+        self._stub("_sdk", lambda: type("Owner", (), {"owns": staticmethod(lambda sid: sid == PARENT)})())
+        real_reg = km._thread_reg
+        self._stub("_thread_reg", lambda sid: ({"name": "parent", "lastSid": PARENT, "cwd": str(Path(str(self.parent_path)).parent)}
+                                               if sid == PARENT else real_reg(sid)))
+        real_tpath = km._thread_transcript_path
+        self._stub("_thread_transcript_path",
+                   lambda reg, sid: str(self.parent_path) if sid == PARENT else real_tpath(reg, sid))
+        err, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why jitter at all?")
+        self.assertIsNone(err)
+        self.assertEqual([c[0] for c in self.be.calls], ["fork", "connect", "send"])
+        self.assertEqual(self.be.calls[0][3], "a1", "the cut resolved against the registry's transcript")
+        self.assertEqual(km._comment_thread(PARENT, tid)["name"], "parent-comment-1",
+                         "the default name still comes off the resolved row's name")
+
+    def test_a_parent_with_no_transcript_anywhere_is_still_refused(self):
+        km._sessions = lambda now, window=None, forks=True: []
+        self._stub("_sdk", lambda: None)
+        self._stub("_discover_wide", lambda now, window: {})
+        err, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self.assertIn("no transcript", err)
+        self.assertIsNone(tid)
+        self.assertEqual(self.be.calls, [])
 
     def test_threads_autoname_by_count_and_accept_an_edited_name(self):
         _, tid1 = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
@@ -1851,7 +1882,7 @@ class ForkCommentRoutes(CommentBase):
         self._saved_sessions = km._sessions
         self._saved_push_now = km._push_session_now
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
-        km.Sessions.live = staticmethod(lambda: {})   # hermetic: never consult the box's real tmux
+        km.Sessions.live = staticmethod(lambda: {})   # hermetic: never consult the machine's live sessions
         km._sdk_ready = lambda: True
         # km.NAMES is bound at import (module-scope constant) — _rebind_state moves only jd's copy,
         # so _name_of would read the import-time root and miss the per-test registry entry
@@ -1927,10 +1958,10 @@ class ForkCommentRoutes(CommentBase):
         res = km._fork_comment_request({"name": "no-such-session", "text": self.OPENER})
         self.assertEqual(res["_status"], 404)
         self.assertIn("no session named", res["error"])
-        km.Sessions.backend_for = staticmethod(lambda sid: object())   # tmux: no fork machinery
+        km.Sessions.backend_for = staticmethod(lambda sid: object())   # a backend with no fork machinery (the unowned route's shape)
         res = km._fork_comment_request({"id": PARENT, "text": self.OPENER})
         self.assertNotIn("_status", res)
-        self.assertIn("tmux", res["error"])
+        self.assertIn("another backend", res["error"])
 
     def test_fork_comment_holds_the_postal_isolation_gate(self):
         saved_shaped, saved_iso = km._postal_shaped, km._postal_isolated

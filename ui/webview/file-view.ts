@@ -22,6 +22,7 @@ import { applyMdConfig } from "./md-config";   // the one markdown configuration
 import { gateRemoteFigures, gateOf, loadGatedHost, figureRefs, parseSrcset, serializeSrcset, GATE_ACT } from "./figure-gate";   // decision 8: a figure on an unlisted host loads on a click (figure-gate.ts)
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
+import { ICON_DOWNLOAD, ICON_COPY, ICON_EDIT, ICON_ZOOM, ICON_CHECK, ICON_CROSS } from "./icons";   // the bar's glyphs (T367)
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { openFileTab, canPreview } from "./preview";   // any file's own tab, for the links inside a shown file, and the web-vs-webview test
 import { headVerdict, mtimeMoved, ABSENT } from "./file-comments-model";   // the panel's reading of a HEAD /file answer, shared by the changed-on-disk probe (Slice 6, item 5); ABSENT: a 404, the bar's deletion words
@@ -218,7 +219,7 @@ export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number)
 // from the attribute alone). A caller may bracket the apply (the third argument; the identity default runs it bare): both
 // viewers read the reader's place before it and seat it after, and the local viewer's bracket also re-places the comments
 // panel's cards (the seam's reflow).
-function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (apply: () => void, keyboard: boolean) => void = (apply) => apply()): { buttons: HTMLButtonElement[]; sync: () => void; bindWheel: (body: HTMLElement) => void } {
+function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (apply: () => void, keyboard: boolean) => void = (apply) => apply()): { buttons: HTMLButtonElement[]; wrap: HTMLElement; trigger: HTMLButtonElement; menu: HTMLElement; sync: () => void; bindWheel: (body: HTMLElement) => void } {
   let pct = loadTextSize();
   const down = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
   down.type = "button"; down.textContent = "A−"; down.title = "Smaller text (Ctrl/Cmd + wheel)";
@@ -229,11 +230,38 @@ function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (a
   up.type = "button"; up.textContent = "A+"; up.title = "Larger text (Ctrl/Cmd + wheel)";
   up.setAttribute("aria-label", "Larger text");
   const buttons = [down, reset, up];
+  // T367 (the user 2026-09-12): the three ride a FLYOUT behind one zoom glyph, the bar's one control for the text
+  // size (a magnifier with a plus; the words in its title and aria-label). The flyout wears the menu vocabulary
+  // (the menu tokens, ui/CLAUDE.md) and opens under the glyph; the glyph again, Escape or a press outside closes
+  // it (one document listener pair for every control, wired once), and it closes with the glyph when no text
+  // shows. Built once per open with the buttons: click-safe, and the wheel binding is untouched.
+  const wrap = el("span", "fileview-zoom");
+  const trigger = el("button", "fileview-btn fileview-icon fileview-zoom-btn") as HTMLButtonElement;
+  trigger.type = "button"; trigger.innerHTML = ICON_ZOOM; trigger.dataset.icon = "1";
+  trigger.setAttribute("aria-label", "Text size");   // the title carries the size too, set by apply() below
+  trigger.setAttribute("aria-haspopup", "true"); trigger.setAttribute("aria-expanded", "false");
+  const menu = el("div", "fileview-zoom-menu");
+  menu.hidden = true;
+  menu.setAttribute("role", "group"); menu.setAttribute("aria-label", "Text size");
+  for (const b of buttons) menu.appendChild(b);
+  wrap.appendChild(trigger); wrap.appendChild(menu);
+  const setOpen = (open: boolean) => {
+    if (open && zoomOpen && zoomOpen.wrap !== wrap) zoomOpen.close();   // one flyout at a time, by rule (review)
+    const focusInside = !open && !menu.hidden && !!document.activeElement && typeof menu.contains === "function" && menu.contains(document.activeElement);
+    menu.hidden = !open;
+    trigger.setAttribute("aria-expanded", open ? "true" : "false");
+    trigger.classList.toggle("on", open);
+    zoomOpen = open ? { wrap, close: () => setOpen(false) } : (zoomOpen && zoomOpen.wrap === wrap ? null : zoomOpen);
+    if (focusInside) trigger.focus();   // Escape, or an outside press with the focus inside: back to the glyph, never left on a hidden button (review)
+  };
+  trigger.addEventListener("click", () => setOpen(menu.hidden));
+  wireZoomDismiss();
   const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
   // the property on the root, and the control's own state, from pct
   const apply = () => {
     root.dataset.fvText = String(pct);
     reset.textContent = pct + "%";
+    trigger.title = "Text size " + pct + "% (Ctrl/Cmd + wheel)";   // the readout is a click away, so the hover says it (review)
     reset.setAttribute("aria-label", "Text size " + pct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
     reset.classList.toggle("fileview-size-default", pct === TEXT_SIZE_DEFAULT);   // the empty slot
     atEnd(down, pct === TEXT_SIZES[0]);
@@ -263,8 +291,21 @@ function textSizeControl(root: HTMLElement, textShowing: () => boolean, step: (a
       if (r.dir) set(stepTextSize(pct, r.dir));
     }, { passive: false });
   };
-  const sync = () => { const hide = !textShowing(); for (const b of buttons) b.hidden = hide; };
-  return { buttons, sync, bindWheel };
+  const sync = () => { const hide = !textShowing(); trigger.hidden = hide; if (hide) setOpen(false); };
+  return { buttons, wrap, trigger, menu, sync, bindWheel };
+}
+// one text-size flyout open at a time, dismissed by Escape (in the capture phase, before the viewer's own Escape
+// closes the file) or a press outside it; the pair of document listeners is wired once, for every control
+let zoomOpen: { wrap: HTMLElement; close: () => void } | null = null;
+let zoomDismissWired = false;
+function wireZoomDismiss(): void {
+  if (zoomDismissWired) return;
+  zoomDismissWired = true;
+  // a viewer closed with its flyout open (the close cross from the keyboard) leaves no reference behind that could
+  // swallow the next viewer's Escape: closeFileView clears it, and a detached wrap is dropped here as well (review)
+  const live = () => { if (zoomOpen && !zoomOpen.wrap.isConnected) zoomOpen = null; return zoomOpen; };
+  document.addEventListener("mousedown", (e) => { const z = live(); if (z && !z.wrap.contains(e.target as Node)) z.close(); });
+  document.addEventListener("keydown", (e) => { const z = live(); if (e.key === "Escape" && z) { z.close(); e.stopPropagation(); } }, true);
 }
 
 // The romp loader (swirl + wordmark + three pulsing accent dots), per the loading-state rule: the
@@ -871,23 +912,19 @@ function runCloseHooks(): void {
 }
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
-// One unit in the action row: the control and, when the kernel gave one, its reason as a caption
-// beside it. The OWNING kernel answers the lazy fileGitLink ask, and until it does the unit holds a
-// PLACEHOLDER — a dimmed disabled button and the loader's pulsing dots where the caption will go —
-// because the check takes up to 3 s when the kernel must ask origin, and an empty slot for that long
-// read as the old no-button state (found in review; the loading-state rule). The answer ALWAYS fills
-// the slot (the user 2026-09-05, who could not tell an uncommitted file from a broken link when the
-// button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
-// a real disabled <button>: assistive tech reads the state and the label, and there is no href to
-// follow or to go stale. The reason rides in the tooltip AND as the caption, because a tooltip alone
-// needs a mouse — touch has no hover, and a disabled button takes no focus — so the caption is what
-// makes the reason glanceable, and it is shown whole: the sheet wraps it inside a bounded width, since
-// nothing in the unit takes a tap, click or focus that could finish a truncated sentence. A URL
-// whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
-// 404s it until the push. One question per open, reqId-guarded; a socket drop while it is out is
-// the one thing that loses the reply, and the shim's reconnect event re-asks (initFileView), so the
-// placeholder never outlives its wait. Exported for the DOM-shape test.
-const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
+// One unit in the action row: the link, when the OWNING kernel's lazy fileGitLink ask resolves to a URL,
+// and NOTHING otherwise (T367, the user 2026-09-12, who wanted the greyed link and its explanation gone
+// from a file outside a repository: the 2026-09-05 always-fill-the-slot rule gave way to the tidier bar).
+// A real URL is an anchor — the browser owns the new tab — with the full URL as its tooltip; a URL whose
+// branch is not on origin stays an anchor, dashed, with the kernel's note in the tooltip and aria-label,
+// since GitHub 404s it until the push. No URL (no repo, uncommitted, no GitHub origin, an older kernel)
+// leaves the unit hidden: the verdict still rides the reply, it is just not rowed. The unit stays in the
+// row hidden while the check is out, so the answer lands in place; aria-busy marks the pending unit in the
+// DOM (the tests read it), and hidden it sits outside the accessibility tree, so no wait is announced for a
+// link nobody sees yet. One question
+// per open, reqId-guarded; a socket drop while it is out is the one thing that loses the reply, and the
+// shim's reconnect event re-asks (initFileView), so the wait never outlives the socket. Exported for the
+// DOM-shape test.
 /** The note bar's words when a save's late ack finds a new editor mounted over the pre-save file (doSave, the late-ack
  *  branch): what happened, then what Save and Cancel do from here. The bar carries the Reload offer itself. */
 export const SAVE_LANDED_UNDER_NEW_EDITOR = "Your earlier save landed after you reopened the editor, so this editor shows the file as it was before that save. "
@@ -898,47 +935,24 @@ export const githubLinkAction: FileViewAction = {
   id: "github-link",
   mount({ path, sid }) {
     const unit = el("span", "fileview-gh");
-    // pending: a real disabled button (never an hrefless anchor, which has no role to read) and the
-    // loader's three dots in the caption's place; aria-busy names the wait for assistive tech
-    const wait = el("button", "fileview-btn") as HTMLButtonElement;
-    wait.type = "button"; wait.disabled = true; wait.textContent = "GitHub ↗";
-    wait.title = "Checking GitHub…"; wait.setAttribute("aria-label", wait.title);
-    const dots = el("span", "fileview-gh-dots");
-    for (let i = 0; i < 3; i++) dots.appendChild(el("i", "fileview-dot"));
+    unit.hidden = true;
     unit.setAttribute("aria-busy", "true");
-    unit.appendChild(dots); unit.appendChild(wait);
     const reqId = ++gitSeq;
     const ask = () => post({ type: "fileGitLink", path, sid: sid || undefined, reqId });
     gitHooks = {
       reqId,
       ask,
       apply: (url, reason) => {
-        let ctl: HTMLElement;
-        if (url) {
-          const a = el("a", "fileview-btn") as HTMLAnchorElement;
-          a.href = url; a.target = "_blank"; a.rel = "noopener";
-          a.title = reason ? url + "\n" + reason : url;      // the full URL one hover away, and the note with it
-          if (reason) { a.classList.add("fileview-gh-note"); a.setAttribute("aria-label", "GitHub: " + reason); }
-          ctl = a;
-        } else {
-          // an older kernel answers without a reason — say what that means, rather than invent one
-          const b = el("button", "fileview-btn") as HTMLButtonElement;
-          b.type = "button"; b.disabled = true;
-          b.title = "No GitHub link: " + (reason || GH_REASONLESS);
-          b.setAttribute("aria-label", b.title);
-          ctl = b;
-        }
-        ctl.textContent = "GitHub ↗";
-        const why = reason || (url ? "" : GH_REASONLESS);
-        const parts: HTMLElement[] = [];
-        if (why) {
-          const cap = el("span", "fileview-gh-why");
-          cap.textContent = why;                             // whole, wrapped by the sheet — no tooltip to reach for
-          parts.push(cap);                                   // before the control: it annotates what follows
-        }
-        parts.push(ctl);
-        unit.replaceChildren(...parts);                      // the placeholder leaves with the wait
         unit.removeAttribute("aria-busy");
+        if (!url) { unit.replaceChildren(); unit.hidden = true; return; }   // nothing to link to: nothing shown
+        const a = el("a", "fileview-btn") as HTMLAnchorElement;
+        a.href = url; a.target = "_blank"; a.rel = "noopener";
+        a.textContent = "GitHub ↗";
+        a.title = reason ? url + "\n" + reason : url;       // the full URL one hover away, and the note with it
+        a.setAttribute("aria-label", reason ? "GitHub: " + reason : "GitHub");
+        if (reason) a.classList.add("fileview-gh-note");    // the branch is not on origin yet: dashed
+        unit.replaceChildren(a);
+        unit.hidden = false;
       },
     };
     ask();
@@ -1043,6 +1057,7 @@ export function closeFileView(): void {
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropProbe();                                         // …and its changed-on-disk probe (the window and document listeners)
+  if (zoomOpen) { zoomOpen.close(); zoomOpen = null; }   // the text-size flyout's reference leaves with the viewer (review: a keyboard close kept it, and the next viewer's first Escape was swallowed)
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
   dropWidthWatch();                                    // …and the body's width watch (watchBodyWidth)
   dropUrlRead();                                       // …and a URL view's in-flight read is cancelled
@@ -1327,6 +1342,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // so the text comparison alone would call the buffer clean), or one a save carried that an undo took back (undoneLanded)
   const decided = (): boolean => { const u = unsent(); return u.accepted.length + u.rejected.length > 0 || anyUndoneLanded(undoneLanded()); };
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
+  // T367 (the user 2026-09-12): the row reads as GROUPS. The view group holds the Rendered|Raw pair (one
+  // segmented control), the SVG Source toggle and the text-size glyph; the file group holds edit (and Save
+  // and Cancel while editing), the GitHub link when it resolves, download and copy path; the close cross
+  // stands alone at the end. Word buttons became glyphs with their words in the title and aria-label.
+  const viewGroup = el("span", "fileview-group fileview-group-view");
+  const fileGroup = el("span", "fileview-group fileview-group-file");
   // The format pick, from the bar's Rendered and Raw buttons and from the seam's setMode alike (the Comments panel switches to
   // Raw through it for a refused comment and for a Reveal): the saved choice, the paint, and one repair the paint does not make
   // itself. Over a failure pane (a reload refused after a deletion or a growth past the cap; error() the pane's words) the paint
@@ -1344,6 +1365,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   };
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
   if (isMd) {
+    const seg = el("span", "fileview-seg");                 // the pair joined: one hairline between, the outer corners rounded
+    seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Markdown view");
     for (const mode of ["rendered", "raw"] as const) {
       const b = el("button", "fileview-btn") as HTMLButtonElement;
       b.type = "button";
@@ -1351,8 +1374,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.title = mode === "rendered" ? "The prose the markdown means" : "The file's actual bytes";
       b.addEventListener("click", () => { pickFormat(mode); takeKeyboard(); });   // the paint (pickFormat), then the keyboard (takeKeyboard: the button holds it)
       segBtns.push([mode, b]);
-      acts.appendChild(b);
+      seg.appendChild(b);
     }
+    viewGroup.appendChild(seg);
   }
   // ── the Outline (plans/markdown-viewer.md Slice 6, item 2) ── A rendered note's headings, listed so a section is one pick
   // away where the audit found no list at all ("No heading ids, no outline"). The button shows over a markdown file's
@@ -1393,7 +1417,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   outlineBtn.type = "button"; outlineBtn.textContent = OUTLINE_LABEL; outlineBtn.title = "The file's headings";
   outlineBtn.setAttribute("aria-haspopup", "menu"); outlineBtn.setAttribute("aria-expanded", "false");
   outlineBtn.hidden = true;                            // shown by the first Rendered paint that holds a heading (syncOutline)
-  if (isMd) acts.appendChild(outlineBtn);
+  if (isMd) viewGroup.appendChild(outlineBtn);           // a view control: it rides the view group beside the Rendered|Raw pair (T367's grouping)
   let outline: HTMLElement | null = null;              // the open popover
   let dropOutline: (() => void) | null = null;         // its document and window listeners, removed with it
   const headingsOf = (): HTMLElement[] => {
@@ -1423,7 +1447,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (held) takeKeyboard(ring);
   };
   const closeOutline = (): void => closeOutlineKeeping(true);
-  const syncOutline = (): void => { outlineBtn.hidden = editing || ctx.mode() !== "rendered" || headingsOf().length === 0; };
+  const syncOutline = (): void => {
+    outlineBtn.hidden = editing || ctx.mode() !== "rendered" || headingsOf().length === 0;
+    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // the group follows the button it holds: renderBody's bar sync ran before this paint decided the Outline (T367's all-hidden rule)
+  };
   const openOutline = (): void => {
     const heads = headingsOf();
     if (!heads.length) return;
@@ -1564,7 +1591,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     apply();
     if (textShowing()) { fireRenderedKeepingSelection(); seat(kept); if (!keyboard) takeKeyboard(); }   // then the keyboard, after the seat: a pointer's or a wheel's step hands it to the body (a wheel step leaves a mark that holds it); a key on the button keeps it there, so the next press steps again
   });
-  for (const b of textSize.buttons) acts.appendChild(b);
+  viewGroup.appendChild(textSize.wrap);          // the zoom glyph and its flyout (the three buttons inside)
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
   // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
@@ -1581,14 +1608,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     renderBody();
     takeKeyboard();
   });
-  acts.appendChild(srcBtn);
+  viewGroup.appendChild(srcBtn);
 
   // ── edit (the raw-mode slice) ── exactly what raw mode can show is what Edit can touch: the
   // button arms only when the kernel served text/plain WITH a Last-Modified to anchor the save's
   // conflict floor (an old remote kernel that mirrors neither gets no Edit rather than an unguarded
   // one). Markdown edits from its Raw view — what you edit is what raw shows.
   const editBtn = el("button", "fileview-btn") as HTMLButtonElement;
-  editBtn.type = "button"; editBtn.textContent = "Edit"; editBtn.title = "Edit this file in place";
+  editBtn.type = "button"; editBtn.innerHTML = ICON_EDIT; editBtn.classList.add("fileview-icon"); editBtn.dataset.icon = "1";
+  editBtn.title = "Edit this file in place"; editBtn.setAttribute("aria-label", "Edit");
   editBtn.hidden = true;
   // The consent gate (the user 2026-08-22): editing is a kernel-side opt-in the SAVE ROUTE enforces —
   // the popup where the one yes happens is ensureEditingAllowed (module level, shared with the comments
@@ -1634,7 +1662,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   cancelBtn.type = "button"; cancelBtn.textContent = "Cancel"; cancelBtn.title = "Leave edit mode";
   cancelBtn.hidden = true;
   cancelBtn.addEventListener("click", () => { if (confirmDiscard()) exitEdit(); });
-  acts.appendChild(editBtn); acts.appendChild(saveBtn); acts.appendChild(cancelBtn);
+  fileGroup.appendChild(editBtn); fileGroup.appendChild(saveBtn); fileGroup.appendChild(cancelBtn);
 
   // The body row: `.fileview-main` holds the body and, when the comments panel asks for one, the aside
   // beside it (two columns; the sheet folds the aside below the body on a narrow column). The body itself
@@ -2237,7 +2265,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
   for (const a of fileViewActions) {
     const n = a.mount(ctx);
-    if (n) acts.appendChild(n);
+    if (n) fileGroup.appendChild(n);
   }
 
   // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
@@ -2246,22 +2274,37 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // federation-aware for free — fileUrl already routes a remote session's file through the relay.
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
-  dl.type = "button"; dl.textContent = "Download"; dl.title = "Save this file to your device";
+  dl.type = "button"; dl.innerHTML = ICON_DOWNLOAD; dl.classList.add("fileview-icon"); dl.dataset.icon = "1";   // the tray glyph the lightbox wears (icons.ts)
+  dl.title = "Download"; dl.setAttribute("aria-label", "Download");
   dl.addEventListener("click", () => startDownload(dlUrl, dl));
-  acts.appendChild(dl);
+  fileGroup.appendChild(dl);
 
-  const copy = el("button", "fileview-btn") as HTMLButtonElement;
-  copy.type = "button"; copy.textContent = "Copy path"; copy.title = path;
+  // ── copy path (a glyph since T367) ── the acknowledgement is a glyph swap with the words in the tooltip and
+  // aria-label: the press dims the button in the same tick (click-safe: every press acknowledges), then a check
+  // and "Copied" for a moment, or a cross and "Copy failed" until the next press. No clipboard here (an insecure
+  // origin drops navigator.clipboard) is said at once as the failure.
+  const copy = el("button", "fileview-btn fileview-icon") as HTMLButtonElement;
+  copy.type = "button"; copy.innerHTML = ICON_COPY; copy.dataset.icon = "1";
+  copy.title = "Copy path"; copy.setAttribute("aria-label", "Copy path");
+  let copyTimer: ReturnType<typeof setTimeout> | null = null;
+  const copySay = (icon: string, word: string, cls: string, ms: number | null) => {
+    copy.innerHTML = icon; copy.title = word; copy.setAttribute("aria-label", word);
+    copy.classList.remove("ok", "err", "fileview-busy"); if (cls) copy.classList.add(cls);
+    if (copyTimer) { clearTimeout(copyTimer); copyTimer = null; }
+    if (ms !== null) copyTimer = setTimeout(() => copySay(ICON_COPY, "Copy path", "", null), ms);
+  };
   copy.addEventListener("click", () => {
-    navigator.clipboard?.writeText(path).then(
-      () => { copy.textContent = "Copied"; setTimeout(() => { copy.textContent = "Copy path"; }, 1200); },
-      () => { copy.textContent = "Copy failed"; });
+    copy.classList.add("fileview-busy");                     // the same-tick acknowledgement
+    const w = navigator.clipboard?.writeText(path);
+    if (!w) { copySay(ICON_CROSS, "Copy failed", "err", null); return; }
+    w.then(() => copySay(ICON_CHECK, "Copied", "ok", 1200), () => copySay(ICON_CROSS, "Copy failed", "err", null));
   });
   const close = el("button", "fileview-btn fileview-close") as HTMLButtonElement;
   close.type = "button"; close.textContent = "✕"; close.title = "Close (Esc)";
   close.setAttribute("aria-label", "Close the file viewer");
   close.addEventListener("click", closeFileView);
-  acts.appendChild(copy); acts.appendChild(close);
+  fileGroup.appendChild(copy);
+  acts.appendChild(viewGroup); acts.appendChild(fileGroup); acts.appendChild(close);
   bar.appendChild(name); if (sess) bar.appendChild(sess); bar.appendChild(acts);
 
   box.appendChild(bar); box.appendChild(main);
@@ -2360,6 +2403,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // 523px low). So a text paint decides it inside the paint, after the swap and before the hooks measure and the seat
     // writes (syncOutline, below); only the paths that paint no text hide it here (the loader, the editor's entry).
     if (editing || text === null) outlineBtn.hidden = true;
+    viewGroup.hidden = !(segBtns.some(([, b]) => !b.hidden) || !textSize.trigger.hidden || !srcBtn.hidden || !outlineBtn.hidden);   // an all-hidden group takes no gap (edit mode hides the pair too); the Outline button is decided inside the paint, so syncOutline re-reads this
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -3650,7 +3694,7 @@ export function openUrlView(href: string): void {
     apply();
     seat(kept);                                        // the same passage at the same height, as across the Rendered/Raw switch
   });
-  for (const b of textSize.buttons) acts.appendChild(b);
+  acts.appendChild(textSize.wrap);   // the zoom glyph and its flyout (T367)
   // The way OUT to the URL itself, in a new tab — an anchor wearing the button treatment, the
   // GitHub link's dress: the browser owns the tab. It is also every failure pane's exit below.
   // data-new-tab: this href IS a same-origin .md, exactly what the chat's anchor delegate routes
@@ -3847,9 +3891,16 @@ function startDownload(url: string, btn: HTMLButtonElement): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  const was = btn.textContent;
-  btn.textContent = "Downloading…";
-  setTimeout(() => { btn.textContent = was; }, 1500);
+  // the acknowledgement: a glyph button says it in its tooltip and a busy dress (T367), a word button in its text
+  if (btn.dataset.icon) {
+    const was = btn.title;
+    btn.title = "Downloading…"; btn.classList.add("fileview-busy");
+    setTimeout(() => { btn.title = was; btn.classList.remove("fileview-busy"); }, 1500);
+  } else {
+    const was = btn.textContent;
+    btn.textContent = "Downloading…";
+    setTimeout(() => { btn.textContent = was; }, 1500);
+  }
 }
 
 function escapeHtml(s: string): string {

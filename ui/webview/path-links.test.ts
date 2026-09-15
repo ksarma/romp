@@ -524,7 +524,7 @@ test("linkTarget reads a link's data-line as a line, else its data-frag as a hea
   assert.deepEqual(at({}), null);
   // the arm's grammar, at source and by behaviour
   assert.match(LINKS, /export const FRAG_SUFFIX_RE = \/\^#\(\?!L\\d\)\(\[\^\\s#\]\+\)\/;/);
-  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
+  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*preVerified\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number; inPre: boolean \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/);   // preVerified and the ctx's inPre: the chat's fenced blocks (2026-09-12)
   assert.equal(FRAG_SUFFIX_RE.exec("#L12"), null, "the line arm's shape is never a section");
   assert.equal(LINE_SUFFIX_RE.exec("#L12")![2], "12");
   assert.equal(FRAG_SUFFIX_RE.exec("#Lx")![1], "Lx", "an L not followed by a digit is a section (a heading named Lx)");
@@ -542,14 +542,16 @@ test("source: the module marks and binds nothing; render.ts binds the click and 
   const RENDER = fs.readFileSync(path.join(UI, "render.ts"), "utf8");
   assert.doesNotMatch(LINKS, /addEventListener|onclick|openPath\(|window\.open|postMessage|fetch\(/, "no action of its own: its handlers are about focus (keydown, the press)");
   assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);   // the session the links carry (data-sid) is the caller's second argument
-  assert.match(LINKS, /export interface PathLinkHit \{ el: HTMLElement; open: string; verified: boolean \}/);
+  assert.match(LINKS, /export interface PathLinkHit \{ el: HTMLElement; open: string; verified: boolean; inPre: boolean \}/, "+ inPre: the chat skips its figure pass for a fenced hit (2026-09-12)");
   assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);
-  assert.match(RENDER, /import \{ linkTarget, type PathLinkOptions \} from "\.\/path-links";/, "the second import: the target reader the hosts share and the walk's options type");
+  assert.match(RENDER, /import \{ linkTarget, type PathLinkOptions \} from "\.\/path-links";/, "the second import: the target reader the hosts share and the walk's options type (the chat's FENCE_WALK and the todo surfaces' walkOpts)");
   // the binder reads the span's data through one opener (openLinkedPath): the path, the rel bit, the session the span names (else the active tab) and the target the link named after its path (linkTarget)
   assert.match(RENDER, /function openLinkedPath\(a: HTMLElement, e\?: MouseEvent \| null\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null, e, linkTarget\(a\)\);/);
-  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a, e\); \}\);\n\s*onMiddleClick\(a, \(e\) => openLinkedPath\(a, e\)\);[^\n]*\n\s*return a;\n\}/);
-  assert.match(RENDER, /const link = bind\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/, "the kernel-verified spaced span takes the same binder (bind: bindPathLink, or the identity under the delegated mode a todo card asks for)");
-  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts\)\) \{\n\s*bind\(link\);\n\s*if \(verified\) kernelVerified\.add\(open\);/);
+  // ...and binds the click and the middle button to it; around the click, T351's hover preview: the pending preview is cancelled at the click, and the span is armed for a hover or a focus (armFilePreview)
+  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); filePreviewIntent\.cancel\(\); openLinkedPath\(a, e\); \}\);\n\s*onMiddleClick\(a, \(e\) => openLinkedPath\(a, e\)\);[^\n]*\n\s*armFilePreview\(a\);[^\n]*\n\s*return a;\n\}/);
+  assert.match(RENDER, /const link = bind\(openPathLink\(tok, tok, true, sid\)\);\n\s*armPreview\(link, tok, tok\);\n\s*code\.replaceChildren\(link\);/, "the kernel-verified spaced span takes the same binder (bind: bindPathLink, or the identity under the delegated mode a todo card asks for) and the kernel's preview verdict (T351)");
+  assert.match(RENDER, /for \(const \{ el: link, open, verified, inPre \} of linkifyPathTokens\(root, sid, pathLinks, walkOpts \? \{ \.\.\.FENCE_WALK, \.\.\.walkOpts \} : FENCE_WALK\)\) \{\n\s*bind\(link\);\n\s*armPreview\(link, link\.textContent \|\| "", open\);\n\s*absorbFragment\(link\);\n\s*if \(verified\) kernelVerified\.add\(open\);/,
+    "the chat's walk carries its fenced-block options (2026-09-12) under a todo surface's own; every hit is bound (unless delegated) and previewable, a `#slug` written after the path is absorbed into the link (T351), a fenced one renders no figure");
   // the matcher lives in ONE place: render.ts no longer declares the regex or its gates
   for (const name of ["CLICKABLE_PATH_RE", "function looksLikeFilePath", "function looksLikeBareFileName", "const BARE_FILE_EXTS", "function fileUriToPath", "function openPathLink", "function fileUriLink"]) {
     assert.ok(!RENDER.includes(name), name + " is path-links.ts's alone");
@@ -712,4 +714,31 @@ test("the walk under the viewer's options: inPre reads a code body, unit joins a
   const h2 = linkifyPathTokens(chat as unknown as HTMLElement);
   assert.deepEqual(h2.map((h) => h.open), ["docs/e.md"]);
   assert.deepEqual(textNodesOf(chat.childNodes[0] as El).map((t) => t.data), ["see ", "docs/e.md", ":12 now"], "the :12 stays prose in the chat");
+});
+
+test("the chat's fenced blocks (the user 2026-09-12): under inPre + preVerified a fenced token links ONLY on the kernel's verdict and under the surface's code gate; prose in the same body keeps the chat's rules; a fenced hit says so", async () => {
+  const { linkifyPathTokens } = await import("./path-links");
+  const { viewerPathGate } = await import("./file-view-links");
+  const row = (...kids: Array<El | string>) => el("span", "cl", el("span", "ct", ...kids));   // code-block.ts's rows, as the chat's highlight leaves a fence
+  const opts = { inPre: true, preVerified: true, unit: ".cl",
+    accept: (tok: string, ctx: { text: string; at: number; inPre: boolean }) => !ctx.inPre || viewerPathGate(tok, ctx) };
+  const body = () => el("div", "",
+    el("p", "", "see docs/e.md and a/dup.md"),
+    el("pre", "", el("code", "hljs",
+      row("open ", el("span", "hljs-string", "'/tmp/TESTHOST/report/viewer.html'"), " now"),
+      row("import fp from ", el("span", "hljs-string", "'lodash/fp.js'")),
+      row("cat docs/e.md"))));
+  // the kernel's map names the fenced path, the import's package and the prose path: the fenced path and both docs/e.md
+  // link; the package stays text under the code gate, verdict or not; a/dup.md (no verdict) stays prose
+  const map = { "/tmp/TESTHOST/report/viewer.html": "/tmp/TESTHOST/report/viewer.html", "lodash/fp.js": "node_modules/lodash/fp.js", "docs/e.md": "docs/e.md" };
+  const b1 = body();
+  assert.deepEqual(linkifyPathTokens(b1 as unknown as HTMLElement, null, map, opts).map((h) => [h.open, h.verified, h.inPre]),
+    [["docs/e.md", true, false], ["/tmp/TESTHOST/report/viewer.html", true, true], ["docs/e.md", true, true]]);
+  assert.deepEqual(links(b1).map((a) => a.textContent), ["docs/e.md", "/tmp/TESTHOST/report/viewer.html", "docs/e.md"], "the quotes around the fenced path stay text");
+  // no map at all (an old kernel, a cached payload): prose links on shape as before; NOTHING in the fence does
+  assert.deepEqual(linkifyPathTokens(body() as unknown as HTMLElement, null, undefined, opts).map((h) => [h.open, h.inPre]), [["docs/e.md", false], ["a/dup.md", false]]);
+  // an empty map is a verdict of none: nothing links anywhere
+  assert.deepEqual(linkifyPathTokens(body() as unknown as HTMLElement, null, {}, opts), []);
+  // without the options the fence is dead text, as every other surface walked it before
+  assert.deepEqual(linkifyPathTokens(body() as unknown as HTMLElement, null, map).map((h) => h.open), ["docs/e.md"]);
 });

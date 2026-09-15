@@ -3,7 +3,8 @@
 // takes the listing whatever the gear says, a closed one only when the gear's "File links open in" names it,
 // and otherwise, framed, the listing opens in the FEED pane's browser (this fork's rule, the user 2026-09-06:
 // never over the chat while a shell frames it); only standalone /chat, where neither surface exists, opens it
-// in place. VS Code keeps its own folder opener. Six legs. The ladder itself, executed (pure). The chat's end
+// in place; and a Files control the gear hides (its setting off, T317) is never a target: the pane road falls back to
+// here, which framed is the feed. VS Code keeps its own folder opener. Six legs. The ladder itself, executed (pure). The chat's end
 // (render.ts browseRouteNow, openBrowse, the tab menu's sub-line and the host contract the chat hands its
 // browser instance), lifted and run over stubs (the open-path-exec.test.ts idiom). The pane's end (files.ts's
 // host contract for the same browser), lifted and run the same way. The wiring at source (render.ts,
@@ -42,18 +43,21 @@ const SID_NONE = "11111111-2222-3333-4444-777777777777";  // a sid neither names
 const COLOR = { bg: "#123456", fg: "#ffffff" };
 const IDENTITY = { name: "web", color: COLOR };
 const SETTINGS: unknown[] = ["chat", "feed", "pane", undefined, null, "purple", 42];   // the gear's three values (this fork's "feed"), an unset store, foreign values
-const GRID: Array<[unknown, boolean, boolean]> = [];
-for (const s of SETTINGS) for (const framed of [true, false]) for (const open of [true, false]) GRID.push([s, framed, open]);
-const label = (s: unknown, framed: boolean, open: boolean) => `setting=${String(s)}, framed=${framed}, filesOpen=${open}`;
+const GRID: Array<[unknown, boolean, boolean, boolean]> = [];   // setting, framed, filesOpen, filesAvail (the shell has a Files control at all: its gear row, T317)
+for (const s of SETTINGS) for (const framed of [true, false]) for (const open of [true, false]) for (const avail of [true, false]) GRID.push([s, framed, open, avail]);
+const label = (s: unknown, framed: boolean, open: boolean, avail = true) => `setting=${String(s)}, framed=${framed}, filesOpen=${open}, filesAvail=${avail}`;
 
 // ── the ladder, executed ──────────────────────────────────────────────────────────────────────────
 
 test("browseRoute: VS Code keeps the editor's own folder opener, whatever the setting or the panes say", () => {
-  for (const [s, framed, open] of GRID) assert.equal(browseRoute(false, s, framed, open), "editor", label(s, framed, open));
+  for (const [s, framed, open, avail] of GRID) assert.equal(browseRoute(false, s, framed, open, avail), "editor", label(s, framed, open, avail));
 });
 
 test("browseRoute: web dashboard, Files pane OPEN: the listing opens in the Files pane, whatever the setting", () => {
   for (const s of SETTINGS) assert.equal(browseRoute(true, s, true, true), "pane", `setting=${String(s)}`);
+  // ...while the shell HAS a Files control (T317): its gear row off, the pane bit is stale and the pane is no target, so the
+  // listing lands on the feed for every setting, the pane setting included (upstream's filesOpen && filesAvail gate, on the fork's ladder)
+  for (const s of SETTINGS) assert.equal(browseRoute(true, s, true, true, false), "feed", `Files pane on screen but its control hidden, setting=${String(s)}`);
 });
 
 test("browseRoute: web dashboard, Files pane CLOSED: the setting's Files pane brings it forward; everything else lands on the feed, never over the chat", () => {
@@ -62,23 +66,25 @@ test("browseRoute: web dashboard, Files pane CLOSED: the setting's Files pane br
   assert.equal(browseRoute(true, "chat", true, false), "feed", "the DEFAULT: a file would open over the chat; a listing goes to the feed pane's browser");
   assert.equal(browseRoute(true, undefined, true, false), "feed", "an unset store reads as the default");
   assert.equal(browseRoute(true, "purple", true, false), "feed", "a foreign stored value falls to the default");
+  assert.equal(browseRoute(true, "pane", true, false, false), "feed", "the pane named but its control hidden (T317): no pane to bring forward, so the framed default, the feed, never over the chat");
+  assert.equal(browseRoute(true, "chat", true, false, true), "feed", "the control shown changes nothing while the pane is closed");
 });
 
 test("browseRoute: no shell (standalone /chat): the browser over this document, whatever the setting or the cache", () => {
-  for (const s of SETTINGS) for (const open of [true, false]) assert.equal(browseRoute(true, s, false, open), "here", label(s, false, open));
+  for (const s of SETTINGS) for (const open of [true, false]) for (const avail of [true, false]) assert.equal(browseRoute(true, s, false, open, avail), "here", label(s, false, open, avail));
 });
 
 test("browseRoute is fileLinkRoute with exactly one substitution: a framed 'here' becomes 'feed'", () => {
-  for (const setting of SETTINGS) for (const framed of [true, false]) for (const open of [true, false]) {
-    const file = fileLinkRoute(setting, framed, open);
+  for (const [setting, framed, open, avail] of GRID) {
+    const file = fileLinkRoute(setting, framed, open, avail);
     const want = framed && file === "here" ? "feed" : file;
-    assert.equal(browseRoute(true, setting, framed, open), want, `setting=${String(setting)}, framed=${framed}, filesOpen=${open}`);
+    assert.equal(browseRoute(true, setting, framed, open, avail), want, label(setting, framed, open, avail));
   }
 });
 
 test("browseRoute names four targets: the editor, the Files pane, the feed pane's browser and this document", () => {
   const seen = new Set<BrowseRoute>();
-  for (const web of [true, false]) for (const [s, framed, open] of GRID) seen.add(browseRoute(web, s, framed, open));
+  for (const web of [true, false]) for (const [s, framed, open, avail] of GRID) seen.add(browseRoute(web, s, framed, open, avail));
   assert.deepEqual([...seen].sort(), ["editor", "feed", "here", "pane"]);
 });
 
@@ -98,9 +104,10 @@ type Host = { shellRestore?: boolean; onRelay?: (m: { path: string; sid?: unknow
 type ChatHooks = {
   up: Array<[unknown, string]>; here: Array<[string, string | null]>; vs: unknown[];
   settings: { fileLinkPane: unknown }; framed: boolean; protocol: string; activeId: string | null; panes: Record<string, boolean>;
+  avail?: Record<string, boolean>;   // the Files control's setting as the shell last told it (T317); absent = available
   host: Host; poster: ((m: unknown) => void) | null;
 };
-type ChatApi = { openBrowse: (p: string, sid?: string | null) => void; browseRouteNow: () => BrowseRoute; setPanes: (on: Record<string, boolean>) => void };
+type ChatApi = { openBrowse: (p: string, sid?: string | null) => void; browseRouteNow: () => BrowseRoute; setPanes: (on: Record<string, boolean>) => void; setAvail: (a: Record<string, boolean>) => void };
 function liftChat(over: Partial<ChatHooks> = {}): { H: ChatHooks; api: ChatApi } {
   const H: ChatHooks = { up: [], here: [], vs: [], settings: { fileLinkPane: "chat" }, framed: true, protocol: "http:", activeId: SID, panes: {}, host: undefined, poster: null, ...over };
   const code = ts(sliceOf(RENDER, "function browseRouteNow(): BrowseRoute {", "\n// A clickable file name that opens the real file", "browseRouteNow through the chat's browser host"));
@@ -111,6 +118,7 @@ function liftChat(over: Partial<ChatHooks> = {}): { H: ChatHooks; api: ChatApi }
     window.parent = H.framed ? { postMessage: (m, origin) => { H.up.push([m, origin]); } } : window;
     const settings = H.settings;
     let panesOn = H.panes;
+    let panesAvail = H.avail || {};   // the Files control's setting as the shell last told it (T317); absent = available
     let activeId = H.activeId;
     const sessions = new Map([[${JSON.stringify(SID)}, { id: ${JSON.stringify(SID)}, name: "web", color: ${JSON.stringify(COLOR)} }]]);
     const tabMeta = new Map([[${JSON.stringify(SID_TAB)}, { name: "api", color: null }]]);
@@ -118,7 +126,7 @@ function liftChat(over: Partial<ChatHooks> = {}): { H: ChatHooks; api: ChatApi }
     const openFileBrowse = (p, sid) => { H.here.push([p, sid]); };
     const initFileBrowse = (poster, host) => { H.poster = poster; H.host = host; };
   `;
-  const epilogue = "return { openBrowse, browseRouteNow, setPanes: (on) => { panesOn = on; } };";
+  const epilogue = "return { openBrowse, browseRouteNow, setPanes: (on) => { panesOn = on; }, setAvail: (a) => { panesAvail = a; } };";
   const api = (new Function("HOOKS", "browseRoute", prelude + code + epilogue) as (h: ChatHooks, r: typeof browseRoute) => ChatApi)(H, browseRoute);
   return { H, api };
 }
@@ -159,6 +167,16 @@ test("the chat's end, executed: with the pane off the setting decides, read at t
   api.openBrowse("/repo/notes-api", SID);
   assert.equal((relayedUp(H)[4] as { pane: string }).pane, "pane", "on screen: the pane takes it whatever the setting says");
   assert.deepEqual(H.here, []);
+  // T317: the Files control hidden in the gear (the shell's avail word, the panes arm's second set) with the pane still
+  // marked on screen: the stale bit cannot take the click and the setting (feed here) names the feed; the pane setting
+  // has no pane to bring forward either, so it falls to the framed default; nothing over the chat either way
+  api.setAvail({ files: false });
+  api.openBrowse("/repo/notes-api", SID);
+  assert.equal((relayedUp(H)[5] as { pane: string }).pane, "feed", "the pane on screen but its control hidden: the feed, not the pane");
+  H.settings.fileLinkPane = "pane";
+  api.openBrowse("/repo/notes-api", SID);
+  assert.equal((relayedUp(H)[6] as { pane: string }).pane, "feed", "even under the pane setting: no pane to bring forward, the framed default");
+  assert.deepEqual(H.here, [], "still never over the chat");
 });
 
 test("the chat's end, executed: no shell (standalone /chat) never relays; VS Code opens nothing here at all, the folder link's own act keeps the editor's opener", () => {
@@ -198,6 +216,10 @@ test("browseRouteNow reads the cache and the setting at the call, so the tab men
   assert.equal(api.browseRouteNow(), "feed", "the pane off under the default setting: the feed pane's browser (framed)");
   H.settings.fileLinkPane = "pane";
   assert.equal(api.browseRouteNow(), "pane");
+  api.setAvail({ files: false });
+  assert.equal(api.browseRouteNow(), "feed", "the Files control hidden (T317): the pane setting cannot name it, so the framed default");
+  api.setAvail({});
+  assert.equal(api.browseRouteNow(), "pane", "absent = available");
   H.protocol = "vscode-webview:";
   assert.equal(api.browseRouteNow(), "editor", "the host is read at the call too");
 });
@@ -362,6 +384,14 @@ test("the guide names the folder link and where its listing opens", () => {
 // never touches the feed's flags; 'feed' (or no pane, an older sender) takes the feed route exactly as before.
 // The stop is the comment right after the listener's close: the dashboard-id minting that followed the listener
 // moved to the head script (upstream #1127, taken in the 2026-09-09 fold) and left this comment in its place.
+/** The shell's feedHere() (the Feed pane on in this browser), which the browse arm reads since the 2026-09-15 pull-in: a
+ *  browseFiles naming no pane goes to the Files pane when the Feed pane is off. The kernel's own line, so a change there is
+ *  seen here; against the shimmed window (no __rompPaneEnabled) it answers true, the feed on. */
+function feedHereJs(): string {
+  const line = "function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled('feed'));}";
+  assert.ok(KERNEL.includes(line), "the shell's feedHere as the kernel spells it: re-anchor this extraction");
+  return line + "\n";
+}
 function arms(): (w: unknown, d: unknown, m: unknown) => void {
   const start = KERNEL.indexOf("if(m.romp==='viewFile'&&m.pane==='pane'){");
   const stop = KERNEL.indexOf("// The dashboard's one id", start);
@@ -369,7 +399,7 @@ function arms(): (w: unknown, d: unknown, m: unknown) => void {
   let js = KERNEL.slice(start, stop).trimEnd();
   assert.ok(js.endsWith("}});"));
   js = js.slice(0, -3);
-  return new Function("window", "document", "m", js) as (w: unknown, d: unknown, m: unknown) => void;
+  return new Function("window", "document", "m", feedHereJs() + js) as (w: unknown, d: unknown, m: unknown) => void;
 }
 // a shell to send messages through: desktop by default; `mobile` answers __rompMobileOn true with `tab` showing;
 // `feedOn` is the po-feed class (the feed pane on screen). data-tab follows every switch, the arms' and the
@@ -865,7 +895,7 @@ function relayJs(): string {
   assert.ok(start >= 0 && stop > start, "relay anchors not found: re-anchor this extraction (see arms())");
   const js = KERNEL.slice(start, stop).trimEnd();
   assert.ok(js.endsWith("}});"), "the relay slice no longer ends at the listener's close: re-anchor");
-  return js.slice(0, -3);
+  return feedHereJs() + js.slice(0, -3);   // the browse arm reads feedHere() (the kernel defines it in the settings script, not in this slice)
 }
 function bundle(entry: string): string {
   const esbuild = requireCjs("esbuild");
@@ -909,6 +939,9 @@ for (const name of ["firefox", "chromium"]) {
       const filesJs = bundle("files.ts");
       const css = CHAT_CSS + "\n" + read("files-pane.css");
       const page = await browser.newPage({ viewport: { width: 1000, height: 500 } });
+      // T317b: the shell shows a Files control (and lets its toggle take the files key) only while the gear's Files row is on
+      // (romp:settings.showFilesControl === true, OFF by default); this world is a dashboard with the control on
+      await page.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch { /* no store: the leg then reads a refused toggle */ } });
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
       await page.route("http://romp.test/**", (route: any) => {
         const u = new URL(route.request().url());
@@ -1009,7 +1042,7 @@ for (const name of ["firefox", "chromium"]) {
           const btns = Array.from(bar.querySelectorAll<HTMLElement>(".fileview-acts .fileview-btn"));
           const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
           return {
-            labels: btns.map((b) => b.textContent),
+            labels: btns.map((b) => b.textContent || b.getAttribute("aria-label")),   // a glyph button (Edit, Download, Copy path since T367) carries its word as aria-label
             minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
             close: box(bar.querySelector(".fileview-close")!), body: box(f.document.querySelector(".fileview-main")!),
             barOver: bar.scrollWidth - bar.clientWidth,
@@ -1067,6 +1100,9 @@ for (const name of ["firefox", "chromium"]) {
       const editorJs = bundle("editor-chunk.ts");   // the on-demand CodeMirror bundle file-view.ts loads at the first Edit
       const css = CHAT_CSS + "\n" + read("files-pane.css");
       const page = await browser.newPage({ viewport: { width: 1000, height: 500 } });
+      // T317b: the shell shows a Files control (and lets its toggle take the files key) only while the gear's Files row is on
+      // (romp:settings.showFilesControl === true, OFF by default); this world is a dashboard with the control on
+      await page.addInitScript(() => { try { localStorage.setItem("romp:settings", JSON.stringify({ showFilesControl: true })); } catch { /* no store: the leg then reads a refused toggle */ } });
       page.on("pageerror", (e: Error) => { errors.push(e.message); });
       await page.route("http://romp.test/**", (route: any) => {
         const u = new URL(route.request().url());

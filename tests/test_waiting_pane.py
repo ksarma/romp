@@ -163,10 +163,14 @@ class FeedRows(_Sandbox):
         self.assertEqual(json.loads(rest_ms)["userTodoRows"], feed["userTodoRows"])
 
     def test_rows_are_built_in_the_count_maps_loop(self):
-        # the mechanism behind "agree by construction": one read, appended beside the count
+        # the mechanism behind "agree by construction": ONE read of the open todos, inside the per-session
+        # derivation T368 memoizes (_feed_session_entry's userTodos row), and build_feed's loop takes the
+        # count and the row off that one memoized value, hit or miss alike (2026-09-15)
         src = SRC
-        self.assertIn('_ut_map[fsid] = len(_ut_open)\n'
-                      '            _ut_rows.append({"sid": fsid, "name": name, "color": color, "todos": _ut_open})', src)
+        self.assertIn('"userTodos": ({"sid": fsid, "name": name, "color": color, "todos": _ut_open} if _ut_open else None)', src)
+        self.assertIn('_ut = (entry or {}).get("userTodos")', src)
+        self.assertIn('_ut_map[fsid] = len(_ut["todos"])', src)
+        self.assertIn('_ut_rows.append(_ut)', src)
         self.assertIn('"userTodoRows": sorted(_ut_rows, key=lambda r: r["sid"])', src)
         self.assertIn('"userTodosOn": _user_todos_on()', src)
 
@@ -243,7 +247,7 @@ class Shell(unittest.TestCase):
     def test_every_pane_list_in_the_landing_js_names_it(self):
         self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
         self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
-        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", self.html)   # Esc wiring
+        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", self.html)   # Esc wiring (the gear's page joins it, T400)
         # the Log's connection-lost label: PN is json.dumps(dict(_PANE_ORDER)) since the 2026-09-07 fold (upstream's
         # one-list map, adopted whole), so the pin is the map plus the pane's row in _PANE_ORDER
         self.assertIn("var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)

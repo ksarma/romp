@@ -20,9 +20,11 @@ test("the kernel no longer carries an inline gear (single source: the feed bundl
     assert.ok(!KERNEL.includes(twin), `${twin} must stay deleted from the kernel`);
 });
 
-test("the feed bundle builds and wires the gear", () => {
+test("the feed bundle builds and wires the gear where it hosts it (VS Code's feed panel), the settings page always", () => {
   assert.ok(FEED.includes('require("./gear.js")'), "feed.ts must load the gear module");
-  assert.ok(FEED.includes("initGear("), "feed.ts must init the gear on its kernel channel");
+  assert.ok(FEED.includes("if (hostsGear(window)) initGear("), "feed.ts inits the gear on its kernel channel, unless the kernel's feed page said the gear is on /settings");
+  const PAGE = read("ui", "webview", "settings-page.ts");
+  assert.ok(PAGE.includes('require("./gear.js")') && PAGE.includes("initGear("), "the settings page is the dashboard's gear host");
   assert.ok(GEAR.includes("module.exports = { initGear }"));
 });
 
@@ -45,8 +47,8 @@ test("every gear fetch routes through the kernel base + token (VS Code's webview
 test("the gear posts kernel ops through ONE shared channel (never re-acquires the VS Code API)", () => {
   assert.ok(!GEAR.includes("acquireVsCodeApi"), "a second acquire throws in a real webview");
   for (const op of ["setAutoNudge", "setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort", "setJudgeConcurrency",
-    "setDistillModel", "setDistillEffort", "setCommentModel", "setCommentEffort", "setCommentFast", "setTmuxBackend",
-    "setJudgeFast", "setFileEditing", "setThinkingSummaries", "setUserTodos", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
+    "setDistillModel", "setDistillEffort", "setCommentModel", "setCommentEffort", "setCommentFast",
+    "setJudgeFast", "setDistillFast", "setIndexFast", "setFileEditing", "setThinkingSummaries", "setUserTodos", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
 });
 
@@ -84,8 +86,8 @@ test("Fast mode for the judges is a kernel setting: a stamped emitter under its 
     "the click posts the kernel's designed message with the gesture stamp minted in the literal");
   assert.ok(GEAR.includes("jf.checked = v.judgeFast === 'on'"),
     "the checkbox shows the kernel's persisted answer (RAW on/off), never a page default");
-  assert.match(GEAR, /STALE_LABELS = \{[\s\S]*?'judge-fast': 'Fast mode \(judges\)'/,
-    "a stood-down gesture toasts under the control's own name");
+  assert.match(GEAR, /STALE_LABELS = \{[\s\S]*?'judge-fast': 'Fast mode \(triage judges\)'/,
+    "a stood-down gesture toasts under the control's own name (T300: one box per tier, named by its tier)");
   assert.match(GEAR, /STALE_TYPE = \{[\s\S]*?'judge-fast': 'setJudgeFast'/,
     "the store maps to its message type (the toast's Apply anyway whitelist)");
   assert.match(GEAR, /\['judgeFast', jf\]/, "the row carries the mixed mark where machines disagree");
@@ -108,16 +110,22 @@ test("the judges' fast-mode box sits on the Triage model row in the chat's words
   // the gate, mirroring cmtFastGate: the opt-in rides only a call whose model is Opus, so with no tier on
   // Opus the box is inert; the gear greys it and the hint says why, instead of a dead control
   assert.ok(GEAR.includes("function judgeFastGate"), "the availability gate must exist");
-  assert.ok(GEAR.includes("jf.disabled = !can"), "the box disables when no tier is on Opus");
-  assert.ok(GEAR.includes("sub.textContent = can ? JUDGEFAST_SUB : JUDGEFAST_SUB_OFF"), "the hint says why while greyed");
-  assert.ok(GEAR.includes("if (dis === 'triage') dis = tri;"), "distilling on Follow triage counts as the triage pick");
+  // T300: one box per tier, each greyed on ITS tier's effective model (gear-judge-fast.test.ts holds the rest)
+  assert.ok(GEAR.includes("t.box.disabled = !can;"), "a box disables when its tier is not on Opus");
+  assert.ok(GEAR.includes("sub.textContent = !can ? JUDGEFAST_SUB_OFF : (r ? judgeFastSubRefused(t.word, r) : JUDGEFAST_SUB)"), "the hint says why while greyed");
+  assert.ok(GEAR.includes("v === 'triage' ? (jm ? (jm.value || '') : '') : v"), "distilling on Follow triage counts as the triage pick");
   for (const store of ["judge-model", "index-model", "distill-model"])
     assert.match(GEAR, new RegExp("gclock\\.stamp\\('" + store + "'\\) \\}\\); judgeFastGate\\(\\);"), `a ${store} pick re-runs the gate`);
   assert.match(GEAR, /cmtFastGate\(false\);\n\s*judgeFastGate\(\);/, "fill() re-checks availability after the tiers are set");
   // the mixed mark is the one inside the box's own label, not the picker's (both share the row now)
   assert.ok(GEAR.includes("el.closest('label') || el.closest('.rs-row')"), "fillMixedMarks scopes to the control's own label first");
   const CSS = read("ui", "webview", "gear.css");
-  assert.ok(CSS.includes("#rsettings .rs-fastin.rs-off { opacity: .4;"), "the greyed look");
+  // the greyed look fades the BOX alone: opacity on the whole label faded the hint span inside it too, and made the
+  // label a stacking context the rows beneath paint over, so the reason the box was greyed read dim and overdrawn
+  assert.ok(CSS.includes("#rsettings .rs-fastin.rs-off input { opacity: .4;"), "the greyed look fades the box alone");
+  assert.doesNotMatch(CSS, /#rsettings \.rs-fastin\.rs-off \{[^}]*opacity/,
+    "no opacity on the label: the hint span lives inside it and would fade with it, and the label would become a stacking context the rows beneath paint over");
+  assert.match(CSS, /#rsettings \.rs-fastin\.rs-off \{[^}]*color: var\(--text-faint/, "the word greys by token, not by fading");
   assert.ok(CSS.includes("#rsettings .rs-row:has(.rs-fastin:hover) > .rs-sub { display: none; }"), "one hover description at a time");
   assert.ok(CSS.includes("#rsettings .rs-fastin .rs-sub { white-space: normal; }"), "the hint wraps: the label's nowrap (box + word on one line) must not reach the hint, or it runs off the card");
   assert.ok(CSS.includes("#rsettings .rs-row:has(.rs-fastin .rs-mixed:hover) .rs-fastin .rs-sub { display: none; }"), "the box's mixed mark keeps its title alone: no hint under it");
@@ -264,10 +272,11 @@ test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the
   // T208 shipped the kernel toggle with no UI; the user ruled it must be an ordinary settings
   // checkbox next to Auto Nudge — off by default for new installs, one click to turn on.
   assert.ok(GEAR.includes("id=rs-suggestcompact"), "the checkbox exists in the gear markup");
-  const sessions = GEAR.indexOf(">Sessions<"), chat = GEAR.indexOf(">Chat<");
+  const auto = GEAR.indexOf("data-pane=automation"), next = GEAR.indexOf("data-pane=tasks");   // the nudges are the Automation tab since T404 (Task tracking before, Automatic before that)
+  assert.ok(auto > 0 && next > 0, "both panes exist (indexOf's -1 would pass every order check below)");
   const at = GEAR.indexOf("id=rs-suggestcompact");
-  assert.ok(sessions < at && at < chat, "…in the Sessions section, with its siblings");
-  assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
+  assert.ok(auto < at && at < next, "…in the Automation tab, with Auto Nudge (T379 regrouped the panel into tabs; T400 renamed this one; T404 cut Automation)");
+  assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < next,
     "…directly after Auto Nudge, where the user asked for it");
   assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
     && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') })"),
@@ -286,7 +295,7 @@ test("the gear owns its browseResult (the reply lands in the FEED document, not 
 test("gear.css carries the modal styling for every pane that hosts it", () => {
   for (const sel of ["#rsettings", ".rs-card", "#rs-cmap-btn", "#rs-pal-btn", ".ra-openbtn", "#ranalytics"])
     assert.ok(GEAR_CSS.includes(sel), `gear.css must style ${sel}`);
-  assert.ok(KERNEL.includes("/dist/gear.css"), "the kernel feed page must link the extracted stylesheet");
+  assert.ok(KERNEL.includes("/dist/gear.css"), "the kernel settings page must link the extracted stylesheet");
 });
 
 test("one tooltip per settings row: the Account row's live status is NOT a second rs-sub", () => {
@@ -294,7 +303,7 @@ test("one tooltip per settings row: the Account row's live status is NOT a secon
   // stacks a second bordered popover — the 2026-09-02 stacked double tooltip (even empty it painted
   // a box). #rs-login-state is a live inline status, not a description: it wears rs-note.
   assert.ok(GEAR.includes("id=rs-login-state class=rs-note"), "the login status line is an inline note");
-  const billing = GEAR.slice(GEAR.indexOf("id=rs-billing"), GEAR.indexOf(">Sessions<"));
+  const billing = GEAR.slice(GEAR.indexOf("id=rs-billing"), GEAR.indexOf("id=rs-panes-sec"));   // the Account row leads the General tab, the Panes section next (T379, re-cut T400)
   assert.equal((billing.match(/class=rs-sub/g) || []).length, 1, "the Account row keeps ONE description popover");
   assert.ok(GEAR_CSS.includes("#rsettings .rs-note {") && GEAR_CSS.includes("#rsettings .rs-note:empty { display: none; }"),
     "rs-note is inline, hidden while it has nothing to say");

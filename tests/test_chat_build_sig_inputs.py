@@ -55,18 +55,17 @@ jd = km.jd
 # Module-level functions build_session calls by name. Where a helper reads through several inputs the
 # label names the one that identifies it and the note lists the rest; every listed input has a label.
 CENSUS = {
-    "_agent_open_set": ("pure", "over the goal store (store)"),
     "_api_error": ("pure", "the transcript's tail, memoized on its (mtime, size) (transcript)"),
     "_apply_rewind_hold": ("sig", "hold", "and the store; the kept-chain read is over the transcript, states and cut"),
     "_archive_roots": ("sig", "store", "the goals-archive identity is the store triple's third member"),
     "_ask_fill_answers": ("pure", "over a tool event and its result block"),
     "_ask_fill_chosen": ("pure", "over a tool event's output string"),
     "_atom_md": ("pure", "over an atom"),
-    "_atom_user_texts": ("pure", "over an atom"),
     "_auth_avail_status": ("sig", "acct", "the availability half of the Billing choices, memoized once per pusher cycle: the account's tri-state read, the key presence and the managed-helper flag, folded whole beside the login label and the both-bit"),
     "_auth_both": ("sig", "acct", "the credential store's login and the settings' key presence"),
     "_awaiting_task_descs": ("sig", "bg", "the live task rows; the split reads the stamped tops (stamp), the store and the transcript"),
     "_awaiting_task_ids": ("sig", "bg", "as _awaiting_task_descs"),
+    "_bg_service_ids": ("sig", "bg", "as _awaiting_task_descs"),
     "_awaiting_items_payload": ("sig", "bg", "the wait's own rows (as _session_awaiting), else the rows in flight mid-turn: the row's agents (row), the live task rows and the watches (watch)"),
     "_bg_tasks": ("sig", "row", "the row's live task set gates the transcript's scan; each output tail is a taskout dep; the spawn epoch reads reg and gone"),
     "_chat_agent_open_at": ("pure", "over the events"),
@@ -81,15 +80,17 @@ CENSUS = {
     "_chat_seam_open_at": ("pure", "over the events"),
     "_chat_stat_key": ("sig", "taskout", "the fold's per-output identity; the same stat the taskout dep re-takes"),
     "_chat_turn_fp": ("pure", "over a turn"),
+    "_asm_cut_turn": ("pure", "over the turns' lazy markers: the first turn with a live atom (transcript)"),
+    "_cursors_before": ("pure", "over the earlier turns' scalars and the note lists (transcript, states, note)"),
+    "_uniq_event_uuids": ("pure", "over the built list: a key on a repeated uuid"),
+    "_key_counts": ("pure", "over the sealed prefix: the uuid pass's seen map, kept in the fold entry"),
     "_claude_account_label": ("sig", "acct"),
+    "_claude_login_display": ("sig", "acct", "the login as the Billing rows name it: the account file's name and organisation plus the credentials file's kind word (T346)"),
     "_claudemd_docs": ("sig", "claudemd", "the CLAUDE.md files on the chain from the cwd to its git root, plus the global one"),
-    "_cleared_ids": ("sig", "cleared"),
     "_clearing_now": ("sig", "backend", "the backend's clearing bracket"),
     "_cmd_gestures": ("sig", "states"),
     "_colormap": ("sig", "colormap"),
     "_compacting": ("sig", "backend", "the backend's compacting bracket; else the row's state and since, the parse, and the optimistic stamp's clock boolean (clock)"),
-    "_echo_landed_in": ("pure", "over an echo's text and the user-text keys built from the parse (transcript)"),
-    "_echo_overtaken": ("pure", "over an atom and the parse's human floor"),
     "_edit_diff": ("pure", "over a tool input"),
     "_effort_changes": ("sig", "states"),
     "_effort_color": ("pure", "over the effort string and the colormap name"),
@@ -99,13 +100,11 @@ CENSUS = {
     "_genuine_queued": ("pure", "over a queued text"),
     "_git_branch": ("sig", "cwd"),
     "_github_repo_of": ("sig", "cwd"),
-    "_has_tmux": ("const", "whether a tmux binary is on PATH"),
-    "_human_turn_floor": ("pure", "over the parse"),
     "_hydrate_postal": ("sig", "postal", "the index, the caption map and each card's peer identity (names)"),
     "_idle_faded": ("sig", "clock", "the faded boolean, from the row's since and now"),
     "_interrupt_settle": ("pure", "over the events and an atom"),
     "_launch_error": ("sig", "backend"),
-    "_limit_hold": ("sig", "limit", "folded as its value while the tab can render a queued bubble (a queue, parked ops, or a tmux session's in-flight echo); None otherwise, when the build never reads it"),
+    "_limit_hold": ("sig", "limit", "folded as its value while the tab can render a queued bubble (a queue, parked ops, or a non-forwarding backend's in-flight echo); None otherwise, when the build never reads it"),
     "_merge_live_atoms": ("sig", "live", "the backend's tail by revision; the transcript-side sets are pure over the parse"),
     "_model_color": ("pure", "over the model string and the colormap name"),
     "_model_pending_now": ("sig", "clock", "the row's flag, the kernel's stamp and its 20 s cap as one boolean"),
@@ -114,18 +113,21 @@ CENSUS = {
     "_name_color": ("sig", "names"),
     "_name_emoji": ("sig", "names"),
     "_name_of": ("sig", "names"),
-    "_node_anchor_uuids": ("sig", "anchors", "the warm-anchor table by this sid's revision; else pure over the node and the parse's segment maps"),
+    "_goal_tree_walk": ("sig", "cleared", "the shared store walk (plans/outline-pane-provisional-row.md): over the store (store) and the parse's segment maps with the warm-anchor table by this sid's revision (anchors), reading the cleared set inside"),
+    "_ledger_tree": ("sig", "flags", "the mute (_session_flag) and the cap of 80 over the walk's rows, shared with the Outline's provisional row"),
     "_norm_branch": ("pure", "over a branch string"),
     "_notify_session_effective": ("sig", "ncards", "the master bell; the session's own override is in flags"),
     "_op_qid": ("pure", "over a parked op"),
     "_open_user_todos": ("sig", "todos", "the sid's rows and the feature switch, serialized"),
     "_orphan_replies": ("sig", "states"),
     "_parked_md": ("pure", "over a parked op"),
+    "_op_paths": ("pure", "over a parked op (its attachment list, T373 fold)"),
     "_parse": ("sig", "transcript", "memoized on the transcript's (mtime, size), the pending cut (cut) and the states file (states)"),
     "_parse_task_notification": ("pure", "over a reminder string"),
     "_patch_rows": ("pure", "over a structured patch"),
     "_path_links": ("sig", "pathlink", "a resolved token latches for the message's life; an unresolved one is retried, and the retry is the pathlink dep"),
     "_path_pins": ("sig", "pathlink", "the pins latched beside the links"),
+    "_path_preview_verdicts": ("sig", "pathlink", "the preview popover's verdict per verified link, with the refusal for each link that does not preview (T351, T364): a stat of each target beside the links, and it warms the cache; it moves only when the links move or a file appears, the pathlink dep"),
     "_pinned_notes_for": ("sig", "pins", "the sid's pinned-note rows, serialized (the _user_todo_fp shape)"),
     "_postal_card_deps": ("sig", "postal"),
     "_postal_index": ("sig", "postal", "memoized on the log's identity"),
@@ -152,6 +154,7 @@ CENSUS = {
     "_session_chip": ("pure", "over classified inputs: the parse and live tail, the row, the backend brackets, the clock booleans, the live task rows, the watches, the states overlay, the store and the downtime list"),
     "_session_cwd": ("sig", "cwd", "the names entry's cwd, else the transcript's stamp"),
     "_session_flag": ("sig", "flags"),
+    "_mail_off_fields": ("sig", "flags", "the effective mail state and its reason from ONE derivation (postalServiceOff, mailOffWhy): the record's readability and threadOf through _thread_reg (reg), then the mailbox flag with its legacy twin (flags) (T356)"),
     "_session_meta": ("pure", "over the transcript's records, memoized by record identity (transcript)"),
     "_session_retry_suppressed": ("sig", "retry"),
     "_session_working": ("sig", "downtime", "over the turns, and the host suspensions recorded since boot"),
@@ -164,9 +167,9 @@ CENSUS = {
     "_stat_key": ("sig", "cleared", "cleared.jsonl's identity, the ledger memo's key beside the set _cleared_ids reads"),
     "_strip_hook_notices": ("pure", "over a text"),
     "_task_outputs_for": ("sig", "taskout", "the launch record from the transcript's scan; each output file's tail is a taskout dep"),
-    "_thread_reg": ("sig", "reg"),
+    "_branch_marker": ("sig", "reg"),   # the fork lineage chip: _thread_reg (the reg) and _name_of, one helper for the whole build and a page
     "_tilde": ("const", "the home directory"),
-    "_tmux_sessions": ("sig", "row", "the liveness map when the caller passed none"),
+    "_live_map": ("sig", "row", "the liveness map when the caller passed none"),
     "_tree_of": ("sig", "cwd"),
     "_user_images": ("pure", "over a turn's blocks and text"),
     "_user_todo_session_ended": ("sig", "reg", "the reg's alive bit; else the death marker (gone) against the last states row (states)"),
@@ -175,6 +178,7 @@ CENSUS = {
 
 # Attribute calls whose base is a module-level object or one of the backend locals build_session binds.
 DOTTED = {
+    "_RENDER_FLOOR.get": ("sig", "floor", "the floor the pusher last used, read by a build outside its cycle (the pusher's decision is the component)"),
     "Sessions.backend_for": ("sig", "reg", "ownership: the SDK backend owns a sid whose reg exists"),
     "Sessions.working_note": ("sig", "note", "the working-note file (working/<sid>) by identity"),
     "jd.episode_rows": ("sig", "episodes"),
@@ -185,11 +189,15 @@ DOTTED = {
     "em.parse_teammate_message": ("pure", "over a text"),
     "em.injected_source": ("pure", "over a message record"),
     "em.strip_harness_preamble": ("pure", "over a text"),
+    "em.hydrate": ("pure", "over the tree's atoms: fills a body before the assembly cut from the transcript the parse key already covers (T323 stage 4a)"),
+
+    "em.parse_z": ("pure", "a rendered orphan note's stamp, parsed for the fold's orphan gate window (round 2, item 11)"),
     "sb.echo_text_key": ("pure", "over a text"),
     "cm.context_rgb": ("pure", "over a percentage"),
     "cm.ramp": ("pure", "over a fraction and the colormap's stops"),
     "cm.stops_for": ("pure", "over the colormap name"),
     "_SEND_TOOL_RE.search": ("const", "a module regex"),
+    "_FOLLOWUP_GOAL_RE.search": ("const", "a module regex (the queued follow-up's goal id, for the rescind's chip, T373)"),
     "_PATH_LINK_CACHE.get": ("sig", "pathlink", "which tokens are still unresolved"),
     "_chat_fold.pop": ("out", "the fold entry's eviction"),
     "_ledger_memo.get": ("memo", "keyed on the seams, cleared.jsonl and the anchor revision, held by parse and store identity"),
@@ -197,9 +205,8 @@ DOTTED = {
     "_parse_mode.get": ("memo", "the parse's own mode, written under the parse's key"),
     "_pending_ops.get": ("sig", "ops"),
     "be.owns": ("sig", "reg"),
-    "be.pending_queued": ("sig", "backend", "the SDK queue by value; the tmux queue is folded from the transcript"),
+    "be.pending_queued": ("sig", "backend", "the owning backend's queue by value"),
     "_cbe.pending_queued_meta": ("sig", "backend", "each queued copy's (qid, qts) beside its text, folded as _qmeta where the backend keeps them"),
-    "be.live_atoms": ("sig", "live"),
     "be.qids_for_landing": ("sig", "live", "the queued-copy ids a landed record pairs with: a landing is a transcript record (transcript) or a live-tail change (live), and the fed ledger it reads fills with the feed that bumps live_rev"),
     "_be_fk.fork_children": ("sig", "fork"),
     "os.path.exists": ("sig", "transcript", "whether the transcript exists yet"),
@@ -220,7 +227,10 @@ GLOBALS = {
     "_CHAT_FOLD_STATS": ("out", "counters"),
     "_PATH_LINK_CACHE": ("sig", "pathlink"),
     "_SEND_TOOL_RE": ("const", "a module regex"),
+    "_FOLLOWUP_GOAL_RE": ("const", "a module regex"),
     "_chat_fold": ("memo", "see _chat_fold_get"),
+    "_RENDER_FLOOR": ("sig", "floor", "the render floor the pusher's last build used; the pusher's own decision is the floor component"),
+    "_PAGE_FILL_TURNS": ("const", "the turns stepped past a page for late fills"),
     "_chat_fold_last": ("out", "the perf line's per-thread record"),
     "_chat_fold_lock": ("const", "a lock"),
     "_chat_fold_warned": ("out", "a once-flag"),
@@ -379,8 +389,8 @@ class Census(unittest.TestCase):
         for retired in ("_active_chat_sig", "_clock_predicates", "_external_sig", "_ACTIVE_SIG_FILES"):
             self.assertFalse(hasattr(km, retired), "%s: the watched tab's separate key is retired" % retired)
 
-    def test_every_kernel_call_hands_the_liveness_map_as_tmux(self):
-        # the signature's order is (sess, tm, now, tmux=, deps=): a map passed positionally lands in `tm` and
+    def test_every_kernel_call_hands_the_liveness_map_as_live_map(self):
+        # the signature's order is (sess, tm, now, live_map=, deps=): a map passed positionally lands in `tm` and
         # the row component reads a dict of rows as one row, so every caller in kernel/ names the map
         calls = []
         for name in ("kernel.py", "sdk_backend.py"):
@@ -395,12 +405,12 @@ class Census(unittest.TestCase):
                 calls.append((name, src[m.end():i - 1]))
         self.assertGreaterEqual(len(calls), 3, "the pusher's pre- and post-build signatures and the thread's")
         for name, args in calls:
-            self.assertIn("tmux=", args, "%s: a _chat_build_sig call without the map named: %s" % (name, args))
+            self.assertIn("live_map=", args, "%s: a _chat_build_sig call without the map named: %s" % (name, args))
             self.assertLessEqual(args.count(",") - args.count("=") + 1, 3, "%s: no fourth positional argument: %s" % (name, args))
 
 
 # ── the differential tests ────────────────────────────────────────────────────────────────────────
-# One hermetic world (a tmux-less session discovery finds, with a fixed liveness row); each test moves one
+# One hermetic world (a session discovery finds, with a fixed liveness row, and no backend owns); each test moves one
 # input and requires the signature to miss under exactly that input's label, so a component that stopped
 # covering its input fails here by name. The dependency components are exercised through a hand-made cache
 # record, the way _chat_sig_deps evaluates one; the pusher tests drive the REAL build_session through _push.
@@ -425,6 +435,22 @@ def _aline(t, text, uuid, parent=None):
             "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
 
 
+class _TailBackend:
+    """An owning backend with a live tail the test moves by hand, shaped like the Codex backend: no live_rev
+    counter (Sessions.live_rev keys its tail on the atoms' serialized value) and no unqueue (its in-flight
+    echo is what lets the build render a queued bubble, so the limit hold is read while one stands)."""
+
+    def __init__(self):
+        self.atoms = {}
+
+    def owns(self, sid): return True
+    def live_atoms(self, sid): return [dict(a) for a in self.atoms.get(sid, [])]
+    def pending_queued(self, sid): return []
+    def compacting(self, sid): return False
+    def clearing(self, sid): return False
+    def pending_cut(self, sid): return ""
+
+
 class _World(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -440,7 +466,7 @@ class _World(unittest.TestCase):
             _uline(T0 + 100, "now the tests", "u2", "a1"), _aline(T0 + 140, "Tests pass.", "a2", "u2")]) + "\n")
         state = td / "state"
         state.mkdir()
-        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._tmux_sessions, km._sdk,
+        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._live_map, km._sdk,
                       os.environ.get("CLAUDE_CONFIG_DIR"), os.environ.get("ROMP_HOST_NAME"),
                       len(km._downtime), km._claude_account_label, km._auth_avail_status, km._MENTION_PINS,
                       km._feed_needs_input[0])
@@ -454,9 +480,9 @@ class _World(unittest.TestCase):
         km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
         os.environ["CLAUDE_CONFIG_DIR"] = str(td / "claude")   # the task-store root (_tasks_base)
         self.row = {"state": "idle", "since": NOW - 100, "model": "", "effort": "", "context": None,
-                    "compactPct": None, "color": None, "backend": "tmux"}
-        self.tmux = {SID: self.row}
-        km._tmux_sessions = lambda: self.tmux
+                    "compactPct": None, "color": None, "backend": "sdk"}
+        self.live_map = {SID: self.row}
+        km._live_map = lambda: self.live_map
         km._sdk = lambda: None
         km._built_chat.clear()
         km._live_scope.chat_shared = None
@@ -464,10 +490,10 @@ class _World(unittest.TestCase):
         self.sess = {"sid": SID, "name": "web", "path": str(self.tpath), "anchor": SID}
 
     def tearDown(self):
-        (state, proj, names, wdir, gmd, tmux, sdk, cfg, host, ndown, acct, avail, pins, needs) = self.saved
+        (state, proj, names, wdir, gmd, live_fn, sdk, cfg, host, ndown, acct, avail, pins, needs) = self.saved
         jd._rebind_state(state)
         jd.PROJECTS = proj
-        km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._tmux_sessions, km._sdk = names, wdir, gmd, tmux, sdk
+        km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._live_map, km._sdk = names, wdir, gmd, live_fn, sdk
         km._claude_account_label, km._auth_avail_status = acct, avail
         km._MENTION_PINS = pins
         km._feed_needs_input[0] = needs
@@ -477,7 +503,7 @@ class _World(unittest.TestCase):
             else:
                 os.environ[k] = v
         del km._downtime[ndown:]
-        for d in (km._tmux_echo, km._tmux_echo_rev, km._node_anchor_rev, km._pending_ops, km._auto_retry_state,
+        for d in (km._node_anchor_rev, km._pending_ops, km._auto_retry_state,
                   km._interrupt_clicked, km._compact_clicked, km._model_switch_pending):
             d.pop(SID, None)
         with km._watch_lock:
@@ -495,10 +521,18 @@ class _World(unittest.TestCase):
 
     def sig(self, now=NOW, deps=None, tm=None):
         """The complete key, as the pusher takes it: the session, its liveness row, the push's clock and map."""
-        return km._chat_build_sig(self.sess, self.row if tm is None else tm, now, tmux=self.tmux, deps=deps)
+        return km._chat_build_sig(self.sess, self.row if tm is None else tm, now, live_map=self.live_map, deps=deps)
 
     def moved(self, before, after):
         return km._chat_sig_miss(before, after)
+
+    def tail_backend(self):
+        """Hand the sid to a _TailBackend for this test (the world's default owner is the unowned route)."""
+        be = _TailBackend()
+        saved = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: be)
+        self.addCleanup(lambda: setattr(km.Sessions, "backend_for", staticmethod(saved)))
+        return be
 
     def store(self, nodes=None, status=None):
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
@@ -610,12 +644,14 @@ class Differential(_World):
         self.assertEqual(self.moved(b, self.sig()), (), "another session's todo moves nothing of this tab's key")
 
     def test_the_live_tail_misses_under_live_for_an_echo_and_for_its_dropped_mark(self):
+        # the owning backend's tail (Sessions.live_rev): a backend with no counter is keyed on the tail's
+        # serialized value, so an echo arriving and a mark written on it are each a change under live
+        be = self.tail_backend()
         a = self.sig()
-        km._tmux_echo_add(SID, "please also fix the header")
+        be.atoms[SID] = [{"t": NOW, "text": "please also fix the header", "author": "human"}]
         b = self.sig()
         self.assertEqual(self.moved(a, b), ("live",))
-        t = km._tmux_echo_atoms(SID)[0]["t"]
-        km._tmux_echo_settle(SID, human_floor=t + 5)
+        be.atoms[SID][0]["dropped"] = True
         self.assertEqual(self.moved(b, self.sig()), ("live",), "the dropped mark is a change to the tail")
 
     def test_the_liveness_row_misses_under_row_and_its_snapshot_stamp_does_not(self):
@@ -623,7 +659,7 @@ class Differential(_World):
         self.assertEqual(self.sig(tm=dict(self.row, snapT=NOW + 3)), a, "snapT moves every cycle and is not rendered")
         self.assertEqual(self.moved(a, self.sig(tm=dict(self.row, state="working"))), ("row",))
         self.assertEqual(self.moved(a, self.sig(tm=dict(self.row, context=42))), ("row",))
-        self.assertEqual(self.moved(a, km._chat_build_sig(self.sess, None, NOW, tmux={})), ("row",),
+        self.assertEqual(self.moved(a, km._chat_build_sig(self.sess, None, NOW, live_map={})), ("row",),
                          "no row for the sid, and an empty map: a different key, never a false hit")
 
     def test_each_clock_boolean_misses_under_clock_exactly_at_its_crossing(self):
@@ -642,7 +678,7 @@ class Differential(_World):
         km._model_switch_pending[SID] = {"target": "other", "until": time.time() + 60}
         self.assertEqual(self.moved(s3, self.sig(now=NOW + 4, tm=tm)), ("clock",), "a model switch in flight")
         km._model_switch_pending.pop(SID, None)
-        # the interrupt stamp, on the transcript path (a tmux row has no interrupting flag): the stop is in
+        # the interrupt stamp, on the transcript path (a row with no interrupting flag): the stop is in
         # flight until the CLI's stop record lands or 120 s pass, and the signature's own read pops the
         # stamp at the cap exactly as the build's would. Read at or after NOW + 2, where faded already holds.
         km._interrupt_clicked[SID] = NOW - 118
@@ -682,13 +718,15 @@ class Differential(_World):
         finally:
             km._set_retry_paused(False)
 
-    def test_the_limit_hold_is_read_for_a_tmux_sessions_in_flight_echo_too(self):
+    def test_the_limit_hold_is_read_for_a_non_forwarding_backends_in_flight_echo_too(self):
+        be = self.tail_backend()
         lim = km._CHAT_SIG_LABELS.index("limit")
         self.assertIsNone(self.sig()[lim])
-        km._tmux_echo_add(SID, "typed while busy")
+        be.atoms[SID] = [{"t": NOW, "text": "typed while busy", "author": "human"}]
         km._set_retry_paused(True, reason="spend")
         try:
-            self.assertEqual(self.sig()[lim]["reason"], "spend", "a tmux echo folds into the queue while busy, so the hold is read")
+            self.assertEqual(self.sig()[lim]["reason"], "spend",
+                             "a non-forwarding backend's echo folds into the queue while busy, so the hold is read")
         finally:
             km._set_retry_paused(False)
 
@@ -923,11 +961,11 @@ class Differential(_World):
     def test_the_handed_liveness_map_is_served_to_every_nested_read(self):
         """_chat_build_sig serves the map it was handed (_serve_live) to the reads beneath it, so the bg
         component (through _bg_live_norm), the awaiting sources and the watch rows read the snapshot the
-        build will, and a signature outside a pusher cycle (a connect push on a handler thread) forks no
-        tmux and sweeps no registry per tab. A fresh liveness read during the call is the failure."""
+        build will, and a signature outside a pusher cycle (a connect push on a handler thread) takes no
+        fresh liveness read and sweeps no registry per tab. A fresh liveness read during the call is the failure."""
         def fresh():
             raise AssertionError("a nested read took a fresh liveness snapshot instead of the handed map")
-        km._tmux_sessions = self.saved[5]                 # the kernel's own reader: the served snapshot, else Sessions.live()
+        km._live_map = self.saved[5]                 # the kernel's own reader: the served snapshot, else Sessions.live()
         saved_live = km.Sessions.live
         km.Sessions.live = staticmethod(fresh)
         aid = "a0123456789abcdef"
@@ -935,12 +973,12 @@ class Differential(_World):
         row["bgTasks"] = [{"toolUseId": "tu_1", "desc": "Running Map the parser", "since": NOW - 30,
                            "type": "local_agent", "taskId": aid}]
         try:
-            s = km._chat_build_sig(self.sess, row, NOW, tmux={SID: row})
+            s = km._chat_build_sig(self.sess, row, NOW, live_map={SID: row})
             self.assertEqual(s[km._CHAT_SIG_LABELS.index("bg")],
                              (("tu_1", "Map the parser", NOW - 30, "local_agent", None, aid),),
                              "the task rows come from the handed row, through the build's own normalizer")
             self.assertIsNone(getattr(km._live_scope, "snapshot", None), "the scope closes with the call")
-            s2 = km._chat_build_sig(self.sess, row, NOW, tmux={SID: row})
+            s2 = km._chat_build_sig(self.sess, row, NOW, live_map={SID: row})
             self.assertEqual(s, s2)
         finally:
             km.Sessions.live = saved_live
@@ -1048,23 +1086,22 @@ class Differential(_World):
 
 class RealBuildIdleBoard(_World):
     """The real build_session through _push over a quiet world, on the fork's mechanics beside Pusher: the
-    liveness-collapse guard (the handed row decides the chip), and a connect push on a handler thread
-    sharing the pusher's cache."""
+    handed liveness map (the handed row decides the chip, the C4 hand-off), and a connect push on a handler
+    thread sharing the pusher's cache."""
 
-    STUBS = ("_tab_list_tmux", "_chat_tab_sessions", "_cached_feed", "_cached_timeline", "build_timeline",
+    STUBS = ("_chat_tab_sessions", "_cached_feed", "_cached_timeline", "build_timeline",
              "_fleet_view_sig", "_comments_frame", "_retry_parked_creates")
 
     def setUp(self):
         super().setUp()
         self.saved_stubs = {nm: getattr(km, nm) for nm in self.STUBS}
         self.saved_state2 = (dict(km._prev_chat_events), dict(km._prev_chat_ledger), list(km._last_tab_order), km._judge_gen[0])
-        km._tab_list_tmux = lambda tmux: dict(tmux)
-        km._chat_tab_sessions = lambda now, tmux: [dict(self.sess)]
-        km._cached_feed = lambda now, tmux, sig, connect=False: {"working": [], "awaiting": [], "now": now}
-        km._cached_timeline = lambda now, tmux, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
-        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
-        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
-        km._comments_frame = lambda sid, tmux: None
+        km._chat_tab_sessions = lambda now, live_map: [dict(self.sess)]
+        km._cached_feed = lambda now, live_map, sig, connect=False: {"working": [], "awaiting": [], "now": now}
+        km._cached_timeline = lambda now, live_map, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
+        km.build_timeline = lambda now, live_map, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, live_map: {"probe": 1}
+        km._comments_frame = lambda sid, live_map: None
         km._retry_parked_creates = lambda: None
         km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
         self.client = {"app": "chat", "alive": True, "sent": {}, "active": PEER, "send": lambda s: None}
@@ -1084,36 +1121,36 @@ class RealBuildIdleBoard(_World):
         c = km._PERF_STATS.snapshot()["builds"]["chat"]
         return dict(c, bg_miss=dict(c["bg_miss"]))
 
-    def test_a_tab_built_during_a_liveness_collapse_caches_the_chip_of_the_handed_row(self):
-        """The review's should-fix 2: _push hands the chat loop the GUARDED map (the previous rows carried
-        through a tmux collapse) and the key reads that row, but the chip's sources read the raw snapshot;
-        a tab built while the raw read had collapsed cached a 'ready' chip under a key the recovered read
-        never busts. The chip now derives from the handed row, so the served payload equals a fresh build's."""
+    def test_a_tab_built_from_the_handed_map_caches_the_chip_of_the_handed_row(self):
+        """The review's should-fix 2: _push hands the chat loop its liveness map (once the collapse guard's
+        carried rows, until the tmux backend's removal) and the key reads that row, but the chip's sources read
+        the raw snapshot; a tab built while the raw read was empty cached a 'ready' chip under a key a later
+        read never busts. The chip derives from the handed row, so the served payload equals a fresh build's."""
         self.row["bgTasks"] = [{"toolUseId": "t1", "desc": "the nightly batch", "since": NOW - 50, "type": "local_bash"}]
-        saved = km._tmux_sessions
-        km._tmux_sessions = lambda: {}                       # the raw read collapsed for this push
+        saved = km._live_map
+        km._live_map = lambda: {}                            # the raw read is empty for this push
         try:
-            km._push([self.client], tmux=self.tmux)          # while the handed map carries the row
+            km._push([self.client], live_map=self.live_map)  # while the handed map carries the row
         finally:
-            km._tmux_sessions = saved
+            km._live_map = saved
         served = km._built_chat[SID][1]["status"]
-        fresh = km.build_session(SID, int(time.time()), self.tmux)["status"]
+        fresh = km.build_session(SID, int(time.time()), self.live_map)["status"]
         self.assertEqual(served["state"], "awaitingBg", "the handed row's pending task decides the chip")
         self.assertEqual((served["state"], served["awaitingWhy"], served["awaitingTaskIds"]),
                          (fresh["state"], fresh["awaitingWhy"], fresh["awaitingTaskIds"]),
                          "what the collapse cycle cached is what a build after the read recovers produces")
         c0 = self._chat()
-        km._push([self.client], tmux=self.tmux)
+        km._push([self.client], live_map=self.live_map)
         self.assertEqual(self._chat()["cached"] - c0["cached"], 1, "the same key: served, and correct")
 
     def _pusher_push(self, *clients):
         """A push as _pusher_cycle runs it: the cycle's scopes open on this thread."""
-        km._live_scope.snapshot = self.tmux
+        km._live_scope.snapshot = self.live_map
         km._live_scope.names = km._names_snapshot()
         km._live_scope.msgsum = [km._MSGSUM_UNSET]
         km._live_scope.paths, km._live_scope.sessions = {}, {}
         try:
-            km._push(list(clients or (self.client,)), tmux=self.tmux)
+            km._push(list(clients or (self.client,)), live_map=self.live_map)
         finally:
             for k in ("snapshot", "names", "msgsum", "paths", "sessions"):
                 setattr(km._live_scope, k, None)
@@ -1121,7 +1158,7 @@ class RealBuildIdleBoard(_World):
     def _connect_push(self, client=None):
         """A page load as _push_one runs it: a handler thread with no cycle scope, connect=True."""
         self.assertIsNone(getattr(km._live_scope, "snapshot", None))
-        km._push([client or self.client], connect=True, tmux=self.tmux)
+        km._push([client or self.client], connect=True, live_map=self.live_map)
 
     def test_a_connect_push_and_the_pusher_share_the_cache(self):
         c0 = self._chat()
@@ -1211,7 +1248,7 @@ class KeyCost(_World):
         the pusher thread; _pusher_cycle's finally closes them, so the next cycle reads them fresh."""
         saved = km._pusher_cycle_jobs
 
-        def jobs(now, tmux, any_client):
+        def jobs(now, live_map, any_client):
             km._chat_push_scopes_open()                       # ...and nothing closes them
             self.assertIsNotNone(km._live_scope.chat_shared)
         km._pusher_cycle_jobs = jobs
@@ -1232,7 +1269,7 @@ SID_B = "77777777-8888-9999-aaaa-ddddddddddd2"
 class Pusher(unittest.TestCase):
     """_push with the builders stubbed: which tabs rebuild, and why."""
 
-    STUBS = ("_tmux_sessions", "_live_names", "_chat_tab_sessions", "build_session",
+    STUBS = ("_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
              "_retry_parked_creates", "_sdk")
 
@@ -1255,18 +1292,21 @@ class Pusher(unittest.TestCase):
         for d in (jd.STATESDIR, jd.GOALDIR):
             d.mkdir(parents=True, exist_ok=True)
         km.NAMES = names
-        self.tmux = {}
-        km._tmux_sessions = lambda: dict(self.tmux)
+        self.live_map = {}
+        km._live_map = lambda: dict(self.live_map)
         km._sdk = lambda: None
+        self.tail = _TailBackend()                            # the owning backend, its tail moved by hand
+        self._saved_be = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: self.tail)
         km._live_names = lambda tm: {"web": SID_A, "api": SID_B}
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": s, "name": n, "path": str(self.tx[s]), "anchor": s}
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": s, "name": n, "path": str(self.tx[s]), "anchor": s}
                                                   for s, n in ((SID_A, "web"), (SID_B, "api"))]
         km.build_session = self._build_session
-        km._cached_feed = lambda now, tmux, sig, connect=False: {"working": [], "awaiting": [], "now": now}
-        km._cached_timeline = lambda now, tmux, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
-        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
-        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
-        km._comments_frame = lambda sid, tmux: None
+        km._cached_feed = lambda now, live_map, sig, connect=False: {"working": [], "awaiting": [], "now": now}
+        km._cached_timeline = lambda now, live_map, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
+        km.build_timeline = lambda now, live_map, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, live_map: {"probe": 1}
+        km._comments_frame = lambda sid, live_map: None
         km._retry_parked_creates = lambda: None
         km._built_chat.clear(); km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
         self.built = []
@@ -1284,10 +1324,9 @@ class Pusher(unittest.TestCase):
         km._last_tab_order[:] = lo
         km._judge_gen[0] = jg
         km._thread_fold_keep[0], km._thread_fold_keep[1] = keep
-        for sid in (SID_A, SID_B):
-            km._tmux_echo.pop(sid, None); km._tmux_echo_rev.pop(sid, None)
+        km.Sessions.backend_for = staticmethod(self._saved_be)
 
-    def _build_session(self, sid, now, tmux):
+    def _build_session(self, sid, now, live_map):
         self.built.append(sid)
         return {"type": "session", "id": sid, "name": "x", "events": [{"uuid": "e1", "type": "user"}],
                 "ledger": None, "status": {"state": "waiting"}, "color": None}
@@ -1326,7 +1365,7 @@ class Pusher(unittest.TestCase):
         km._mark_views_dirty()
         km._push([self.chat])
         self.assertEqual(len(self.built), n, "a dirty mark with no moved input is no new information for the chat")
-        km._tmux_echo_add(SID_A, "and also fix the header")
+        self.tail.atoms[SID_A] = [{"t": 1.0, "text": "and also fix the header", "author": "human"}]
         km._push([self.chat])
         self.assertEqual(self.built[n:], [SID_A], "the watched tab's live tail moved: it rebuilds, and B is served")
 
@@ -1342,7 +1381,7 @@ class Pusher(unittest.TestCase):
             self.assertTrue(ent[2] is None or isinstance(ent[2], str), "index 2: the lazy serialization, a string once a full send materialized it")
 
     def test_a_build_whose_signature_moved_during_the_build_is_not_cached_and_counts_under_moved(self):
-        def build(sid, now, tmux):
+        def build(sid, now, live_map):
             self.built.append(sid)
             if sid == SID_B:
                 km._node_anchor_rev[SID_B] = km._node_anchor_rev.get(SID_B, 0) + 1   # the build learned an anchor
@@ -1446,7 +1485,7 @@ class RecordedDependencies(unittest.TestCase):
 
     _salt = itertools.count()                    # one value per test instance, read in setUp
 
-    STUBS = ("_tmux_sessions", "_live_names", "_chat_tab_sessions", "_cached_feed", "_cached_timeline",
+    STUBS = ("_live_map", "_live_names", "_chat_tab_sessions", "_cached_feed", "_cached_timeline",
              "build_timeline", "_fleet_view_sig", "_comments_frame", "_retry_parked_creates", "_sdk", "_msg_summaries")
 
     def setUp(self):
@@ -1476,17 +1515,17 @@ class RecordedDependencies(unittest.TestCase):
         km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
         os.environ["CLAUDE_CONFIG_DIR"] = str(td / "claude")
         self.row = {"state": "working", "since": self.now - 100, "model": "", "effort": "", "context": None,
-                    "compactPct": None, "color": None, "backend": "tmux"}
-        km._tmux_sessions = lambda: {SID_R: self.row}
+                    "compactPct": None, "color": None, "backend": "sdk"}
+        km._live_map = lambda: {SID_R: self.row}
         km._sdk = lambda: None
         km._msg_summaries = lambda: {}
         km._live_names = lambda tm: {"web": SID_R}
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": SID_R, "name": "web", "path": str(self.tpath), "anchor": SID_R}]
-        km._cached_feed = lambda now, tmux, sig, connect=False: {"working": [], "awaiting": [], "now": now}
-        km._cached_timeline = lambda now, tmux, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
-        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
-        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
-        km._comments_frame = lambda sid, tmux: None
+        km._chat_tab_sessions = lambda now, live_map: [{"sid": SID_R, "name": "web", "path": str(self.tpath), "anchor": SID_R}]
+        km._cached_feed = lambda now, live_map, sig, connect=False: {"working": [], "awaiting": [], "now": now}
+        km._cached_timeline = lambda now, live_map, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
+        km.build_timeline = lambda now, live_map, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, live_map: {"probe": 1}
+        km._comments_frame = lambda sid, live_map: None
         km._retry_parked_creates = lambda: None
         km._built_chat.clear(); km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
         km._parse_cache.clear(); km._task_out_cache.clear(); km._chat_fold.pop(SID_R, None)
@@ -1514,7 +1553,7 @@ class RecordedDependencies(unittest.TestCase):
         km._prev_chat_ledger.clear(); km._prev_chat_ledger.update(pl)
         km._last_tab_order[:] = lo
         km._thread_fold_keep[0], km._thread_fold_keep[1] = keep
-        km._tmux_echo.pop(SID_R, None); km._tmux_echo_rev.pop(SID_R, None)
+        km._node_anchor_rev.pop(SID_R, None)
         km._chat_fold.pop(SID_R, None); km._parse_cache.clear(); km._task_out_cache.clear()
         for cache in (km._PATH_LINK_CACHE, km._SPACE_PATH_CACHE):
             for k in [k for k in cache if k[0] == SID_R]:
@@ -1679,7 +1718,7 @@ class RecordedDependencies(unittest.TestCase):
         m, rec, touts = self.record()
         self.assertEqual(touts.get(str(out)), km._chat_stat_key(str(out)), "the cold build read the card's tail")
         self.assertIn(str(out), dict(km._chat_fold_get(SID_R)["task_outs"]), "and the seal recorded it")
-        km._tmux_echo_add(SID_R, "and the coverage")        # the live tail moves: a rebuild over the same parse
+        km._node_anchor_rev[SID_R] = km._node_anchor_rev.get(SID_R, 0) + 1   # an anchor learned: a rebuild over the same parse
         km._push([self.chat])
         self.assertGreater(km._chat_fold_last_info().get("prefix", 0), 0, "the second build reused the sealed prefix")
         m, rec, touts = self.record()

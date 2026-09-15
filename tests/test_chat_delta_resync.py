@@ -200,12 +200,13 @@ def test_build_sig_keys_the_rows_context_percentage(state_root):
     tx.write_text('{"type":"user"}\n')
     sess = {"sid": sid, "path": str(tx), "anchor": sid}
     row = {"state": "working", "model": "m", "context": 10, "effort": "", "mode": "", "fast": "", "since": 1}
-    # this kernel's signature takes the liveness MAP (`tmux`, the push's guarded chat map) and folds the
+    # this kernel's signature takes the liveness MAP (`live_map`, the push's cycle map; named `tmux` until the tmux backend's
+    # removal 2026-09-11) and folds the
     # session's whole row from it, minus snapT and interrupting (the round-4 P4 shape; upmerge4 kernel-code
     # DECISIONS 5), so the row rides under its sid rather than as upstream's `tm=` argument
-    before = km._chat_build_sig(sess, tmux={sid: dict(row)})
-    assert before == km._chat_build_sig(sess, tmux={sid: dict(row)})
-    assert before != km._chat_build_sig(sess, tmux={sid: {**row, "context": 20}}), "a context-% step busts the chat build sig"
+    before = km._chat_build_sig(sess, live_map={sid: dict(row)})
+    assert before == km._chat_build_sig(sess, live_map={sid: dict(row)})
+    assert before != km._chat_build_sig(sess, live_map={sid: {**row, "context": 20}}), "a context-% step busts the chat build sig"
 
 
 # ───────────────────────── the lost-first-frame class (the user 2026-09-02) ─────────────────────────
@@ -241,4 +242,5 @@ def test_ready_branch_is_wired_to_the_reset():
     assert i > 0
     body = src[i:src.index("_consume_pending_reveal(client)", i)]   # the whole branch, not a fixed window
     assert "_client_reset_chat_base(client)" in body, "ready must reset BEFORE its push"
+    assert "_push_one(client)" in body, "the connect push is in the arm"
     assert body.find("_client_reset_chat_base(client)") < body.find("_push_one(client)")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The three fork terms of the planner's skip key (kernel/judge.py _plan_key; the upstream fold of 2026-09-09, slice 3,
 ruling 2): cleared.jsonl by file identity, this session's death marker (STATE/gone/<sid>.json) by file identity, and
-this session's stall slice (auto-nudge.json's records for its goals, read by value; _stall_term).
+this session's stall slice (auto-nudge.json's records for its goals, read by value; _stall_slice_key).
 
 Upstream's #1173 and #1179 key the planner skip on the parse cache's pair, the store trio, the episode log, the leaf's
 task store, the reg file, the captions file and the background launches' expiry crossing. The planner's decision path
@@ -118,7 +118,7 @@ class _World(unittest.TestCase):
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear(); jd._episode_memo.clear(); jd._shared_clear()
         jd._PLANNER_SEEN.clear(); jd._lastsid_memo.clear(); jd._BG_SCAN_CACHE.clear(); jd._gone_memo.clear()
         for k in jd._PLANNER_STATS:
-            jd._PLANNER_STATS[k] = 0
+            jd._PLANNER_STATS[k] = {} if k == "mismatchByTerm" else 0    # the histogram (T401 (5c)) resets to a dict
         jd._discover_cache.clear()
 
     def prompt(self, sid, t, text=None):
@@ -188,7 +188,7 @@ class PlannerKeyTerms(_World):
     def test_a_stall_record_for_this_session_moves_its_key_and_re_plans_it_and_an_unreadable_file_never_skips(self):
         # rollup_status's stall-warn retire reads stalled_facts, this sid's records in auto-nudge.json by value, so a
         # record on A's goal moves A's key and not B's (the whole file moved for both); a file that exists and does not
-        # read is a fresh sentinel per read (_stall_term, the listing-error rule of _task_store_key), so no recorded key
+        # read is a fresh sentinel per read (_stall_slice_key, the listing-error rule of _task_store_key), so no recorded key
         # ever equals it and every session is planned until the file reads again
         self.settle()
         ka, kb = self.key(A), self.key(B)
@@ -266,7 +266,7 @@ class PlannerKeyTermsUnderTheEvidenceGate(_World):
         self.assertEqual(inner[0:2], (1, 0), "A planned by the inner gate, never skipped there: the marker is a term of its key too")
 
     def test_a_stall_record_re_arms_the_outer_gate_and_the_inner_gate_plans_that_session_and_an_unreadable_file_never_skips(self):
-        # the slice is read by sid, by value, at both gates (_stall_slice in the signature, _stall_term in the key): a record
+        # the slice is read by sid, by value, at both gates (_stall_slice in the signature, _stall_slice_key in the key): a record
         # on A's goal lets A through and plans it while B and C stop at the outer gate. A file that exists and does not
         # read is an OSError to the outer gate (run, stamp nothing) and a fresh sentinel to the inner one (never equal),
         # so every framed pass plans every session until the file reads again
@@ -284,7 +284,13 @@ class PlannerKeyTermsUnderTheEvidenceGate(_World):
                                             "nothing is stamped" % i)
             self.assertEqual(inner[0:2], (3, 0), "pass %d: the inner term is a fresh sentinel per read: every session "
                                                  "planned, none skipped" % i)
-        an.write_text(json.dumps({"enabled": False, "deferred": {}}))  # readable again: the world settles as before
+        an.write_text(json.dumps({"enabled": False, "deferred": {}}))  # readable again
+        # Upstream's memo (T401 (5c)) POPS a session's inner row on a sentinel key rather than recording one, and
+        # once the file reads again B and C skip at the OUTER gate under their standing stamps, so their rows would
+        # not return on their own: a cleared.jsonl row re-arms every session (all three through the outer gate, the
+        # inner gate plans and records them), then the world converges as before.
+        with (jd.STATE / "cleared.jsonl").open("a") as f:
+            f.write(json.dumps({"id": OTHER + ":g2", "op": "clear", "t": NOW + 1}) + "\n")
         self.converge()
 
 

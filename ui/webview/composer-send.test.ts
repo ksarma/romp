@@ -18,7 +18,7 @@ test("the composer markup includes a send button to the right of 📎", () => {
 
 test("⏎ and the send button share ONE sendComposer() path", () => {
   assert.match(RENDER, /const sendComposer = \(opts\?: \{ pastShipGate\?: boolean \}\) => \{/);   // the opts are the ship gate's re-entry door (composer-ship-gate.test.ts)
-  assert.match(RENDER, /vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, qid \}\)/);   // routeUserMessage — one routing owner since the staged flush (2026-08-15)
+  assert.match(RENDER, /vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, qid, \.\.\.att \}\)/);   // routeUserMessage — one routing owner since the staged flush (2026-08-15)
   // Enter calls it (desktop only — the mobile guard is asserted separately below)
   assert.match(RENDER, /if \(e\.key === "Enter" && !e\.shiftKey && !isCoarsePointer\(\)\) \{\s*e\.preventDefault\(\);\s*sendComposer\(\);/);
   // the button calls it (mousedown keeps textarea focus on desktop; on a phone it blurs so the keyboard
@@ -90,7 +90,7 @@ test("focusing a tab (after ⏎-send) draws NO white UA focus ring around its co
   // default focus outline doesn't draw a redundant white ring around the identity-colored border.
   assert.match(CSS, /\.tab \{[^}]*outline: none;[^}]*\}/);
   // the dashed STATE outlines stay (higher specificity than the base .tab rule, so outline:none can't kill them)
-  assert.match(CSS, /\.tab\.tab-awaiting, \.tab\.tab-blocked, \.tab\.tab-retrying \{ outline: 2px dashed/);
+  assert.match(CSS, /\.tab\.ring-needs-you, \.tab\.ring-retrying \{ outline: 2px dashed/);   // the ring class the strip composes (widgets since 2026-09-14), still above the base .tab rule's specificity
 });
 
 test("a staged chip clips IN BOUNDS with an ellipsis and expands on click (the user 2026-08-15)", () => {

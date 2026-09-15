@@ -202,7 +202,9 @@ class _OptionsBackend(_Backend):
         self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
         if self._fake_sdk:
             fake = types.ModuleType("claude_agent_sdk")
-            fake.HookMatcher = lambda **kw: kw
+            # an attribute-bearing stand-in, like the SDK's dataclass: with hosts on (the default since T348) the
+            # options loop sets each matcher's `timeout` to the host's hook bound, which a plain dict refused
+            fake.HookMatcher = lambda **kw: types.SimpleNamespace(**kw)
             sys.modules["claude_agent_sdk"] = fake
 
     def tearDown(self):
@@ -514,12 +516,6 @@ class SessionIdentityEnv(unittest.TestCase):
         # the caveat is the contract: a rename after spawn is NOT reflected in a live session's
         # env, so nothing may treat the name as an address — the comment must keep saying so
         self.assertIn("a rename after spawn is NOT reflected", SDK)
-
-    def test_the_terminal_launcher_exports_the_same_identity(self):
-        # both backends: the tmux launch line carries ROMP_SID + ROMP_SESSION_NAME into the CLI's
-        # environment (the user 2026-08-16 — external tools attribute env-first, never via tmux)
-        launcher = Path(os.path.join(os.path.dirname(HERE), "bin", "romp")).read_text()
-        self.assertIn('claude_cmd="ROMP_SID=$sid ROMP_SESSION_NAME=\\"$display\\" $claude_cmd"', launcher)
 
     def test_one_env_overlay_only(self):
         # both vars ride _options' single env= overlay (additive over os.environ via

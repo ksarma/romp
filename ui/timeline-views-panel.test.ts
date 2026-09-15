@@ -281,7 +281,7 @@ test("membership rows drag-reorder into the SHARED session order (the user 2026-
   assert.deepEqual(p.data.sessions.map((s: any) => s.id), ["d", "b", "a", "c"], "optimistic — no snap-back before the next poll");
   // the wiring: grab a NAME cell; the insertion cue moves WITHOUT rebuilding mid-drag (the
   // redraw-eats-pointer rule) — the rebuild and the persist happen on the drop
-  assert.match(SRC, /nameCell\.setAttribute\('style', 'white-space:nowrap;cursor:grab;'\);/);
+  assert.match(SRC, /nameCell\.setAttribute\('style', 'white-space:nowrap;cursor:' \+ \(this\._tabsLocked\(\) \? 'default' : 'grab'\) \+ ';'\);/);   // the tab lock (T395) takes the grab away
   assert.match(SRC, /nameCell\._sid = s\.id;/);
   assert.match(SRC, /cells\[toIdx\]\.style\[toIdx > fromIdx \? 'borderBottom' : 'borderTop'\] = '2px solid #9cd2ff';/,
     "the accent insertion cue rides the target cell's border — no mid-drag rebuild");
@@ -672,6 +672,14 @@ test("the lane version submenu opens with a Latest row that clears the family's 
   // the bridge carries the flag in every host: the VS Code boot glue and the kernel's shell page
   assert.match(SRC, /_sendCommand\(name, cmd, confirm, extra\) \{/);
   assert.match(SRC, /window\.__rompTimelineSendCommand\(name, cmd, extra \|\| undefined\); return;/);
+  // bare Obsidian (no host hook): the kernel's /send route over HTTP is the transport (T331); no tmux shell-out remains
+  assert.match(SRC, /this\._kernelPost\('\/send', \{ name, text: cmd \}\)\.then\(\(r\) => \{ if \(r && r\.ok === false\) this\._commandRefused\(name, kind, r\); \}\);/,
+    "a refusal reaches the lane, never the console alone (review find)");
+  assert.match(SRC, /_commandRefused\(name, kind, r\) \{[\s\S]{0,400}this\.settingRefused\(\{ gesture: 'command', sid, flag: kind \|\| '', text \}\);/);
+  assert.match(SRC, /if \(m && m\.gesture === 'command' && sid\) \{\s*\n[^\n]*\n\s*if \(flag\) delete this\._metaPending\[sid \+ ':' \+ flag\]; else delete this\._compactClicked\[sid\];/, "the optimistic cue is dropped");
+  assert.doesNotMatch(SRC, /console\.warn\('romp timeline: \/(send|compact)/);
+  assert.doesNotMatch(SRC, /_tmuxPath|send-keys|paste-buffer|set-buffer/, "the direct tmux path is gone");
+  assert.doesNotMatch(SRC, /require\('child_process'\), tmux/);
   assert.match(BOOT, /__rompTimelineSendCommand: \(name: string, cmd: string, extra\?: Record<string, unknown>\) => post\(\{ type: "sendCommand", name, cmd, \.\.\.\(extra \|\| \{\}\) \}\)/);
   assert.match(KERNEL, /window\.__rompTimelineSendCommand=function\(name,cmd,extra\)\{post\(Object\.assign\(\{type:"sendCommand",name:name,cmd:cmd\},extra\|\|\{\}\)\);\};/);
   assert.match(KERNEL, /_route_meta_command\(be, sid, cmd, client, floating=bool\(msg\.get\("floating"\)\)\)/);

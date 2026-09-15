@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The live-tail revision. Both backends keep an in-memory tail the chat merges ahead of the transcript
-(the SDK backend's `_live`, the kernel's `_tmux_echo` store), and the chat-build signature keys a tab on
-that tail without hashing its atoms per cycle. Each backend therefore counts: a per-sid revision that
-advances on every change to the tail and only then (the SDK backend's _touch_live, the kernel's
-_tmux_echo_bump). The tests here pin the two halves of that contract: every writer bumps (an add, a
+(the SDK backend's `_live`, the Codex backend's per-session list), and the chat-build signature keys a tab on
+that tail without hashing its atoms per cycle. A backend with a counter keeps a per-sid revision that
+advances on every change to the tail and only then (the SDK backend's _touch_live). The tests here pin
+the two halves of that contract: every writer bumps (an add, a
 replace, a pop, a flag write, a reworded echo, including the flag writes _mark_dropped_echoes makes
 outside the live-tail lock), and a call that changed nothing (a read, a prune that retired nothing, a
 settle over echoes already marked, a queue miss) leaves the revision alone; plus the kernel's dispatcher,
@@ -147,22 +147,6 @@ class SdkLiveTailRevision(unittest.TestCase):
         self.assertEqual(self.be.unqueue(SID, 0), "already gone")
         self.assertEqual(self.rev(), r0 + 1, "a queue hit whose echo was retired ahead of it changes no atom")
 
-    def test_edit_queued_rewords_the_echo_and_bumps(self):
-        """The queue-edit route rewrites a queued message's echo in place (its text and its message block),
-        so the tab that renders the echo changed with no file moving: a change to the tail, one bump."""
-        self.be._stash_live(SID, "e1", _echo("e1", "the old words", 6))
-        self.be.sessions[SID] = types.SimpleNamespace(replace_queued=lambda idx, text, expect=None: "the old words")
-        r0 = self.rev()
-        self.assertEqual(self.be.edit_queued(SID, 0, "the new words"), "the old words")
-        self.assertEqual(self.rev(), r0 + 1, "the reworded echo is a change to the tail")
-        self.assertEqual(self.be.live_atoms(SID)[0]["_echo_text"], "the new words")
-        self.be.sessions[SID] = types.SimpleNamespace(replace_queued=lambda idx, text, expect=None: None)
-        self.assertIsNone(self.be.edit_queued(SID, 0, "nothing to edit"))
-        self.assertEqual(self.rev(), r0 + 1, "a queue miss rewords nothing and bumps nothing")
-        self.be.sessions[SID] = types.SimpleNamespace(replace_queued=lambda idx, text, expect=None: "no echo wears this")
-        self.assertEqual(self.be.edit_queued(SID, 0, "still nothing"), "no echo wears this")
-        self.assertEqual(self.rev(), r0 + 1, "a queue hit with no matching echo changes no atom")
-
     def test_mark_dropped_echoes_bumps_for_its_flag_writes_outside_the_lock(self):
         """The two in-place flag writes (`dropped`, `_landed`) change atoms the pusher already holds by
         identity, without the live-tail lock; each is a change to the tail and advances the revision."""
@@ -187,8 +171,8 @@ class SdkLiveTailRevision(unittest.TestCase):
         (which carry the claim that each bump happens): each mutator's source calls _touch_live, the two
         flag-writing lines in _mark_dropped_echoes are each followed by one, and _stash_live and _forward are
         the only sites that stash into _live, so a new mutator fails here until it is classified."""
-        for name in ("_stash_live", "_forward", "unqueue", "edit_queued", "dismiss_echo", "prune_live",
-                     "retire_live_work", "_mark_dropped_echoes"):
+        for name in ("_stash_live", "_forward", "unqueue", "dismiss_echo", "prune_live",
+                     "retire_live_work", "_mark_dropped_echoes", "settle_echoes"):
             src = inspect.getsource(getattr(sb.SdkBackend, name))
             self.assertIn("self._touch_live(", src, "%s changes the tail without advancing its revision" % name)
         mde = inspect.getsource(sb.SdkBackend._mark_dropped_echoes)
@@ -226,70 +210,21 @@ class SdkLiveTailRevision(unittest.TestCase):
         BE._live.clear()
 
 
-class TmuxEchoRevision(unittest.TestCase):
-    def setUp(self):
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_rev.pop(SID, None)
-
-    tearDown = setUp
-
-    def rev(self):
-        return km._TMUX.live_rev(SID)
-
-    def test_add_prune_settle_and_dismiss_each_bump_and_no_ops_do_not(self):
-        self.assertEqual(self.rev(), 0)
-        km._tmux_echo_add(SID, "a typed line")
-        self.assertEqual(self.rev(), 1)
-        km._tmux_echo_add(SID, "a second one")
-        self.assertEqual(self.rev(), 2)
-        km._tmux_echo_atoms(SID)
-        self.assertEqual(self.rev(), 2, "a read is not a change")
-        km._tmux_echo_prune(SID, set(), set())
-        self.assertEqual(self.rev(), 2, "a prune that retires nothing is not a change")
-        km._tmux_echo_prune(SID, set(), {ek("a typed line")})
-        self.assertEqual(self.rev(), 3, "the echo landed by text")
-        self.assertEqual([a["_echo_text"] for a in km._tmux_echo_atoms(SID)], ["a second one"])
-        t = km._tmux_echo_atoms(SID)[0]["t"]
-        km._tmux_echo_settle(SID, human_floor=t - 1)
-        self.assertEqual(self.rev(), 3, "not overtaken: nothing marked")
-        km._tmux_echo_settle(SID, human_floor=t + 5, still_queued=("a second one",))
-        self.assertEqual(self.rev(), 3, "still owed by the queue ledger: the settle stands down, no change")
-        km._tmux_echo_settle(SID, human_floor=t + 5)
-        self.assertEqual(self.rev(), 4, "the `dropped` mark is a change")
-        self.assertTrue(km._tmux_echo_atoms(SID)[0].get("dropped"))
-        km._tmux_echo_settle(SID, human_floor=t + 5)
-        self.assertEqual(self.rev(), 4, "already marked: a second settle changes nothing")
-        self.assertEqual(km._TMUX.dismiss_echo(SID, t=t), "a second one")
-        self.assertEqual(self.rev(), 5)
-        self.assertIsNone(km._TMUX.dismiss_echo(SID, t=t), "a miss (already gone)")
-        self.assertEqual(self.rev(), 5)
-        self.assertNotIn(SID, km._tmux_echo, "the sid entry went with its last echo")
-        self.assertEqual(self.rev(), 5, "...and its revision stays readable")
-
-    def test_every_writer_site_bumps_by_source(self):
-        for fn in (km._tmux_echo_add, km._tmux_echo_prune, km._tmux_echo_settle, km._TMUX.dismiss_echo):
-            self.assertIn("_tmux_echo_bump(", inspect.getsource(fn), fn.__name__)
-        self.assertNotIn("_tmux_echo_bump(", inspect.getsource(km._tmux_echo_atoms), "a read")
-        self.assertNotIn("with _tmux_echo_lock", inspect.getsource(km._tmux_echo_bump),
-                         "the caller holds the (non-re-entrant) lock; the bump takes nothing")
-
-
 class SessionsLiveRevDispatch(unittest.TestCase):
     def setUp(self):
-        self._saved = km._sdk
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_rev.pop(SID, None)
+        self._saved = (km._sdk, km._codex)
 
     def tearDown(self):
-        km._sdk = self._saved
-        km._tmux_echo.pop(SID, None)
-        km._tmux_echo_rev.pop(SID, None)
+        km._sdk, km._codex = self._saved
 
-    def test_a_tmux_sid_reads_the_echo_store_revision(self):
+    def test_an_unowned_sid_answers_with_its_empty_tail(self):
+        # no backend owns the sid → the unowned route, which keeps no counter and no tail: the dispatcher
+        # answers with the serialized empty tail, stable across reads
         km._sdk = lambda: None
-        self.assertEqual(km.Sessions.live_rev(SID), 0)
-        km._tmux_echo_add(SID, "hello")
-        self.assertEqual(km.Sessions.live_rev(SID), 1)
+        km._codex = lambda: None
+        self.assertIs(km.Sessions.backend_for(SID), km._UNOWNED)
+        self.assertEqual(km.Sessions.live_rev(SID), json.dumps([]))
+        self.assertEqual(km.Sessions.live_rev(SID), json.dumps([]), "stable: nothing can move an empty tail")
 
     def test_an_sdk_sid_reads_the_backend_counter(self):
         be = _backend()
@@ -297,9 +232,7 @@ class SessionsLiveRevDispatch(unittest.TestCase):
         km._sdk = lambda: be
         self.assertEqual(km.Sessions.live_rev(SID), 0)
         be._stash_live(SID, "e1", _echo("e1", "typed", 1))
-        self.assertEqual(km.Sessions.live_rev(SID), 1)
-        km._tmux_echo_add(SID, "a stray tmux echo under the same sid")
-        self.assertEqual(km.Sessions.live_rev(SID), 1, "dispatch by the owning backend, not a union")
+        self.assertEqual(km.Sessions.live_rev(SID), 1, "dispatch by the owning backend")
 
     def test_a_backend_without_a_counter_answers_with_the_tail_itself(self):
         atoms = [{"uuid": "c1", "t": 1, "message": {"content": [{"type": "text", "text": "hi"}]}}]

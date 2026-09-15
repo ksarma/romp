@@ -234,36 +234,6 @@ class NamesMemoSweep(unittest.TestCase):
                          "the retired entries are gone; the live one and the peer's insert stand")
 
 
-# ── race 4: the tmux echo store's compound steps against a concurrent add ──
-class TmuxEchoStore(unittest.TestCase):
-    def setUp(self):
-        km._tmux_echo.pop(SID, None)
-        self._saved = km.sb.echo_keys
-
-    def tearDown(self):
-        km.sb.echo_keys = self._saved
-        km._tmux_echo.pop(SID, None)
-
-    def test_a_send_landing_during_a_prune_survives_it(self):
-        km._tmux_echo_add(SID, "first")
-        orig = self._saved
-        writer = {}
-
-        def staged(text):
-            if not writer:               # the peer's send arrives mid-walk: it lands now (old) or waits for the lock (new)
-                writer["t"] = _run(km._tmux_echo_add, SID, "second")
-                writer["t"].join(SETTLE)
-            return orig(text)
-        # the walk's mid-step seam is sb.echo_keys, read through _echo_landed_in (#1261, C12) for an echo whose uuid
-        # the transcript does not hold, so the landed echo is named by its text key, the form _atom_user_texts builds
-        km.sb.echo_keys = staged
-        km._tmux_echo_prune(SID, set(), {km.sb.echo_text_key("first")})     # was: RuntimeError, dictionary changed size during iteration
-        writer["t"].join(WAIT)
-        self.assertIsNone(writer["t"].box["exc"])
-        self.assertEqual([a["_echo_text"] for a in km._tmux_echo_atoms(SID)], ["second"],
-                         "the landed echo is pruned, the concurrent send is kept")
-
-
 # ── race 5: two passes over the parked comment creates ──
 class ParkedCreates(unittest.TestCase):
     def setUp(self):
@@ -655,14 +625,14 @@ class Counters(unittest.TestCase):
 
     def test_assembly_stats_count_exactly(self):
         # _asm_demote first: it exists on both trees, so without the GIL the unfixed tree fails here, on the
-        # lost increments. _asm_count is the helper the fix added, so its half pins the fixed tree's entry
+        # lost increments. _asm_stat is the locked helper (upstream's, under _ASM_CKPT_LOCK, returning the new value), so its half pins the fixed tree's entry
         # point (an AttributeError before the fix, not a race).
         em._ASM_STATS.pop("ft-test", None)
         em._ASM_STATS.pop("g:ft-test", None)
         try:
             demoted = _hammer(lambda: em._asm_demote("ft-test"))
             self.assertEqual(em._ASM_STATS["g:ft-test"], demoted)
-            total = _hammer(lambda: em._asm_count("ft-test"), n=2000)
+            total = _hammer(lambda: em._asm_stat("ft-test"), n=2000)
             self.assertEqual(em._ASM_STATS["ft-test"], total)
         finally:
             em._ASM_STATS.pop("ft-test", None)

@@ -72,7 +72,7 @@ test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its ow
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
   assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null, readAt\(m\.at\)\);\n\}, \{/,
-    "…and the link's target the relay carries, validated by the viewer's readAt (it crossed a frame; Slice 6 of plans/markdown-viewer.md)");
+    "…and the link's target the relay carries, validated by the viewer's readAt (it crossed a frame; Slice 6 of plans/markdown-viewer.md; a section rides as its heading arm, so the relay's frag slot is not read here)");
   // …and the third argument is the pane's opener for a link inside the shown file (file-view-links.test.ts pins its shape)
   assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
     "the browser opens here too, owing the shell no restore (browse-route.test.ts pins the contract)");
@@ -175,7 +175,7 @@ test("openHere, executed: the identity is cached before the open, a vetoed open 
 
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
+  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, at, place \}\)\) return;[^\n]*\n\s*const known = /, "a dirty-edit veto records nothing (a trailing comment on the line is allowed, nothing else)");
   assert.match(SRC, /openFile: \(p, sid, at\) => openHere\(p, sid, null, null, at\),/, "a link inside the shown file hands its target on (Slice 6 of plans/markdown-viewer.md)");
   assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\), place: null \}\);/, "the entry brings no place: rememberRecent keeps the row's (a relay re-open after the leave stored one)");
   assert.match(SRC, /let recent: RecentFile\[\] = parseRecent\(readStore\(\)\);/, "persisted per browser");
@@ -295,12 +295,12 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   assert.deepEqual(pane.toggles, [["files", true]], "the Files pane comes forward; the feed is not touched");
   assert.deepEqual(pane.tabs, [], "DESKTOP: no mobile tab switch — the column is already visible, and show() would only persist a stale romp-mobile-tab");
   assert.equal(pane.from, undefined, "…and nothing to remember");
-  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity, todoId: null, at: null }],
-    "a chat click names no todo and no target: the pane sees null, never undefined");
+  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity, todoId: null, at: null, frag: null }],
+    "a chat click names no todo and no target: the pane sees null, never undefined (frag: upstream's T351 slot, forwarded as is and unread by the pane, whose target is `at`)");
   assert.deepEqual(pane.posted["f-feed"], [], "nothing reaches the feed");
   // a Waiting-on-you detail link names the todo the path came from (plans/file-review.md Slice 0); forwarded as-is
   const fromTodo = run({ romp: "viewFile", pane: "pane", path: "docs/design.md", sid: SID, identity, todoId: "t1" });
-  assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1", at: null }]);
+  assert.deepEqual(fromTodo.posted["f-files"], [{ romp: "viewFile", path: "docs/design.md", sid: SID, identity, todoId: "t1", at: null, frag: null }]);
   // a todo link's target after its path (Slice 6 of plans/markdown-viewer.md): the forwarder copies `at` WHOLE, whatever
   // its shape (the receiver validates it, file-view.ts readAt; files.ts hands readAt(m.at) to the open); both forwarders
   // rebuild the message field by field, so a field not copied is dropped in transit
@@ -308,7 +308,7 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
     const aimed = run({ romp: "viewFile", pane: "pane", path: "docs/report.md", sid: SID, identity, todoId: "t1", at });
     assert.deepEqual((aimed.posted["f-files"][0] as any).at, at, "the Files branch forwards at " + JSON.stringify(at));
     const feedAimed = run({ romp: "viewFile", pane: "feed", path: "docs/report.md", sid: SID, at });
-    assert.deepEqual(feedAimed.posted["f-feed"], [{ romp: "viewFile", path: "docs/report.md", sid: SID, at }], "the feed branch forwards at too");
+    assert.deepEqual(feedAimed.posted["f-feed"], [{ romp: "viewFile", path: "docs/report.md", sid: SID, at, frag: null }], "the feed branch forwards at too (and upstream's frag slot, null on a click that named none)");
   }
   assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
   // MOBILE (one tab at a time): the relay brings the Files tab forward and remembers the tab the click came
@@ -341,7 +341,7 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   // the feed route: a click with pane:"feed" (or none) takes the else branch exactly as before
   for (const m of [{ romp: "viewFile", pane: "feed", path: "/p", sid: SID }, { romp: "viewFile", path: "/p", sid: SID }]) {
     const feed = run(m);
-    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID, at: null }]);
+    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID, at: null, frag: null }]);   // the feed arm forwards the target and upstream's frag slot, no identity and no todoId
     assert.deepEqual(feed.posted["f-files"], []);
     assert.deepEqual(feed.tabs, ["feed"]);
     assert.equal(feed.pend, false, "the feed pane was on, so nothing is stashed — but the stash IS written by this route");

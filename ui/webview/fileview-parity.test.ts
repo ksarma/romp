@@ -31,11 +31,17 @@ const RULES = [
   ".fileview-dir {", ".fileview-base {", ".fileview-sess {", ".fileview-sess .host-prefix {", ".fileview-acts {",
   ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",   // the bar's own wrap (scoped: the browser's row and the pane's Recent rows wear the classes too)
   ".fileview-btn {", ".fileview-btn:hover {",
-  "a.fileview-btn {", ".fileview-gh {", ".fileview-gh-why {", ".fileview-gh-dots {",
+  "a.fileview-btn {", ".fileview-gh {",
   // one disabled dress for every bar button: the GitHub unit's no-link state and the text-size control's ends
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
   "a.fileview-gh-note {", ".fileview-body {",
+  // T367: the grouped row, the segmented pair, the glyph buttons and the text-size flyout
+  ".fileview-group {", ".fileview-acts > .fileview-group + .fileview-group, .fileview-acts > .fileview-group ~ .fileview-close {",
+  ".fileview-seg {", ".fileview-seg .fileview-btn {", ".fileview-seg .fileview-btn + .fileview-btn {", ".fileview-seg .fileview-btn:first-child {",
+  ".fileview-seg .fileview-btn:last-child {", ".fileview-seg .fileview-btn.on {",
+  ".fileview-btn.fileview-icon {", ".fileview-btn.fileview-icon svg {", ".fileview-btn[hidden], .fileview-group[hidden], .fileview-zoom[hidden], .fileview-gh[hidden] {", ".fileview-btn.fileview-icon.ok {", ".fileview-btn.fileview-icon.err {", ".fileview-btn.fileview-busy {",
+  ".fileview-zoom {", ".fileview-zoom-menu {", ".fileview-zoom-menu[hidden] {",
   ".fileview-body:focus {", ".fileview-body:focus-visible {",   // the body holds the keyboard (Slice 6 of plans/markdown-viewer.md, item 1): no ring for a paint's focus, the accent ring for a Tab's
   // the bar's one selected dress: the Rendered/Raw and Wrap toggles, and the Outline button while its popover is up (Slice 6 of
   // plans/markdown-viewer.md, item 2: file-view.ts toggles the class beside aria-expanded; the PR review's round 1 dropped the button's own

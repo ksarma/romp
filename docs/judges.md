@@ -134,6 +134,30 @@ coordinate/question mail, a bookkeeping record): the anchor substitutes the
 segment's first assistant atom. The clear wrap-up is exempt: its one
 blocked card is the designed needs-you escape.
 
+A card appears only for work that traces to something the user asked for (the
+user 2026-09-10, whose feed filled with cards titled after the workflows their
+sessions ran on their own). The planner labels every mint `kind`: `ask` (a
+deliverable the user's message asked for) or `process` (work the session started
+for itself: a review round, an audit, a workflow or agent it launched), and the
+rule at minting time trusts the labels: an ask keeps its card, on both the
+unplaced and the already-placed path; a process mint nests as a step under the
+goal the turn ran in (the seam's own top, the segment's placement, this reply's
+ask, else the open top nearest in words), carrying `born` (`{kind: session, via:
+workflow | agent | work, why, parentText}`), with the matching background launch
+(a Workflow run, or an Agent or Task with `run_in_background` or an asynchronous
+ack; a foreground subagent is no launch) supplying `via` and the why; with
+nothing to nest under it files nothing and the ops chained onto it go with it. A
+segment whose trigger is not a human ask (a seam tail a completion notification
+woke, an autonomous stretch) treats every mint as process; a scheduled or
+programmatic prompt is left untouched. A missing label is filled by the words
+alone: without a launch a mint is an ask; with one, every unlabelled mint is
+process except the one nearest the user's own words (its text against the
+message, never its why or its position), and only among the mints no launch
+fits better; when all read like a launch and a top exists, all nest. A harness
+report (a background task's completion, a system reminder) or a teammate's line
+never appears under USER ASKED in the text the judges read and never roots a
+mint. `_demote_session_mints`, `_seg_launches`.
+
 **placer.** The second, scoped call, only when the chosen card already has
 open sub-goals: it sees just that card's subtree and picks the spot, biased
 to the highest level that makes sense. Most cards have no open sub-goals,
@@ -169,6 +193,112 @@ verdict done, blocked, or omit, with "when in doubt, omit". Idempotent per
 turn. Its diary events carry src `closer`, so planner and closer verdicts
 stay distinguishable, and both defer to the user floor: a verdict computed
 from evidence at or before your last reply loses.
+
+A block addressed to a peer is a peer wait, not your needs-you (the user
+2026-09-10, via the philosophy: waiting on a peer or another session is not
+you being the bottleneck). Both judges file blocks through one writer that
+reads the addressee from evidence, never from words alone: the session's own
+open question to a live peer (the wait graph's source), failing that the peer
+that delegated the work the block sits under (the courier-planted top's
+origin when present; else the sender of the delegate mail the goal's anchor
+names, the primary record, and only for a top the latch has read as a machine
+record: a goal you typed keeps its blocks, a goal split out of one you typed
+inherits that, a goal split out of a delegated one reads its own record (a
+typed step stays yours, a system-record step is the manager's again), a
+delegate mail with no message id sustains nothing, and a script mailer's
+pseudo-sid is never a peer; a goal whose
+anchor names no dispatch, or whose stamp the latch has not written yet, falls
+back to the newest delegate the session received before its mint whose own
+goal, latched or courier-planted, was still open at the mint, so a finished or
+goal-less dispatch never claims your later decisions and a stray hand-off note
+never displaces the manager's standing one), and words only to pick among
+several open asks; a block on a
+"delegated to <peer>" tracker waits on that peer, whose report ends the
+delegate edge. A block in a
+delegated goal whose text names you still goes to the delegating manager, who
+relays; a worker's card reaches you only through the debt ladder's escalation
+event. The write is the existing awaiting-a-peer stamp in place of the block
+(the "Awaiting <peer>" chip in Working, the auto-nudge skipping it, the peer's
+reply the lift); an already-blocked node is unblocked by romp first. When the
+worker never mailed that peer, nothing could end the wait, so the kernel RELAYS
+it: the block's why goes to the delegating peer as the worker's own question
+(kind question, from the worker, "<worker> cannot move further: <why>", marked
+relayed in the row and the header, on a far host too, the row naming the
+marker so a send whose record was lost is adopted and never repeated; a why
+that speaks romp is scrubbed to the question, and romp's own procedural whys
+ride as the plain lead-in alone; under the question rides the conversation it
+ends, quoted whole inside a fence: whole turns, the question's own always,
+earlier ones newest first while they fit the bound, shown oldest first with a
+line saying how many were left out, the user's prompts and the worker's
+replies with tool calls collapsed to a count and code blocks never cut, a turn
+with no paragraph break keeping its last lines, read newest first only as far
+as the bound reaches; the bound is 24 KiB as the bus carries it (JSON-encoded UTF-8) by
+default, a knob at ~/.config/romp/relay-context-bytes or
+$ROMP_RELAY_CONTEXT_BYTES, read at call time and capped at 768 KiB, so you
+raise it without a release), once per block off a marker the judge
+leaves on the node (each marker has an identity, the block's evidence time
+and the peer, that its queue entry and the record settling it name, and the
+node remembers the markers it settled, so a block filed again after a lift is
+a new marker nothing older can settle, an ended wait's unsent marker is never
+reused for a new wait, a holder stale across two relays never re-mints the
+first, and two holders filing one wait mint one marker) and an entry the
+saver holding the store writes to a queue directory once its own publish
+carried the marker (one file per entry, so the two writers never rewrite
+each other's list; another holder's save of the same session flushes nothing
+of it; an entry whose node carries a newer marker is rewritten for it; an
+entry whose marker is gone with no record is spent once the store's
+published revision passed the entry's; the boot pass re-queues a marker that
+lost its entry; a pass that changed nothing is not repeated until the store,
+the log or the entries move), so the reply lifts the stamp and the reminder
+ladder covers it; a wait that ended before the tick is never relayed, a relay
+the bus handed to a far host (parked, or in flight to a host that is up)
+stays pending by its id up to the far host's delivered row or the peer's
+answer (the pending stamp survives every holder's save), and a refusal the
+bus cannot retry (no live recipient, a message that came back, with the far
+host's reason) reverts the node to your block with the refusal in its why,
+since nobody can be asked (the node is read again first, so a wait another
+holder ended meanwhile stands down instead, and the block is filed at the
+bounce's own time, so a follow-up of yours between the bounce and the tick
+outranks it; the refusal is noted beside the block, never in its words); a
+pending relay whose wait ended another way is withdrawn from the far host's
+outbox, and one the judge retired while it was parked is recalled the same
+way (the recall rides its own queue entry beside the marker's, the boot pass
+re-queues a node that owes one, and a recall nobody answers is asked once per
+hold for a while and then once per half hour, said both times; every queue
+entry carries a token of its own that the spend's re-read compares, so a
+fresh entry flushed over the path during a pass is never taken for the spent
+one; a question the far host carried on before it could be withdrawn, or one
+the host could not be reached to withdraw, leaves a note on the node that the
+brief's owed why carries and the card and the modal show as their own line
+under the brief, dropped when the node's wait next settles); a parked
+question completes only on the far
+host's delivered row, never on a later message; a refused relay's note reaches
+the card's brief beside the question it could not carry; a dead worker's block is not relayed; each record lands
+before its entry is spent; a send the bus answered late is never repeated
+(the bus answers the send it holds, and the tick holds off after an unknown
+outcome and reads the bus's row). A block filed again after the
+peer's reply ended the wait relays again; a block re-asserted on a standing
+wait never does. Your own follow-up on a delegated card, newer than every edge the block
+could wait on (the delegation, a standing wait up the card, the worker's own
+open question, a handoff), keeps its block yours. A top is attributed to the
+delegate mail its anchor names (the delegate-kind marker of the delivery that
+is a dispatch to this session, never one quoted from another session's, so a
+batched inbox whose first mail is a peer's heads-up still belongs to the
+manager whose dispatch follows it; a stamp naming no such dispatch leaves the
+newest delegate whose own goal is open at the mint as the fallback, a row
+with no message id never), so a worker two managers dispatched relays each
+block to the manager that asked, and a dispatch handled without a goal, or
+finished, claims none of the session's later goals; a goal split out of a
+goal you typed inherits your anchor, one split out of a delegated goal reads
+its own record, so a typed step stays yours and a system-record step is the
+manager's again.
+An open question to a peer the block never names does not capture a block in
+the delegator's work: that block goes to the delegator, relayed. Rows filed before the rule convert once per boot. The debt ladder judges a debtor's
+reminder only at an idle turn end (the nudge walk's own gates); for a manager
+debtor the record also stands while delivered mail waits unread in its inbox,
+so a manager with worker mail queued is not yet failing to answer. Any other
+peer keeps the ladder as it was, and the dead-man backstop still applies. A block nothing
+resolves to a peer stays yours, exactly as before.
 
 **unblocker.** The stale-block backstop; it exists because answers arrive
 in passing and work overtakes asks. A goal blocked on a question is only
@@ -371,15 +501,21 @@ toward nothing.
 ## Billing, and when the credential itself is broken
 
 A judge call bills **the account of the session it judges**: the same pick the
-session's own Billing selector holds, read from the same registry, with the same
-default (an explicit login pick, the login; otherwise the API key when Claude
-Code's settings carry an `apiKeyHelper`, else the login). Judges run on Claude
+session's own Billing selector holds, read from the same registry, resolved by
+the same rule the launch uses (the kernel wires the backend's resolver into the
+judges): the session's own pick; else the machine's default set in the tab
+menu's Billing flyout, when the machine can bill it; else the API key when
+Claude Code's settings carry an `apiKeyHelper`, else the login. Judges run on Claude
 Code's own credential resolution, and romp holds no key (the user 2026-09-08).
 Every judge child (`claude -p`) launches with no credential in its environment.
 A key-billed call resolves the helper itself, inside its own CLI, the way a
 session does. A login-billed call passes `--settings '{"apiKeyHelper": ""}'`,
 which disables the helper for that one process, and gets back the login tokens
-the kernel claimed out of its own environment at boot. The same selection
+the kernel claimed out of its own environment at boot. A call billed to a
+stored login passes the same suppression and gets that login's setup-token
+instead, read by running the record's token command for that one child (the
+environment road, 2026-09-14; a failing command fails the call in its own
+words, never a fall onto another credential). The same selection
 applies to standalone `romp-judge --once`. A helper that fails inside a judge's
 CLI cannot silently use the login or a stale key; what the call files depends on
 how the CLI fails: a credential error the CLI reports within the call's 120 s
@@ -459,9 +595,16 @@ permission/API-error floors: one interrupt at a time, the present event first.
 
 - Toggles: `CLOSER_ON`, `GROUPER_ON`, `DISTILLER_ON`, `CONSOLIDATE_ON`.
   Models: `STATE/judge-model` (triage), `STATE/index-model`.
-  Fast mode for the judges (the gear's Fast mode box beside the Triage model
-  picker): `STATE/judge-fast` (`on` | `off`, off by default; read per call, and
-  the fast-mode opt-in rides only a call whose model is Opus).
+  Fast mode per judge tier (the gear's Fast mode box beside each tier's model
+  picker): `STATE/judge-fast` (triage), `STATE/distill-fast`, `STATE/index-fast`
+  (`on` | `off`, off by default; read per call for the call's tier, and the
+  fast-mode opt-in rides only a call whose model is Opus: `_tier_fast`). A flag
+  on for a tier whose model cannot run fast is kept and asks nothing. The CLI's
+  refusal of a fast ask is recorded per tier in `STATE/fast-refused.json` (one
+  `fast-refused` judge-errors row per change of reason) and cleared by the next
+  fast call that engages; a key-billed fast call carries the sessions' org-check
+  env (`_fast_org_env`, asked once per process). The one-time carry-over from
+  the single flag is `_migrate_judge_fast_tiers` in the kernel's boot sweep.
   Pool width: `STATE/judge-concurrency` (the gear's Judge concurrency, 1..16,
   read fresh each pass; empty = `ROMP_JUDGE_CONCURRENCY` as read at load,
   else 6). Every pool reads it at call time (`_conc`, or `_judge_concurrency()`
@@ -486,18 +629,18 @@ permission/API-error floors: one interrupt at a time, the present event first.
   The planner has a second gate inside
   `_plan_session`: a session whose inputs have not moved since a pass that
   placed nothing, left the store's key where it was and ran to completion
-  returns before the store read. The evidence gate keys on the same inputs
-  (the reg by its `spawnedAt` and backend values rather than by identity)
-  and, like the inner key on this fork, on `cleared.jsonl`, the death marker
-  and the stall records (an input only one gate keyed would let an outer
-  re-arm be swallowed by an inner skip), so an
-  idle session stops at the evidence gate; the inner gate's counters
+  returns before the store read. The evidence gate keys on the same files by
+  identity plus derived values the inner key does not read (the reg's
+  `spawnedAt` and backend, the stall slice's value, the task-store
+  fingerprint), so an idle session stops at the evidence gate; the inner gate's counters
   (`memos.plannerSkip` on `GET /perf`, see `docs/reference.md`) count only
   the sessions the evidence gate ran. Outside
   a pass frame (`romp-judge --plan`) the evidence gate stamps nothing, and
   the inner gate does the skipping.
-- Logs: `STATE/judge-usage.jsonl` (per-call cost, one name per prompt, and
-  the CLI's `fast_mode_state` as `fast`),
+- Logs: `STATE/judge-usage.jsonl` (per-call cost, one name per prompt, the
+  CLI's `fast_mode_state` as `fast` and its `fast_mode_disabled_reason` as
+  `fastReason`; an error envelope that carried the readback leaves a zero-cost
+  row marked `err`, which the cost rollup skips),
   `STATE/judge-errors.jsonl` (the row contract above; kinds are parse,
   call, give-up, sweep-cut, cite-miss, rate-limited, task-store, history-unreadable,
   task-key-collision (a duplicated to-do mirror key, reconciled per node
@@ -511,15 +654,16 @@ permission/API-error floors: one interrupt at a time, the present event first.
   unroll-heal: a top left rolled up with settle rows and no done in its
   diary, given one reopen row so it can be judged again, gate-stamp: the
   evidence gate could not write a tier's stamp after a complete run, so the
-  session stays due, and the seven `*-unreadable` kinds of the gate's side
+  session stays due, and the eight `*-unreadable` kinds of the gate's side
   files, states-unreadable, cleared-unreadable, stall-unreadable,
-  captions-unreadable, episodes-unreadable, marker-unreadable and
-  archive-unreadable (the cleared-card archive's): a file the gate stat'd
-  into a tier's signature exists and could not be read or parsed by the
-  stage, so the run is marked incomplete and stamps nothing, one row per
-  failure episode; the index tier's own readers write two more under the
-  same rule, session-archive-unreadable and units-cache-unreadable, and its
-  unit-cache publish writes units-cache-write-failed when it did not land;
+  captions-unreadable, episodes-unreadable, marker-unreadable,
+  archive-unreadable (the cleared-card archive's) and reg-unreadable: a file
+  the gate stat'd or read by value into a tier's signature exists and could not
+  be read or parsed, so the gate runs the stage without a stamp (or the stage's
+  own read marks the run incomplete), one row per failure episode; the index
+  tier's own readers write two more under the same rule,
+  session-archive-unreadable and units-cache-unreadable, and its unit-cache
+  publish writes units-cache-write-failed when it did not land;
   unread-store-save is `save_goal_archive`'s refusal to publish over a
   cleared-card archive that did not read (the `_unread` shape), reached by
   the rewind archivers (`archive_goal_nodes`, from the rewind take

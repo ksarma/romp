@@ -1,645 +1,803 @@
-"""build_feed's per-session memo (round-4 plan P2-A): the seam maps, the tree shape and each top
-goal's flattened tree are pure functions of a session's parse and goal store, so they are kept per
-session across builds and served while every input holds.
+#!/usr/bin/env python3
+"""build_feed's per-session card memo (T368): a rebuild re-derives only the sessions whose inputs moved.
 
-The memo may only return what the uncached computation would return NOW, so the tests here pin the
-key one input at a time: a transcript append, a store publish, a journal append, a names write, a
-working flip, a session-row rename and a changed remembered anchor each miss, and nothing else does.
-The bypasses (a live-merge copy, a swallowed exception, an unkeyed store, a build outside the pusher's
-names scope) never store. Rows are shared values: the serving fold lands on a copy, the tint is
-stamped at serialization, and two builds over unchanged inputs hand back the same row objects. A
-differential run over random perturbations checks the memoized build against a fresh one.
+The pusher keeps the whole feed payload while nothing on the board changes, but any change anywhere rebuilt it
+whole, and the rebuild walked every living session's goal tree and per-session derivations (the loop body of
+build_feed, now _feed_session_entry) whether or not that session had moved: a cost that scaled with sessions
+times goals, not with what changed. The memo (_feed_memo) holds each session's derived entry under a key of every
+input the derivation reads (_feed_session_key), invalidated by those inputs alone and never by the clock.
 
-Synthetic fixtures only: sids private to this module (never the shared 11111111-2222 placeholder, see
-CLAUDE.md), invented goal text, the demo names `web`/`api`/`tests`, hostname TESTHOST. Every test
-rebinds STATE to a temp dir, so the journal rows it appends die with the test."""
+This module drives the REAL build_feed over a hermetic three-session board (the notes-api demo world: web, api
+and tests, each with a transcript, a names entry, a live row and a goal store holding one top-level goal) and
+pins, per build, how many sessions were derived (/perf builds.feed.memo `derived`) and which component the miss
+was attributed to, beside the card the moved input changes:
+  * cold: three derivations; unchanged: none; a memoized build equals a from-scratch build byte for byte;
+  * one input at a time, each re-deriving ITS session only: a judge verdict (the store file), a user gesture
+    (the override journal), a clear (the session's slice of cleared.jsonl), a live-row change, a transcript
+    append, a states append, a names rewrite, the hideFromFeed flag;
+  * a peer's verdict re-derives the session whose card reads that peer's store (the peers dependency);
+  * the clock: two builds ten minutes apart derive nothing and differ in `now`, `buildId` and the cards' age
+    tint alone (the fold stamps trgb per build; the memo holds nothing clock-derived);
+  * the byte bound (FEED_MEMO_BYTES): entries leave oldest first, counted, and the payload stays complete;
+  * a departed session's entry leaves with it; GET /perf reports the memo's counters.
+
+Harness: tests/test_payload_dedup_invariant.py's world (a hermetic state root the kernel's judge is rebound to,
+names/ entries and projects/<launch dir>/<sid>.jsonl transcripts discover finds, a fixed live map, a warm first
+build so the session-order adoption sits behind the compared builds), extended to three sessions with goal
+stores minted the way tests/test_kernel_goal_cache_wiring.py mints them (jd.apply_plan, jd.rollup_status,
+jd.save_goals). The parses stay cold, as the feed reads them (cache-only), so a card here is the store's card.
+Synthetic fixtures only: private synthetic sids (the goal-store fixture rule: load_goals replays the per-sid
+override journal, so a shared placeholder sid would be re-flagged by other modules' rows), invented text.
+"""
 import json
 import os
 import random
+import re
 import tempfile
-import threading
 import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
-
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
-# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
+# Hermetic state BEFORE the load: the kernel resolves its state root at import time, and only pytest runs
+# conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = load_source("romp_kernel_feedsegs", os.path.join(BIN, "romp-kernel"))
-jd = km.jd
+km = load_source("romp_kernel_feed_session_memo", os.path.join(BIN, "romp-kernel"))
+jd = km.jd                              # the kernel's judge: the one object build_feed reads stores through
 
-SIDS = ["88888888-1111-4222-8333-44444444440%d" % i for i in range(3)]   # private to this module (synthetic)
-SID, SID_B, SID_C = SIDS
-NAMES = ("web", "api", "tests")
-NOW = 1781400000
-T0 = NOW - 3600
-
-
-def _iso(t):
-    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _user(uuid, parent, t, text):
-    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent, "promptSource": "typed",
-            "message": {"role": "user", "content": text}}
+# This module's PRIVATE synthetic sids (never the shared 11111111-2222-... placeholder: see the docstring).
+# (a tuple, unpacked below: a session named after the demo's api service assigned a high-entropy string on its
+# own line reads as a credential to the secret scanner the pre-push hook runs)
+SIDS = ("5f3e2d1c-0b9a-4876-9543-210fedcba001", "5f3e2d1c-0b9a-4876-9543-210fedcba002",
+        "5f3e2d1c-0b9a-4876-9543-210fedcba003")
+WEB, API, TESTS = SIDS
+NAME_OF = {WEB: "web", API: "api", TESTS: "tests"}
+COLOR_OF = {WEB: "#1EA1EB", API: "#E67E22", TESTS: "#2ECC71"}
+GOAL_OF = {WEB: "wire the notes-api web client", API: "add the notes-api list endpoint",
+           TESTS: "cover the notes-api list endpoint"}
+NOW = 1781100000
+T0 = NOW - 3600                         # the goals' mint time: a one-hour age sits inside the tint's fade window
 
 
-def _asst(uuid, parent, t, text):
-    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
-            "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
+def iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _tops(feed, sid):
-    """The goal cards of one session, by itemId."""
-    return {a["itemId"]: a for a in feed["asks"] if a.get("sid") == sid and a.get("turnId")}
+def uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "promptSource": "typed", "message": {"role": "user", "content": text}}
 
 
-def _loop_out(feed):
-    """What the per-session loop produces, serialized: the cards and the per-session lists. The frame's
-    other top-level fields read state outside the loop (the session order file, the SDK notice rows) that
-    the first build of a fresh world writes as a side effect, so they are not compared here."""
-    return json.dumps({k: feed.get(k) for k in ("asks", "working", "awaiting", "bgServices", "userTodos", "userTodoRows")},
-                      sort_keys=True)
+def aline(t, text, uuid, parent=None, stop="end_turn"):
+    return {"type": "assistant", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}],
+                        "stop_reason": stop}}
 
 
-class _World(unittest.TestCase):
-    """Three sessions with parsed transcripts and goal stores whose trails resolve in the parse (warm
-    anchors), one sub per store whose trail does not (a cold anchor), a handoff row (a names read for
-    the recipient), a done sub and a blocked top."""
+def _dump(feed):
+    """The payload's serialization with the declared clock fields stripped: the dedup's comparison."""
+    return json.dumps({k: v for k, v in feed.items() if k not in km._DEDUP_VOLATILE}, sort_keys=True, default=str)
+
+
+def _without_tints(feed):
+    """The stripped payload with every card's and tree row's age tint removed, for the clock comparison."""
+    f = json.loads(_dump(feed))
+    for c in f["asks"]:
+        c.pop("trgb", None)
+        for r in c.get("tree") or []:
+            r.pop("trgb", None)
+    return json.dumps(f, sort_keys=True)
+
+
+def _reset_memo():
+    """The memo empty and its counters at zero: every test starts cold. A kernel without the memo (the base commit
+    this change's red-first run pins against) has nothing to reset: the walked-sessions pin below then runs red on
+    its own assertion rather than erroring here."""
+    if not hasattr(km, "_feed_memo"):
+        return
+    with km._feed_memo_lock:
+        km._feed_memo.clear()
+        st = km._FEED_MEMO_STATS
+        for k in ("hit", "miss", "evict", "derived", "entries", "bytes"):
+            st[k] = 0
+        for k in st["miss_by"]:
+            st["miss_by"][k] = 0
+
+
+def _memo_snapshot():
+    """(the entries, the counters) as they stand, so a test can hand the process back what it found."""
+    if not hasattr(km, "_feed_memo"):
+        return None
+    with km._feed_memo_lock:
+        return dict(km._feed_memo), json.loads(json.dumps(km._FEED_MEMO_STATS))
+
+
+def _memo_restore(snap):
+    if snap is None:
+        return
+    entries, stats = snap
+    with km._feed_memo_lock:
+        km._feed_memo.clear()
+        km._feed_memo.update(entries)
+        km._FEED_MEMO_STATS.clear()
+        km._FEED_MEMO_STATS.update(stats)
+
+
+class _Board(unittest.TestCase):
+    """The three-session world; every test builds the REAL build_feed over it."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
-        self.root = Path(self.td.name)
-        self.saved_state, self.saved_names = jd.STATE, km.NAMES
-        jd._rebind_state(self.root)
-        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
-        jd.NAMES.mkdir(parents=True, exist_ok=True)
-        km.NAMES = jd.NAMES
-        for sid, name in zip(SIDS, NAMES):
-            self._write_name(sid, name, "#1EA1EB")
-        km._rewind_holds[0] = None
-        km._rewind_kept_memo.clear()
-        km._rewind_kept_err.clear()
-        km._end_goals_pass()
-        with km._FEED_SEGS_LOCK:
-            km._feed_segs_memo.clear()
-        km._node_anchor_last.clear()
-        self.paths, self.seg_ids, self.tx_n = {}, {}, {}
+        td = Path(self.td.name)
+        proj = td / "projects"
+        names = td / "names"
+        names.mkdir()
+        self.tpath, self.cdir = {}, {}
         for sid in SIDS:
-            self._transcript(sid)
-        for i, sid in enumerate(SIDS):
-            self._publish(sid, self._store_json(sid, SIDS[(i + 1) % 3]))
-        self.sessions = [{"sid": sid, "name": nm, "path": self.paths[sid], "anchor": sid, "mtime": 0}
-                         for sid, nm in zip(SIDS, NAMES)]
-        self.tmux = {sid: {"state": "idle", "since": NOW - 50} for sid in SIDS}
-        self.force_working = set()
-        orig_working = km._session_working
-
-        def working(turns):
-            for sid in self.force_working:
-                ps = km._parse_cached(self.paths[sid])
-                if ps is not None and turns is ps["turns"]:
-                    return True
-            return orig_working(turns)
-        self.patches = [mock.patch.object(km, "_alive_sessions", lambda now, tm: list(self.sessions)),
-                        mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
-                        mock.patch.object(km, "_sessions", lambda now, window=None, forks=True: list(self.sessions)),
-                        mock.patch.object(km, "_sdk", lambda: None),
-                        mock.patch.object(km, "_session_working", working)]
-        for p in self.patches:
-            p.start()
-            self.addCleanup(p.stop)
-        self.stats0 = dict(km._feed_segs_stats)
-        self.poisoned0 = jd.shared_store_stats()["poisoned"]
+            cdir = td / ("launch-" + NAME_OF[sid])
+            cdir.mkdir()
+            pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
+            pdir.mkdir(parents=True)
+            tp = pdir / (sid + ".jsonl")
+            tp.write_text("\n".join(json.dumps(r) for r in [
+                uline(T0, "start on: " + GOAL_OF[sid], "u1"),
+                aline(T0 + 40, "On it.", "a1", "u1"),
+            ]) + "\n")
+            (names / sid).write_text("%s\t%s\t%s\n" % (NAME_OF[sid], cdir, COLOR_OF[sid]))
+            self.tpath[sid], self.cdir[sid] = tp, cdir
+        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD)
+        self.saved_memo = _memo_snapshot()        # the memo and its counters, restored in tearDown
+        # The kernel's judge is ONE module object for every test module in the process, so its STATE (goals,
+        # override journals, cleared.jsonl, session-order.json) is a directory the whole run shares. This board
+        # builds over ITS root and nothing else: _rebind_state moves GOALDIR and every derived dir with it.
+        jd._rebind_state(td)
+        jd.PROJECTS = proj
+        km.NAMES = jd.NAMES
+        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        km._live_scope.names = None               # no cycle snapshot: the names registry is read from the files
+        km._live_scope.snapshot = None
+        for sid in SIDS:
+            self._mint(sid, GOAL_OF[sid])
+        # Fixed rows, so the stub itself contributes nothing clock-derived (the dedup invariant's idiom).
+        self.live = {sid: self._row() for sid in SIDS}
+        # A session's FIRST build adopts it into the persisted session order (feed `order` reads that file
+        # before _ordered appends the newcomer), so the first sight is a genuine change; warm once so every
+        # compared build is post-adoption, then start the memo cold.
+        jd._discover_cache.clear()
+        km.build_feed(NOW - 1, self.live)
+        _reset_memo()
 
     def tearDown(self):
-        self.assertEqual(jd.shared_store_stats()["poisoned"] - self.poisoned0, 0, "a build wrote into a shared store")
+        _memo_restore(self.saved_memo)
+        jd._rebind_state(self.saved[0])
+        jd.PROJECTS, km.NAMES, km._GLOBAL_CLAUDE_MD = self.saved[1:]
         km._live_scope.names = None
-        with km._FEED_SEGS_LOCK:
-            km._feed_segs_memo.clear()
-        km._node_anchor_last.clear()
-        km._end_goals_pass()
-        km._rewind_holds[0] = None
-        km._rewind_kept_memo.clear()
-        km._rewind_kept_err.clear()
-        km.NAMES = self.saved_names
-        jd._rebind_state(self.saved_state)
+        km._live_scope.snapshot = None
+        jd._discover_cache.clear()
         self.td.cleanup()
 
-    # ── fixtures ──
-    def _write_name(self, sid, name, color):
-        km._atomic_write(jd.NAMES / sid, "%s\t/proj/TESTHOST/notes-api\t%s\twhite\n" % (name, color))
+    # ── the world's writers ──
+    @staticmethod
+    def _row():
+        return {"state": "idle", "since": NOW - 100, "model": "", "effort": "", "context": None,
+                "compactPct": None, "color": None}
 
-    def _transcript(self, sid):
-        p = self.root / (sid + ".jsonl")
-        recs = [_user("u0", None, T0, "ship the notes api"), _asst("a0", "u0", T0 + 5, "The handler is written and wired."),
-                _user("u1", "a0", T0 + 200, "and the flaky test?"), _asst("a1", "u1", T0 + 210, "It needs an auth decision.")]
-        p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
-        self.paths[sid] = str(p)
-        self.tx_n[sid] = 2
-        ps = km._parse(str(p), sid, NOW)
-        self.seg_ids[sid] = [km._segs_seam(t, {})[0]["id"] for t in ps["turns"]]
-        return ps
+    @staticmethod
+    def _mint(sid, text):
+        """One top-level goal, minted the way the planner mints (apply_plan), rolled up and saved: the store
+        the kernel's judge loads (tests/test_kernel_goal_cache_wiring.py's idiom)."""
+        s = {"rompUuid": sid, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {}, "placements": {},
+             "status": {}}
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "the request that opened the session", "text": text}], [])
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(sid, s)
 
-    def _append_turn(self, sid):
-        """One more settled turn on the transcript, parsed into the cache: a new parse object."""
-        n = self.tx_n[sid]
-        t = T0 + 300 * n
-        recs = [_user("u%d" % n, "a%d" % (n - 1), t, "next step %d" % n), _asst("a%d" % n, "u%d" % n, t + 5, "Done with step %d." % n)]
-        with open(self.paths[sid], "a") as f:
-            f.write("\n".join(json.dumps(r) for r in recs) + "\n")
-        self.tx_n[sid] = n + 1
-        os.utime(self.paths[sid], (NOW + n, NOW + n))       # a moved stat, whatever the clock's tick
-        return km._parse(self.paths[sid], sid, NOW)
+    @staticmethod
+    def _complete(sid, t=NOW - 30):
+        """A JUDGE VERDICT: the closer records the goal done and rolls the store up with the session's turn
+        closed, which settles the top (rollup_status records the settle verdict itself) so the card enters
+        Completed; the publish moves the store file."""
+        s = jd.load_goals(sid)
+        nd = s["nodes"][sid + ":g1"]
+        assert jd.record_verdict(s, nd, "romp", "done", t, why="Shipped."), "the done verdict passed the gate"
+        jd.rollup_status(s, session_closed=True, now=t)
+        jd.save_goals(sid, s)
 
-    def _store_json(self, sid, peer):
-        s0, s1 = self.seg_ids[sid]
-        g1, g2, gh, gc, gd = (sid + ":g%d" % i for i in (1, 2, 3, 4, 5))
-        nodes = {
-            g1: {"id": g1, "text": "Ship the notes API", "parentId": None, "t": T0, "mt": T0 + 50, "why": "x",
-                 "trail": [s0], "promptUuid": "u0", "log": []},
-            gh: {"id": gh, "text": "delegated to api: review the schema", "parentId": g1, "t": T0 + 10, "mt": T0 + 10,
-                 "why": "x", "trail": [], "log": [], "handoff": {"peer": peer, "msgId": "m-1"}},
-            gc: {"id": gc, "text": "Wire the route", "parentId": g1, "t": T0 + 20, "mt": T0 + 20, "why": "x",
-                 "trail": ["%s:999:nonexistent" % sid], "log": []},
-            gd: {"id": gd, "text": "Write the handler", "parentId": g1, "t": T0 + 30, "mt": T0 + 40, "why": "x",
-                 "trail": [s1], "nodeComplete": True, "doneWhy": "landed",
-                 "log": [{"kind": "done", "src": "planner", "at": T0 + 40, "ev_t": T0 + 40, "why": "landed", "seg": s1}]},
-            g2: {"id": g2, "text": "Fix the flaky test", "parentId": None, "t": T0 + 60, "mt": T0 + 70, "why": "x",
-                 "trail": [s1], "blocked": True, "blockWhy": "which auth?", "blockCheckT": T0 + 75,
-                 "log": [{"kind": "block", "src": "planner", "at": T0 + 70, "ev_t": T0 + 70, "why": "which auth?", "seg": s1}]},
-        }
-        return {"rompUuid": sid, "seq": 5, "placementsV": jd.PLACEMENTS_V, "nodes": nodes,
-                "status": {g1: "working", g2: "blocked"}, "placements": {s0: g1, s1: g2}, "lastNode": g2}
+    @staticmethod
+    def _publish_raw(sid, text, **node):
+        """A store republished whole in the judge's file shape (the fault-boundary tests' fixture), for a node
+        shape apply_plan does not mint here (a goal carrying a sender's origin)."""
+        gid = sid + ":g1"
+        nd = {"id": gid, "parentId": None, "t": T0, "mt": T0, "text": text, "nodeComplete": False,
+              "blocked": False, "cleared": False, "trail": ["s1"], "log": []}
+        nd.update(node)
+        store = {"rompUuid": sid, "seq": 1, "rev": 7, "placementsV": jd.PLACEMENTS_V, "placements": {},
+                 "nodes": {gid: nd}, "status": {gid: "working"}, "lastNode": gid}
+        p = jd.GOALDIR / (sid + ".json")
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(store))
+        os.replace(tmp, p)                    # the atomic publish every store writer uses
 
-    def _publish(self, sid, raw):
-        path = jd.GOALDIR / (sid + ".json")
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(raw))
-        os.replace(tmp, path)
+    # ── the reads ──
+    def _build(self, now=NOW):
+        return km.build_feed(now, self.live)
 
-    def _republish(self, sid, mutate):
-        raw = json.loads((jd.GOALDIR / (sid + ".json")).read_text())
-        mutate(raw)
-        self._publish(sid, raw)
+    def _delta(self, fn):
+        """(the memo counters' movement over fn(), fn's result): hit / miss / derived / evict and the non-zero
+        miss attributions."""
+        b = km._feed_memo_report()
+        bm = b["miss_by"]
+        out = fn()
+        a = km._feed_memo_report()
+        d = {k: a[k] - b[k] for k in ("hit", "miss", "derived", "evict")}
+        d["miss_by"] = {k: v - bm.get(k, 0) for k, v in a["miss_by"].items() if v - bm.get(k, 0)}
+        return d, out
 
-    def _scope(self):
-        km._live_scope.names = km._names_snapshot()
-
-    def _build(self, scoped=True):
-        if scoped:
-            self._scope()
-        else:
-            km._live_scope.names = None
-        return km.build_feed(NOW, dict(self.tmux))
-
-    def _delta(self, key):
-        return km._feed_segs_stats[key] - self.stats0[key]
-
-    def _reset_deltas(self):
-        self.stats0 = dict(km._feed_segs_stats)
-
-    def _fresh(self):
-        """A build with an empty memo: every session recomputed."""
-        with km._FEED_SEGS_LOCK:
-            km._feed_segs_memo.clear()
-        return self._build()
+    @staticmethod
+    def _cards(feed):
+        return {a["itemId"]: a for a in feed["asks"]}
 
 
-class Hits(_World):
-    def test_two_builds_over_unchanged_inputs_serve_the_same_objects_and_skip_the_walk(self):
-        f1 = self._build()
-        self.assertEqual(self._delta("miss"), 3)
-        e1 = {sid: km._feed_segs_memo[sid] for sid in SIDS}
-        with mock.patch.object(km, "_seg_anchors", wraps=km._seg_anchors) as walk:
-            f2 = self._build()
-            self.assertEqual(walk.call_count, 0, "a hit runs no anchor walk")
-        self.assertEqual(self._delta("hit"), 3)
-        self.assertEqual(self._delta("miss"), 3)
-        for sid in SIDS:
-            self.assertIs(km._feed_segs_memo[sid], e1[sid], "the entry stands")
-            c1, c2 = _tops(f1, sid), _tops(f2, sid)
-            self.assertEqual(sorted(c1), sorted(c2))
-            for nid in c1:
-                self.assertIsNot(c1[nid]["tree"], c2[nid]["tree"], "each build gets its own tree list")
-                for r1, r2 in zip(c1[nid]["tree"], c2[nid]["tree"]):
-                    self.assertIs(r1, r2, "…of the same row objects")
-        self.assertEqual(_loop_out(f1), _loop_out(f2))
-        self.assertEqual(km._feed_segs_report()["entries"], 3)
+class ColdWarmAndFromScratch(_Board):
+    def test_a_cold_build_derives_every_session_and_an_unchanged_rebuild_derives_none(self):
+        d, f1 = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (3, 0), d)
+        self.assertEqual(d["miss"], d["derived"], "miss and derived count the same event: one per derivation")
+        self.assertEqual(d["miss_by"], {"cold": 3}, "a session with no entry misses under `cold`")
+        self.assertEqual(sorted(self._cards(f1)), sorted(sid + ":g1" for sid in SIDS), "one card per goal")
+        self.assertEqual({a["column"] for a in f1["asks"]}, {"working"})
+        d, f2 = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), d)
+        self.assertEqual(_dump(f1), _dump(f2), "a served build is the derived build, byte for byte")
+        rep = km._feed_memo_report()
+        self.assertEqual(rep["entries"], 3)
+        self.assertEqual(rep["bytes"], sum(e[2] for e in km._feed_memo.values()))
+        self.assertGreater(rep["bytes"], 0)
 
-    def test_a_cold_parse_is_a_stable_key_too(self):
-        # a session with no cached parse (ps None): the memo keys on None and hits until the parse lands
-        km._parse_cache.pop(self.paths[SID_C], None)
+    def test_one_sessions_store_publish_re_derives_that_session_alone_and_equals_a_from_scratch_build(self):
+        before = self._cards(self._build())
+        self.assertIsNone(before[API + ":g1"]["doneConfirming"])
+        self._complete(API)                   # the closer's verdict lands in api's store
+        d, memoized = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"store": 1}, "the store file moved and nothing else")
+        cards = self._cards(memoized)
+        self.assertEqual(cards[API + ":g1"]["column"], "completed", "the verdict reached the card")
+        self.assertEqual(cards[API + ":g1"]["distillState"], "completed")
+        self.assertEqual(cards[WEB + ":g1"]["column"], "working")
+        self.assertEqual(cards[TESTS + ":g1"]["column"], "working")
+        _reset_memo()                         # the same clock, nothing memoized: every session derived afresh
+        d, scratch = self._delta(self._build)
+        self.assertEqual(d["derived"], 3, d)
+        self.assertEqual(_dump(memoized), _dump(scratch),
+                         "two served entries beside one derivation must equal three derivations, byte for byte")
+
+
+class EveryInputMovesItsSessionOnly(_Board):
+    """Each writer below is one of the events the key covers; each re-derives exactly the session it touched,
+    under exactly its label, and the card shows the change."""
+
+    def test_a_user_gesture_journaled_as_an_override_row(self):
         self._build()
-        self._reset_deltas()
+        # the user resolves web's card: _resolve_node journals the gesture BEFORE its store save (the journal
+        # is the durable truth load_goals replays); here the journal row alone, the store file untouched
+        jd.append_override(WEB, WEB + ":g1", "resolve", NOW - 20)
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"store": 1}, "the override journal is part of the store identity")
+        card = self._cards(f)[WEB + ":g1"]
+        # the replayed resolve is a done verdict on a top the session still holds as its focus: the settle gate
+        # keeps the column Working and the card wears the "done, confirming" cue (rollup's confirming export)
+        self.assertTrue(card["doneConfirming"], "the replayed resolve reached the card")
+        self.assertEqual(card["column"], "working")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0, "the replay is idempotent and the journal stands: a hit")
+
+    def test_a_clear_row_for_one_card(self):
         self._build()
-        self.assertEqual(self._delta("hit"), 3)
-        km._parse(self.paths[SID_C], SID_C, NOW)           # the warm-up lands the parse: a new object, one miss
-        self._reset_deltas()
+        with (jd.STATE / "cleared.jsonl").open("a") as fh:      # the ledger row the clear handler appends
+            fh.write(json.dumps({"id": TESTS + ":g1", "t": NOW - 10, "op": "clear"}) + "\n")
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"cleared": 1}, "the ledger is keyed by the session's own slice")
+        self.assertNotIn(TESTS + ":g1", self._cards(f), "the cleared card is gone")
+        self.assertEqual(sorted(self._cards(f)), sorted([WEB + ":g1", API + ":g1"]))
+        self.assertEqual(f["dismissedCount"], 1)
+
+    def test_a_live_row_change(self):
         self._build()
-        self.assertEqual((self._delta("hit"), self._delta("miss")), (2, 1))
+        self.live[API] = dict(self._row(), model="opus")        # the row's model badge changes
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"row": 1})
+        self.assertEqual(len(f["asks"]), 3)
 
-
-class KeyInputs(_World):
-    """Each input alone moves the key for its session only."""
-
-    def _one_miss(self, sid):
-        self.assertEqual(self._delta("miss"), 1, "exactly one session recomputed")
-        self.assertEqual(self._delta("hit"), 2, "the other two served from the memo")
-        self.assertEqual(self._delta("bypass_live") + self._delta("bypass_degraded") + self._delta("bypass_unkeyed"), 0)
-
-    def test_a_transcript_append_misses_that_session_only(self):
+    def test_a_transcript_append(self):
         self._build()
-        self._reset_deltas()
-        self._append_turn(SID)
-        f = self._build()
-        self._one_miss(SID)
-        rows = {r["id"]: r for r in _tops(f, SID)[SID + ":g1"]["tree"]}
-        self.assertIsNotNone(rows[SID + ":g1"]["anchorUuid"], "warm anchors still resolve in the new parse")
+        with self.tpath[WEB].open("a") as fh:
+            fh.write(json.dumps(uline(NOW - 5, "and the pagination", "u2", "a1")) + "\n")
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertIn("transcript", d["miss_by"])
+        self.assertTrue(set(d["miss_by"]) <= {"transcript", "parse"},
+                        "an append moves the transcript identity (and the parse bit when a parse was cached): %r"
+                        % d["miss_by"])
+        self.assertEqual(len(f["asks"]), 3)
 
-    def test_a_store_publish_misses_that_session_only(self):
+    def test_a_states_append(self):
         self._build()
-        self._reset_deltas()
-        self._republish(SID_B, lambda raw: raw["nodes"][SID_B + ":g4"].__setitem__("text", "Wire the route (v2)"))
-        f = self._build()
-        self._one_miss(SID_B)
-        rows = {r["id"]: r for r in _tops(f, SID_B)[SID_B + ":g1"]["tree"]}
-        self.assertEqual(rows[SID_B + ":g4"]["text"], "Wire the route (v2)")
+        jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        with (jd.STATESDIR / (API + ".jsonl")).open("a") as fh:   # a producer's state row
+            fh.write(json.dumps({"t": NOW - 5, "state": "idle"}) + "\n")
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"states": 1})
+        self.assertEqual(len(f["asks"]), 3)
 
-    def test_a_journal_append_misses_that_session_only(self):
+    def test_a_names_rewrite(self):
         self._build()
-        self._reset_deltas()
-        jd.append_override(SID_C, SID_C + ":g2", "followup", NOW - 10)
-        f = self._build()
-        self._one_miss(SID_C)
-        card = _tops(f, SID_C)[SID_C + ":g2"]
-        self.assertEqual(card["column"], "working", "the replayed reopen shows: the served view moved")
+        (jd.NAMES / TESTS).write_text("tests\t%s\t#123456\n" % self.cdir[TESTS])   # the session recolored
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"names": 1})
+        self.assertEqual(self._cards(f)[TESTS + ":g1"]["color"], {"bg": "#123456", "fg": "#ffffff"})
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["color"], {"bg": COLOR_OF[WEB], "fg": "#ffffff"})
 
-    def test_a_names_write_misses_every_session_and_the_rows_carry_the_new_colour(self):
+    def test_the_hide_from_feed_flag(self):
         self._build()
-        self._reset_deltas()
-        self._write_name(SID_B, "api", "#FF8800")          # a colour change: the handoff rows naming api re-tint
-        f = self._build()
-        self.assertEqual(self._delta("miss"), 3, "every session resolves names through the registry")
-        row = next(r for r in _tops(f, SID)[SID + ":g1"]["tree"] if r["kind"] == "handoff")
-        self.assertEqual(row["whoColor"], {"bg": "#FF8800", "fg": "#ffffff"})
-        self.assertEqual(row["who"], "api")
+        flags = jd.STATE / "session-flags.json"
+        flags.write_text(json.dumps({API: {"hideFromFeed": True}}))
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"hide": 1})
+        self.assertNotIn(API, {a["sid"] for a in f["asks"]}, "a muted session's cards vanish")
+        self.assertEqual(sorted(self._cards(f)), sorted([WEB + ":g1", TESTS + ":g1"]))
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), "the muted session's (empty) entry serves too")
+        flags.write_text(json.dumps({}))
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"hide": 1}), d)
+        self.assertIn(API + ":g1", self._cards(f), "unmuted: the card is back")
 
-    def test_a_working_flip_misses_that_session_only(self):
+    def test_a_peers_verdict_re_derives_the_card_that_reads_its_store(self):
+        """api's goal was delegated from web (its origin names web's goal): the card's origin badge reads WEB's
+        store, so a verdict in web's store must re-derive api's card too, or a hit would serve a badge a judge
+        has moved. The key's `peers` component re-evaluates the peers the previous derivation recorded."""
         self._build()
-        self._reset_deltas()
-        self.force_working.add(SID)
-        f = self._build()
-        self._one_miss(SID)
-        self.assertTrue(all(r["whoWorking"] for r in _tops(f, SID)[SID + ":g1"]["tree"]))
-        self.assertFalse(any(r["whoWorking"] for r in _tops(f, SID_B)[SID_B + ":g1"]["tree"]))
+        self._publish_raw(API, GOAL_OF[API], origin={"peer": WEB, "goalId": WEB + ":g1"})
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"store": 1}), d)
+        card = self._cards(f)[API + ":g1"]
+        self.assertTrue(card["origin"]["live"], "web's goal is open: the badge reads live")
+        # That derivation read web for the FIRST time, so web's facts were not taken before the read (a publish
+        # landing mid-read could pair a new key with old content): the stored key is unsettled, and the next build
+        # re-derives api once more with web's facts taken before the read, then hits.
+        peers_at = km._FEED_MEMO_LABELS.index("peers")
+        self.assertEqual(km._feed_memo_get(API)[0][peers_at], km._FEED_PEERS_UNSETTLED,
+                         "a peer first read by this derivation leaves the key unsettled")
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"peers": 1}), "the settling derivation: %r" % d)
+        self.assertEqual(km._feed_memo_get(API)[0][peers_at][0][0], WEB,
+                         "api's key names web, with facts taken before the read")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0, "the peer's facts stand: a hit")
+        self._complete(WEB)                   # the verdict lands in WEB's store, not api's
+        d, f = self._delta(self._build)
+        self.assertEqual(d["derived"], 2, "web (its store) and api (its peer's store): %r" % d)
+        self.assertEqual(d["miss_by"], {"store": 1, "peers": 1})
+        self.assertEqual(self._cards(f)[WEB + ":g1"]["column"], "completed")
+        self.assertFalse(self._cards(f)[API + ":g1"]["origin"]["live"], "the badge dimmed with the sender's goal")
+        self.assertEqual(self._cards(f)[TESTS + ":g1"]["column"], "working")
 
-    def test_the_session_rows_own_name_misses_that_session_only(self):
-        # the row's name is not always the registry's (a live session outside the discover window, an
-        # SDK session with no transcript yet), so it is keyed by value on its own
+
+class TheClockIsNotAnInput(_Board):
+    def test_two_builds_ten_minutes_apart_derive_nothing_and_differ_only_in_the_clock_fields_and_the_tints(self):
+        d, a = self._delta(self._build)
+        self.assertEqual(d["derived"], 3)
+        d, b = self._delta(lambda: self._build(NOW + 600))
+        self.assertEqual((d["derived"], d["hit"]), (0, 3), "time passing moves no key component: %r" % d)
+        top = sorted(k for k in set(list(a) + list(b))
+                     if json.dumps(a.get(k), sort_keys=True, default=str) != json.dumps(b.get(k), sort_keys=True, default=str))
+        self.assertEqual(top, ["asks", "now"], "only the clock and the cards (their tints) differ: %r" % top)
+        self.assertEqual(_without_tints(a), _without_tints(b), "with the tints removed the two builds are one")
+        tints_a = [c["trgb"] for c in a["asks"]]
+        tints_b = [c["trgb"] for c in b["asks"]]
+        self.assertNotEqual(tints_a, tints_b, "the fold re-stamped the age tint for the later clock")
+        self.assertTrue(all(len(t) == 3 for t in tints_a + tints_b))
+        for c in a["asks"] + b["asks"]:
+            self.assertNotIn("_ageT", c, "the tint's epoch is the entry's; the folded card carries trgb")
+            for r in c.get("tree") or []:
+                self.assertNotIn("_ageT", r)
+        self.assertIn("now", km._DEDUP_VOLATILE, "the one clock field the builder emits is a declared volatile")
+
+
+class TheBoundAndTheDepartures(_Board):
+    def test_the_byte_bound_sheds_the_oldest_entries_and_the_payload_stays_complete(self):
         self._build()
-        self._reset_deltas()
-        self.sessions[0]["name"] = "web-2"
-        f = self._build()
-        self._one_miss(SID)
-        rows = _tops(f, SID)[SID + ":g1"]["tree"]
-        self.assertEqual(next(r for r in rows if r["kind"] == "ask")["who"], "web-2")
+        one = max(e[2] for e in km._feed_memo.values())     # the largest entry: alone at the bound it still serves
+        with mock.patch.object(km, "FEED_MEMO_BYTES", one):
+            _reset_memo()
+            d, f = self._delta(self._build)
+            self.assertEqual(d["derived"], 3)
+            rep = km._feed_memo_report()
+            self.assertEqual(rep["bound"], one)
+            self.assertGreaterEqual(rep["evict"], 2, "the second and third puts each shed the oldest: %r" % rep)
+            self.assertLessEqual(rep["bytes"], one)
+            self.assertEqual(rep["entries"], 1)
+            self.assertEqual(rep["bytes"], sum(e[2] for e in km._feed_memo.values()))
+            self.assertEqual(sorted(self._cards(f)), sorted(sid + ":g1" for sid in SIDS),
+                             "the payload is complete whatever the bound")
+            self.assertEqual(km._PERF_STATS.snapshot()["builds"]["feed"]["memo"], rep,
+                             "GET /perf reports the memo's counters under builds.feed.memo")
 
-    def test_a_changed_remembered_anchor_misses_that_session_only(self):
-        # g4's trail names a segment no parse holds, so its row reads the remembered warm anchor
-        # (_node_anchor_last); that read is recorded and a changed value misses
-        gc = SID + ":g4"
-        km._node_anchor_last[gc] = ("p-old", "w-old")
-        f1 = self._build()
-        row = {r["id"]: r for r in _tops(f1, SID)[SID + ":g1"]["tree"]}[gc]
-        self.assertEqual(row["anchorUuid"], "w-old")
-        self.assertIn(gc, km._feed_segs_memo[SID].anchor_deps)
-        self._reset_deltas()
+    def test_the_bound_is_a_fraction_of_the_machines_memory_unless_the_environment_names_bytes(self):
+        with mock.patch.dict(os.environ, {"ROMP_FEED_MEMO_BYTES": "4096"}):
+            self.assertEqual(km._feed_memo_bound(), 4096)
+        with mock.patch.dict(os.environ, {"ROMP_FEED_MEMO_BYTES": "lots"}):
+            self.assertEqual(km._feed_memo_bound(), km._mem_total_bytes() // 64, "an unparseable value falls to the default")
+        with mock.patch.dict(os.environ, {"ROMP_FEED_MEMO_BYTES": "0"}):
+            self.assertEqual(km._feed_memo_bound(), km._mem_total_bytes() // 64, "zero is not a bound")
+        env = {k: v for k, v in os.environ.items() if k != "ROMP_FEED_MEMO_BYTES"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            self.assertEqual(km._feed_memo_bound(), km._mem_total_bytes() // 64)
+        self.assertGreater(km.FEED_MEMO_BYTES, 0)
+
+    def test_a_departed_sessions_entry_leaves_with_it(self):
         self._build()
-        self.assertEqual(self._delta("hit"), 3, "unchanged: a hit")
-        self._reset_deltas()
-        km._node_anchor_last[gc] = ("p-new", "w-new")     # what a chat build with a fresher parse would write
-        f2 = self._build()
-        self._one_miss(SID)
-        row = {r["id"]: r for r in _tops(f2, SID)[SID + ":g1"]["tree"]}[gc]
-        self.assertEqual(row["anchorUuid"], "w-new")
+        self.assertEqual(km._feed_memo_report()["entries"], 3)
+        self.live.pop(TESTS)                  # the session is gone from the backend's live map ...
+        (jd.NAMES / TESTS).unlink()           # ... and from the names registry
+        jd._discover_cache.clear()
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (0, 2), d)
+        self.assertEqual(d["evict"], 1, "the departed entry is counted as an eviction")
+        rep = km._feed_memo_report()
+        self.assertEqual(rep["entries"], 2)
+        self.assertEqual(set(km._feed_memo), {WEB, API})
+        self.assertEqual(rep["bytes"], sum(e[2] for e in km._feed_memo.values()))
+        self.assertNotIn(TESTS + ":g1", self._cards(f))
+        self.assertEqual(set(km._SUBAGENT_DIRS_MEMO) & set(SIDS), {WEB, API},
+                         "the key's subagent-walk memo drops the departed session with its entry (round two, low 1)")
 
-    def test_a_hit_re_applies_the_warm_anchors_the_entry_recorded(self):
-        g1 = SID + ":g1"
+    def test_the_perf_snapshot_carries_the_memo_beside_the_feed_builds_counters(self):
         self._build()
-        warm = km._node_anchor_last[g1]
-        self.assertIsNotNone(warm[1], "g1's trail resolves in the parse: a warm write")
-        km._node_anchor_last[g1] = ("x", "y")             # another builder's write in between
-        self._reset_deltas()
+        feed = km._PERF_STATS.snapshot()["builds"]["feed"]
+        self.assertEqual(set(feed), {"cached", "built", "ms", "dirty", "memo"})   # dirty: this fork's forced-rebuild counter beside the memo
+        self.assertEqual(feed["memo"], km._feed_memo_report())
+        self.assertEqual(set(feed["memo"]), {"hit", "miss", "evict", "entries", "bytes", "bound", "derived", "miss_by"})
+        self.assertEqual(set(feed["memo"]["miss_by"]), set(km._FEED_MEMO_LABELS) | {"cold"})
+        self.assertEqual(feed["memo"]["derived"], 3)
+        self.assertEqual(feed["memo"]["bound"], km.FEED_MEMO_BYTES)
+        json.dumps(feed)                      # serializes as-is
+
+
+class TheRebuildWalksOnlyWhatMoved(_Board):
+    """The pin this change is filed under (it fails on the kernel before the memo): a rebuild of an unchanged board
+    walks NO session's goal tree. _heal_session_tops runs once per session per derivation (the read-side nesting of
+    machine-rooted tops over the session's nodes and status), so its call count is the number of sessions whose
+    trees the build walked. Before the memo it was three on every rebuild, whatever had changed; with it, three on
+    the cold build and none on the unchanged rebuild, then exactly the one session whose store moved."""
+
+    def _walked(self, fn):
+        calls = []
+        real = km._heal_session_tops
+        with mock.patch.object(km, "_heal_session_tops", side_effect=lambda *a, **k: (calls.append(1), real(*a, **k))[1]):
+            out = fn()
+        return len(calls), out
+
+    def test_an_unchanged_rebuild_walks_no_sessions_tree_and_a_moved_store_walks_that_session_alone(self):
+        n_cold, _ = self._walked(self._build)
+        self.assertEqual(n_cold, 3, "the cold build derives every session: one walk each")
+        n_same, feed = self._walked(self._build)
+        self.assertEqual(n_same, 0, "an unchanged board is served from the memo: no session's tree is walked")
+        self.assertEqual(len(feed["asks"]), 3, "and the board is whole")
+        self._complete(API)
+        n_moved, feed = self._walked(self._build)
+        self.assertEqual(n_moved, 1, "one store moved: that session's tree alone is walked again")
+        self.assertEqual(self._cards(feed)[API + ":g1"]["column"], "completed", "and its card wears the verdict")
+
+
+class TheClearedIndexMatchesTheFilter(unittest.TestCase):
+    """The per-build clear index (_cleared_by_sid) must hand each session exactly what the per-session filter
+    `i.startswith(sid + ":")` returned, for every id shape the ledger can hold: a node id <sid>:gN, a composite
+    session key with its own colon (host:name:gN, a peer wait key), an id with no colon, and an id of another kind
+    (parked:<msgId>). Round two, low 3: an index on the FIRST colon gave a composite session nothing. The sessions
+    asked are the shapes a session id takes (a uuid, a host:name key, none, an unknown one); a session id is never
+    the bare host half of a composite key, the one prefix the filter would have matched and the index does not."""
+
+    def test_every_shape_indexes_where_the_filter_found_it(self):
+        ids = {WEB + ":g1", WEB + ":g2", API + ":g1", "TESTHOST:api:g3", "TESTHOST:api:g1", "parked:m-1789", "bare-id"}
+        by = km._cleared_by_sid(ids)
+        for sid in (WEB, API, TESTS, "TESTHOST:api", "parked", "bare-id", "", "nobody"):
+            want = tuple(sorted(i for i in ids if i.startswith(sid + ":")))
+            self.assertEqual(by.get(sid, ()), want, "session %r" % sid)
+
+
+class TheClockDecidedBooleansAreComponents(_Board):
+    """The one read in the derivation's closure that consults its own clock is the billing-switch offer
+    (_cap_switch_offer: a login-account usage window at its cap with resets_at still ahead). The reset passing ends the
+    offer on the base's next build; a memo hit would keep offering a switch past the reset, so the crossing is the
+    `offer` component, a boolean the key computes from usage.json against the build's clock (the verifier's shape,
+    T368 review). Red on the memo without the component: the second build serves the offer with derived 0."""
+
+    def _cap_death(self, sid, resets_at):
+        """web dead on a plain retryable API error, billing the login, a key on hand, the five-hour window at its cap:
+        every leg of the offer."""
+        with open(self.tpath[sid], "a") as fh:
+            fh.write(json.dumps({"type": "assistant", "timestamp": iso(T0 + 80), "uuid": "a2", "parentUuid": "a1",
+                                 "isApiErrorMessage": True, "apiErrorStatus": 529, "error": "overloaded_error",
+                                 "message": {"role": "assistant", "stop_reason": "stop_sequence",   # the failed turn ENDS on the record
+                                             "content": [{"type": "text", "text": "API Error: 529 overloaded"}]}}) + "\n")
+        km._parse(str(self.tpath[sid]), sid, NOW)          # the feed reads the parse cache-only: warm it (the error tail rides the parse)
+        self.live[sid] = dict(self._row(), authLive="login")
+        (jd.STATE / "usage.json").write_text(json.dumps({"five_hour": {"pct": 100, "resets_at": resets_at}}))
+
+    def test_the_offer_leaves_the_card_when_its_reset_passes_on_a_served_entry(self):
+        # The reset sits ahead of BOTH clocks the offer has been read against (the build's, and the wall clock the
+        # memo's first head still minted from), so the served-stale case shows on that head as it did on the
+        # verifier's kernel: the window passes, the entry hits, the card keeps offering.
+        resets_at = max(NOW, int(time.time())) + 600
+        self._cap_death(WEB, resets_at)
+        with mock.patch.object(km, "_auth_key_present", lambda: True), \
+                mock.patch.object(km, "_live_map", lambda: self.live):   # the offer reads the cycle's live snapshot
+            d, f = self._delta(self._build)
+            self.assertEqual(d["derived"], 3)
+            offer = {"resetsAt": resets_at, "window": "five_hour"}
+            blocked = self._cards(f)[WEB + ":g1"]["blocked"]     # the api-error block carries the offer
+            self.assertEqual(blocked.get("capOffer"), offer,
+                             "the offer rides the card while the window is capped with its reset ahead: %r" % blocked)
+            d, f = self._delta(self._build)
+            self.assertEqual(d["derived"], 0, "nothing moved: a hit, the offer still current")
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["blocked"].get("capOffer"), offer)
+            d, f = self._delta(lambda: self._build(resets_at + 1))
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"offer": 1}),
+                             "the reset passed: the crossing moved web's key and web alone re-derived: %r" % d)
+            blocked = self._cards(f)[WEB + ":g1"]["blocked"]
+            self.assertEqual(blocked.get("state"), "apiError", "the error block stays: %r" % blocked)
+            self.assertNotIn("capOffer", blocked, "a rebuilt card drops the offer; a served one must too")
+            d, f = self._delta(lambda: self._build(resets_at + 2))
+            self.assertEqual(d["derived"], 0, "closed stays closed: a hit")
+            self.assertNotIn("capOffer", self._cards(f)[WEB + ":g1"]["blocked"])
+
+    def test_two_capped_windows_the_earlier_reset_passing_moves_the_offer_to_the_later_window(self):
+        """Round two's shape: both windows at their cap, the five-hour one resetting first. The five-hour reset
+        passing leaves a login window capped (the seven-day one), so a boolean would stand and a served card would
+        keep naming a reset already in the past; the component is the payload the card renders, so the crossing
+        moves the key and the rebuilt card names the seven-day window and its reset."""
+        base = max(NOW, int(time.time()))
+        r5, r7 = base + 600, base + 4000
+        self._cap_death(WEB, r5)
+        (jd.STATE / "usage.json").write_text(json.dumps({"five_hour": {"pct": 100, "resets_at": r5},
+                                                         "seven_day": {"pct": 100, "resets_at": r7}}))
+        with mock.patch.object(km, "_auth_key_present", lambda: True), \
+                mock.patch.object(km, "_live_map", lambda: self.live):
+            d, f = self._delta(self._build)
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["blocked"].get("capOffer"), {"resetsAt": r5, "window": "five_hour"})
+            d, f = self._delta(lambda: self._build(r5 + 1))
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"offer": 1}),
+                             "the five-hour reset passed with the seven-day window still capped: web re-derives: %r" % d)
+            self.assertEqual(self._cards(f)[WEB + ":g1"]["blocked"].get("capOffer"), {"resetsAt": r7, "window": "seven_day"},
+                             "the rebuilt card names the window still capped and ITS reset, never the passed one")
+            d, f = self._delta(lambda: self._build(r5 + 2))
+            self.assertEqual(d["derived"], 0, "and holds: a hit")
+            d, f = self._delta(lambda: self._build(r7 + 1))
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"offer": 1}), "the seven-day reset passing closes it: %r" % d)
+            self.assertNotIn("capOffer", self._cards(f)[WEB + ":g1"]["blocked"])
+
+    def test_the_offer_is_keyed_only_for_the_session_that_read_usage(self):
+        # one clock read: the cap and the assertion below must name the same second, and two reads of time.time()
+        # straddled a boundary on a CI job (1789348898 in the key against 1789348899 expected)
+        reset = max(NOW, int(time.time())) + 600
+        self._cap_death(WEB, reset)
+        with mock.patch.object(km, "_auth_key_present", lambda: True), \
+                mock.patch.object(km, "_live_map", lambda: self.live):
+            self._build()
+            k_web = km._feed_memo_get(WEB)[0]
+            k_api = km._feed_memo_get(API)[0]
+            at = km._FEED_MEMO_LABELS.index("offer")
+            self.assertEqual(k_web[at], ("five_hour", reset),
+                             "web read usage.json: its key carries the open window and its reset")
+            self.assertIsNone(k_api[at], "api did not: the crossing is no input of its card")
+
+
+class ThePostalLogIsKeyedPerSession(_Board):
+    """The postal log is one file every session's derivation reads, but a session's cards read only the rows it is
+    a party to (its own asks, the replies to them, its peers' names), so the key holds that slice by value, not
+    the whole log's identity: a row between two other sessions moves no key of this one (T368 review: the
+    whole-log identity re-derived the board on every row)."""
+
+    def _mail(self, frm, to, kind, t, body):
+        p = jd.MESSAGES
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a") as fh:
+            fh.write(json.dumps({"id": "m-%d" % t, "from_id": frm, "to_id": to, "from": NAME_OF[frm], "to": NAME_OF[to],
+                                 "kind": kind, "t": t, "body": body}) + "\n")
+
+    def test_a_row_between_two_other_sessions_leaves_a_sessions_key_where_it_was(self):
         self._build()
-        self.assertEqual(self._delta("hit"), 3, "warm nodes are writes, not reads: no dependency, a hit")
-        self.assertEqual(km._node_anchor_last[g1], warm, "the hit re-applied what a fresh build would have written")
-
-
-class TwoGestures(_World):
-    """A SECOND user gesture on the same sid within one judge pass (the review's reproduction): the first
-    punch copies the snapshot entry, and the second must land on a fresh copy too. Re-punching the first
-    copy in place kept its identity, so the memo hit on it and served the pre-gesture rows for the rest
-    of the pass."""
-
-    def test_the_second_gesture_in_one_pass_reaches_the_memoized_rows(self):
-        g1, g2, g4 = SID + ":g1", SID + ":g2", SID + ":g4"
-        self._build()                                    # live branch: the FrozenStore is the key
-        km._begin_goals_pass()                           # a judge pass in flight: the snapshot branch
-        try:
-            self._build()                                # the snapshot object is the key: stored
-            jd.append_override(SID, g2, "followup", NOW - 20)    # gesture 1: reopen the blocked top
-            km._note_user_goal_write(SID)
-            f1 = self._build()                           # copy-on-punch: the copy is a new key
-            self.assertEqual(_tops(f1, SID)[g2]["column"], "working", "gesture 1 landed")
-            self.assertEqual({r["id"]: r for r in _tops(f1, SID)[g1]["tree"]}[g4]["status"], "open")
-            jd.append_override(SID, g4, "resolve", NOW - 10)     # gesture 2, same pass: resolve an open sub
-            km._user_goal_write[SID] = km._user_goal_write[SID] + 1.0   # a moved mark, whatever the clock's tick
-            self._reset_deltas()
-            memoized = self._build()
-            self.assertEqual(self._delta("miss"), 1, "the fresh copy is a new key: the session recomputes")
-            fresh = self._fresh()
-        finally:
-            km._end_goals_pass()
-        rows_m = {r["id"]: r for r in _tops(memoized, SID)[g1]["tree"]}
-        rows_f = {r["id"]: r for r in _tops(fresh, SID)[g1]["tree"]}
-        self.assertEqual(rows_f[g4]["status"], "done", "a fresh build shows the second gesture")
-        self.assertEqual(rows_m[g4]["status"], "done", "…and so does the memoized one")
-        self.assertEqual(_loop_out(memoized), _loop_out(fresh))
-
-
-class Bypasses(_World):
-    def test_live_atoms_bypass_the_memo_and_the_build_equals_the_unmemoized_one(self):
-        self._build()
-        self._reset_deltas()
-        e_before = km._feed_segs_memo[SID]
-        real = km._merge_live_atoms
-        with mock.patch.object(km, "_merge_live_atoms",
-                               lambda session, sid, shown_texts=(): dict(session) if sid == SID else real(session, sid, shown_texts)):
-            memoized = self._build()
-            self.assertEqual(self._delta("bypass_live"), 1)
-            self.assertEqual(self._delta("hit"), 2)
-            self.assertIs(km._feed_segs_memo[SID], e_before, "a bypass stores nothing")
-            fresh = self._fresh()
-        self.assertEqual(_loop_out(memoized), _loop_out(fresh))
-
-    def test_a_swallowed_exception_on_the_miss_build_is_not_memoized(self):
-        real = km._seg_anchors
-        boom = {"n": 0}
-
-        def failing(atoms):
-            boom["n"] += 1
-            if boom["n"] == 1:
-                raise OSError("synthetic: the first walk fails")
-            return real(atoms)
-        with mock.patch.object(km, "_seg_anchors", failing):
-            f = self._build()
-        degraded_sid = next(sid for sid in SIDS if sid not in km._feed_segs_memo)
-        self.assertEqual(self._delta("bypass_degraded"), 1)
-        self.assertEqual(self._delta("miss"), 2)
-        self.assertEqual(len(km._feed_segs_memo), 2, "the degraded session has no entry")
-        rows = {r["id"]: r for r in _tops(f, degraded_sid)[degraded_sid + ":g1"]["tree"]}
-        self.assertIsNone(rows[degraded_sid + ":g1"]["anchorUuid"], "the degraded build shipped empty anchors")
-        self._reset_deltas()
-        f2 = self._build()
-        self.assertEqual(self._delta("miss"), 1, "the next build recomputes it and stores")
-        rows = {r["id"]: r for r in _tops(f2, degraded_sid)[degraded_sid + ":g1"]["tree"]}
-        self.assertIsNotNone(rows[degraded_sid + ":g1"]["anchorUuid"], "…and the anchors are back")
-
-    def test_a_held_session_bypasses(self):
-        self._build()
-        self._reset_deltas()
-        km._rewind_hold_set(SID, T0 + 55, "a0")            # hides g2 (born after the cut)
-        f = self._build()
-        self.assertEqual(self._delta("bypass_unkeyed"), 1)
-        self.assertEqual(self._delta("hit"), 2)
-        self.assertNotIn(SID + ":g2", _tops(f, SID))
-        km._rewind_hold_clear(SID)
-        self._reset_deltas()
-        self._build()
-        self.assertEqual(self._delta("hit"), 3, "the entry survived the hold and serves again")
-
-    def test_an_unscoped_build_reads_the_memo_but_never_fills_it(self):
-        self._build()                                    # scoped: fills
-        self._reset_deltas()
-        f_unscoped = self._build(scoped=False)
-        self.assertEqual(self._delta("hit"), 3, "a WS-thread gesture build reads the pusher's entries")
-        with km._FEED_SEGS_LOCK:
-            km._feed_segs_memo.clear()
-        self._reset_deltas()
-        f2 = self._build(scoped=False)
-        self.assertEqual(self._delta("bypass_unscoped"), 3)
-        self.assertEqual(len(km._feed_segs_memo), 0, "…and never fills")
-        self.assertEqual(_loop_out(f_unscoped), _loop_out(f2))
-
-    def test_a_session_leaving_the_alive_set_is_evicted(self):
-        self._build()
-        self.assertEqual(km._feed_segs_report()["entries"], 3)
-        self.sessions.pop()                              # tests leaves
-        self._reset_deltas()
-        self._build()
-        self.assertEqual(self._delta("evict"), 1)
-        self.assertEqual(sorted(km._feed_segs_memo), sorted([SID, SID_B]))
-
-
-class SharedRows(_World):
-    def test_the_serving_fold_lands_on_a_copy_of_the_memoized_tracker_row(self):
-        # SID_B's top gM is a to-do mirror SERVING SID's handoff row g3: the fold re-parents gM's rows under it
-        gm, gs, tracker = SID_B + ":g6", SID_B + ":g7", SID + ":g3"
-
-        def add_mirror(raw):
-            raw["nodes"][gm] = {"id": gm, "text": "review the schema (mirror)", "parentId": None, "t": T0 + 80,
-                                "mt": T0 + 80, "why": "x", "trail": [], "log": [], "serving": {"goalId": tracker}}
-            raw["nodes"][gs] = {"id": gs, "text": "check the indexes", "parentId": gm, "t": T0 + 85, "mt": T0 + 85,
-                                "why": "x", "trail": [], "log": []}
-            raw["status"][gm] = "working"
-            raw["seq"] = 7
-        self._republish(SID_B, add_mirror)
-        f1 = self._build()
-        rows1 = {r["id"]: r for r in _tops(f1, SID)[SID + ":g1"]["tree"]}
-        self.assertEqual(rows1[tracker]["children"], [gm], "the mirror's root rides the tracker row")
-        self.assertIn(gs, rows1, "…with its rows")
-        self.assertNotIn(gm, _tops(f1, SID_B), "the mirror stands on no card of its own")
-        memo_rows, _w = km._feed_segs_memo[SID].trees[SID + ":g1"]
-        memo_tracker = next(r for r in memo_rows if r["id"] == tracker)
-        self.assertEqual(memo_tracker["children"], [], "the memoized row is untouched")
-        self.assertIsNot(rows1[tracker], memo_tracker, "the served row is a copy")
-        self.assertIs(rows1[SID + ":g1"], memo_rows[0], "the rows the fold did not touch are the shared objects")
-        snapshot = json.dumps(memo_rows, sort_keys=True)
-        f2 = self._build()
-        self.assertEqual(json.dumps(km._feed_segs_memo[SID].trees[SID + ":g1"][0], sort_keys=True), snapshot)
-        self.assertEqual(_loop_out(f1), _loop_out(f2))
-
-    def test_tints_are_stamped_at_serialization_not_in_the_build(self):
-        f = self._build()
-        for a in f["asks"]:
-            self.assertNotIn("trgb", a)
-            for r in a.get("tree") or []:
-                self.assertNotIn("trgb", r)
-            self.assertIs(km._strip_trgb(a), a)
-        body = json.loads(km._feed_body(f))
-        self.assertEqual(len(body["asks"]), len(f["asks"]))
-        for a in body["asks"]:
-            self.assertEqual(a["trgb"], list(km.cm.age_rgb(NOW - a["t"])))
-            for r in a.get("tree") or []:
-                self.assertEqual(r["trgb"], list(km.cm.age_rgb(NOW - r["last"])))
-        cards, _l, _r, _ms = km._feed_parts(f)
-        self.assertFalse(any('"trgb"' in s for s in cards.values()), "the delta strings carry no tint")
-        for a in f["asks"]:
-            self.assertNotIn("trgb", a, "the stamp copied; the built cards are unchanged")
-
-    def test_concurrent_builds_while_sessions_die_do_not_raise(self):
-        errors = []
-
-        def builder():
-            try:
-                km._live_scope.names = km._names_snapshot()
-                for _ in range(12):
-                    km.build_feed(NOW, dict(self.tmux))
-            except Exception as e:                       # noqa: BLE001 — the test collects every failure
-                errors.append(repr(e))
-            finally:
-                km._live_scope.names = None
-
-        def killer():
-            for _ in range(2):
-                time.sleep(0.02)
-                if self.sessions:
-                    self.sessions.pop()
-        ts = [threading.Thread(target=builder), threading.Thread(target=builder), threading.Thread(target=killer)]
-        for t in ts:
-            t.start()
-        for t in ts:
-            t.join(30)
-        self.assertEqual(errors, [])
-        self.assertLessEqual(len(km._feed_segs_memo), len(self.sessions) or 1)
-
-
-class ConcurrentDeps(unittest.TestCase):
-    """_FeedSegs.anchors_hold() on one thread while tree() fills a cold top on another (a gesture build
-    on a handler thread beside the pusher's): the dependency map is read as a snapshot and filled in one
-    step under the memo lock, so the iteration never sees the dict change size. Staged with hooks (the
-    filler records its first cold read only once the reader is inside its loop, and the reader resumes
-    only once that read is recorded), not a sleep race."""
-
-    def setUp(self):
-        self.saved_last = km._node_anchor_last
-        self.addCleanup(setattr, km, "_node_anchor_last", self.saved_last)
-
-    def _entry(self):
-        nodes = {}
-        for top in ("g1", "g2"):
-            tid = "%s:%s" % (SID, top)
-            nodes[tid] = {"id": tid, "text": "top " + top, "parentId": None, "t": T0, "mt": T0, "trail": [], "log": []}
-            for i in range(40):
-                cid = "%s:%s-c%d" % (SID, top, i)                       # a cold sub: its trail resolves in no parse
-                nodes[cid] = {"id": cid, "text": "cold %d" % i, "parentId": tid, "t": T0 + i, "mt": T0 + i,
-                              "trail": ["%s:999:nonexistent%d" % (SID, i)], "log": []}
-        store = {"rompUuid": SID, "nodes": nodes, "status": {}, "placements": {}}
-        return km._feed_segs_build(SID, "web", None, None, store, False)
-
-    def test_anchors_hold_reads_a_snapshot_while_another_thread_fills_the_deps(self):
-        e = self._entry()
-        e.tree(SID + ":g1")                                            # 41 cold reads recorded: the top (an empty
-        self.assertEqual(len(e.anchor_deps), 41)                       # trail resolves to no segment) and its 40 subs
-        iterating, inserted = threading.Event(), threading.Event()
-        reader_ident = [None]                                          # the hook stages the READER's reads only: the
-        #                                                                writer's own cold reads go through get() too
-
-        class Hooked(dict):
-            def get(self_, k, d=None):
-                if threading.get_ident() == reader_ident[0] and not iterating.is_set():
-                    iterating.set()                                    # the reader is inside its loop
-                    inserted.wait(10)                                  # …and holds until the filler recorded a read
-                return dict.get(self_, k, d)
-        km._node_anchor_last = Hooked(self.saved_last)
-        real = km._node_anchor_uuids
-
-        def filler(nd, seg_trig, seg_work, deps=None, writes=None, sid=None):   # sid: the ledger memo's revision
-            first = deps is not None and not inserted.is_set()
-            if first:
-                iterating.wait(10)                                     # record nothing until the reader is mid-loop
-            out = real(nd, seg_trig, seg_work, deps, writes, sid=sid)
-            if first:
-                inserted.set()
-            return out
-        errors, results = [], []
-
-        def reader():
-            reader_ident[0] = threading.get_ident()
-            try:
-                results.append(e.anchors_hold())
-            except Exception as ex:                                    # noqa: BLE001 — the test collects the failure
-                errors.append(repr(ex))
-
-        def writer():
-            try:
-                with mock.patch.object(km, "_node_anchor_uuids", filler):
-                    e.tree(SID + ":g2")
-            except Exception as ex:                                    # noqa: BLE001
-                errors.append(repr(ex))
-        tr, tw = threading.Thread(target=reader), threading.Thread(target=writer)
-        tr.start(); tw.start(); tw.join(20); tr.join(20)
-        self.assertTrue(iterating.is_set() and inserted.is_set(), "the staging ran")
-        self.assertEqual(errors, [], "no dict-changed-size raise out of either thread")
-        self.assertEqual(results, [True])
-        self.assertEqual(len(e.anchor_deps), 82, "the second top's cold reads were merged after its flatten")
-
-
-class Differential(_World):
-    def test_random_perturbations_memoized_equals_fresh(self):
-        rng = random.Random(20260907)
-        colours = ["#1EA1EB", "#FF8800", "#22AA44", "#AA22AA"]
-
-        def perturb():
-            sid = rng.choice(SIDS)
-            kind = rng.choice(("transcript", "store", "journal", "names", "working", "hold", "nothing", "anchor",
-                               "pass", "gesture"))
-            if kind == "transcript":
-                self._append_turn(sid)
-            elif kind == "store":
-                n = rng.randrange(1000)
-                self._republish(sid, lambda raw: raw["nodes"][sid + ":g4"].__setitem__("text", "Wire the route %d" % n))
-            elif kind == "journal":
-                jd.append_override(sid, sid + ":g2", rng.choice(("followup", "resolve")), NOW - rng.randrange(1, 3000))
-            elif kind == "names":
-                self._write_name(sid, dict(zip(SIDS, NAMES))[sid], rng.choice(colours))
-            elif kind == "working":
-                (self.force_working.discard if sid in self.force_working else self.force_working.add)(sid)
-            elif kind == "hold":
-                if km._rewind_hold_get(sid):
-                    km._rewind_hold_clear(sid)
-                else:
-                    km._rewind_hold_set(sid, T0 + 55, "a0")
-            elif kind == "anchor":
-                km._node_anchor_last[sid + ":g4"] = ("p", "w-%d" % rng.randrange(100))
-            elif kind == "pass":                     # a judge pass begins or ends: the snapshot branch comes and goes
-                if km._goals_snap[0] is None:
-                    km._begin_goals_pass()
-                else:
-                    km._end_goals_pass()
-            elif kind == "gesture":                  # a user gesture, noted as the routes note it: punches a mid-pass snapshot
-                jd.append_override(sid, sid + ":g4", rng.choice(("followup", "resolve")), NOW - rng.randrange(1, 3000))
-                km._user_goal_write[sid] = max(time.time(), km._user_goal_write.get(sid, 0.0) + 1e-3)
-            return kind
-        for i in range(200):
-            kind = perturb()
-            memoized = self._build()
-            fresh = self._fresh()
-            self.assertEqual(_loop_out(memoized), _loop_out(fresh),
-                             "step %d (%s): the memoized build differs from a fresh one" % (i, kind))
-        st = km._feed_segs_report()
-        self.assertGreater(st["hit"] - self.stats0["hit"], 0, "the run exercised hits")
+        self._mail(WEB, API, "question", NOW - 50, "Is the list endpoint paginated?")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 2, "the two parties re-derive, the third does not: %r" % d)
+        self.assertEqual(d["miss_by"], {"postal": 2, "wait": 1}, "the question also opens the asker's wait edge")
+        self.assertEqual(km._feed_memo_get(TESTS)[0][km._FEED_MEMO_LABELS.index("postal")], ((), ()),
+                         "tests is party to no row: its slice is empty and its key stood")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0)
+        self._mail(API, WEB, "coordinate", NOW - 40, "Yes, by cursor.")
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (2, {"postal": 2, "wait": 1}), "the reply moves the pair's rows and closes the edge: %r" % d)
+        self.assertEqual(km._feed_memo_get(TESTS)[0][km._FEED_MEMO_LABELS.index("postal")], ((), ()))
+        self._mail(TESTS, WEB, "coordinate", NOW - 30, "Covering the cursor case.")
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (2, {"postal": 2}), "tests and web, never api: %r" % d)
+        self.assertEqual(km._feed_memo_get(API)[0][km._FEED_MEMO_LABELS.index("postal")][0][0][0], (WEB, API),
+                         "api's slice still holds its own pair alone")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── this fork's components and claims (the 2026-09-15 pull-in) ─────────────────────────────────────────────
+# The fork's own per-session feed memo (its tests/test_feed_session_memo.py, round-4 plan P2-A) retired for T368's,
+# the module above. What follows are the fork-only claims whose mechanism survives the merge: the two key
+# components the fork's user-todo floor adds (`todos`, `queued`), the pass-snapshot punch a second gesture in one
+# judge pass lands on (_note_user_goal_write, _feed_goals's copy-on-punch), and a differential run over random
+# perturbations of the board.
+
+class TheUserTodoAndQueuedComponents(_Board):
+    """This fork's user-todo floor reads the session's open todos and whether a send is already waiting inside
+    _feed_session_entry, so the key carries both by value: `todos` (the open todos after the ended gate) and
+    `queued` (a message parked for the session, or queued at its backend). A todo appended, answered or withdrawn
+    and a send parked or lifted each re-derive that session alone, under that label; an unchanged store hits."""
+
+    def setUp(self):
+        super().setUp()
+        self.assertIsNotNone(km._set_user_todos(True), "the switch on in this board's own state root")
+        km._pending_ops.pop(WEB, None)
+        self.addCleanup(km._pending_ops.pop, WEB, None)
+
+    def test_a_todo_appended_and_answered_re_derives_that_session_alone(self):
+        self._build()
+        tid = km._add_user_todo(WEB, "check the pagination against the spec")
+        self.assertEqual([t["id"] for t in km._open_user_todos(WEB)], [tid])
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"todos": 1}, "the open todos are a component of the key")
+        card = self._cards(f)[WEB + ":g1"]
+        self.assertEqual(f["userTodos"].get(WEB), 1, "the payload's marker map counts web's todo")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0, "the todo stands: a hit")
+        self.assertTrue(km._resolve_user_todo(WEB, tid, "answered", reply="matches"))
+        d, f = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"todos": 1}), "the answer moved the open set: %r" % d)
+        self.assertNotIn(WEB, f["userTodos"], "no open todo, no marker")
+        self.assertIn(WEB + ":g1", self._cards(f))
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0, d)
+
+    def test_a_queued_send_re_derives_that_session_alone(self):
+        self._build()
+        km._pending_ops[WEB] = [("send", "and the retry hint", "human", None, True, None, None)]   # a parked user send
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["hit"]), (1, 2), d)
+        self.assertEqual(d["miss_by"], {"queued": 1}, "a send waiting for the session is a component of the key")
+        d, _ = self._delta(self._build)
+        self.assertEqual(d["derived"], 0, "still queued: a hit")
+        km._pending_ops.pop(WEB, None)                                            # the drain delivered it
+        d, _ = self._delta(self._build)
+        self.assertEqual((d["derived"], d["miss_by"]), (1, {"queued": 1}), d)
+        with mock.patch.object(km, "_backend_queued", lambda sid: sid == API):   # the backend's own queue counts too
+            d, _ = self._delta(self._build)
+            self.assertEqual((d["derived"], d["miss_by"]), (1, {"queued": 1}), d)
+
+    def test_the_two_labels_sit_before_peers_and_the_miss_map_carries_them(self):
+        labels = km._FEED_MEMO_LABELS
+        self.assertEqual(labels[-1], "peers", "upstream's closing dependency stays last")
+        self.assertLess(labels.index("closer"), labels.index("todos"))
+        self.assertLess(labels.index("todos"), labels.index("queued"))
+        self.assertLess(labels.index("queued"), labels.index("peers"))
+        self.assertEqual(len(labels), 33)
+        self.assertTrue({"todos", "queued"} <= set(km._feed_memo_report()["miss_by"]))
+
+
+class TwoGesturesInOnePass(_Board):
+    """A SECOND user gesture on the same sid within one judge pass (the fork's review reproduction, 032b32077): the
+    feed reads the pass's snapshot store, a gesture is replayed onto a fresh copy (_feed_goals's copy-on-punch, keyed
+    on the mark _note_user_goal_write moves), and the memo must miss on the second copy as on the first, so the served
+    board equals a from-scratch build after each gesture."""
+
+    def test_the_second_gesture_in_one_pass_reaches_the_memoized_rows(self):
+        gid = WEB + ":g1"
+        self._build()
+        km._begin_goals_pass()                             # a judge pass in flight: the snapshot branch serves the store
+        try:
+            self._build()                                  # the snapshot's decode is a new store identity: derived once, then served
+            d, _ = self._delta(self._build)
+            self.assertEqual(d["derived"], 0, "the snapshot stands: a hit")
+            jd.append_override(WEB, gid, "resolve", NOW - 20)          # gesture 1: the user resolves web's card
+            km._note_user_goal_write(WEB)
+            d, f1 = self._delta(self._build)
+            self.assertEqual(d["derived"], 1, "the punched copy is a new store identity: web re-derives")
+            self.assertTrue(self._cards(f1)[gid]["doneConfirming"], "gesture 1 landed")
+            jd.append_override(WEB, gid, "followup", NOW - 10)         # gesture 2, same pass: the user reopens it
+            km._user_goal_write[WEB] = km._user_goal_write[WEB] + 1.0  # a moved mark, whatever the clock's tick
+            d, f2 = self._delta(self._build)
+            self.assertEqual(d["derived"], 1, "the second copy is a new identity too: web re-derives again")
+            self.assertFalse(self._cards(f2)[gid].get("doneConfirming"), "gesture 2 landed on the served board")
+            _reset_memo()
+            d, fresh = self._delta(self._build)
+            self.assertEqual(d["derived"], 3)
+            self.assertEqual(_dump(f2), _dump(fresh), "the memoized board after two gestures equals a fresh one")
+        finally:
+            km._end_goals_pass()
+            km._user_goal_write.pop(WEB, None)
+
+
+class Differential(_Board):
+    """A random walk over the board's writers, each step comparing the memoized build against a from-scratch one at
+    the same clock: a component that stopped covering its input shows up as a differing board, by step and kind."""
+
+    def test_random_perturbations_memoized_equals_fresh(self):
+        rng = random.Random(20260915)
+        self.assertIsNotNone(km._set_user_todos(True))
+        km._pending_ops.pop(WEB, None)
+        self.addCleanup(km._pending_ops.pop, WEB, None)
+        todos = {}
+        turn_n = {sid: 1 for sid in SIDS}
+
+        def perturb():
+            sid = rng.choice(SIDS)
+            kind = rng.choice(("store", "journal", "clear", "row", "transcript", "states", "names", "hide", "todo",
+                               "queued", "nothing"))
+            if kind == "store":
+                self._publish_raw(sid, "%s (revision %d)" % (GOAL_OF[sid], rng.randrange(1000)))
+            elif kind == "journal":
+                jd.append_override(sid, sid + ":g1", rng.choice(("followup", "resolve")), NOW - rng.randrange(1, 3000))
+            elif kind == "clear":
+                with (jd.STATE / "cleared.jsonl").open("a") as fh:
+                    fh.write(json.dumps({"id": sid + ":g1", "t": NOW - 10, "op": rng.choice(("clear", "dismiss"))}) + "\n")
+            elif kind == "row":
+                self.live[sid] = dict(self._row(), model=rng.choice(("", "opus", "sonnet")),
+                                      state=rng.choice(("idle", "working")))
+            elif kind == "transcript":
+                turn_n[sid] += 1
+                with self.tpath[sid].open("a") as fh:
+                    fh.write(json.dumps(uline(NOW - rng.randrange(1, 300), "step %d" % turn_n[sid], "u%d" % turn_n[sid], "a1")) + "\n")
+            elif kind == "states":
+                jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+                with (jd.STATESDIR / (sid + ".jsonl")).open("a") as fh:
+                    fh.write(json.dumps({"t": NOW - rng.randrange(1, 300), "state": rng.choice(("idle", "working"))}) + "\n")
+            elif kind == "names":
+                (jd.NAMES / sid).write_text("%s\t%s\t%s\n" % (NAME_OF[sid], self.cdir[sid], rng.choice(("#1EA1EB", "#123456", "#E67E22"))))
+            elif kind == "hide":
+                flags = jd.STATE / "session-flags.json"
+                cur = json.loads(flags.read_text()) if flags.exists() else {}
+                cur[sid] = {"hideFromFeed": not (cur.get(sid) or {}).get("hideFromFeed")}
+                flags.write_text(json.dumps(cur))
+            elif kind == "todo":
+                if todos.get(sid):
+                    km._resolve_user_todo(sid, todos.pop(sid), "answered", reply="done")
+                else:
+                    todos[sid] = km._add_user_todo(sid, "look at step %d" % turn_n[sid])
+            elif kind == "queued":
+                if km._pending_ops.get(sid):
+                    km._pending_ops.pop(sid, None)
+                else:
+                    km._pending_ops[sid] = [("send", "a parked note", "human", None, True, None, None)]
+                    self.addCleanup(km._pending_ops.pop, sid, None)
+            return kind
+        for i in range(60):
+            kind = perturb()
+            memoized = self._build()
+            _reset_memo()
+            fresh = self._build()
+            self.assertEqual(_dump(memoized), _dump(fresh),
+                             "step %d (%s): the memoized build differs from a fresh one" % (i, kind))

@@ -9,6 +9,12 @@ import type { PickHeld } from "./pick-held";
 export type CommentMsg = { who: "you" | "agent"; text: string; t: number };
 
 export type CommentThread = {
+  /** the thread's mail is off (T356): a comment thread neither sends nor receives peer mail until broken out */
+  mailOff?: boolean;
+  /** why, when it is off: "thread" (not yet broken out), "isolation" (the lane's mailbox toggle), "unreadable" (its record cannot be read) */
+  mailOffWhy?: string;
+  /** messages waiting in its postal box (they land when it is broken out) */
+  heldMail?: number;
   tid: string;
   name?: string;              // the thread's editable name (<session>-comment-<N> by default)
   color?: string;             // the comment's identity color — picked distinct from its parent's
@@ -163,6 +169,15 @@ export function findAnchorRange(hay: string, exact: string):
   const matched = words.slice(0, best.k).join(" ");
   if (best.k < 3 && matched.length < 12) return null;
   return { start: best.start, end: best.end, partial: true };
+}
+
+/** A text node the mark pass must leave alone (T349, the user 2026-09-11: a comment on a table's row broke the table):
+ *  the whitespace text between a table's cells and rows sits directly under TABLE / THEAD / TBODY / TFOOT / TR, and an
+ *  inline <mark> placed there gets its own anonymous table cell, so the columns shift. Those nodes carry no visible
+ *  text; skipping them lets the mark ride the row cell by cell while the table's boxes stay. `parentTag` is the text
+ *  node's parent element's tagName (upper-case in an HTML document). */
+export function markSkipsParent(parentTag: string | null | undefined): boolean {
+  return /^(TABLE|THEAD|TBODY|TFOOT|TR)$/.test(parentTag || "");
 }
 
 /** Split a global [start, end) character range over consecutive text-node lengths into per-node

@@ -60,7 +60,7 @@ def claude_dir():
 def _registry(state):
     """{sid: {name, keyed, threadOf, ids}} from the SDK backend's per-session registry files. The registry
     keeps a dead session's file, so this is every SDK session the kernel ever ran — the ledger's universe
-    (tmux-backend sessions never reach spend.json and have no file here)."""
+    (a Codex session bills no Claude account, never reaches spend.json and has no file here)."""
     out = {}
     for p in sorted(glob.glob(str(state / "sdk" / "*.json"))):
         try:
@@ -100,6 +100,19 @@ def _bucket_keys(ts):
     keying (time.strftime on the local clock at record time)."""
     t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
     return t.strftime("%Y-%m-%dT%H"), t.strftime("%Y-%m-%d")
+
+
+def _lane_files(subdir):
+    """Every .jsonl under a session's subagents directory, at any depth (Claude Code 2.1.261 writes a Workflow agent's
+    transcript at workflows/wf_<id>/agent-<id>.jsonl; a flat glob missed every one, T355), no symlink followed or taken:
+    the kernel's _subagent_transcripts rule."""
+    if os.path.islink(subdir) or not os.path.isdir(subdir):
+        return []
+    out = []
+    for root, dirs, files in os.walk(subdir):        # followlinks=False
+        dirs.sort()
+        out.extend(p for p in (os.path.join(root, n) for n in files if n.endswith(".jsonl")) if not os.path.islink(p))
+    return sorted(out)
 
 
 def _scan(paths, seen):
@@ -148,7 +161,8 @@ def recount(state, claude, ledger):
         paths = []
         for fid in sorted(info["ids"]):
             paths += glob.glob(str(claude / "projects" / "*" / (fid + ".jsonl")))
-            paths += glob.glob(str(claude / "projects" / "*" / fid / "subagents" / "*.jsonl"))   # the Agent tool's lanes
+            for sd in glob.glob(str(claude / "projects" / "*" / fid / "subagents")):   # the Agent tool's lanes, one level or deeper
+                paths += _lane_files(sd)                                                #  (workflow agents sit under workflows/wf_<id>/)
         for hk, dk, u in _scan(sorted(set(paths)), seen):
             for kind, key in (("hours", hk), ("days", dk)):
                 slot = per.setdefault((kind, key), {}).setdefault(owner, {k: 0 for k, _ in KINDS})
@@ -163,7 +177,9 @@ def rebuild(ledger, per, reg, now=None, allow_lower=False):
     LOWER than recorded and were left as they were (missing evidence, see the module doc) — empty when
     allow_lower is set, in which case they are rewritten and listed in changes."""
     now = time.time() if now is None else now
-    out = {"days": {}, "hours": {}}
+    out = {k: v for k, v in (ledger or {}).items() if k not in ("days", "hours")}   # every other top-level key rides through
+    #   unchanged (repairJournal, the spend repair's folded refs: dropped, every past journal entry read as pending again)
+    out.update({"days": {}, "hours": {}})
     changes, kept = [], []
     for kind in ("days", "hours"):
         buckets = dict(ledger.get(kind) or {}) if isinstance(ledger.get(kind), dict) else {}

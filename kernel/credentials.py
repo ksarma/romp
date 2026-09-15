@@ -202,13 +202,43 @@ def settings_files(cwd=None, operator_only=False) -> list:
     return files
 
 
+# _read_settings's memo: path -> ((inode, mtime ns, ctime ns, size), the parsed dict). The helper readers run
+# per push from the kernel's pusher thread (helper_source through _auth_both and _auth_avail) and per auth
+# check from the SDK backend; before the memo each call opened and parsed the user and the managed file
+# (measured on a live box: ~57 opens a second of each). One stat per call now, a read only when it changed.
+_SETTINGS_CACHE = {}
+
+
 def _read_settings(path):
     """One settings file as a dict; None when absent. Unreadable or unparsable is loud: the CLI would refuse
-    it too, and a silently skipped file would misreport the box as helper-less."""
+    it too, and a silently skipped file would misreport the box as helper-less.
+
+    Memoized per path on the file's stat identity (inode, mtime in ns, ctime in ns, size): one stat per call,
+    a read and a parse only when that changed, so the hot reload api_key_helper promises holds (a helper the
+    user just added counts at the next call) while the per-push callers cost a stat rather than an open. A
+    rewrite in place within one timestamp tick that keeps the byte length is the accepted blind spot, and so is
+    a chmod within the tick of the last write (kernels before multigrain timestamps, Linux 6.13, stamp ctime
+    with the coarse tick); past that tick a rename into place is a new inode and a chmod is a new ctime, so
+    both are seen (the chmod matters: a file made unreadable takes the loud path below at the next call
+    instead of serving its old parse). Nothing loud is memoized: an unreadable or unparsable file raises on
+    every call. An absent file drops its entry. Callers read the returned dict and never mutate it: it is the
+    memoized object."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        _SETTINGS_CACHE.pop(path, None)
+        return None
+    except OSError:
+        raise CredentialError("Claude Code settings file cannot be read: %s" % path)
+    ident = (st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size)
+    hit = _SETTINGS_CACHE.get(path)
+    if hit is not None and hit[0] == ident:
+        return hit[1]
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
     except FileNotFoundError:
+        _SETTINGS_CACHE.pop(path, None)      # removed between the stat and the open: absent, as the stat would say
         return None
     except OSError:
         raise CredentialError("Claude Code settings file cannot be read: %s" % path)
@@ -216,16 +246,19 @@ def _read_settings(path):
         d = json.loads(text)
     except ValueError:
         raise CredentialError("Claude Code settings file is not valid JSON: %s" % path)
-    return d if isinstance(d, dict) else {}
+    d = d if isinstance(d, dict) else {}
+    _SETTINGS_CACHE[path] = (ident, d)     # the stat from BEFORE the read: a write in between re-reads next time
+    return d
 
 
 def api_key_helper(cwd=None, operator_only=False):
     """The `apiKeyHelper` command Claude Code would run for a process in `cwd`: the value in the
     highest-precedence settings file that DEFINES it as a string. "" when that file sets it to "" (the
     value that disables the helper; a login launch's per-session layer uses it), None when no file defines
-    it (a null falls through to the next file, as it does in the CLI). Read fresh on every call, never
-    cached: Claude Code hot-reloads its settings files, and a helper the user just added must count at
-    once; the cost is four stats. `operator_only`: see settings_files."""
+    it (a null falls through to the next file, as it does in the CLI). Resolved fresh on every call: Claude
+    Code hot-reloads its settings files, and a helper the user just added must count at once; the cost is
+    four stats (_read_settings re-reads a file only when its stat changed). `operator_only`: see
+    settings_files."""
     for p in settings_files(cwd, operator_only):
         d = _read_settings(p)
         if d is None or HELPER_KEY not in d:
@@ -281,31 +314,35 @@ def helper_env() -> dict:
             if k in HELPER_ENV_PASSTHROUGH or k.startswith(HELPER_ENV_PREFIXES)}
 
 
-def run_helper(cmd) -> str:
+def run_helper(cmd, label: str = "apiKeyHelper", timeout_s=None) -> str:
     """Run the helper once, the way Claude Code runs it: through /bin/sh, stdin /dev/null (a prompt would
     hang until the timeout), stderr discarded and never logged (a secret manager's diagnostics can quote
     its own token), stdout the key: non-empty, one line, no whitespace, at most 16 KiB, one trailing
-    newline forgiven (a script's echo adds one). Every failure is a CredentialError in static words."""
+    newline forgiven (a script's echo adds one). Every failure is a CredentialError in static words that
+    open with `label`: the box's own apiKeyHelper by default, a stored login's token command when a launch
+    or a judge call runs one the same way (logins.token_value, the environment road since 2026-09-14).
+    `timeout_s` overrides the bound for a test; HELPER_TIMEOUT_S otherwise."""
+    bound = HELPER_TIMEOUT_S if timeout_s is None else timeout_s
     try:
         r = subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, timeout=HELPER_TIMEOUT_S, check=False, env=helper_env())
+                           stderr=subprocess.DEVNULL, timeout=bound, check=False, env=helper_env())
     except FileNotFoundError:
-        raise CredentialError("apiKeyHelper could not run: /bin/sh is not available") from None
+        raise CredentialError("%s could not run: /bin/sh is not available" % label) from None
     except subprocess.TimeoutExpired:
-        raise CredentialError("apiKeyHelper timed out after %d s" % HELPER_TIMEOUT_S) from None
+        raise CredentialError("%s timed out after %d s" % (label, bound)) from None
     except OSError:
-        raise CredentialError("apiKeyHelper could not be run") from None
+        raise CredentialError("%s could not be run" % label) from None
     if r.returncode:
-        raise CredentialError("apiKeyHelper is not on the manager's PATH (exit 127)" if r.returncode == 127
-                              else "apiKeyHelper failed (non-zero exit)")
+        raise CredentialError("%s is not on the manager's PATH (exit 127)" % label if r.returncode == 127
+                              else "%s failed (non-zero exit)" % label)
     try:
         value = r.stdout.decode("utf-8")
     except UnicodeError:
-        raise CredentialError("apiKeyHelper printed bytes that are not a key") from None
+        raise CredentialError("%s printed bytes that are not a key" % label) from None
     if value.endswith("\n"):
         value = value[:-2] if value.endswith("\r\n") else value[:-1]
     if not value or len(value) > 16384 or any(c.isspace() or c == "\0" for c in value):
-        raise CredentialError("apiKeyHelper printed an empty or invalid key (one line on stdout, exit 0)")
+        raise CredentialError("%s printed an empty or invalid key (one line on stdout, exit 0)" % label)
     return value
 
 

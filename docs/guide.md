@@ -26,6 +26,11 @@ complementary views of what the agents are doing:
 
 ![Tool calls fold into runs; each expands to one line per call](assets/guide/chat-detail.png){ width="100%" }
 
+**Dropping a file.** Drop an image or any file anywhere on the chat pane and it attaches to
+the message box of the session you are looking at; a dashed ring shows the pane is the target
+while you drag, and in a split each column takes its own drops. Dropped anywhere else on the
+dashboard, a file is refused (the cursor says so) rather than opened in place of the page.
+
 **Commenting on a file.** Select any passage in the file viewer and it lands in the
 composer as a quote chip, labeled with the file and the line the passage lives on. Type
 what should change and press **⌘⏎** to set the note aside; keep reading, select the next
@@ -83,17 +88,22 @@ without inserting, and it stays closed for that `@` until you delete it: more le
 caret move away and back, do not reopen it. In the sent message, a name that matches a live
 session is shown as a chip: the name without its `@`, in that session's color on a dark
 backing, the way the Awaiting chip names the session it waits on. Hover it for how that
-session is doing; the message itself still carries the `@name` you typed.
+session is doing; the message itself still carries the `@name` you typed, and so does a
+copy of it.
 
 **A message that has not gone yet.** Send to a busy session and your message waits as a
 dashed bubble under an hourglass until the session takes it — while it compacts, while a
 turn runs, or in the beat before the kernel confirms the send. Until then it is still
-yours: the **✕** in its corner pulls it back into the composer, and the **✎** beside it loads
-the text into the composer under an editing pill, so you can change your mind without
-losing your place in the queue. Send replaces the message where it was, a follow-up keeps
-its context, and Esc or the pill's ✕ leaves it as it was. If the session takes the message
-before the edit lands, romp says so and gives your edited words back to the composer
-rather than sending them twice.
+yours: the **✎** in its corner takes it out of the queue and puts it back into the message
+box — the words, the quote chips it was written against and its attachments — so you can
+change it and send it again, or clear the box to drop it. A queued slash command, and a
+notice romp itself queued, carry a **✕** instead: there is nothing to reword, so they just
+cancel. If the session took the message before you pressed, the bubble says so and the
+box is left as it was, so nothing is sent twice. One narrow window: a chat page from
+before an update, still open while the kernel restarts on the new one, presses a pencil
+the new kernel no longer knows as an edit; the bubble reverts and the message stays
+queued. The page reloads itself on the new kernel within moments, which keeps that
+window short.
 
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
@@ -124,9 +134,7 @@ that had already happened, the steps the session runs in the meantime appear bel
 the session takes it, it lands in that same place. Send several messages during one turn (a
 composer message, then a todo reply) and each reaches the session as its own message, in
 the order you sent them: the next one waits, shown as queued, until the session has taken
-the one before it, so two messages are never joined into one. A Claude Code (tmux) session
-takes a message only while it is idle, so messages sent during its turn wait, shown as queued,
-and arrive together when the turn ends, as one message.
+the one before it, so two messages are never joined into one.
 
 **While a message is on its way.** A message you have sent shows as a dashed bubble
 marked "sending…" until the session records it, however long that takes; the bubble
@@ -138,6 +146,26 @@ its way read "not confirmed · sending…", and ✕ acts on the bubble you press
 Sending the same text twice shows two bubbles; romp confirms them one at a time, as it
 receives each copy, and each clears when its own copy lands.
 
+**A session that needs you.** A tab wears a dashed red ring while its session is stopped on a
+permission or picker prompt. When the feed shows one of the session's cards under Blocked (it
+asked you something, it is waiting on a decision, a peer's message is waiting for your say, or
+a stalled task needs a look), the tab wears a dashed yellow ring instead, whether the session
+is idle, waiting on background work or still working, so the sessions that need you stand out
+in the strip without a click through each of them; a working session keeps its gold dot inside
+the ring. The ring follows the feed, one refresh behind it at most, and goes when the card
+does: answer it, resolve it or clear it and the tab is plain again. A red ring outranks the
+yellow one; the amber ring of a session retrying an API error on its own gives way to it. The
+three rings are rows of **Settings**, **Chat**, **Tab widgets** (**Needs you**, **Waiting on
+you**, **Retrying**), each with its own switch, listed in that order because a tab wears one
+ring at a time and the first that applies wins: red over yellow over amber. A ring switched off
+leaves the tab with its dot; the small dot on a folded group's header and the phone's picker
+follow the same switches. With
+notifications on, the card entering Blocked is also what notifies you (see [Notifications on
+your phone](#notifications-on-your-phone)): the ring is that card, shown in the strip, and it
+stays as long as the card does, including across a kernel restart, which announces nothing. On
+a phone, the session picker marks the same sessions with a yellow bar at the row's left edge,
+and the button that names the current session wears the dashed yellow border.
+
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
 surface (the tag button in the strip narrows the tabs to the tags you pick), and they group
@@ -147,9 +175,9 @@ at the end. A session with several tags appears under each of them; every copy i
 session (click either to open it, and closing either ends it). Each header shows the tag's color and name, then a chevron and a
 member count. Click a header, or press Enter on it, to fold its section down to the header
 alone; the count then says how many tabs are folded away, and a small dot after it shows when
-one of them is busy or needs you: red when one is blocked or waiting on you, otherwise gold
-when one is working, otherwise amber when one hit an API error and is retrying on its own
-(hover it for their names). A folded header keeps the ⚑ flag
+one of them is busy or needs you: red when one is blocked or waiting on you, otherwise yellow
+when one has something waiting on you, otherwise gold when one is working, otherwise amber
+when one hit an API error and is retrying on its own (hover it for their names). A folded header keeps the ⚑ flag
 of any session in it that has asked you for something; when several have, the flag shows how
 many, and hovering it names them. Click the flag to open the section. To keep one tab visible
 while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
@@ -174,29 +202,36 @@ menu cannot tell which copy you mean), or for a tag that is still being created,
 its row leaves the flyout and the menu stays open. **Hide tab** refuses
 the same way on a re-created tag, while the **✕** beside a tag and the row's **+** act on the re-created
 tag at once. The row's **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
-button's menu, turns the sections off for this browser. The groups follow one another across the
+button's menu, turns the sections off for this browser. The Sessions pane has the same
+sections: **Group by tag** in its Filter menu (off until you turn it on, per browser) lays the
+lanes out one section per tag in the same order, each session under every tag it carries and
+the untagged sessions behind a divider, with the tag's chip, the caret and the count on a row
+of its own; a section folded in either place is folded in both, and while grouped the lanes
+follow the tag order (dragging a lane pans, it does not reorder). A session reached from a card or the chat while its section is folded unfolds that section, in the strip too, and the arrow keys walk the rows on screen. The gear at the strip's right end, the same gear as the one at the bottom right of every romp page, opens a small menu: **Lock the tabs in place** freezes every tab move (a drag, a Move to, the Sessions pane's lanes) until you turn it off, and **Tab widgets…** opens the settings on the Chat tab's widget rows. The strip's tag button, at the other end of the controls from the gear, shows no chips of its own: the tags show in the strip's sections when the tabs are grouped, and the button wears the accent while a filter is on. The groups follow one another across the
 strip and wrap as they need (a header left at a row's end with its first tab on the next row moves
 down to join it, when the two fit on one row); the gear's **One tag group per row in the tab strip**
 starts every group on its own row instead. With the groups following one another, the untagged
-sessions sit behind a thin divider.
+sessions sit behind a thin divider. The **Status line** section, next to Tab widgets in the same Chat tab, does the same for the line above the composer: the folder and the git branch are on by default, the session's name and the host of a remote session are there to switch on, and in both sections the rows reorder by dragging a row's grip or with the arrow keys on it, each section previewing the result below its rows; in Tab widgets a line marking the session name's place divides the list, and a row dragged above or below it renders on that side of the name; the three rings around a tab are listed below those rows without a place in the order, since a ring has no side of the name.
 
 **A section at a glance.** Clicking a header also shows the section in the transcript's place:
 one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
 prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,
-green waiting on background work, none while it is idle), a **needs you** or **waiting** word, a ⚑
-when it has asked you for something, what it is doing now in a few words, and how long ago it last
-did anything.
-**Needs you** appears when the feed shows one of the session's cards under Blocked, when the
-session is stopped on a prompt or an API error only you can clear, or when it has flagged a todo
-for you; **waiting**, when it is waiting on background work. A session that asked a question and
-went quiet shows the word with no dot: the dot follows the session's own state, the word follows
-the feed. What it is doing now comes from its current task, else from the headline of
+green waiting on background work, none while it is idle), a state chip when the state is worth a
+word, a ⚑ when it has asked you for something, what it is doing now in a few words, and how long
+ago it last did anything. The chip is the one the bar under the transcript wears for the session
+you are reading, with the same words and colours: **Blocked** when the feed shows one of the
+session's cards under Blocked (a request it flagged for you counts here once the session is idle
+on it) or the session is stopped on a prompt (**API error** when it is stopped on one only you can
+clear), and **Awaiting** with what is awaited (**Awaiting 3 agents**, **Awaiting watch**, the
+peer's name) when it is waiting on background work; the flag and its count show as soon as it
+flags one. A session that asked a question and went quiet shows the chip
+with no dot: the dot follows the session's own state, the chip follows the feed. What it is doing now comes from its current task, else from the headline of
 its work so far, else from the last task it had; a session that has published a note of what it is
 working on shows the note as a quieter second line. Hover a row for its last message, shown without
 its formatting; click one to open that session, which also opens its section if the section is
 folded (with several tags, the first folded group of them that does not hide it; a section that
 hides the session stays as it was; see the next paragraph). The rows update as
-the sessions work and change only when something about a session changes; the **needs you** word
+the sessions work and change only when something about a session changes; the **Blocked** chip
 follows the feed, at most a moment behind it. The section of the tab you are reading folds like
 any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
 The transcript comes back when you pick a session, press Escape, or click that header again while
@@ -246,9 +281,10 @@ come back. Nothing is lost by
 hiding. The group's header keeps the dot and the ⚑ flag for its hidden sessions (the dot is red
 when one of them needs you), and its count shows two numbers, **6+2** for six on the strip and two
 hidden (the tooltip spells it out). When a hidden session needs you, the fold's head says so in
-red before you open it, and its row says **needs you**. While the
-group is open, its count opens this view without folding the group, so hiding a session never needs
-a fold; the dot and the flag, which appear once something is hidden, do the same. On a folded header
+red before you open it, and its row wears the **Blocked** chip, or the ⚑ alone for a request it
+flagged while still working. While the group is open, its count opens this view without folding the
+group, so hiding a session never needs a fold; the dot and the flag, which appear once something is
+hidden, do the same. On a folded header
 the flag opens the group, as before. While this view shows an open group, its count, dot and flag take
 you back to the transcript. Clicking a hidden session's row shows its transcript, with the header
 standing in for the tab, and leaves it hidden, its group folded or open as it was, unless the
@@ -279,11 +315,45 @@ scrolling for the rest; the cap lifts while a row's details are open. Where the 
 it also shrinks the tabs and group headers; on a phone the session picker stands in for the strip, so
 there the setting tightens the panel alone. Like the other chat settings, it is per browser.
 
+**Several sessions at once.** The chat can be split into columns, so two or three sessions
+sit side by side instead of behind each other's tabs. Every column is one full chat with its
+own tab strip and its own composer, and each session lives in exactly one column: the first
+column holds every session not shown elsewhere. Drag a tab to the right edge of the chat and a
+new column opens there on that session; drag a tab onto another column and the session moves
+to it. Without the mouse, **⌘** / **Ctrl** with the backslash key, or **Move this session to a
+new column** in the command palette, moves the session you are on to a new column at the right;
+**Move this session to the next column** and **Move this session to the previous column** in
+the palette walk it across the columns you have. Your unsent draft travels with the session.
+Drag the gutter between two columns to resize them. The **×** in a column's top-right corner
+closes it and returns its sessions to the first column, as does **Close this column** in the
+palette (the column you are in, or the last one when you are in the first); a column whose last
+tab leaves, whether moved away or ended, closes on its own (a column with a session still being
+created in it waits for that session to open). Clicking a card in the feed or a
+notification, or picking a session from the **+** picker, the switcher, an at-mention or a link
+in a transcript when it is shown in another column, lands you in the column that holds it, so
+no session is ever shown twice. The arrangement, each column's sessions and widths, is
+remembered per browser across reloads. Four columns at most; the phone shows one pane at a time
+and never splits.
+
+A tab can have a **hot key**: right-click it, pick **Hot key…**, press a combination, and the
+combination shows on the tab after its name; pressing it switches to that session, in the column that holds it. Once one is set the row reads
+**Update hot key…**: press a new combination to change it, or Backspace or its **Remove**
+button to take it away. **Focus the next chat column** and
+**Focus the previous chat column** in **Keyboard shortcuts** take a hot key too, and cycle the
+focus between the columns; **Toggle notifications for this session** flips the bell of the
+session you are looking at (the tab menu's **Notify me**) and flashes "Notifications enabled
+for web" or "disabled"; once it has a key, the menu's row shows it.
+
 ### The feed
 
 The feed is Romp's task-management layer: a card for each task. Romp's
 [judges](judges.md) watch each session's work, split it into those tasks, and
 keep every card current.
+
+Task tracking has a master switch at the top of Settings, Task tracking, on by
+default. Off, the judges do not run and spend nothing, the feed and the outline
+are not shown, and Romp is a chat-only tool: the chat, the Sessions pane and
+the postal service carry on.
 
 Cards sit in three columns:
 
@@ -306,6 +376,24 @@ tasks, and a task can be handed from one session to another.
 
 Press <span class="romp-btn">Clear</span> on a card when you are done with it. A
 cleared card is archived, and no more work is added to it.
+
+The **View** button in the feed's footer holds the layout choices: the sort
+direction, a single-column layout, grouping each column's cards by session, and
+**Show focused session**. That last switch puts the session you are reading in
+the chat at the top of the feed, above a divider (a two-pixel rule, a step
+up from the hairlines), under a label reading
+**Current session:** followed by the session's name. Clicking the name opens the
+session; clicking the label or its caret folds the whole section to that one
+line, which then shows the session's card count, and clicking again unfolds it.
+Under the label the session's cards sit in the same three blocks as the board
+below, which stays as it is. The blocks have their own controls: the six-dot
+grip on each block drags it to another slot within the section (the arrow keys
+move a focused grip's block the same way), the gutter between two blocks resizes
+them against each other (width only; the section's height follows its cards),
+and each block's caret folds it to its head, a choice that holds for whichever
+session is focused next. The section's blocks follow the board's arrangement
+until the first drag in the section; from then on the two are arranged
+independently.
 
 ### The timeline
 
@@ -377,8 +465,9 @@ it opens where the listing is. The **Directory** row of the **System context** c
 a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again, and the file opens at the
-place you left it. The pane is off by default; the bottom bar turns it on, and on a phone it
-is a tab like the others.
+place you left it. The pane is off by default: the gear's **Files** row (Settings, General, Panes)
+adds a Files toggle to the bottom bar (on a phone, a Files tab like the others), and that
+toggle turns the pane on.
 
 **Links in a file.** Wherever the viewer shows a file's text, over the chat, over
 the feed, or in this pane, the links in that text work. A web address opens in a
@@ -407,7 +496,9 @@ one thing: a plain click acts in the dashboard, and a Cmd-click (Ctrl on Windows
 and Linux) or a middle-click opens the link in a browser tab of its own. Where a comment highlight or a change mark covers a
 link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
-message gets: a path links only when it has a slash and a file extension, starts
+message gets, and a fenced code block in a chat message follows the file's test
+too, linking a path only once the kernel has verified it is a file: a path links
+only when it has a slash and a file extension, starts
 on its own, at the start of a line or after a space, a quote, a bracket, a comma, a
 semicolon, an equals sign, a pipe or Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
 `C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
@@ -745,16 +836,20 @@ The timeline draws an arc for each message. Hover one for its gist:
 Underneath, a local message bus writes the message into a mailbox on disk that
 belongs to the recipient, then delivers it: straight away if that session is
 idle, otherwise when its current turn ends. The recipient reads it as a message
-in its chat, and it appears in the user interface as a card naming the sender
-and the kind:
+in its chat, and it appears in the user interface as a card. The card's head
+names both ends, the other session and this one, each in its session's color. A
+message this session sent also carries a delivery mark at the head's right edge,
+the way a messaging app does: sent, delivered, read, parked while the recipient
+is unreachable, bounced, or recalled. A send that failed has no mark; its tool
+call's result says what happened. An incoming message that waited while this
+session was offline wears the parked mark. Hover a mark for the state and when
+it was reached.
 
-![A message from another session, as the recipient's chat shows it](assets/guide/postal-chat.png){ width="100%" }
+Every message declares its kind, which the card shows as colored text:
 
-Every message declares its kind, which the card wears as a chip:
-
-- <span class="romp-chip-kind romp-chip-delegate">delegation</span> — the recipient owns the work now.
-- <span class="romp-chip-kind romp-chip-coordinate">coordination</span> — a heads-up; a reply is optional.
-- <span class="romp-chip-kind romp-chip-question">question</span> — an answer is required.
+- <span class="romp-kind romp-kind-delegate">Delegation</span>: the recipient owns the work now.
+- <span class="romp-kind romp-kind-coordinate">Coordination</span>: a heads-up; a reply is optional.
+- <span class="romp-kind romp-kind-question">Question</span>: an answer is required.
 
 The same mailbox is on the command line, for you and for scripts:
 
@@ -804,6 +899,42 @@ Romp, can still show as an empty box on a machine whose font predates it. The
 emoji is stored with the session's name and color, so every dashboard shows the
 same one, including a dashboard on another machine that has linked to this one.
 
+The chat pane never jumps to another session on its own. If the tab you are
+on disappears (a kernel restart that hides a remote host's sessions until the
+host reconnects, a relay down, a session that ended), the pane goes blank: no
+tab is selected, the body names the session that vanished (and says it is
+reconnecting when that is known), and the message box is disabled with no
+session name in it. When that same session's tab returns, the pane goes back
+to it. After a kernel restart the page reloads and remembers the tab you were
+on: until that session is listed again the pane stays blank and names it as not
+listed yet, and it never settles on another session meanwhile; if it never
+returns, the blank body stays until you pick a tab (a remembered tab that can
+never return, a subagent's viewer or a session still being created, says so at
+once). A tab view that stops showing your session keeps it on the strip as the
+peek. From the blank pane an arrow key or Next Tab lands on the first visible
+tab. Focus moves to a different session only when
+you pick a tab, or when you close the active tab yourself (then the pane returns
+to the tab you used before it).
+
+A comment thread's mail is off, both directions, until you break it out: peers
+cannot see or mail the thread, and its own mail is refused with a line saying
+so. The comment box itself says nothing about it (the tab hover's Mail row and
+the Sessions pane show the state), except a count when messages are actually
+held for the thread; they land within seconds of a break-out. The moment you
+break the thread out it is a session like any other, mail on unless you toggle
+its mailbox off (the user 2026-09-11, after a thread received a manager's mail
+and acted as the manager). Only peer mail is gated: what you type into the thread's
+box yourself, and plain text the kernel's own send route carries, is yours and
+still goes through; that is the human channel, by design, not a hole in the
+gate.
+
+Words your team coined wear a quiet dotted underline wherever a session writes
+them: hover for the definition and the plain phrase, click to open the group's
+glossary at that entry. The glossary is a plain file per tag group,
+`~/.claude/glossaries/<group>.md`; its README gives the grammar, and a `link`
+line per entry sets how often a word is underlined (every time, first mention
+per message, or never) for headwords that are also everyday words.
+
 A session started from another one joins its tags. Forking a session, breaking
 a comment thread out into its own session, and running `romp new` inside a
 session's shell all put the new session in the parent's groups, so a session's
@@ -824,25 +955,14 @@ did, so searching for the work finds the session that did it, months later.
 
 ### Session backends
 
-Sessions run on one of these backends, chosen per session:
+Sessions run on one of two backends, chosen per session:
 
-- **Claude Code (the default, strongly recommended).** The kernel runs the
-  Claude Code session itself, through the Claude Agent SDK.
-- **Claude Code (tmux).** A Claude Code session running in a terminal inside
-  tmux. Run `romp new -t <name>` and that terminal session joins the interface
-  like any other, so you can work in the terminal directly and still see it in
-  Romp. The cost is that Romp has no direct connection to it: it reads what
-  appears in the terminal and on disk, and sends messages and nudges by
-  injecting keystrokes. That makes it less reliable and less responsive than
-  Claude Code itself, since scraping a terminal has edge cases a real API does
-  not, and updates wait on the transcript reaching disk. The new-session picker
-  and the gear's Default backend list offer it only while **Enable Claude Code
-  tmux backend** is on in the gear's Updates & debug section (off by default);
-  sessions already running on it keep working either way.
+- **Claude Code (the default).** The kernel runs the Claude Code session
+  itself, through the Claude Agent SDK.
 - **Codex.** An OpenAI Codex agent; see [docs/codex.md](codex.md).
 
-The backends interleave freely, so terminal sessions and Claude Code sessions
-sit side by side in the interface and message each other like any other pair.
+The backends interleave freely, so Codex sessions and Claude Code sessions sit
+side by side in the interface and message each other like any other pair.
 
 ## The Romp kernel (the back end)
 
@@ -1120,7 +1240,10 @@ switches indented under it, and a button:
   then Notifications, then Romp; in a desktop browser, the site permission
   beside the address). Turning this off silences only this device. With the
   main switch off, the row says the device is set up but nothing arrives until
-  the main switch is on.
+  the main switch is on. What the kernel needs for this, the Python
+  `cryptography` package, the installer sets up; if the row says the package is
+  missing, run `bin/romp-sdk-setup` on the machine running Romp and turn it on
+  again.
 - **Also when a turn finishes**, also under it, adds a notification every time
   any session finishes a turn you started, with the session's name and the
   first line of what it said. Turns a session starts on its own, such as
@@ -1249,14 +1372,17 @@ auto-retry paused (a usage limit, the monthly spend cap, or you stopped it), and
 it stays red while a failed attempt sits in the last 15 minutes anywhere. Gray
 means the API is not being used right now: no traffic in the last 15 minutes on
 any machine. A machine whose link is down is named in the popup with what it
-last said and does not colour the dot. Hover for the reading in plain
-words (for example, 4 requests in the last 15 minutes, all succeeded), one
-line per machine when several are connected, the waiting sessions listed, and
-the history under it: a graph of attempts per minute over the last 15 minutes
-with rate-limited attempts in red and server errors in orange, one sentence
-explaining the codes, and the most recent state changes with how long each
-held. A kernel restart shows as its own line there, because the counts start
-over with the kernel. Click the dot, or press Enter on it, for the detail:
+last said and does not colour the dot. Hover for the counts: one line per
+machine, each named by its own name, with its successful requests over the last
+24 hours in the accent and any failures counted in their colours (429s in red,
+5xx in magenta, no connection in gray), the waiting sessions listed, and
+the history under it: a stacked histogram of attempts per quarter hour over
+the last 24 hours in those same colours, a legend for the codes, when the
+reading was taken in words, and the most recent state changes with how long
+each held. A kernel restart shows as its own line there, because the counts
+start over with the kernel. Click the dot, or press Enter on it, for the
+detail: the same lines with a larger histogram per machine and a choice of
+range (1 hour, 24 hours, 7 days),
 each waiting session (click one to open that session), a button that stops
 auto-retry for every session while sessions are waiting and resumes it while
 paused, and links to the usage figures and the Log.

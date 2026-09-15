@@ -43,7 +43,7 @@ ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 EXT = os.path.join(ROOT, "vscode-extension")
 sys.path.insert(0, HERE)
-import test_ship_reship as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes: an
+import test_ship_reship_served as _lab   # noqa: E402  the lab kernel's environment (the module, not its classes: an
 #                                   imported TestCase would be collected here a second time)
 
 SID = "aaaaaaaa-1111-2222-3333-444444444444"          # the parent session, `web`
@@ -95,7 +95,9 @@ await page.locator(`#tabs .tab[data-id="${cfg.sid}"]`).first().click();   // the
 // the parent's transcript renders and the kernel's comments frame lands: the highlights wrap both passages
 // (attached, not visible — every session's view stays in the DOM, hidden when not active; the click below
 // auto-waits for the visible one)
-for (const tid of [cfg.promoted, cfg.open]) await page.waitForSelector(`mark.cmt-hl[data-tid="${tid}"]`, { state: "attached", timeout: 30000 });
+// 60 s: the highlights land after the kernel's comments frame, tens of seconds behind the chat frame on a loaded runner
+// (2026-09-11: red on CI at 30 s for a head that changed nothing on this road)
+for (const tid of [cfg.promoted, cfg.open]) await page.waitForSelector(`mark.cmt-hl[data-tid="${tid}"]`, { state: "attached", timeout: 60000 });
 
 // the popup as painted — rects and computed styles, read-only
 const MEASURE = () => {

@@ -23,14 +23,14 @@ const FEED = web("feed.ts");
 const FEED_CSS = web("feed.css");
 const CHAT_CSS = web("styles.css");
 
-test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
-  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void/);   // ev: the click, for a PDF's modified-click tab; at: the target a todo link named (Slice 6 of plans/markdown-viewer.md, item 4)
+test("openPath routes by HOST: the in-pane viewer modal on the web (or a pane, by the ladder), the editor in VS Code", () => {
+  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null, at: At \| null = null\): void/);   // ev: the click, for a PDF's modified-click tab; at: the target a todo link named (Slice 6 of plans/markdown-viewer.md, item 4; a `#slug` is its heading arm, so upstream's separate frag does not ride here)
   // web → the gesture reader, on every route (a plain click is openFileView here, or the relay below when the
   // route names a pane; a modified click on a PDF is the tab either way, pdf-new-tab.test.ts)
   assert.match(RENDER, /openFileClick\(ev, path, to, relay, at\);/);
-  // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
-  // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
-  // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
+  // (setCommentSink left the import with the review layer, 2026-08-23; quote chips replaced it. Upstream's relay names one
+  // target, the Files pane (T404); here the route may also name the feed, the fork's fileLinkPane preference since
+  // 2026-08-20, pinned by fileLinkRoute below.)
   assert.match(RENDER, /import \{ openFileClick, type At \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
   // VS Code keeps the host editor, whose arm reads a line target; a heading or an offset posts nothing extra
   assert.match(RENDER, /const m: Record<string, unknown> = sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \};\n\s*if \(at && "line" in at\) m\.line = at\.line;\n\s*vscodeApi\.postMessage\(m\);/);
@@ -45,44 +45,59 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
 // setting check. Since 2026-09-04 an OPEN Files pane takes the click whatever the setting says (the
 // user: the pane being open IS the intent; a click that opened as a modal over the chat while the
 // pane sat empty was the bug) — the setting decides only where a link goes while the pane is closed.
-test("fileLinkRoute: an open Files pane takes the click; otherwise the preference relays only when framed", () => {
+// Since T317 (upstream) the ladder also reads whether the shell HAS a Files control at all (the gear's
+// Files row, panesAvail): hidden, the pane is no target and the pane road falls back to here.
+test("fileLinkRoute: an open Files pane takes the click; otherwise the preference relays only when framed; a Files control the gear hides is never a target (T317)", () => {
   // the shipped function itself (file-route.ts since 2026-09-06, when the folder click joined the ladder), not a replica
   // the Files pane is OPEN: every setting value routes there (the 2026-09-04 rule)
   for (const setting of ["chat", "feed", "pane", undefined, "purple"]) {
     assert.equal(fileLinkRoute(setting, true, true), "pane", `Files pane open & framed, setting=${String(setting)} → the Files pane, whatever the setting`);
   }
+  // ...while the shell HAS a Files control (upstream's filesAvail, T317): its gear row off, the open bit is stale and the pane
+  // is no target, so the setting alone decides: "here" for the default, "feed" for the feed setting, never "pane"
+  for (const setting of ["chat", "pane", undefined, "purple"]) {
+    assert.equal(fileLinkRoute(setting, true, true, false), "here", `Files pane on screen but its control hidden, setting=${String(setting)} → here (the pane road falls back)`);
+  }
+  assert.equal(fileLinkRoute("feed", true, true, false), "feed", "the feed setting needs no Files control");
   // the Files pane is CLOSED: the setting's own table, exactly as before
   assert.equal(fileLinkRoute("feed", true, false), "feed", "setting=feed & framed → hand the open to the shell, for the feed");
   assert.equal(fileLinkRoute("pane", true, false), "pane", "setting=pane & framed → the shell, for the Files pane (2026-09-03) — which brings the closed pane forward");
   assert.equal(fileLinkRoute("chat", true, false), "here", "the default: exactly the pre-setting behavior");
   assert.equal(fileLinkRoute(undefined, true, false), "here", "an unset store reads as the default");
   assert.equal(fileLinkRoute("purple", true, false), "here", "a foreign stored value falls to the default");
-  // UNFRAMED (standalone /chat): no shell, no other pane — "here" regardless of setting or pane bit
+  assert.equal(fileLinkRoute("pane", true, false, false), "here", "setting=pane but the Files control hidden (T317): no pane to bring forward, so here (browseRoute then substitutes the feed for a folder)");
+  assert.equal(fileLinkRoute("chat", true, false, true), "here", "the control shown changes nothing while the pane is closed");
+  // UNFRAMED (standalone /chat): no shell, no other pane, so "here" regardless of setting, pane bit or control
   for (const setting of ["chat", "feed", "pane", undefined]) {
-    for (const open of [true, false]) {
-      assert.equal(fileLinkRoute(setting, false, open), "here", `standalone /chat, setting=${String(setting)}, filesOpen=${open} → open in place`);
+    for (const open of [true, false]) for (const avail of [true, false]) {
+      assert.equal(fileLinkRoute(setting, false, open, avail), "here", `standalone /chat, setting=${String(setting)}, filesOpen=${open}, filesAvail=${avail} → open in place`);
     }
   }
   // the chat imports the shipped function; no local copy that could drift from the table above
   assert.match(RENDER, /import \{ fileLinkRoute, browseRoute, type BrowseRoute \} from "\.\/file-route";/);
   assert.doesNotMatch(RENDER, /function fileLinkRoute\(/, "one definition, in file-route.ts");
-  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit; a route other than
-  // "here" becomes the plain click's opener (openFileClick's fourth argument, so the PDF gesture is read first),
-  // which posts up a message naming its target pane and carrying the session's identity for the Files pane's chip
-  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);/);
+  // the wiring: openPath consults it with the LIVE framed bit, the shell's Files-pane bit AND whether the Files control exists
+  // at all (its gear setting, T317: hidden, the pane road falls back to here); a route other than "here" becomes the plain
+  // click's opener (openFileClick's fourth argument, so the PDF gesture is read first), which posts up a message naming its
+  // target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true, panesAvail\.files !== false\);/);
   assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null, a: At \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null, at: a \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay, at\);/);   // the relay carries the target too (Slice 6, item 4)
 });
 
 // The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
 // {romp:"panes", on:{key:bool}} on every toggle (the shell's apply()) and on this iframe's load (kernel.py
 // _LANDING_COLLAPSE_JS; pinned in tests/test_pane_state_broadcast.py) — never a per-click read of the
-// parent's DOM or a poll. Whole-set replace, so a key the shell stops naming cannot linger as on.
-test("the chat caches the shell's pane set from its romp:panes broadcast, and openPath reads the Files bit from it", () => {
+// parent's DOM or a poll. Whole-set replace, so a key the shell stops naming cannot linger as on. The same
+// message carries a second set since T317, avail:{key:bool}, which panes EXIST to bring forward (the Files
+// control's gear row): read the other way round, only an explicit false hides, absent is available.
+test("the chat caches the shell's pane set (and which panes exist) from its romp:panes broadcast, and openPath reads the Files bits from it", () => {
   assert.match(RENDER, /let panesOn: Record<string, boolean> = \{\};/);
-  assert.match(RENDER, /if \(m\.romp === "panes"\) \{\n\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*const on: Record<string, boolean> = \{\};\n\s*for \(const k of Object\.keys\(m\.on\)\) on\[k\] = m\.on\[k\] === true;\n\s*panesOn = on;\n\s*\}\n\s*return;\n\s*\}/);
-  assert.match(RENDER, /fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\)/);
+  assert.match(RENDER, /let panesAvail: Record<string, boolean> = \{\};/, "…and the second set, which panes EXIST to bring forward (T317)");
+  assert.match(RENDER, /if \(m\.romp === "panes"\) \{\n\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*const on: Record<string, boolean> = \{\};\n\s*for \(const k of Object\.keys\(m\.on\)\) on\[k\] = m\.on\[k\] === true;\n\s*panesOn = on;\n\s*\}\n(?:\s*\/\/[^\n]*\n)*\s*const avail: Record<string, boolean> = \{\};\n\s*if \(m\.avail && typeof m\.avail === "object"\) for \(const k of Object\.keys\(m\.avail\)\) avail\[k\] = m\.avail\[k\] !== false;\n\s*panesAvail = avail;\n\s*return;\n\s*\}/);
+  assert.match(RENDER, /fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true, panesAvail\.files !== false\)/);
   assert.equal((RENDER.match(/panesOn\.files/g) || []).length, 2,
     "two readers: openPath's route decision, and browseRouteNow for a folder click (2026-09-06)");
+  assert.equal((RENDER.match(/panesAvail\.files/g) || []).length, 2, "the same two read the control's existence (T317)");
   // executed: the listener's fold, as the source spells it — strict booleans in, unknown keys dropped on the next set
   const fold = (on: Record<string, unknown>): Record<string, boolean> => {
     const out: Record<string, boolean> = {};
@@ -92,6 +107,15 @@ test("the chat caches the shell's pane set from its romp:panes broadcast, and op
   assert.deepEqual(fold({ chat: true, feed: false, files: true }), { chat: true, feed: false, files: true });
   assert.deepEqual(fold({ files: "yes" }), { files: false }, "only a real true counts as on");
   assert.equal(fold({ chat: true }).files, undefined, "a set that stops naming a pane leaves it off (=== true fails)");
+  // ...and the avail fold beside it, as the source spells it: only an explicit false hides a control
+  const foldAvail = (avail: Record<string, unknown>): Record<string, boolean> => {
+    const out: Record<string, boolean> = {};
+    for (const k of Object.keys(avail)) out[k] = avail[k] !== false;
+    return out;
+  };
+  assert.deepEqual(foldAvail({ files: false }), { files: false }, "only an explicit false hides a control");
+  assert.deepEqual(foldAvail({ files: "yes" }), { files: true }, "anything else reads as available");
+  assert.equal(foldAvail({}).files !== false, true, "a control the shell does not name is available (openPath reads !== false)");
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
@@ -109,7 +133,7 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   // gate is chat-side — see the fileLinkRoute test), and the shell forwards unconditionally, the
   // browseFiles contract, into the feed iframe where initFileView's viewFile branch opens the viewer
   assert.match(KERNEL, /if\(m\.romp==='viewFile'\)\{var vf=document\.getElementById\('f-feed'\);/);
-  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid,at:m\.at\|\|null\},'\*'\)/);   // …and the target rides through (Slice 6, item 4)
+  assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid,at:m\.at\|\|null,frag:m\.frag\|\|null\},'\*'\)/);   // …and the target rides through (Slice 6, item 4), beside upstream's frag slot (T351; the feed's viewer reads `at`)
   // ARM ON ACK (review 2026-08-20): postMessage up the relay is fire-and-forget, so the shell only
   // STASHES the was-off bit at relay time and COMMITS the restore flag when the feed acks the real
   // open — a viewFile lost to a mid-reload feed iframe leaves no armed flag behind for a later
@@ -222,7 +246,12 @@ test("shell flag algebra: both handoff routes restore once, a lost viewFile arms
   arms = arms.slice(0, -3);   // drop the listener's own `});` — the arms are plain statements without it
   for (const a of ["browseFiles", "browseClosed", "viewFile", "viewFileOpened", "viewFileClosed"])
     assert.ok(arms.includes("if(m.romp==='" + a + "'"), "extraction lost the " + a + " arm");
-  const armsFn = new Function("window", "document", "m", arms) as (w: unknown, d: unknown, m: unknown) => void;
+  // the browse arm reads feedHere() since the 2026-09-15 pull-in (the Feed pane off in this browser sends a feed browse to the Files
+  // pane); the kernel defines it in the settings script, outside this slice, so its own line is seated here (asserted, so a change
+  // there is seen); against these stand-ins (no __rompPaneEnabled) it answers true, the feed on
+  const feedHere = "function feedHere(){return !(window.__rompPaneEnabled&&!window.__rompPaneEnabled('feed'));}";
+  assert.ok(KERNEL.includes(feedHere), "the shell's feedHere as the kernel spells it: re-anchor");
+  const armsFn = new Function("window", "document", "m", feedHere + "\n" + arms) as (w: unknown, d: unknown, m: unknown) => void;
   type S = { paneOn: boolean; pend: boolean; wasOffView: boolean; wasOff: boolean; mobile: string };
   const shell = (s: S, msg: string): S => {
     const n = { ...s };
@@ -611,7 +640,8 @@ test("format prefs: rendered is the markdown default, and a corrupt entry reads 
 test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML unsanitized", () => {
   assert.match(VIEW, /const isMd = langFor\(path\) === "markdown";/);
   // the two buttons are built inside the isMd gate — a .py file shows no Rendered/Raw toggle
-  assert.match(VIEW, /if \(isMd\) \{\s*\n\s*for \(const mode of \["rendered", "raw"\] as const\)/);
+  assert.match(VIEW, /if \(isMd\) \{\s*\n\s*const seg = el\("span", "fileview-seg"\);[\s\S]{0,400}?for \(const mode of \["rendered", "raw"\] as const\)/,
+    "the pair is built inside the isMd gate, into ONE segmented wrapper (T367)");
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
   assert.match(VIEW, /import \{ sanitizeMd, revealFragmentTarget \} from "\.\/md-sanitize";/);   // the sanitizer, and the shared reveal step scrollToFragment runs before its scroll
   assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
@@ -760,13 +790,23 @@ test("a file opened FROM the listing offers the way back — close only the view
 // show — the kernel's ?download=1 serves anything on disk (the rationale lives with _file_download in
 // kernel.py: the view allowlists are a rendering choice, not a security boundary). ──
 
-test("the title bar offers Download next to Copy path, at the same-origin download URL", () => {
+test("the title bar offers Download as the lightbox's tray glyph, in the file group beside Copy path, at the same-origin download URL (T367)", () => {
   // the URL is fileUrl + the download switch: same origin, cookie-authed, and federation-aware for
   // free — fileUrl already routes a remote session's file through the /remote/<host>/file relay
   assert.match(VIEW, /const dlUrl = fileUrl\(path, sid\) \+ "&download=1";/);
-  assert.match(VIEW, /dl\.textContent = "Download";/);
-  // next to Copy path: appended into the same acts bar, wearing the same button class
-  assert.match(VIEW, /acts\.appendChild\(dl\);\n\n  const copy = el\("button", "fileview-btn"\)/);
+  assert.match(VIEW, /dl\.innerHTML = ICON_DOWNLOAD;/, "the one tray drawing (icons.ts), not a word");
+  assert.match(VIEW, /dl\.title = "Download"; dl\.setAttribute\("aria-label", "Download"\);/, "the word rides the title and aria-label");
+  assert.doesNotMatch(VIEW, /dl\.textContent = "Download";/);
+  // in the file group beside Copy path (a glyph too), wearing the same button class
+  assert.match(VIEW, /fileGroup\.appendChild\(dl\);/);
+  assert.match(VIEW, /const copy = el\("button", "fileview-btn fileview-icon"\) as HTMLButtonElement;/);
+  assert.match(VIEW, /fileGroup\.appendChild\(copy\);/);
+  // the wider gaps apply only where groups exist: the close cross after a GROUP sibling, never the file browser's row or
+  // the URL viewer's flat row (review)
+  for (const css of [CHAT_CSS, FEED_CSS]) {
+    assert.match(css, /\.fileview-acts > \.fileview-group \+ \.fileview-group, \.fileview-acts > \.fileview-group ~ \.fileview-close \{ margin-left: 10px; \}/);
+    assert.doesNotMatch(css, /\.fileview-acts > \.fileview-close \{/, "an unscoped close margin would move the file browser's and the URL viewer's cross");
+  }
   assert.match(VIEW, /const dl = el\("button", "fileview-btn"\) as HTMLButtonElement;/, "no new styling, no new font size");
 });
 
@@ -1225,7 +1265,8 @@ test("the title bar carries a session chip resolved from the sid — never inven
   // the signatures every opener and the relay pin depend on are as they were, plus the optional opts:
   // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) and `at`, where the open lands
   // (Slice 6 of plans/markdown-viewer.md, item 4: a line, a source offset or a heading; the former `line` and `frag`
-  // options are two of its arms, replaced, not aliased); every existing caller moved with it (file-view-seam.test.ts)
+  // options are two of its arms, replaced, not aliased, and upstream's T351 `frag` is the heading arm); every existing
+  // caller moved with it (file-view-seam.test.ts)
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; at\?: At \| null; place\?: RememberedPlace \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
   // The host's onLeave (Slice 6 of plans/markdown-viewer.md, item 3) hands the pane the reader's place in a file as they

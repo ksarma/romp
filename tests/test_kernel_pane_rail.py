@@ -43,7 +43,7 @@ class PaneRailTest(unittest.TestCase):
         # "Files" (2026-09-03): the file viewer as its own pane, last in the rail
         self.assertIn("<div class=rail-btn data-pane=files>Files</div>", self.html)
         # Chat before Timeline before Outline(fleet) before Feed before Waiting before Files in the rail (fixed user-chosen order)
-        idxs = [self.html.index("data-pane=" + k) for k in ("chat", "timeline", "fleet", "feed", "waiting", "files")]
+        idxs = [self.html.index("data-pane=%s>" % k) for k in ("chat", "timeline", "fleet", "feed", "waiting", "files")]   # the rail button's literal: T317's CSS rule names data-pane=files] earlier in the page
         self.assertEqual(idxs, sorted(idxs), "rail order must be Chat, Timeline, Outline, Feed, Waiting, Files")
         # the old per-pane strips + the show-fleet swap + the timeline minimize bar are gone
         self.assertNotIn("pane-strip", self.html)
@@ -80,6 +80,25 @@ class PaneRailTest(unittest.TestCase):
         # well (2026-09-03) — the viewFile relay brings it forward when a click routes there
         self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)
 
+    def test_the_optional_panes_are_served_unloaded_and_the_controller_reads_the_gear(self):
+        # The gear's Panes section (the user 2026-09-10): Sessions, the Outline and the Feed can be hidden from
+        # this browser's dashboard altogether, per browser (romp:settings.panes). The markup carries data-src
+        # for those three, the controller copies it to src for a pane this browser shows and hides the rail
+        # button and phone tab of one it does not; the chat (required) and the Files pane (its own rail
+        # toggle) keep src. The behaviour runs under node in tests/test_pane_state_broadcast.py OptionalPanes.
+        for k in ("fleet", "feed", "timeline"):
+            self.assertIn("<iframe id=f-%s data-src=/%s>" % (k, k), self.html)
+        self.assertIn("<iframe id=f-chat class=m-on src=/chat>", self.html)
+        self.assertIn("<iframe id=f-files src=/files>", self.html)
+        self.assertIn(".rail-btn[hidden]{display:none}", self.html, "the controller's hidden must beat .rail-btn's display:flex")
+        self.assertIn("var ALL=KEYS.slice(),OPT=['timeline','fleet','feed'],SK='romp:settings';", self.html)
+        # reconcile(live): the boot call keeps a shown pane's stored rail flag; the storage listener's call brings a
+        # pane the gear just turned on ON SCREEN (the row promises the column back, not its button alone)
+        self.assertIn("function reconcile(live){", self.html)
+        self.assertIn("reconcile(true);apply();", self.html)
+        # the default body class still ships chat+feed+timeline; the controller reconciles before its first apply
+        self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)
+
     def test_gutters_show_only_between_two_visible_panes(self):
         # gv-a sits chat|fleet → only when BOTH are shown
         self.assertIn("body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}", self.html)
@@ -114,14 +133,20 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}#files-pane{flex:var(--g-files,40) 1 0}", self.html)
         self.assertNotIn("--g-timeline", self.html)              # timeline is the fixed-height band, not a row grow
         self.assertIn("var GK='romp-pane-grow'", self.html)
-        self.assertIn("setGrow(key(id),document.getElementById(id).offsetWidth)", self.html)
+        # two passes (2026-09-08): every shown width is READ before any grow is written — a write re-flows the row,
+        # and a read after it came back at a mixed scale, ballooning the first column on a fresh browser's first drag
+        self.assertIn("var px={};PANES.forEach(function(id){if(shown(id))px[id]=document.getElementById(id).offsetWidth;});", self.html)
+        self.assertIn("Object.keys(px).forEach(function(id){setGrow(key(id),px[id]);});", self.html)
         self.assertIn("localStorage.setItem(GK,JSON.stringify(grow))", self.html)
-        # gv-b picks its left neighbour live: fleet when shown, else chat (so it's the chat|feed gutter too)
-        self.assertIn("document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane'", self.html)
-        # gv-c picks the rightmost shown of feed / fleet / chat
-        self.assertIn("gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');", self.html)
-        # gv-d picks the rightmost shown of waiting / feed / fleet / chat
-        self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');", self.html)
+        # gv-b picks its left neighbour live: the outline (fleet) when shown, else the RIGHTMOST chat column (so it's the
+        # chat|feed gutter too; lastChat() is the last split column, or #chat-pane when there is no split —
+        # split screen, the user 2026-09-08)
+        self.assertIn("document.body.classList.contains('po-fleet')?'fleet-pane':lastChat()", self.html)
+        self.assertIn("gutter('gv-a',function(){return lastChat();},'fleet-pane')", self.html)
+        # gv-c picks its left neighbour live: feed, else the outline (fleet), else the rightmost chat column; its right side is the Waiting pane (the fork's fifth pane)
+        self.assertIn("gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'waiting-pane');", self.html)
+        # gv-d, the Files pane's gutter, picks the rightmost shown of waiting / feed / fleet / the chat columns
+        self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'files-pane');", self.html)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
 
     def test_a_divider_drag_moves_a_ghost_line_and_writes_the_grows_once_on_release(self):
@@ -194,7 +219,7 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("function driftWord(t){", self.html)
         self.assertIn("down=bb>0?('behind '+bb):''", self.html)   # said in words since 2026-07-30
         self.assertIn("up=ab>0?('ahead '+ab):''", self.html)
-        self.assertIn("var dw=t.outOfDate?(' \\u00b7 '+(t.status==='up'?'':'last known ')+driftWord(t)):''", self.html)
+        self.assertIn("var dw=t.outOfDate?(' \\u00b7 '+(t.status==='up'?'':'last known ')+driftWord(t)):(t.restartPending?' \\u00b7 running older code':'')", self.html)
         self.assertIn("+dw+", self.html, "the per-host tooltip line carries it")
         # the panel row reads the same functions rather than re-deriving the words. Since 2026-07-30 it
         # leads with the BUILD (release + commit) and puts the distance in parentheses after it — a bare
@@ -356,6 +381,15 @@ class ApiHealthCell(unittest.TestCase):
         self.assertLess(js.index(reader), js.index("function shellWS()"), "bound at load, before the first dial")
         shell_ws = js[js.index("function shellWS()"):]
         self.assertNotIn("__rompShellSend=", shell_ws, "the dial's closure never rebinds it")
+
+    def test_the_shell_socket_routes_a_refused_press_to_the_notification_center(self):
+        # the detail's pause button sends setGlobalRetryPaused on this socket, and a press the kernel refused (the
+        # pause file could not be read; nothing was changed) is answered with a warn frame on the same socket. A
+        # dispatcher without this branch discarded it: the answering frame's moved seq un-acknowledged the button
+        # with no reason anywhere, and the press read as ignored. The chat page toasts its own warn frames already.
+        self.assertIn("else if(m&&m.type==='warn'&&typeof m.text==='string'&&m.text&&window.__rompNotify)"
+                      "window.__rompNotify('warn',m.text);", self.html)
+        self.assertIn("window.__rompNotify=function(kind,text,tgt)", self.html, "the center the branch feeds is on this page")
 
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))

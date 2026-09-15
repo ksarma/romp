@@ -42,12 +42,12 @@ import unittest
 from contextlib import redirect_stderr
 from datetime import datetime, timezone
 from romp_load import load_source
+from fs_clock import move_ctime   # noqa: E402  the shared test helper, on the path the line above put there
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-os.environ["ROMP_TMUX_AVAILABLE"] = "1"          # an empty tmux map means zero live sessions, not "no tmux here"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
@@ -72,21 +72,6 @@ def _rec(kind, t, uuid, parent, text):
             "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
 
 
-def move_ctime(path):
-    """Move a file's ctime and nothing else: flip its mode between 0o600 and 0o644, checking the stat after
-    each chmod, until the ctime differs (a coarse filesystem clock can hand two chmods one timestamp). mtime,
-    size and inode stand. Bounded at 5 s: a filesystem that never ticks ctime under chmod fails the test
-    loudly rather than passing it."""
-    before = cur = os.stat(path)
-    deadline = time.monotonic() + 5
-    while cur.st_ctime_ns == before.st_ctime_ns:
-        if time.monotonic() > deadline:
-            raise AssertionError("ctime did not move under chmod within 5 s")
-        os.chmod(path, 0o644 if (cur.st_mode & 0o777) == 0o600 else 0o600)
-        cur = os.stat(path)
-    return cur
-
-
 class DeadLaneMemo(unittest.TestCase):
     def setUp(self):
         km._downtime[:] = []
@@ -102,11 +87,11 @@ class DeadLaneMemo(unittest.TestCase):
         self._write(self.recs)
         names = td / "names"; names.mkdir()
         (names / DEAD_SID).write_text("testsess\t%s\t#abcdef\n" % str(cdir))
-        self.saved = (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._tmux_sessions)
+        self.saved = (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._live_map)
         km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR = names, proj, td / "goals", td / "captions"
         km.jd.STATE = td
         km.NAMES = names
-        km._tmux_sessions = lambda: {}                 # NOBODY is live: the lane is a dead one within the window
+        km._live_map = lambda: {}                 # NOBODY is live: the lane is a dead one within the window
         (td / "states").mkdir(); (td / "captions").mkdir(); (td / "goals").mkdir()
         (td / "goals" / (DEAD_SID + ".json")).write_text(json.dumps({"nodes": {}, "status": {}}))   # the judging marks need a store
         self.caps = td / "captions" / (DEAD_SID + ".jsonl")
@@ -115,7 +100,7 @@ class DeadLaneMemo(unittest.TestCase):
         km._delta_entry_memo.clear()
 
     def tearDown(self):
-        (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._tmux_sessions) = self.saved
+        (km.jd.NAMES, km.jd.PROJECTS, km.jd.GOALDIR, km.jd.CAPDIR, km.jd.STATE, km.NAMES, km._live_map) = self.saved
         km._dead_lane_memo.clear()
         km._downtime[:] = []
         self.td.cleanup()
@@ -210,9 +195,9 @@ class DeadLaneMemo(unittest.TestCase):
         self.assertIn(DEAD_SID, km._dead_lane_memo, "readable again: cached like any other dead lane")
 
     def test_a_live_lane_is_not_memoized(self):
-        km._tmux_sessions = lambda: {DEAD_SID: {"state": "waiting", "since": NOW - 100, "model": "", "effort": "",
+        km._live_map = lambda: {DEAD_SID: {"state": "waiting", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None, "mode": ""}}
-        km.build_timeline(NOW, km._tmux_sessions(), with_bars=True)
+        km.build_timeline(NOW, km._live_map(), with_bars=True)
         self.assertNotIn(DEAD_SID, km._dead_lane_memo)
 
     def test_a_chmod_alone_moves_the_transcripts_stat_key(self):
@@ -541,7 +526,7 @@ class DerivationSplit(unittest.TestCase):
 
 
 # ── the LIVE-lane memo: a live lane's segment part is derived once and served while its inputs stand ──
-def _tmux_row(since):
+def _live_row(since):
     return {"state": "waiting", "since": since, "model": "", "effort": "", "context": None,
             "compactPct": None, "color": "#336699", "mode": ""}
 
@@ -573,6 +558,7 @@ class LaneMemoBase(unittest.TestCase):
         self._saved_backend = km.Sessions.backend_for
         self._saved_file_key = km.jd._file_key
         km._caps_memo.clear(); km._lanes_memo.clear(); _zero(km._lanes_stats)   # the _Caps object memo is this kernel's own
+        km._lane_prefix_memo.clear()                 # the prefix memo (2026-09-12) holds turn keys that repeat across tests
         km._sdk = lambda: None
         km._run_judging = lambda t0, alive, semantic: [dict(m) for m in semantic]
         self.now = int(time.time())
@@ -592,6 +578,7 @@ class LaneMemoBase(unittest.TestCase):
         km.jd._file_key = self._saved_file_key
         km.jd._SHARED_OFF[0] = False
         km._lanes_memo.clear(); _zero(km._lanes_stats)
+        km._lane_prefix_memo.clear()                 # the prefix memo (2026-09-12) holds turn keys that repeat across tests
         km._dead_lane_memo.clear(); km._downtime[:] = []
         km.jd._rebind_state(self._saved_state)
         km.jd.PROJECTS = self._saved_proj
@@ -628,11 +615,11 @@ class LaneMemoBase(unittest.TestCase):
         km.jd.ARCHDIR.mkdir(parents=True, exist_ok=True)
         (km.jd.ARCHDIR / (sid + ".json")).write_text(json.dumps({"t": t, "headline": headline}))
 
-    def tmux(self, *sids):
-        return {s: _tmux_row(self.now - 100) for s in sids}
+    def live_map(self, *sids):
+        return {s: _live_row(self.now - 100) for s in sids}
 
-    def build(self, tmux=None, with_bars=True, live_only=False, now=None):
-        return km.build_timeline(self.now if now is None else now, self.tmux(LIVE_SID) if tmux is None else tmux,
+    def build(self, live_map=None, with_bars=True, live_only=False, now=None):
+        return km.build_timeline(self.now if now is None else now, self.live_map(LIVE_SID) if live_map is None else live_map,
                                  with_bars=with_bars, live_only=live_only)
 
     def stats(self):
@@ -909,8 +896,8 @@ class EveryInputBusts(LaneMemoBase):
         self.assertTrue(tl["turns"][LIVE_SID][1].get("t"), "the second piece is a continuation: no new prompt dot")
 
     def test_liveness_is_in_the_key_and_a_dead_lane_leaves_this_memo(self):
-        self.build(tmux=self.tmux(LIVE_SID))
-        tl = self.build(tmux={})                                         # the process ended: a dead lane in the window
+        self.build(live_map=self.live_map(LIVE_SID))
+        tl = self.build(live_map={})                                         # the process ended: a dead lane in the window
         self.assertFalse(self.lane(tl)["live"])
         # a dead lane is the dead-lane memo's: derived once by _lane_segments directly (dead_miss) and handed to it,
         # whose populate drops the entry this memo held from the lane's live days (it keys on the parse the
@@ -921,7 +908,7 @@ class EveryInputBusts(LaneMemoBase):
         self.assertNotIn(LIVE_SID, km._lanes_memo, "and this memo dropped the entry from the lane's live days")
         self.assertFalse(any(p.endswith("/" + LIVE_SID + ".jsonl") for p in km._parse_cache), "so the parse can go")
         served = km._VIEW_STATS.get("laneServe", 0)
-        self.build(tmux={})
+        self.build(live_map={})
         self.assertEqual(km._VIEW_STATS.get("laneServe", 0), served + 1, "a dead-lane serve still counts under views")
         self.assertEqual(self.dead()["dead_serve"], 1, "and on this block beside it")
         self.assertEqual(self.outcomes(), {"hit": 0, "miss": 1, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0})
@@ -931,8 +918,8 @@ class EveryInputBusts(LaneMemoBase):
                              {"type": "assistant", "timestamp": _iso(self.t0 + 110), "uuid": "a2", "parentUuid": "u2",
                               "message": {"role": "assistant", "stop_reason": None,
                                           "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {}}]}}])
-        tl_live = self.build(tmux=self.tmux(LIVE_SID))
-        tl_dead = self.build(tmux={})
+        tl_live = self.build(live_map=self.live_map(LIVE_SID))
+        tl_dead = self.build(live_map={})
         self.assertEqual(self.outcomes()["miss"], 1, "the live build's; the dead build is derived outside this memo")
         self.assertEqual(self.dead()["dead_miss"], 1)
         self.assertTrue(tl_live["turns"][LIVE_SID][-1].get("u"), "the live turn's last piece is open")
@@ -973,18 +960,18 @@ class EveryInputBusts(LaneMemoBase):
 
     def test_a_parent_lane_leaving_the_build_moves_a_live_childs_branch_clip(self):
         fork_t = self.fork_fixture()
-        tl1 = self.build(tmux=self.tmux(LIVE_SID, LIVE_PARENT, LIVE_CHILD))
+        tl1 = self.build(live_map=self.live_map(LIVE_SID, LIVE_PARENT, LIVE_CHILD))
         self.assertIn(fork_t, [b["end"] for b in tl1["turns"][LIVE_PARENT]], "the parent draws the turn that ends at the fork time")
         self.assertEqual([c["t"] for c in self.lane(tl1, LIVE_PARENT)["compactions"]], [self.now - 500], "and its compaction marker")
         self.assertTrue(all(b["start"] > fork_t for b in tl1["turns"][LIVE_CHILD]),
                         "clipped while the parent is a lane, the turn ending AT the fork time included")
         self.assertEqual(self.lane(tl1, LIVE_CHILD)["compactions"], [], "the copied boundary is the parent's marker")
         self.assertEqual(self.outcomes()["miss"], 3)
-        self.build(tmux=self.tmux(LIVE_SID, LIVE_PARENT, LIVE_CHILD))
+        self.build(live_map=self.live_map(LIVE_SID, LIVE_PARENT, LIVE_CHILD))
         self.assertEqual(self.outcomes()["hit"], 3)
         (km.jd.NAMES / LIVE_PARENT).unlink()                             # the parent leaves the build: no name, no row
         km.jd._discover_cache.clear()
-        tl3 = self.build(tmux=self.tmux(LIVE_SID, LIVE_CHILD))
+        tl3 = self.build(live_map=self.live_map(LIVE_SID, LIVE_CHILD))
         self.assertEqual(self.outcomes()["miss"], 4, "the child's clip moved: one more miss")
         self.assertEqual(self.outcomes()["hit"], 4, "the other lane still hits")
         self.assertTrue(any(b["start"] < fork_t for b in tl3["turns"][LIVE_CHILD]), "the whole story, the parent gone")
@@ -1269,14 +1256,14 @@ class ClockAtAssembly(LaneMemoBase):
 class Eviction(LaneMemoBase):
     def test_entries_leave_with_their_lanes_and_a_live_only_build_evicts_nothing(self):
         self.add_lane(LIVE_SID2, "api", self.recs)
-        self.build(tmux=self.tmux(LIVE_SID, LIVE_SID2))
+        self.build(live_map=self.live_map(LIVE_SID, LIVE_SID2))
         self.assertEqual(self.stats()["entries"], 2)
-        self.build(tmux=self.tmux(LIVE_SID), live_only=True)            # LIVE_SID2 is not in a live-only build
+        self.build(live_map=self.live_map(LIVE_SID), live_only=True)            # LIVE_SID2 is not in a live-only build
         self.assertEqual(self.stats()["entries"], 2, "a live-only build reads a subset of the lanes and must not evict")
         self.assertEqual(self.stats()["evict"], 0)
         (km.jd.NAMES / LIVE_SID2).unlink()
         km.jd._discover_cache.clear()
-        self.build(tmux=self.tmux(LIVE_SID))
+        self.build(live_map=self.live_map(LIVE_SID))
         self.assertEqual(self.stats()["entries"], 1)
         self.assertEqual(self.stats()["evict"], 1)
         self.assertEqual(set(km._lanes_memo), {LIVE_SID})
@@ -1284,13 +1271,13 @@ class Eviction(LaneMemoBase):
     def test_the_memo_is_bounded_least_recently_served_first(self):
         self.add_lane(LIVE_SID2, "api", self.recs)
         km._LANES_MEMO_MAX = 2
-        self.build(tmux=self.tmux(LIVE_SID, LIVE_SID2))                 # both held
+        self.build(live_map=self.live_map(LIVE_SID, LIVE_SID2))                 # both held
         self.assertEqual(set(km._lanes_memo), {LIVE_SID, LIVE_SID2})
         first = next(iter(km._lanes_memo))                               # the FIRST inserted, whichever lane the build drew first
-        self.build(tmux=self.tmux(first), live_only=True)                # served: the most recently served, though inserted first
+        self.build(live_map=self.live_map(first), live_only=True)                # served: the most recently served, though inserted first
         self.assertEqual(self.outcomes()["hit"], 1)
         self.add_lane(LIVE_SID3, "tests", self.recs)
-        self.build(tmux=self.tmux(LIVE_SID3), live_only=True)
+        self.build(live_map=self.live_map(LIVE_SID3), live_only=True)
         self.assertEqual(set(km._lanes_memo), {first, LIVE_SID3},
                          "the least recently SERVED went, not the first inserted; the served lane stayed")
         self.assertEqual(self.stats()["evict"], 1)
@@ -1313,7 +1300,7 @@ class DeadLanesOnTheSameBlock(LaneMemoBase):
     fork_fixture = EveryInputBusts.fork_fixture   # the parent-and-child lanes, borrowed for the dead-lane clip test
 
     def dead_build(self):
-        return self.build(tmux={})
+        return self.build(live_map={})
 
     def test_a_dead_miss_leaves_this_memo_and_the_parse_cache_empty_and_is_not_a_miss_here(self):
         calls = self.spy_segments()
@@ -1422,13 +1409,60 @@ class PerfWiring(LaneMemoBase):
         self.build(); self.build()
         blk = km._PERF_STATS.snapshot()["memos"]["lanes"]
         self.assertEqual(set(blk), {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
-                                    "segs_hit", "segs_miss", "dead_serve", "dead_miss", "dead_failed_serve"})
+                                    "segs_hit", "segs_miss", "prefix_hit", "prefix_segs", "dead_serve", "dead_miss", "dead_failed_serve"})
         self.assertEqual((blk["hit"], blk["miss"], blk["entries"], blk["segs_hit"], blk["segs_miss"]), (1, 1, 1, 1, 1))
         self.assertEqual((blk["dead_serve"], blk["dead_miss"], blk["dead_failed_serve"]), (0, 0, 0), "live lanes only so far")
-        self.build(tmux={}); self.build(tmux={})
+        self.build(live_map={}); self.build(live_map={})
         blk = km._PERF_STATS.snapshot()["memos"]["lanes"]
         self.assertEqual((blk["dead_serve"], blk["dead_miss"], blk["dead_failed_serve"]), (1, 1, 0), "the dead lanes ride the same block")
         self.assertEqual((blk["hit"], blk["miss"]), (1, 1), "and leave the live counters alone")
+
+
+class PrefixMemo(LaneMemoBase):
+    """The lane PREFIX memo (2026-09-12): a live lane whose transcript moved re-derived every turn of its history each
+    build (1.19 million segments re-walked in 25 minutes on the devbox, a third of the pusher's time). The closed
+    turns before the last one are held per lane and reused; only the tail is derived, and the bars equal a whole
+    derivation's."""
+
+    def _prefix_counts(self):
+        st = self.stats()
+        return (st["prefix_hit"], st["prefix_segs"])
+
+    def test_a_third_turn_reuses_the_held_prefix_and_equals_a_whole_derivation(self):
+        km.jd.append_caption(LIVE_SID, self.seg_id(), "segment", self.t0, "Added backoff")
+        self.build()                                                  # one turn: nothing before the tail, no prefix held
+        self.append_records([_rec("user", self.t0 + 100, "u2", "a1", "and cap the delay"),
+                             _rec("assistant", self.t0 + 120, "a2", "u2", "Capped at two minutes.")])
+        self.build()                                                  # two turns: the first turn is held as the prefix
+        self.assertEqual(self._prefix_counts(), (0, 0), "nothing to reuse yet: the held prefix was empty at the first build")
+        self.append_records([_rec("user", self.t0 + 200, "u3", "a2", "and log each retry"),
+                             _rec("assistant", self.t0 + 220, "a3", "u3", "Logged with the delay.")])
+        tl3 = self.build()                                            # three turns: the first turn's bars come from the prefix
+        self.assertEqual(self._prefix_counts(), (1, 1), "one derivation reused the prefix, one segment came from it")
+        self.assertEqual(len(tl3["turns"][LIVE_SID]), 3)
+        # what the prefix served equals a whole derivation on the same objects
+        km._lane_prefix_memo.clear()
+        session = km._parse(str(self.tpath()), LIVE_SID, self.now)
+        goals = km.jd.load_goals_shared(LIVE_SID)
+        caps = km._captions(LIVE_SID)
+        bars, seg_ends, last_t, compactions, cap_marks, other_marks, nsegs, complained = km._lane_segments(
+            LIVE_SID, session, goals, caps, True, None)
+        self.assertEqual(json.dumps(tl3["turns"][LIVE_SID]), json.dumps(bars), "the prefix path and the whole derivation agree")
+        self.assertEqual(nsegs, 3)
+        self.assertEqual(self.stats()["segs_miss"], 1 + 2 + 2, "the derivations walked 1, then 2, then only the 2 turns after the prefix")
+
+    def test_a_captions_change_is_a_new_input_and_the_prefix_is_not_served_under_the_old_one(self):
+        self.append_records([_rec("user", self.t0 + 100, "u2", "a1", "and cap the delay"),
+                             _rec("assistant", self.t0 + 120, "a2", "u2", "Capped at two minutes.")])
+        self.build()
+        self.append_records([_rec("user", self.t0 + 200, "u3", "a2", "and log each retry"),
+                             _rec("assistant", self.t0 + 220, "a3", "u3", "Logged with the delay.")])
+        self.build()
+        self.assertEqual(self._prefix_counts()[0], 1)
+        km.jd.append_caption(LIVE_SID, self.seg_id(), "segment", self.t0, "Added backoff")   # the first turn's caption changes
+        tl = self.build()
+        self.assertEqual(self._prefix_counts()[0], 1, "a changed captions file is a changed input: the old prefix is not served")
+        self.assertEqual(tl["turns"][LIVE_SID][0].get("c"), "Added backoff", "and the first bar carries the new caption")
 
 
 if __name__ == "__main__":

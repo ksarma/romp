@@ -600,11 +600,11 @@ class EmojiRoute(unittest.TestCase):
         self.names = Path(self.tmp) / "names"
         self.names.mkdir()
         # getattr: a kernel without the forwarder must fail at the forwarding assertion, not here in setUp
-        self._saved = (km.NAMES, km.jd.STATE, km._tmux_sessions, km._live_names, km._mark_views_dirty,
+        self._saved = (km.NAMES, km.jd.STATE, km._live_map, km._live_names, km._mark_views_dirty,
                        km._host_for_sid, getattr(km, "_remote_forward_status", None), km._demand_redial)
         km.NAMES = self.names
         km.jd.STATE = Path(self.tmp) / "state"
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": SID}
         km._host_for_sid = lambda sid: None
         self.dirty = []
@@ -613,7 +613,7 @@ class EmojiRoute(unittest.TestCase):
         km._demand_redial = lambda host, kind: self.redials.append((host, kind))
 
     def tearDown(self):
-        (km.NAMES, km.jd.STATE, km._tmux_sessions, km._live_names, km._mark_views_dirty,
+        (km.NAMES, km.jd.STATE, km._live_map, km._live_names, km._mark_views_dirty,
          km._host_for_sid, km._remote_forward_status, km._demand_redial) = self._saved
 
     def _post(self, body):

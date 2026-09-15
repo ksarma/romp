@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The Files pane (app=files): the file viewer as a dashboard column of its own, beside Chat,
-Sessions, Outline, Feed and Waiting, off by default, with the gear's "File links open in" setting routing a
+Sessions, Outline, Feed and Waiting, off by default, with the open Files pane taking a file click (T404's rule; T317's avail
+input) and, while it is closed, the gear's "File links open in" setting (kept on this fork, D2) routing a
 chat file-link click into it. The kernel side, pinned here:
 
 - the pane is not a feed consumer. The viewer is request/response (HTTP /file for the bytes; the
@@ -166,10 +167,11 @@ class Plumbing(unittest.TestCase):
         for page in (km._chat_page(), km._feed_page(), km._fleet_page(), km._waiting_page(), km._timeline_page()):
             _has(self, "var NOSTALE=false;", page)
             _lacks(self, "var NOSTALE=true;", page)
-        # the one page that passes it; the other pane pages call the shim exactly as they did
+        # the pages that pass it: this one and the settings page (the gear alone, no pushed view either;
+        # tests/test_settings_page.py); the pane pages call the shim exactly as they did
         shims = re.findall(r'_shim\("(\w+)", v(?:, ([^)]*))?\)', SRC)
-        self.assertEqual([app for app, kw in shims if "no_stale=True" in (kw or "")], ["files"])
-        self.assertEqual(sorted(app for app, kw in shims), ["chat", "feed", "files", "fleet", "timeline", "waiting"])
+        self.assertEqual([app for app, kw in shims if "no_stale=True" in (kw or "")], ["files", "settings"])
+        self.assertEqual(sorted(app for app, kw in shims), ["chat", "feed", "files", "fleet", "settings", "timeline", "waiting"])
 
     def test_the_editor_chunk_derives_from_the_pages_own_bundle_tag(self):
         # file-view.ts loads its CodeMirror chunk from a URL rewritten off the page's running bundle
@@ -225,13 +227,14 @@ class Shell(unittest.TestCase):
         _has(self, "po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
         _has(self, "po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
         _has(self, "document.body.classList.toggle('po-files',!!po.files)", self.html)
-        _has(self, "files:'Files pane'", self.html)   # the rail tooltip's words
+        _has(self, "files:'files pane'", self.html)   # the rail tooltip's words (upstream's spelling of the label since the pull-in; the Waiting pane keeps its own)
 
     def test_every_pane_list_in_the_landing_js_names_it(self):
         _has(self, "'f-files':'files-pane'", km._LANDING_FOCUS_JS)
         _has(self, "var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
-        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", km._LANDING_ESC_JS)
-        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", km._LANDING_MOBILE_JS)
+        # the settings iframe (the gear's document, not a pane) rides the two keyboard lists with the panes
+        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", km._LANDING_ESC_JS)
+        _has(self, "['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline','f-settings'].forEach", km._LANDING_MOBILE_JS)
         # the Log's connection-lost label reads the one map, so the pane's row in _PANE_ORDER is the pin
         _has(self, "var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)
         self.assertEqual(dict(km._PANE_ORDER).get("files"), "Files")
@@ -239,8 +242,61 @@ class Shell(unittest.TestCase):
         _has(self, "var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
         _has(self, "grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)
         _has(self, "id==='waiting-pane'?'waiting':'files'", self.html)
+        # the chat side of every gutter is the RIGHTMOST chat column (the split, 2026-09-08: lastChat() is 'chat-pane' with no split);
+        # gv-c's right side is the fork's Waiting pane, and gv-d, the Files pane's gutter, picks its left one from waiting / feed / fleet / the chat
+        _has(self, "gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':"
+                      "c.contains('po-fleet')?'fleet-pane':lastChat();},'waiting-pane');", self.html)
         _has(self, "gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':"
-                      "c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');", self.html)
+                      "c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':lastChat();},'files-pane');", self.html)
+
+    def test_the_files_controls_own_setting_hides_it_in_both_layouts(self):
+        # T317 (the user 2026-09-10): the gear's Files row, "Files control in the dashboard bar" until T407 (romp:settings.showFilesControl,
+        # hidden unless the store holds the literal true: OFF by default since T317b; a FRESH key, since the T317-era gear's
+        # whole-object save left filesControl: true in any profile that touched a setting). The shell reads the gear's store key itself, hides the
+        # rail's toggle and the phone's tab by one body class, closes an open pane on the same apply, refuses to
+        # bring the pane forward, tells the panes it is unavailable, and the phone's switcher never shows a hidden
+        # tab (a stored romp-mobile-tab, a relay). Executed under node in tests/test_pane_state_broadcast.py.
+        _has(self, "body.no-files-control .rail-btn[data-pane=files],body.no-files-control #mtabs button[data-pane=files]{display:none}", self.html)
+        js = km._LANDING_COLLAPSE_JS
+        _has(self, "function filesCtl(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}", js)
+        _has(self, "function filesCtlM(){try{var st=JSON.parse(localStorage.getItem('romp:settings')||'null');return !!(st&&st.showFilesControl===true);}catch(e){return false;}}", km._LANDING_MOBILE_JS)   # the phone's read agrees: only the literal true
+        self.assertNotIn("st.filesControl", js + km._LANDING_MOBILE_JS, "the T317-era key is never read: a whole-object save merged its true into profiles that never touched the box")
+        _has(self, "document.body.classList.toggle('no-files-control',!ctl);", js)
+        _has(self, "if(k==='files'&&!filesCtl())return;", js)
+        _has(self, "return {romp:'panes',on:on,avail:{files:filesCtl()}};", js)
+        _has(self, "window.addEventListener('storage',function(e){if(!e||!e.key||e.key===SK)reconcile(true);apply();});", js)   # the gear writes from another document: this is the event (a gear save re-reads the optional panes before the titles refresh)
+        mob = km._LANDING_MOBILE_JS
+        _has(self, "function show(p){if(p==='files'&&!filesCtlM())p='chat';", mob)
+        # the gear's row, in General's Panes section since T404 (the file-links setting keeps its own Files section right after it on this fork, D2 KEEP), UNCHECKED by default (T317b); the chat's route reads the word
+        gear = (UI / "gear.js").read_text()
+        _has(self, "<input type=checkbox id=rs-filesctl>", gear)
+        self.assertNotIn("id=rs-filesctl checked", gear, "off by default: the box is not pre-checked")
+        self.assertEqual(gear.count("showFilesControl: false, stripGroupRows"), 2, "the gear's load defaults (the assign and its catch) say off")
+        _has(self, "delete o.filesControl; return o; } catch (e) {", gear)   # load() drops the T317-era key; the file-links key stays a setting on this fork (D2 KEEP), so load() keeps it
+        # the box has a NAME OF ITS OWN in the gear's one var list (review find: a second `fc` shadowed the feed's
+        # collapsed box, so the new row was dead and the feed box wrote this setting)
+        _has(self, "fsc = document.getElementById('rs-filesctl')", gear)
+        _has(self, "if (fsc) fsc.addEventListener('change', function () { var s = load(); s.showFilesControl = fsc.checked; save(s); });", gear)
+        _has(self, "if (fsc) fsc.checked = (s.showFilesControl === true);", gear)
+        self.assertEqual(gear.count("fc = document.getElementById("), 1, "fc is the feed's collapsed box alone")
+        self.assertEqual(gear.count("fsc = document.getElementById("), 1)
+        # the palette's entry for the pane is not listed while the control is hidden (re-read at every open)
+        pal = (UI / "palette-main.ts").read_text()
+        _has(self, 'when: key === "files" ? () => !document.body.classList.contains("no-files-control")', pal)
+        _has(self, ': optional.has(key) ? () => loadSettings().panes[key as keyof PaneSet]', pal)   # the optional panes' own predicate (the gear's Panes section) shares the ternary
+        _has(self, "filter((c) => !c.hidden && (!c.when || c.when()))", (UI / "palette.ts").read_text())
+        # a ?panes= bookmark stays a view: the forced close is never written over the stored set
+        _has(self, "if(!ctl&&po.files){po.files=false;if(qp===null)saveP();}", js)
+        _has(self, "id=rs-filelink", gear, "the file-links setting stays on this fork (D2 KEEP, the user's 2026-08-20 and 2026-09-06 decisions): the open Files pane wins, the setting decides where a click goes while it is closed")
+        self.assertLess(gear.index("id=rs-pane-feed"), gear.index("id=rs-filesctl"), "the row sits in General's Panes section, after the three pane toggles (T404)")
+        self.assertLess(gear.index("id=rs-filesctl"), gear.index("data-section=appearance>Appearance<"), "…before the Appearance section")
+        render = (UI / "render.ts").read_text()
+        _has(self, "fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true, panesAvail.files !== false)", render)   # the setting first (D2 KEEP), then T317's avail input
+        # the hint in the pane stays true: it speaks of the pane being open or closed, never of the control (its third sentence,
+        # which told a reader with the pane open to turn on the control that must already be on, went with T407)
+        files = (UI / "files.ts").read_text()
+        _has(self, 'hint.textContent = "While this pane is open, a file or folder clicked in the chat opens here. Closed, they open over the pane you clicked.";', files)
+        self.assertNotIn("Files control in the dashboard bar", files, "the row is named Files now (T407)")
 
     def test_mobile_tab_and_the_palette_command(self):
         _has(self, "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}", self.html)
@@ -273,7 +329,7 @@ class Relay(unittest.TestCase):
         # remembered so the viewer's close puts the person back
         _has(self, "if(window.__rompMobileOn&&window.__rompMobileOn()){var cur=document.body.getAttribute('data-tab')||'chat';", branch)
         _has(self, "if(cur!=='files'){window.__rompFilesTabFrom=cur;window.__rompMobileTab&&window.__rompMobileTab('files');}", branch)
-        _has(self, "postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null},'*')", branch)
+        _has(self, "postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null,at:m.at||null,frag:m.frag||null},'*')", branch)   # todoId and at: the fork's todo link and place (F5); frag: the section a preview card's open names (T351)
         self.assertEqual(branch.count("postMessage("), 1, "one forward, carrying the whole click")
         for tok in ("__rompFeedWasOff", "'f-feed'", "browseClosed", "viewFileOpened", "viewFileClosed"):
             _lacks(self, tok, branch, tok + " belongs to the feed route")
@@ -301,16 +357,20 @@ class Relay(unittest.TestCase):
         # gesture reader); the pane validates the identity and caches it per sid (files.ts)
         render = (UI / "render.ts").read_text()
         _has(self, 'window.parent.postMessage({ romp: "viewFile", path: p, sid: s, pane: route,', render)
-        _has(self, "fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true)", render)
+        _has(self, "fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true, panesAvail.files !== false)", render)   # the setting first (D2 KEEP), then T317's avail input
         files = (UI / "files.ts").read_text()
         _has(self, "asIdentity(m.identity)", files)
         route = (UI / "file-route.ts").read_text()
-        _has(self, "export function fileLinkRoute(pane: unknown, framed: boolean, filesOpen: boolean): FileRoute {", route)
+        _has(self, "export function fileLinkRoute(pane: unknown, framed: boolean, filesOpen: boolean, filesAvail: boolean = true): FileRoute {", route)   # the fork's pane input (D2 KEEP) with T317's avail
 
     def test_the_gear_and_the_guide_say_the_open_pane_wins(self):
+        # the open pane wins (T404's rule); on this fork the gear's file-links row stays (D2 KEEP) and says so, beside the
+        # Files control row's sentence (T317, T407) and the pane's own hint
         gear = (UI / "gear.js").read_text()
-        _has(self, "While the Files pane is open, both open there.", gear)
+        _has(self, "While the Files pane is open, both open there.", gear)   # the setting's own sentence says the open pane wins (D2 KEEP)
         _has(self, "<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>", gear)
+        _has(self, "closes the Files pane if it is open; file links then open over the pane you clicked.", gear)   # the Files control row's sentence (T317, T407)
+        _has(self, "While this pane is open, a file or folder clicked in the chat opens here. Closed, they open over the pane you clicked.", (UI / "files.ts").read_text())
         guide = (Path(ROOT) / "docs" / "guide.md").read_text()
         _has(self, "### Files\n", guide)
         _has(self, "While the pane is open, a file link clicked in the chat opens here.", guide.replace("\n", " "))
@@ -346,7 +406,7 @@ class Relay(unittest.TestCase):
         code = "\n".join(l for l in pane.splitlines() if not l.lstrip().startswith("//"))
         self.assertIn("at:m.at||null", code)
         feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
-        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')", feed)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null,frag:m.frag||null},'*')", feed)
         lines = js.split(head)[0].rstrip("\n").split("\n")
         start = len(lines)
         while start > 0 and lines[start - 1].lstrip().startswith("//"):
@@ -378,7 +438,7 @@ class Relay(unittest.TestCase):
         feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
         self.assertIn("window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');", feed)
         self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", feed)
-        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null},'*')", feed)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,at:m.at||null,frag:m.frag||null},'*')", feed)
 
     def test_the_quote_seed_forward_sits_in_the_same_listener(self):
         # file-view.ts composerWindow posts editorSelection UP from a pane without a composer; the shell
@@ -490,7 +550,9 @@ class BrowseRelay(unittest.TestCase):
     ui/webview/browse-route.test.ts. Synthetic only: placeholder sids, the notes-api demo world, TESTHOST."""
 
     SID = "11111111-2222-3333-4444-555555555555"
-    HEAD = "if(m.romp==='browseFiles'&&m.pane==='pane'){var fb=document.getElementById('f-files');"
+    # …or a browse ask naming no pane while the Feed pane is off in this browser (the gear's Panes section, the user
+    # 2026-09-10): the feed cannot be lifted, so the Files pane's arm takes it (tests/test_pane_state_broadcast.py RelayArms)
+    HEAD = "if(m.romp==='browseFiles'&&(m.pane==='pane'||!feedHere())){var fb=document.getElementById('f-files');"
     FEED = "else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');"
     IDENTITY = {"name": "web", "color": {"bg": "#123456", "fg": "#ffffff"}}
 
@@ -557,7 +619,7 @@ class BrowseRelay(unittest.TestCase):
     def test_the_view_file_pane_branch_beside_it_is_untouched(self):
         v = self.out["view"]
         self.assertEqual(v["files"], [{"romp": "viewFile", "path": "/repo/notes-api/src/app.py", "sid": self.SID, "identity": self.IDENTITY,
-                                       "todoId": None, "at": None}], "a chat click carries no todo and no place; the forward says so")
+                                       "todoId": None, "at": None, "frag": None}], "a chat click carries no todo, no place and no section; the forward says so")
         self.assertEqual(v["toggles"], [["files", True]])
 
     def test_the_pane_branch_precedes_the_feed_branch_and_names_no_feed_token(self):
@@ -595,6 +657,7 @@ class BrowseRelay(unittest.TestCase):
         # identity, opens the browser, and owes the shell no browseClosed (files.ts; file-browse.ts gates it)
         render = (UI / "render.ts").read_text()
         self.assertIn('window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,', render)
+        _has(self, "browseRoute(web, settings.fileLinkPane, window.parent !== window, panesOn.files === true, panesAvail.files !== false)", render)   # the setting first (D2 KEEP), then T317's avail input
         files = (UI / "files.ts").read_text()
         self.assertIn("shellRestore: false,", files)
         self.assertIn("if (sid && id) identities.set(sid, id);", files)
@@ -602,12 +665,14 @@ class BrowseRelay(unittest.TestCase):
         browse = (UI / "file-browse.ts").read_text()
         self.assertIn("if (!shellRestore) return;", browse)
         route = (UI / "file-route.ts").read_text()
-        self.assertIn("export function browseRoute(web: boolean, pane: unknown, framed: boolean, filesOpen: boolean): BrowseRoute {", route)
+        self.assertIn("export function browseRoute(web: boolean, pane: unknown, framed: boolean, filesOpen: boolean, filesAvail: boolean = true): BrowseRoute {", route)   # the fork's pane input (D2 KEEP) with T317's avail
+        _has(self, 'export type BrowseRoute = FileRoute | "editor";', route)
 
     def test_the_gear_and_the_guide_name_the_folder(self):
         gear = (UI / "gear.js").read_text()
         _has(self, "Where a file or folder clicked in the chat opens. While the Files pane is open, both open there.", gear)
         _has(self, "<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>", gear, "the three destinations")
+        _has(self, "closes the Files pane if it is open; file links then open over the pane you clicked.", gear)   # the Files control row (T317, T407) beside it
         guide = (Path(ROOT) / "docs" / "guide.md").read_text().replace("\n", " ")
         _has(self, "opens a listing of that folder by the same rule: in this pane while it is open or when the setting names it, otherwise over the feed.", guide)
         _has(self, "Pick a file in the listing and it opens where the listing is.", guide)

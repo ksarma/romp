@@ -140,6 +140,8 @@ test("a detach's hostDrop `closed` frames and an undeliverable send's `warn` sta
   withManager((fm, windowed) => {
     const got: any[] = [];
     fm.onFrame((e: MessageEvent) => got.push(e.data));
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }] });   // the local kernel's strip lands first, as on every page (tabs-first on connect): the merged order's re-emissions are held until it has (federation-order-hold.test.ts)
+    got.length = 0;
     // an attached host whose socket is not open: its sessions are on screen, its tunnel is down
     fm.conns.set("TESTHOST", { host: "TESTHOST", ws: null, url: "", closed: false, live: false, lastRecv: 0, resumeProvisional: 0, connT: 0, pending: new Map() });
     fm.hostSeq.push("TESTHOST");
@@ -229,6 +231,8 @@ test("a throw on a detach's lanes emission still lets its bars emission run", ()
   withManager((fm, windowed, reported) => {
     const got: string[] = [];
     fm.onFrame((e: MessageEvent) => { got.push(e.data.type); if (e.data.type === "data") throw new Error("lanes bug"); });
+    fm.inbound("", { type: "tabOrder", order: [U], tabs: [{ id: U, name: "web" }] });   // the local strip first, as on every page: the detach's order re-emission below is held until it has landed (federation-order-hold.test.ts)
+    got.length = 0;
     fm.inbound("", laneData([U]));
     fm.inbound("", { type: "bars", turns: [] });
     fm.inbound("TESTHOST", laneData([V]));
@@ -282,7 +286,7 @@ test("a view-order storage event re-emits all three merged frames to the registe
   g.document = Object.assign(new EventTarget(), { visibilityState: "visible" });
   g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
   g.setInterval = () => 0;                                   // start()'s poll and watchdog timers: never armed here
-  g.fetch = () => Promise.reject(new Error("no kernel"));    // start()'s first /tunnels poll: returns quietly
+  g.fetch = () => new Promise(() => {});   // start()'s first /tunnels poll never answers here: a rejection files a crumb, and that read of the window would land after the finally below restored the globals
   try {
     const fm: any = new FederationManager();
     fm.start();

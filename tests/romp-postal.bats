@@ -1,8 +1,8 @@
 #!/usr/bin/env bats
 
 # Exercises the romp-postal-service program end to end: a real bus (own port per test),
-# CLI client ops, the loop guard, the stdio MCP server, and autostop. tmux is
-# mocked so no real sessions are needed.
+# CLI client ops, the loop guard, the stdio MCP server, and autostop. The kernel's
+# session listing is a fixture file (ROMP_SESSIONS_FILE), so no real sessions are needed.
 
 POSTAL="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-postal-service"
 
@@ -16,18 +16,17 @@ setup() {
     # per run; three misdiagnosed CI runs on 2026-08-31). Same lesson the kernel's own port
     # comment records. postal_spawn_bus below retries past a genuine collision anyway.
     export ROMP_POSTAL_PORT=$((27200 + ${BATS_TEST_NUMBER:-0}))
+    export ROMP_POSTAL_HERMETIC=1   # the port above is this run's own: the bus honours it under a temporary state root (2026-09-11)
     export ROMP_POSTAL_POLL=1
     export ROMP_POSTAL_IDLE_GRACE=2
     export ROMP_POSTAL_HEARTBEAT_TTL=2
     export HOME="$TEST_DIR/home"; mkdir -p "$HOME"   # sandbox the client-only marker
     unset SSH_CONNECTION SSH_TTY                      # default: not a remote machine
 
-    # The bus no longer shells tmux for session ops. Identity is the CLAUDE_CODE_SESSION_ID env (the harness
-    # sets it for every session) resolved to a name via the names registry; the session list comes from the
-    # kernel's GET /sessions (ROMP_SESSIONS_FILE seam, from a "name|uuid" fixture via mksessions). Delivery +
-    # status-bar chrome go through the kernel too — absent here, they no-op (the maildir-drain backstop covers
-    # delivery). A hermetic stub tmux (always-empty) keeps any residual tmux() call from touching real tmux.
-    MOCK="$TEST_DIR/mock"; mkdir -p "$MOCK"
+    # Identity is the CLAUDE_CODE_SESSION_ID env (the harness sets it for every session) resolved to a
+    # name via the names registry; the session list comes from the kernel's GET /sessions
+    # (ROMP_SESSIONS_FILE seam, from a "name|uuid" fixture via mksessions). Delivery goes through the
+    # kernel too — absent here, it no-ops (the maildir-drain backstop covers delivery).
     export SESS="$TEST_DIR/sessions.txt"
     printf 'alpha|uuid-a\nbeta|uuid-b\n' > "$SESS"
     export ROMP_SESSIONS_FILE="$TEST_DIR/sessions.json"
@@ -36,9 +35,8 @@ setup() {
     printf 'alpha\t%s\t#111111\t#ffffff\n' "$HOME" > "$XDG_STATE_HOME/romp/names/uuid-a"
     printf 'beta\t%s\t#222222\t#ffffff\n' "$HOME" > "$XDG_STATE_HOME/romp/names/uuid-b"
     export CLAUDE_CODE_SESSION_ID=uuid-a             # "this session" = alpha by default (tests acting as beta override it)
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK/tmux"   # hermetic stub: every tmux call → "" (no real tmux)
-    chmod +x "$MOCK/tmux"
-    export PATH="$MOCK:$PATH"
+    unset CODEX_THREAD_ID                            # the second identity source (a Codex session's shell variable, 2026-09-15): the
+                                                     # anonymous-send tests blank the Claude variable and must find this one absent too
 
     # Readiness is load-bearing: every test assumes the bus is up, and proceeding without it surfaces as a
     # confusing DOWNSTREAM failure (a 2026-08-14 CI runner lost this race: "remote --force" probed a port
@@ -98,7 +96,7 @@ mksessions() {
           [ -n "$n" ] || continue
           [ "$first" = 1 ] || printf ','
           first=0
-          printf '{"id":"%s","name":"%s","state":"working","dir":"","bg":"","fg":"","working":"","backend":"tmux"}' "$u" "$n"
+          printf '{"id":"%s","name":"%s","state":"working","dir":"","bg":"","fg":"","working":"","backend":"sdk"}' "$u" "$n"
       done < "$SESS"
       printf ']'
     } > "$ROMP_SESSIONS_FILE"

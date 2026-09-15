@@ -2144,6 +2144,21 @@ class CopyIgnoresForeignStaging(_Checkout):
             self.assertNotIn(name, copied, "%s was copied into the served tree" % name)
         self.assertEqual(len(self.builds()), 1)
 
+    def test_copy_prebuilt_serves_a_foreign_tree_as_it_is_and_builds_nothing(self):
+        """The `<KNOB>_BEFORE_DIST` legs (upstream's screenshot and bisect knobs) hand a lab a dist built from another
+        tree: lab_dist.copy_prebuilt copies it whole, minus the ignore's names, and never touches the checkout's build
+        (default() is not called: a build here would replace the very tree the knob asked for)."""
+        src = os.path.join(self.root, "before")
+        os.makedirs(src)
+        for name in ("render.js", "feed.css", ".render.js.tmp-1-2", lab_dist.LOCK_NAME, lab_dist.MARKER_NAME):
+            with open(os.path.join(src, name), "w") as fh:
+                fh.write(name)
+        dest = os.path.join(self.root, "lab", "dist")
+        with patch.object(lab_dist, "default", side_effect=AssertionError("copy_prebuilt must not build")):
+            lab_dist.copy_prebuilt(src, dest)
+        self.assertEqual(sorted(os.listdir(dest)), ["feed.css", "render.js"])
+        self.assertEqual(open(os.path.join(dest, "render.js")).read(), "render.js")
+
     def test_copies_survive_a_staged_builder_running_outside_the_lock(self):
         """A STAGED build that does not take the harness lock (a developer's `node esbuild.js`) renames
         staging files out from under a listing, which is exactly what broke the copy before; the ignore
@@ -2227,6 +2242,12 @@ _ESBUILD_TEXT_READERS = {
     # (write: false) to compare the emitted basenames with the landing html's tags: nothing is written to dist and
     # nothing is copied, so it is a reader of the config, not a served lab
     "test_landing_bundles_built.py",
+    # test_hermetic_kernel_postal.py (upstream's, the 2026-09-15 pull-in) asks its _spawns_kernel text classifier about an
+    # argv shape naming esbuild.js, as a NEGATIVE case (a build is not a kernel spawn): a string in a test, never a build
+    "test_hermetic_kernel_postal.py",
+    # test_settings_page.py (upstream's, the same pull-in) reads esbuild.js's TEXT to pin the settings page's bundle entry
+    # beside the kernel's served script tag: a source pin, no build and no copy
+    "test_settings_page.py",
 }
 _TREE_COPIERS = {"test_lab_dist.py", "test_github_repo.py",             # test_github_repo copies a repo, never dist
                  "test_perf_bench.py",                                  # upstream's copies kernel/ into a scratch checkout, never dist
@@ -2311,7 +2332,7 @@ class ServedModulesUseTheHelper(unittest.TestCase):
                 continue
             if "\nimport lab_dist\n" in _read(p):
                 served.append(p)
-        self.assertGreaterEqual(len(served), 15, "the served labs import the helper")
+        self.assertGreaterEqual(len(served), 70, "the served labs import the helper (22 of the fork's plus the 48 upstream modules the 2026-09-15 pull-in converted)")
         for p in served:
             self.assertIn("lab_dist.copy_dist(", _read(p), os.path.basename(p))
 

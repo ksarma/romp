@@ -145,6 +145,15 @@ test("the Files pane off: the setting decides; 'pane' hands the click up (the sh
   api.onShellMessage(PANES_ON({ chat: true, files: true }));
   api.openPath("/repo/notes-api/README.md", SID, { mod: false });
   assert.equal(H.up.length, 2, "on screen: the pane takes it whatever the setting says");
+  // T317 (upstream's filesAvail, the panes arm's second set): the Files control hidden in the gear leaves the on bit stale, and
+  // the pane setting has no pane to bring forward, so the click opens here; the control back, the pane takes it again
+  api.onShellMessage({ romp: "panes", on: { chat: true, files: true }, avail: { files: false } });
+  api.openPath("/repo/notes-api/README.md", SID, { mod: false });
+  assert.equal(H.up.length, 2, "nothing relayed: no pane to bring forward");
+  assert.equal(H.views.length, 3, "opened here instead");
+  api.onShellMessage({ romp: "panes", on: { chat: true, files: true }, avail: { files: true } });
+  api.openPath("/repo/notes-api/README.md", SID, { mod: false });
+  assert.equal(H.up.length, 3, "the control back: the pane takes it");
 });
 
 test("the gesture is read FIRST: a Cmd/Ctrl- or middle-clicked PDF takes its own tab whichever pane the plain click would have landed in; a blocked tab falls through to the route", () => {

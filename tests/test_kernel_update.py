@@ -1752,7 +1752,7 @@ class Routes(Fresh):
                 km._run_main_update("pull", True, manager_port=None, target="")
                 d = check()
                 self.assertIn("no commit was named for the move", d["failed"])
-                self.assertIn("the next check re-reads main and offers the update again", d["failed"],
+                self.assertIn("Update again once the next check has read main", d["failed"],   # upstream's wording since the 2026-09-15 pull-in (kernel blocks 17, 18)
                               "the text promises the re-offer, never a button that will not show")
                 self.assertEqual((d["drift"], d["driftSha"], km._MAIN_DRIFT[0]), ("", "", ""), "no offer stands after a refused pull")
                 self.assertEqual([ok for _, ok in notices], [False, False, False])
@@ -2430,7 +2430,7 @@ class Wiring(unittest.TestCase):
         # what upstream lacks, and the help line's own words cover the notices ("one banner covers both",
         # "Off never checks"). Both sites in gear.js carry the heading, the row and the stale-pick toast's
         # label table, and the reference names the control by the same heading so a reader finds it in the gear.
-        self.assertIn("<b>Automatic updates <span class=rs-mixed hidden></span></b>", self.gear)
+        self.assertIn("<b>Updates install automatically <span class=rs-mixed hidden></span></b>", self.gear)   # upstream's T404 heading (the 2026-09-15 pull-in); the label table and the reference keep "Automatic updates"
         self.assertIn("'update-mode': 'Automatic updates',", self.gear)
         self.assertNotIn("Updates and update notices", self.gear)
         ref = re.sub(r"\s+", " ", (Path(BIN).parent / "docs" / "reference.md").read_text())
@@ -2444,7 +2444,7 @@ class Wiring(unittest.TestCase):
         # code converges in place with the kernel left up (_kernel_code_changed + _in_place_converge).
         # The copy names both routes. The route line is pinned too, so a change to the route flags
         # the copy for re-reading.
-        self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):",
+        self.assertIn("if not _kernel_code_changed(_kernel_sha(reask=True), pulled) and _in_place_converge(pulled):",
                       self.src)
         self.assertNotIn("quiet moment", self.gear,
                          "the gear still promises a quiet-window restart; since T269 every deploy restart "
@@ -2469,8 +2469,8 @@ class Wiring(unittest.TestCase):
         # list over-claims for the bus's script under bin/): code the running kernel executes restarts
         # at once, anything else converges in place. The code pin couples the copy to the route it
         # describes.
-        self.assertIn("if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):", self.src,
-                      "the pull converge's in-place route, which the copy describes")
+        self.assertIn("if not _kernel_code_changed(_kernel_sha(reask=True), pulled) and _in_place_converge(pulled):", self.src,
+                      "the pull converge's in-place route, which the copy describes")   # reask=True: upstream's re-read of the running sha (#1478, the 2026-09-15 pull-in)
         ref = (Path(BIN).parent / "docs" / "reference.md").read_text()
         para = next(p for p in re.split(r"\n\s*\n", ref) if p.lstrip().startswith("**Update notices.**"))
         para = re.sub(r"\s+", " ", para)

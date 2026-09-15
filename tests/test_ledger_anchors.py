@@ -105,7 +105,10 @@ class ColdBeatWorkAnchorFallback(unittest.TestCase):
 
 class SharedHelperAntiDrift(unittest.TestCase):
     """The whole point of the helper: the feed and the ledger can't drift. Guard that BOTH build_feed and
-    build_session resolve node anchors through km._node_anchor_uuids (not a private re-implementation)."""
+    build_session resolve node anchors through km._node_anchor_uuids (not a private re-implementation). Since the
+    Outline's provisional row (plans/outline-pane-provisional-row.md, 2026-09-15) the ledger's walk lives in the shared
+    _goal_tree_walk, which build_session AND the provisional assembly call: the anchors are resolved there, through the
+    one helper, so the pin follows the walk and holds both callers to it."""
 
     def test_both_builders_call_the_one_helper(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -116,9 +119,13 @@ class SharedHelperAntiDrift(unittest.TestCase):
             m = re.search(r"\ndef %s\(.*?(?=\ndef )" % fn, src, re.S)
             self.assertIsNotNone(m, "found %s" % fn)
             return m.group(0)
-        self.assertIn("_node_anchor_uuids(", body("build_session"), "the ledger resolves anchors via the helper")
-        # the feed's flatten lives in _feed_segs_build since 2026-09-07 (build_feed's per-session memo)
-        self.assertIn("_node_anchor_uuids(", body("_feed_segs_build"), "the feed resolves anchors via the helper")
+        self.assertIn("_node_anchor_uuids(", body("_goal_tree_walk"), "the ledger's shared walk resolves anchors via the helper")
+        self.assertNotIn("_node_anchor_uuids(", body("build_session"), "build_session holds no private anchor resolution beside the walk")
+        self.assertIn("_goal_tree_walk(sid, gstore, seg_trig, seg_work, anchors=True)", body("build_session"), "the ledger takes the shared walk, anchors on")
+        self.assertIn("_goal_tree_walk(sid, gstore, anchors=False)", body("_provisional_ledger"), "the Outline's provisional row takes the same walk, anchors off (a cold tab has no landing)")
+        self.assertEqual(len(re.findall(r"def _goal_tree_walk\(", src)), 1, "the walk defined exactly once")
+        self.assertIn("_node_anchor_uuids(", body("_feed_session_entry"),   # T368: build_feed's per-session loop body
+                      "the feed resolves anchors via the helper")
 
 
 class GlowByIdRouting(unittest.TestCase):
@@ -197,8 +204,9 @@ class ChatAndFeedHoverRouting(unittest.TestCase):
         self.assertIn('_send_to_app("feed", {"type": "hoverCards"', self.SRC)
 
     def test_chat_dot_hover_glows_its_whole_segment(self):
-        # #3: the same branch glows EVERY atom uuid in the hovered segment (the sibling dots), by id
-        self.assertIn('"sid": hsid, "uuids": seg_uuids', self.SRC)
+        # #3: the same branch glows EVERY atom uuid in the hovered segment (the sibling dots), by id; the group is
+        # built by _glow_groups, which adds each uuid's global index for the ruler's history strip (T318b)
+        self.assertIn("_glow_groups(hsid, seg_uuids)", self.SRC)
 
     def test_ledger_bullet_hover_stays_timeline_only(self):
         # the feed/chat extension is gated to dotHover; a ledgerHover (TOC bullet) must not stomp the glow
@@ -243,8 +251,7 @@ class SegJump(unittest.TestCase):
     def test_the_deep_link_maps_use_the_landable_anchor(self):
         # both zone maps (ledger seg_work + feed seg_uuid) resolve through _seg_jump, not bare `r or w`
         import inspect
-        src = (inspect.getsource(km.build_session) + inspect.getsource(km.build_feed)
-               + inspect.getsource(km._feed_segs_build))   # the feed's seam walk (2026-09-07)
+        src = inspect.getsource(km.build_session) + inspect.getsource(km._feed_session_entry)   # T368: the feed's loop body
         self.assertEqual(src.count('_seg_jump(seg["atoms"])'), 2)
         self.assertNotIn("= r or w", src)
 

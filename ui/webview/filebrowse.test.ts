@@ -146,8 +146,10 @@ test("every entry point is gated to where the click can land, and posts the one 
 });
 
 test("the statusline folder link BROWSES on the web; OS-open lives on its right-click (the user 2026-08-14)", () => {
-  assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // the act names the intent; openBrowse routes it at the click
-  assert.match(RENDER, /click to browse this folder/);
+  const SW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "status-widgets.ts"), "utf8");   // the folder link rule lives beside the folder widget since T409 (folderLink); render.ts's asFolderLink delegates
+  assert.match(SW, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // pane-local browse needs no shell (2026-08-24)
+  assert.match(RENDER, /function asFolderLink\(elem: HTMLElement, cwd: string, sid\?: string\): void \{\n\s*folderLink\(elem, cwd, sid\);/);
+  assert.match(SW, /click to browse this folder/);
   // the demoted OS-open: one document-level contextmenu on folder links, posting the old openFolder
   assert.match(RENDER, /item\.textContent = "Open folder window";/);
   assert.match(RENDER, /browseFiles: \(el\) => \{/, "the body delegate carries the new act");
@@ -243,7 +245,13 @@ test("Browse files sits at the BOTTOM of the tab menu, behind a divider, wearing
   assert.match(menuBody, /sb\.textContent = "the session's working tree, " \+ \(where === "pane" \? "in the Files pane" : where === "feed" \? "in the feed pane" : "in a viewer over this chat"\);/,
     "the standard sub-description line, naming where the listing will open (browseRouteNow, 2026-09-06)");
   // …and the Billing submenu (the previous last item) now sits ABOVE it
-  assert.ok(menuBody.indexOf('l.textContent = "Billing"') < browseAt, "Browse is last");
+  const billingAt = menuBody.indexOf('l.textContent = "Billing"');
+  assert.ok(billingAt > 0 && billingAt < browseAt, "Browse is last");
+  // the divider before Browse follows Billing directly (2026-09-11: Tags moved up into the where-it-belongs
+  // section, so the switches section ends on Billing and nothing else is appended before Browse's divider)
+  const between = menuBody.slice(billingAt, browseAt);
+  assert.ok(between.includes('menu.appendChild(el("div", "ctx-sep"));'), "the divider sits between Billing and Browse");
+  assert.doesNotMatch(between, /l\.textContent = "(Tags|Move to folder…|Move to a new column|Rename)"/, "no other item between them");
 });
 
 // ── the viewer's veto, run FOR REAL: a browse click while the discard confirm keeps the viewer ──────────
@@ -481,7 +489,7 @@ function viewerUp(): Viewer {
   const body = main.children.find((c) => c.className === "fileview-body")!;
   assert.ok(body !== undefined, "the body inside the row");
   const acts = bar.children.find((c) => c.classList.contains("fileview-acts"))!;
-  const btn = (label: string) => { const b = acts.children.find((c) => c.tagName === "button" && c.textContent === label); assert.ok(b !== undefined, "the " + label + " button"); return b!; };
+  const btn = (label: string) => { const walk = (n: El): El | undefined => { for (const c of n.children) { if (c.tagName === "button" && (c.textContent === label || c.getAttribute("aria-label") === label)) return c; const d = walk(c); if (d) return d; } return undefined; }; const b = walk(acts); assert.ok(b !== undefined, "the " + label + " button"); return b!; };   // T367: controls sit in groups, glyph buttons carry their word as aria-label
   return { wrap: wrap!, body, btn };
 }
 /** Click Edit (the editor chunk has no bundle to load from, so the plain textarea mounts) and type a line: the
@@ -517,6 +525,9 @@ test("a browse click while the discard confirm keeps the viewer stands down whol
   win.parent = { postMessage: (m: Record<string, unknown>) => { shell.push(m); } };
   t.after(() => { win.parent = win; });
   t.after(reset);
+  // T367's text-size flyout wires its document listeners (a capture-phase Escape among them) ONCE per document, at the first
+  // control built, and never removes them by design; a first open and close here puts that singleton into the baseline
+  fv.openFileView(APP, SID); await settle(); fv.closeFileView();
   const keysBase = docKeys.length;   // before the viewer: this fork's viewer binds document keydown handlers per open and drops them at its close
   fv.openFileView(APP, SID);
   await settle();

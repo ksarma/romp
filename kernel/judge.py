@@ -13,7 +13,9 @@ CLI:
   romp-judge --once               # one caption pass over the live fleet (writes captions/)
   romp-judge --test <transcript>  # caption one transcript's recent units, print them (no write)
 """
-import contextlib, copy, errno, hashlib, json, os, re, secrets, shutil, signal, stat, sys, time, subprocess, threading, traceback, importlib.util
+import collections
+import shlex
+import contextlib, copy, errno, hashlib, json, os, pickle, re, secrets, shutil, signal, stat, sys, time, subprocess, threading, traceback, importlib.util
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -47,14 +49,25 @@ class _TimedPool(ThreadPoolExecutor):
     2026-09-08). Thread-locals do not cross into pool workers on their own, which is why the mark rides
     the submit rather than the tier."""
 
+    def __init__(self, *args, **kwargs):
+        if "thread_name_prefix" not in kwargs:            # the workers carry their tier: judge-index_0, judge-triage_3, ... so the
+            kwargs["thread_name_prefix"] = "judge-" + (threading.current_thread().name or "tier").split(":", 1)[0]   # kernel's
+        super().__init__(*args, **kwargs)                 #  stack sample keys them by tier, never as an anonymous pool (T401)
+
     def submit(self, fn, /, *args, **kwargs):
+        stage = em._read_stage()                          # the submitter's stage mark (judge.<tier> on a tier thread) rides the submit
+        #                                                   the same way the pass frame does: a build or a hydration inside the worker
+        #                                                   counts under the tier, never under `none` (T401 (5a) round two)
         def run():
             _judge_ctx.in_pass = True
+            prev = em._read_stage()
+            em._set_stage_mark(stage)
             c0 = time.thread_time()
             try:
                 return fn(*args, **kwargs)
             finally:
                 _judge_cpu_add(time.thread_time() - c0)
+                em._set_stage_mark(prev)                  # the worker's previous mark restored on every exit
         return super().submit(run)
 
 
@@ -66,7 +79,12 @@ _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
+em.set_checkpoint_dir(lambda: STATE / "checkpoints")   # T323 stage 3: the fold checkpoints live under the state root, read at
+#                                                        call time so _rebind_state moves them with everything else
 _cred = sys.modules.get("romp_credentials") or load_source("romp_credentials", HERE / "credentials.py")
+# the stored Claude logins' registry (T346): a judge call for a session billed to one names that login's helper,
+# and never runs as a login the registry holds refused
+_logins = sys.modules.get("romp_logins") or load_source("romp_logins", HERE / "logins.py")
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
@@ -166,14 +184,21 @@ def _rebind_state(path):
     MESSAGES, ERRORS, USAGE = STATE / "timeline" / "messages.jsonl", STATE / "judge-errors.jsonl", STATE / "judge-usage.jsonl"
     global JUDGE_LIMIT
     JUDGE_LIMIT = STATE / "judge-limit.json"
+    global FAST_REFUSED
+    FAST_REFUSED = STATE / "fast-refused.json"   # the judges' per-tier fast refusal record (T300) rebinds with the rest
     SDKDIR = STATE / "sdk"
     CODEXDIR = STATE / "codex"
     EPIDIR = STATE / "episodes"
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
+    _LEAF_SEEN.clear(); _LEAF_RETIRED.clear()   # the leaves discover handed out belong to the old root
     _STORE_FAULTS.clear()   # unreadable-store episodes belong to the old root's files
     _CHAIN_MEMO.clear()     # the write-moment chain memo keys on paths under STATESDIR; a new root is a new world
+    parse_cache_clear()      # the parses belong to the old root too
     _COURIER_SEEN.clear()   # the courier gate keys on the old root's files
-    _PLANNER_SEEN.clear()   # ...and the planner gate
+    _PLANNER_SEEN.clear(); _PLANNER_SEEN_LOADED[0] = False; _PLANNER_SEEN_DIRTY[0] = False; _PLANNER_SEEN_READ_FAULT[0] = False   # ...and the planner gate, its load latch
+    #                                                                                          with it: the new root's rows load on
+    #                                                                                          the next pass, and a forced persist
+    #                                                                                          before that writes nothing (T401 (5c) round three)
     _BACKREF_MEMO["slot"] = None   # ...and so does the sender-board walk's map
     _CAPTIONS_MEMO.clear(); _GOALARCH_MEMO.clear()   # ...and the per-file read memos
     _episode_memo.clear()   # ...and so are the episode-log reads
@@ -184,6 +209,8 @@ def _rebind_state(path):
     with _DISK_CONTENT_LOCK:
         _DISK_CONTENT.clear()   # save_goals' disk-side memo is keyed on full store paths, so an old root's
     #                         entries could never hit under the new one; cleared anyway so a rebind starts empty
+    with _RAW_STORE_LOCK:
+        _RAW_STORE.clear()      # the writer loader's parse memo: same full-path keys, same reasoning
     with _ABSENT_FLAGS_LOCK:
         _ABSENT_FLAGS.clear()   # the absent-store predicate memo: same full-path keys, same reasoning
     with _VIEW_CLEARED_LOCK:
@@ -244,8 +271,30 @@ def _index_effort():  return _state_str("index-effort", "")
 def _judge_engine():  return _state_str("judge-engine", "claude")   # "claude" | "codex" — which model
 #   harness runs the judges (docs/codex.md §judges). "codex" lets a machine with no Claude login keep
 #   the board thinking: every judge becomes a one-shot `codex exec` billing the machine's codex login.
-def _judge_fast():    return _state_str("judge-fast", "off") == "on"   # the gear's Fast mode box (Triage model row): the CLI's fast-mode
-#   opt-in rides every judge call whose model is Opus (_judge_cmd); off by default. Read per call, like the tiers.
+def _judge_fast():    return _state_str("judge-fast", "off") == "on"   # the gear's Fast mode box beside the TRIAGE model
+#   (T300, the user 2026-09-10: one flag per tier, since one box for every tier ticked three at once and sat greyed
+#   where it could not act). STATE/judge-fast is the triage tier's flag (it was the one flag of the first cut;
+#   _migrate_judge_fast_tiers in the kernel carries an existing "on" over once), distill-fast and index-fast the
+#   other two. Read per call, like the tiers' models.
+def _distill_fast():  return _state_str("distill-fast", "off") == "on"
+def _index_fast():    return _state_str("index-fast", "off") == "on"
+_TIER_FAST = {"triage": _judge_fast, "distill": _distill_fast, "index": _index_fast}
+
+
+def fast_capable(model):
+    """Whether the CLI would run fast mode on `model`: the opus family, by the bare alias or a pinned version id
+    (fast mode is an Opus-only research preview). One rule for the judges, the gear's per-tier gate and the
+    kernel's migration, so the three never disagree about a model."""
+    return _model_family_version(model)[0] == "opus"
+
+
+def _tier_fast(tier, model):
+    """Whether THIS call asks for fast mode: the tier's flag is on AND the model the call runs on can run it. The
+    model is the RESOLVED one (a fallback onto a non-Opus model never asks); an unknown tier reads the triage flag,
+    the long-standing default tier. A flag left on for a tier whose model cannot run fast is kept, not cleared
+    (the gear greys its box and says why): it simply asks nothing until the tier is back on a model that can."""
+    on = _TIER_FAST.get(tier or "triage", _judge_fast)()
+    return bool(on and fast_capable(model))
 INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on models that take --effort (2026-09-01; see _judge_env)
 
 
@@ -449,7 +498,19 @@ JUDGE_FAIL_CAP = 3                       # the same rule for every other retryin
 #                                          consolidator / courier; the
 #                                          planner (PLAN_PARSE_RETRIES) and distiller/briefer (DISTILL_FAIL_CAP)
 #                                          already had their own.
-PLACEMENTS_V = 12                        # placements-identity schema version (plan P2, the user 2026-07-06).
+PLACEMENTS_V = 14                        # placements-identity schema version (plan P2, the user 2026-07-06).
+#                                          v14 (T333, 2026-09-11): the harness's own skill-load wrapper (the bare-named
+#                                          <skill-format> command wrapper with no arguments slot that the orchestration
+#                                          mode writes right after the prompt) no longer parses to a command atom, so on
+#                                          every transcript carrying it the prompt's segment grows to hold the work the
+#                                          wrapper's own segment used to hold. v8's shape (a SMALLER atom set), same seal.
+#                                          v13 (T318, 2026-09-10): a segment opened by a machine-written trigger (a romp
+#                                          injection, the CLI's stop record, a scheduled task's fired prompt) keys on its
+#                                          anchor atom's uuid; the tasks memo (tasks_for) steps to v7 with it. Recorded
+#                                          ids from before (trails, seam keys, caption rows into such segments) are NOT
+#                                          remapped: their lookups miss and the card falls to its fallback tiers, which
+#                                          is where those anchors already were wrong; a one-time remap by exact `t`
+#                                          in _migrate_placements would be the follow-up if that ever matters.
 #                                          v12 (2026-09-08, T252d): an ABSORBED atom (a mid-turn send the CLI
 #                                          spliced in) is placed at its LANDING time, not its send time, so
 #                                          every absorbed segment whose landing differs from its send changes
@@ -842,7 +903,7 @@ UNTRUSTED_SYS = (
     "prompt and from text outside the marked sections.")
 
 
-def _judge_cmd(model, sys_prompt, effort=None, auth=None):
+def _judge_cmd(model, sys_prompt, effort=None, auth=None, tier="triage"):
     """The `claude -p` argv for ONE judge call, isolated so the model sees ONLY its own prompt. Three
     flags do it (verified by token count: a probe call drops 8334 -> ~165 input tokens):
       --system-prompt (REPLACE, not --append) — drops Claude Code's static base prompt (~6k tokens);
@@ -861,19 +922,22 @@ def _judge_cmd(model, sys_prompt, effort=None, auth=None):
     # call needs rides one overlay; --safe-mode drops only the auto-discovered settings, an explicit
     # --settings still loads. Two keys can ride it:
     overlay = {}
-    if _judge_fast() and _model_family_version(model)[0] == "opus":
-        # Fast mode for the judges (the gear's box beside the Triage model picker, off by default): the CLI refuses fast mode to a
-        # non-interactive client unless the flag-settings layer carries this exact key, the same opt-in a
-        # fast-picked session's launch uses (sdk_backend.flag_settings_path), and fast mode is an Opus-only
-        # preview, so the key rides only a call whose model reads as the opus family: the bare alias or a
-        # pinned version id (a tier pinned to a version id reaches here with that id). Whether fast then
-        # engaged is the CLI's answer, per account: the envelope's fast_mode_state, kept on the usage row.
+    if _tier_fast(tier, model):
+        # Fast mode for this call's TIER (the gear's box beside the tier's model picker, off by default): the CLI
+        # refuses fast mode to a non-interactive client unless the flag-settings layer carries this exact key, the
+        # same opt-in a fast-picked session's launch uses (sdk_backend.flag_settings_path), and fast mode is an
+        # Opus-only preview, so the key rides only a call whose model reads as the opus family: the bare alias or
+        # a pinned version id (a tier pinned to a version id reaches here with that id). Whether fast then
+        # engaged is the CLI's answer, per account: the envelope's fast_mode_state, kept on the usage row and
+        # read back by _note_fast_readback.
         overlay["fastMode"] = True
-    if auth == "login":
+    if _is_login_auth(auth):
         # A login-billed call must not bill the key (2026-09-08): in the CLI's precedence apiKeyHelper outranks
         # every login form, so the per-call settings layer disables the helper. The empty string is the value
         # the CLI takes as unset (null falls through to the settings files; verified on 2.1.257), the same
-        # lever a login-picked session's launch uses (sdk_backend.flag_settings_path).
+        # lever a login-picked session's launch uses (sdk_backend.flag_settings_path). The machine's own login
+        # and a STORED login alike: a stored login's token rides the child's environment (_judge_env, the
+        # environment road since 2026-09-14), where a helper would outrank it.
         overlay["apiKeyHelper"] = ""
     if overlay:
         cmd += ["--settings", json.dumps(overlay)]
@@ -999,8 +1063,9 @@ def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
              "gate-stamp" (the evidence gate could not write a tier's stamp after a complete run; the run
              counts bypassed and the session stays due: _gated), "states-unreadable", "cleared-unreadable",
              "stall-unreadable", "captions-unreadable", "episodes-unreadable", "marker-unreadable",
-             "archive-unreadable" (a side file the evidence gate stat'd into a tier's signature exists and
-             could not be read or parsed by the stage: the run is marked incomplete and stamps nothing, one
+             "archive-unreadable", "reg-unreadable" (the eight side-file kinds: a file the evidence gate
+             stat'd or read by value into a tier's signature exists and could not be read or parsed: the
+             gate runs the stage without a stamp, or the stage's own read marks the run incomplete, one
              row per failure episode: _read_failed)
       note   the evidence — reply tail, error message, exception name, or the give-up scope + re-arm
              event. Callers must pass it; an empty note means the caller has nothing at all to show.
@@ -1317,12 +1382,29 @@ def _reg_spawned_at(fsid):
     components rely on, but a rewrite in place of equal size within one mtime tick keeps all three, and a
     memo keyed on them served the previous content (the kernel publishes the reg by os.replace, so it
     never does that; a test fixture writing in place did, 2026-09-07). The reg is small; one read per
-    session per tier is the whole cost. None when the reg is absent, unreadable, or carries no number
-    (the value _cli_epoch derives too)."""
+    session per tier is the whole cost. None when the reg is absent or carries no number (the value
+    _cli_epoch derives too). STRICT, like _stall_slice (2026-09-14, the planner memo tidy's round two): a
+    reg that exists and cannot be read or parsed raises OSError, so the gate runs the stage without a
+    stamp (_gate_check's bypass) instead of matching a stamp taken while the reg was readable, one
+    judge-errors row per failure episode (_read_failed); before, the fault read as None, the same as a
+    reg with no spawnedAt, and a plan-tier stamp taken over a spawnedAt-less reg skipped the session for
+    as long as its reg stayed unreadable, while _plan_key's sentinel for the same fault was never even
+    computed."""
+    p = STATE / "sdk" / (fsid + ".json")
     try:
-        v = json.loads((STATE / "sdk" / (fsid + ".json")).read_text()).get("spawnedAt")
-    except Exception:
+        raw = p.read_text()
+    except FileNotFoundError:
+        _read_ok(str(p))
         return None
+    except OSError as e:
+        _read_failed(str(p), "reg-unreadable", fsid, e)
+        raise OSError("sdk reg unreadable: %r" % (e,))
+    try:
+        v = json.loads(raw).get("spawnedAt")
+    except (ValueError, AttributeError) as e:
+        _read_failed(str(p), "reg-unreadable", fsid, e)
+        raise OSError("sdk reg unparseable: %r" % (e,))
+    _read_ok(str(p))
     return v if isinstance(v, (int, float)) else None
 
 
@@ -1585,7 +1667,7 @@ def _prune_usage_log():
         pass
 
 
-def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
+def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None, err=False, auth=None):
     """Append ONE per-call usage line to USAGE for the kernel/UI cost rollup (judge_ui 2026-06-17).
     `wrap` is the claude -p JSON envelope. `sent`/`recv` are the LITERAL wall-clock floats bracketing the
     actual API call — when the judge's prompt went out and when its response came back (the user
@@ -1605,16 +1687,116 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
                                 "cache_r": u.get("cache_read_input_tokens"),
                                 "fast": wrap.get("fast_mode_state"),   # the CLI's word on whether fast mode engaged
                                 #   ("on" | "off" | "cooldown"; null when the envelope carries none): the judges' fast-mode readback
+                                "fastReason": wrap.get("fast_mode_disabled_reason"),   # why not, when the CLI says
+                                **({"err": True} if err else {}),   # an error envelope's row: kept for its readback,
+                                #   zero cost, skipped by the cost rollup's call and cost counts
+                                # which account the call billed (T346): 'key', 'login' (the machine's own) or
+                                # 'login:<id>' (a stored login), so the cost rollups split by login; absent on rows
+                                # written before the stamp existed
+                                **({"auth": auth} if auth else {}),
                                 "cost": wrap.get("total_cost_usd")}) + "\n")
     except Exception:
         pass
 
 
+FAST_REFUSED = STATE / "fast-refused.json"   # tier -> {"reason", "model", "t"}: the CLI's last refusal of a fast
+#   ask, per tier; absent or empty when the last fast call engaged. /version lifts it so the gear's box says why.
+
+
+def _fast_refused():
+    """The per-tier refusal record, {} when none stands. Read fresh: the judges write it, the kernel reads it."""
+    try:
+        d = json.loads(FAST_REFUSED.read_text())
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+_FAST_REFUSED_LOCK = threading.Lock()   # the record is one file written from every judge pool's threads
+
+
+def _note_fast_readback(tier, model, wrap, judge, fsid):
+    """After a call that ASKED for fast: the envelope's fast_mode_state is the CLI's answer. "on" clears the tier's
+    refusal record (the box's hint goes with it on the gear's next read); a refusal records itself under the tier
+    with the CLI's reason and writes ONE judge-errors row per reason change (the fast-refused kind), so a refused
+    pick is loud where every judge fault is, and never once per call. Two answers are NOT refusals: an envelope
+    without the field says nothing (the sessions' rule for the same field: never fabricate a verdict), and
+    "cooldown" means fast is allowed and rate-limited for now (the statusline's third state), so neither records
+    nor clears. Any refusal drops the org-check memo, so the next key-billed fast call asks the paying account
+    again (the event that says the earlier answer may have been wrong). The read-check-write holds a lock: the
+    index and triage pools refuse on parallel threads. Best-effort, never raises."""
+    try:
+        if not isinstance(wrap, dict) or "fast_mode_state" not in wrap:
+            return
+        state = wrap.get("fast_mode_state")
+        if state == "cooldown":
+            return
+        reason = wrap.get("fast_mode_disabled_reason") or ("the CLI reported %r" % state)
+        tier = tier or "triage"
+        with _FAST_REFUSED_LOCK:
+            rec = _fast_refused()
+            if state == "on":
+                if tier in rec:
+                    del rec[tier]
+                    _atomic_write_json(FAST_REFUSED, rec)
+                return
+            _FAST_ORG_MEMO["env"] = None
+            if (rec.get(tier) or {}).get("reason") == reason:
+                return                               # the same refusal standing: said already
+            rec[tier] = {"reason": reason, "model": str(model), "t": int(time.time())}
+            _atomic_write_json(FAST_REFUSED, rec)
+        _log_judge_error(judge, fsid, "fast-refused",
+                         note="%s tier asked for fast mode on %s; the CLI ran it %s: %s" % (tier, model, state or "without saying", reason))
+    except Exception:
+        pass
+
+
+def _atomic_write_json(path, obj):
+    tmp = Path("%s.%d.%x.tmp" % (path, os.getpid(), threading.get_ident()))   # per writer: two threads never share one
+    tmp.write_text(json.dumps(obj))
+    os.replace(tmp, path)
+
+
+_FAST_ORG_MEMO = {"env": None}   # the org-check env for key-billed fast calls: None = not asked; a dict (maybe {})
+#                                  = asked. Filled once per process under _FAST_ORG_LOCK; dropped by any refusal the
+#                                  CLI reports (_note_fast_readback), never re-asked per call
+_FAST_ORG_LOCK = threading.Lock()
+
+
+def _fast_org_env():
+    """The sessions' rule for a KEY-billed fast call (sdk_backend.helper_fast_org_env): the CLI's fast-mode
+    availability probe asks the saved claude.ai login even when the call bills the key, so the kernel asks the
+    paying account (the configured apiKeyHelper's key) and hands the CLI its own switch. Asked once per process,
+    since a judge call is not a connect (hundreds an hour) and the helper may cost the operator a prompt: the
+    first caller asks under a lock and the pool's other callers wait for its answer instead of each running the
+    helper. An answer with nothing to say ({}: no helper, or the probe unreachable) is kept too, so a dead network
+    does not cost a probe per call; the CLI's next refusal of a fast ask, whatever its reason, drops the memo and
+    the next call asks again."""
+    env = _FAST_ORG_MEMO["env"]
+    if env is not None:
+        return env
+    with _FAST_ORG_LOCK:
+        env = _FAST_ORG_MEMO["env"]
+        if env is not None:
+            return env                               # another caller asked first
+        try:
+            sb = sys.modules.get("romp_sdk_backend") or load_source("romp_sdk_backend", HERE / "sdk_backend.py")
+            def log(msg, problem=False):
+                sys.stderr.write("judges: %s\n" % msg)
+            env = dict(sb.helper_fast_org_env(log, None) or {})
+        except Exception as e:
+            sys.stderr.write("judges: fast-mode org check failed (%s); the CLI's own check stands\n" % e)
+            env = {}
+        _FAST_ORG_MEMO["env"] = env
+        return env
+
+
+_DEFAULT_AUTH_FN = None        # kernel wiring: fn(reg) -> 'login' | 'key', SdkBackend.default_auth: the ONE billing resolver
+_DEFAULT_LOGIN_FN = None       # kernel wiring beside it: fn(reg) -> a stored login's id or "", SdkBackend.default_login: WHICH login
+#                                an unpicked session bills when the machine's explicit default names a stored one (2026-09-14)
+#                                (the reg's own pick, else the machine's explicit default when billable, else the helper rule)
 _LOGIN_AUTH_ENV_FN = None      # login tokens claimed out of the manager's ambient environment: the kernel
                                # wires sdk_backend.startup_auth_env; standalone reads the environment
-_UNPICKED_AUTH_FN = None       # the kernel wires this to sdk_backend.unpicked_auth over its state dir: the
-                               # side an unpicked session bills given whether the box's apiKeyHelper bills the
-                               # key (_unpicked_auth)
 
 
 def _key_available():
@@ -1650,49 +1832,80 @@ def _judge_auth(fsid):
     user 2026-08-12: a judge rides the account of the session it judges, never a third choice and
     never a silent fall to the other one — a judge quietly billing the login on a session the user
     put on the key is the same wrong-account failure the per-session picker exists to prevent).
-    Same resolution as the session's own badge (sdk_backend default_auth / effective_auth), read from
-    the same registry file: an explicit 'login' or 'key' pick stands; anything else is the unpicked
-    rule (_unpicked_auth): the key when Claude Code's settings carry an apiKeyHelper, else the side
-    the box declares when no gear
-    pick has made it inert, else login. A call with no session (rows about every session at once) takes
-    the same unpicked default."""
-    a = ""
+    THE resolution the picker uses, asked of the ONE resolver: the kernel wires _DEFAULT_AUTH_FN to
+    SdkBackend.default_auth, which reads the reg's own pick, else the machine's EXPLICIT default when this
+    box can bill it (T380; auth_unavailable_why: a logged-out login, a managed helper, an expired account
+    file all move the launch, the status and the flyout to the other side, and the judges with them — the
+    round-3 review found a seed re-read here that kept billing the login alone), else the helper rule. A
+    call with no session (rows with no session) takes the same default a fresh session would. A session billed to a STORED login (T346) is decided here first, from the reg's
+    own pick: the resolver names sides. A stored login set as the machine's DEFAULT (the user 2026-09-14) reaches an
+    unpicked session's judges through the second wired function, default_login, which judges the record. Standalone
+    (tests, no kernel wiring) the registry file and the helper rule stand in: an explicit 'login' or 'key'
+    pick → that side; else the key when Claude Code's settings carry an apiKeyHelper, else login."""
+    reg = {}
     if fsid:
         try:
-            a = json.loads((SDKDIR / (fsid + ".json")).read_text()).get("auth") or ""
+            reg = json.loads((SDKDIR / (fsid + ".json")).read_text())
+            reg = reg if isinstance(reg, dict) else {}
         except Exception:
-            a = ""
+            reg = {}
+    a = reg.get("auth") or ""
+    lid = reg.get("authLogin") if isinstance(reg.get("authLogin"), str) else ""
+    if a == "login" and lid and re.fullmatch(r"[0-9a-f]{12}", lid):
+        # a session billed to a STORED login (T346): its judges bill that same login, carried as the pick value
+        # 'login:<id>' so _judge_cmd names the login's helper and every latch and row says WHICH login. A stored
+        # login the registry holds REFUSED (or expired, or gone) is never run as: the call takes the session's own
+        # fallback (the key when a helper is configured, else the machine's login), said once per session, and a
+        # judge call never clears a refusal (its envelope carries no evidence of which login answered).
+        why = _logins.why_unavailable(_logins.record_state(STATE, lid))
+        if not why:
+            return "login:" + lid
+        fall = "key" if _key_available() else "login"
+        if (fsid, lid) not in _LOGIN_FALL_SAID:
+            _LOGIN_FALL_SAID.add((fsid, lid))
+            sys.stderr.write("romp-judge: session %s bills a stored login that is unavailable (%s); its judge calls bill "
+                             "the %s instead\n" % (str(fsid or "")[:8], why, "API key" if fall == "key" else "machine's login"))
+        return fall
+    if _DEFAULT_AUTH_FN is not None:
+        try:
+            side = str(_DEFAULT_AUTH_FN(reg) or "")
+            if side == "login" and _DEFAULT_LOGIN_FN is not None:
+                # an unpicked session following a STORED login set as the machine's default (the user 2026-09-14): its
+                # judges bill that login, as its launch does; default_login judges the record ("" = the machine's own)
+                lid = str(_DEFAULT_LOGIN_FN(reg) or "")
+                if re.fullmatch(r"[0-9a-f]{12}", lid):
+                    return "login:" + lid
+            if side in ("login", "key"):
+                return side
+        except Exception:
+            pass   # the resolver failed: the standalone rule below decides, never a raise inside a judge call
     if a in ("login", "key"):
         return a
-    return _unpicked_auth(_key_available())
+    return "key" if _key_available() else "login"
 
 
-def _unpicked_auth(key):
-    """The side an unpicked session bills, given whether the box has an apiKeyHelper: sdk_backend.unpicked_auth
-    through the kernel's wire (_UNPICKED_AUTH_FN), else a MIRROR of it for the standalone judge
-    (romp-judge --once), kept in sync by test rather than import (the _is_auth_error pattern; judge.py
-    loads standalone). The rule: the key when the box has an apiKeyHelper (Claude Code resolves it for every
-    unpicked session, whatever the box declares); else a remembered gear Billing pick in STATE/sdk-defaults.json
-    speaks for itself when it is a login pick (it is re-seeded into every new reg, and it makes
-    ROMP_EXPECTED_AUTH inert), while a key pick on a keyless box is one spawn sets aside, so the
-    declaration speaks again under it; else the declaration; else login. Until 2026-09-09 the fallback
-    was the key test alone, so on a declared-key box with no key of romp's every unpicked call was
-    classified login-billed while the session's badge said key: the rate-limit gate then read the login
-    account's windows for it, a limit-shaped envelope minted the login-account latch, and a credential
-    error recorded the wrong side."""
-    if _UNPICKED_AUTH_FN is not None:
-        return _UNPICKED_AUTH_FN(key)
-    if key:
-        return "key"
+def _is_login_auth(auth) -> bool:
+    """A login-side pick, the machine's own ('login') or a stored one ('login:<id>')."""
+    return auth == "login" or str(auth or "").startswith("login:")
+
+
+_LOGIN_FALL_SAID = set()       # (fsid, login id) pairs whose judge fall off a refused stored login was said (once each)
+_API_HEALTH_NOTE_FN = None     # the kernel wires the API-health ring's judge source (T346, the user 2026-09-11: one
+                               # accounting per login, the judges included): fn(kind, auth, model, msg, fsid) with kind
+                               # 'ok' | 'gaveup'; standalone judges note nothing
+
+
+def _note_api_health(kind, auth, model, msg, fsid):
+    """File ONE judge call's outcome into the API-health ring through the kernel's hook: an 'ok' for a served
+    reply, a 'gaveup' with the envelope's message for an error envelope. Never for a codex call (another
+    vendor), never raising into the call."""
+    fn = _API_HEALTH_NOTE_FN
+    if fn is None or auth == "codex":
+        return
     try:
-        d = json.loads((STATE / "sdk-defaults.json").read_text())
-        pick = d.get("auth") if isinstance(d, dict) else None
+        fn(kind, auth, model, msg, fsid)
     except Exception:
-        pick = None
-    if pick == "login":
-        return "login"
-    exp = (os.environ.get("ROMP_EXPECTED_AUTH") or "").strip().lower()
-    return exp if exp in ("key", "login") else "login"
+        pass
 
 
 def _is_auth_error(text):
@@ -1750,12 +1963,16 @@ def _auth_down_mark(fsid, mode, note):
     if not fsid:
         return
     note = str(note or "")[:300]
+    mode = str(mode or "")
+    login = mode[6:] if mode.startswith("login:") else ""    # a stored login's id (T346); the mode stays the side word
+    if login:
+        mode = "login"
     with _auth_lock:
         d = dict(_auth_down_map())
         row = d.get(fsid) or {}
-        if row.get("mode") == mode and row.get("note") == note:
+        if row.get("mode") == mode and row.get("note") == note and (row.get("login") or "") == login:
             return
-        d[fsid] = {"t": int(row.get("t") or time.time()), "mode": mode, "note": note}
+        d[fsid] = {"t": int(row.get("t") or time.time()), "mode": mode, "note": note, **({"login": login} if login else {})}
         _auth_write_locked(d)
 
 
@@ -1892,8 +2109,9 @@ def _codex_effort(effort, tier):
     return "low" if tier == "index" else None
 
 def _judge_env(tier, auth="login", model=None):
-    """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
-    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
+    """The subprocess env for ONE judge call. Drops the TMUX vars (a $TMUX inherited from the manager's own
+    terminal would have the child's CLI take itself for a pane of that multiplexer; the judge runs headless)
+    and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
     (MAX_THINKING_TOKENS=0), on EVERY model (2026-09-01; unconditional since the PR #880 review): the
     captioner + archiver do mechanical one-shot summarization, where the default thinking is pure waste —
     a Haiku probe showed a ~385-token thinking block emitted before a ~15-token caption (722 -> 24 output
@@ -1915,16 +2133,31 @@ def _judge_env(tier, auth="login", model=None):
     unconditionally, and a KEY-billed call injects nothing back (2026-09-08: romp holds no key; the child
     resolves Claude Code's apiKeyHelper itself, and the first pass after boot runs exactly like every later
     one). A LOGIN-billed call gets the claimed login tokens back and, in _judge_cmd, the helper suppression.
+    A call billed to a STORED login ('login:<id>', T346) gets that login's setup-token instead, read by running
+    the record's token command now, the way the session's own launch runs it (the environment road, 2026-09-14:
+    a setup-token through an apiKeyHelper hangs the CLI's request; through CLAUDE_CODE_OAUTH_TOKEN it is
+    accepted); the machine's tokens stay out, and a failing command is a CredentialError the caller notes in
+    its own words, never a fall onto ambient auth.
     Removal, not blanking: the CLI treats even an empty var as key-mode-without-a-key and refuses with
     "Not logged in"."""
     env = dict(os.environ)
     for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         env.pop(k, None)                             # billing is an explicit choice per call
+    env.pop("CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK", None)   # the fast-mode org verdict is per call too (_fast_org_env
+    #   for a key-billed ask): a session's skip in this process's environment says nothing about the judge's account.
+    #   CLAUDE_CODE_DISABLE_FAST_MODE stays: set in service.env it is the OPERATOR's kill switch, which every judge
+    #   child honoured before and every session still does (a review finding on the add-on's first head).
     for k in list(env):                              # the 1Password CLI's own names never ride a judge child
         if k in _cred.OP_ENV_NAMES or k.startswith(_cred.OP_ENV_PREFIX):
             env.pop(k, None)
     if auth == "login":
         env.update(_login_auth_env())
+    elif str(auth or "").startswith("login:"):
+        try:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = _logins.token_value(STATE, str(auth)[6:],
+                                                                 lambda c: _cred.run_helper(c, label="the token command"))
+        except ValueError as e:                     # no such record, or one naming no command: the same loud road
+            raise _cred.CredentialError(str(e)) from None
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
@@ -2001,6 +2234,40 @@ _KILL_RC = -signal.SIGALRM               # the other kill shape: the perl `alarm
 #                                          install would have tombstoned every turn it touched after three passes).
 
 
+# ── the Task tracking master switch's census (T404, the user 2026-09-13) ─────────────────────────
+# Every kernel-initiated model call goes through _judge_run, and every caller names its judge. MODEL_CALLERS
+# lists each judge name with its relation to the kernel's master switch: "tracking" stands down while the
+# switch is off (the producer starts no tier; this gate catches any path that still asks, the nudge's
+# redundancy check among them). A judge with NO entry is REFUSED, with a judge-errors row saying why (T404 round
+# two, low 3: letting it out defeated the switch for any caller that forgot the table), and
+# tests/test_task_tracking_switch.py holds this table to an ast census of _judge_run's call sites, so a new
+# caller cannot ship undeclared; a call that names no judge at all (a harness, a direct probe) is not gated.
+# The kernel installs its _task_tracking_on as TASK_TRACKING_ON at boot; the romp-judge CLI runs with the
+# default (on): a pass the user starts by hand is the user's.
+TASK_TRACKING_ON = lambda: True
+MODEL_CALLERS = {
+    "captioner": "tracking", "archiver": "tracking", "gister": "tracking", "titler": "tracking",   # the index tier and its title work
+    "planner": "tracking", "opener": "tracking", "placer": "tracking", "grouper": "tracking", "consolidator": "tracking",
+    "closer": "tracking", "unblocker": "tracking", "courier": "tracking",                          # the triage tier
+    "distiller": "tracking", "briefer": "tracking", "staller": "tracking",                          # the distill tier
+    "nudge-check": "tracking",                                                                     # the auto-nudge's redundancy read
+}
+
+
+def _model_call_allowed(judge):
+    """Whether a model call by `judge` may go out now: a declared "tracking" judge only while the Task tracking switch
+    is on; a declared "user" judge always; an undeclared NAME is refused and files a judge-errors row (the census test
+    catches it at merge time; this is the running kernel's belt); an unnamed call is not this gate's business."""
+    if judge is None:
+        return True
+    rel = MODEL_CALLERS.get(judge)
+    if rel is None:
+        _log_judge_error(judge, getattr(_judge_ctx, "fsid", None), "unregistered-caller",
+                         note="judge %r is not in judge.py MODEL_CALLERS: declare its relation to the Task tracking switch; the call was refused" % (judge,))
+        return False
+    return rel != "tracking" or bool(TASK_TRACKING_ON())
+
+
 def _call_shape(model, sys_prompt, user, sent):
     """The grep-able shape of a FAILED call for its 'call' row: the model, the prompt size in chars
     (system + user — the SIZE only, never the text) and the wall-clock ms since it was sent. 2026-09-03:
@@ -2035,6 +2302,9 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
             return ""                                 # from a real call failure — event-based, no time window
     except Exception:
         pass
+    if not _model_call_allowed(judge):                # the Task tracking switch off for a declared tracking judge (T404):
+        _judge_ctx.paused = True                      # a stand-down like a pause, never a failure to count
+        return ""
     fsid = getattr(_judge_ctx, "fsid", None)
     engine = _judge_engine()                          # "claude" | "codex" (docs/codex.md §judges)
     try:
@@ -2207,7 +2477,10 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
             _judge_ctx.paused = True
             return ""
         try:
-            p = subprocess.run(_judge_cmd(model, sys_prompt, effort, auth=auth), input=user,
+            fast_asked = _tier_fast(tier, model)
+            if fast_asked and not _is_login_auth(auth):
+                env = dict(env, **_fast_org_env())    # permission follows billing (the sessions' rule, T300)
+            p = subprocess.run(_judge_cmd(model, sys_prompt, effort, auth=auth, tier=tier), input=user,
                                capture_output=True, text=True, cwd=JUDGE_SCRATCH, env=env,
                                timeout=CALL_ALARM_S + 5)
         except Exception as e:
@@ -2242,6 +2515,11 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
                     _mark_call_failed(model, msg[:160])
                 _log_judge_error(judge or tier, fsid, "call",
                                  note="error envelope: %r" % msg[:160])
+                if fast_asked and "fast_mode_state" in wrap:
+                    # the call asked for fast and the CLI's refusal envelope still says whether fast engaged: keep
+                    # that readback (a zero-cost row marked err, which the cost rollup skips) and judge it below
+                    _log_judge_usage(judge or tier, tier, model, fsid, dict(wrap, total_cost_usd=0), sent, recv, err=True, auth=auth)
+                    _note_fast_readback(tier, model, wrap, judge or tier, fsid)
                 if _LIMIT_ENVELOPE_RE.search(msg):
                     # a limit-shaped envelope is the EVENT that says usage.json is stale (get_usage
                     # rides turn ends; an idle fleet refreshes nothing): latch the loud banner NOW
@@ -2262,10 +2540,14 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
                     # credential-class: only the user can fix it — latch, so build_feed floors this
                     # session's focus card instead of leaving the board silently frozen (2026-08-12)
                     _auth_down_mark(fsid, auth, msg[:160])
+                _note_api_health("gaveup", auth, model, msg, fsid)   # the judges' half of the login's bucket (T346)
                 return ""
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
-                _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
+                _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv, auth=auth)
+                _note_api_health("ok", auth, model, "", fsid)          # the judges' half of the login's bucket (T346)
+                if fast_asked and "fast_mode_state" in wrap:   # no answer is no information (never a fabricated refusal)
+                    _note_fast_readback(tier, model, wrap, judge or tier, fsid)
                 _note_served_model(model, wrap)       # the envelope names the model a bare alias resolved to;
                                                       # the alias table is checked against it (one line per drift)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
@@ -2484,6 +2766,7 @@ def gist_llm(prompt_text, judge="gister"):
 
 # ───────────────────────── unit text (caption input) ─────────────────────────
 def _atom_text(atom):
+    if atom.get("lazy") is not None: em.hydrate([atom])   # a body before the assembly cut: read on demand (T323 stage 4a)
     msg = atom.get("message") or {}
     return " ".join(b.get("text", "") for b in msg.get("content", [])
                     if isinstance(b, dict) and b.get("type") == "text").strip()
@@ -2533,6 +2816,41 @@ def _tool_arg(name, inp):
 # where the outcome lives (the user 2026-07-14: a completed card's summary click landed on the
 # announcement stub instead of the wrap-up).
 CITE_MIN_CHARS = 80
+WHY_CUT_MARK = "…"      # the visible ellipsis a cut why ends with: the reader (and the brief judge) can tell a cut
+WHY_MAX = 300                # a verdict's why (a planner op's rationale, the closer's done, block or awaiting why): the
+#                              ceiling as before (tests/test_judge.py pins it), now reached at a boundary, never mid-word
+
+
+class _CutWhy(str):
+    """A why _cut_why shortened: a str that carries the fact, so record_verdict can store it on the row (whyCut) and
+    the fold can materialize blockWhyCut; a complete why that happens to end with an ellipsis is never mistaken for
+    a cut one (the verifier's first round on T388)."""
+    cut = True
+
+
+def _cut_why(why, cap):
+    """A verdict's why, whitespace-collapsed and cut to `cap` characters at a SENTENCE end (past half the cap) or
+    else a word boundary, with WHY_CUT_MARK appended when anything was cut; never mid-word. A why the raw slice cut
+    mid-word ("... Also say whether the d") read to the brief judge as a fifth, half-stated question the user had to
+    restate (the manager's T388 finding, 2026-09-12): the stump was the cap's, not the closer's, and nothing marked it."""
+    s = " ".join(str(why or "").split())
+    if len(s) <= cap:
+        return s
+    head = s[:cap]
+    cut = -1
+    for m in re.finditer(r"[.!?](?=\s)", head):     # the last sentence end that leaves at least half the cap
+        if m.end() >= cap // 2:
+            cut = m.end()
+    if cut < 0:
+        sp = head.rfind(" ")
+        cut = sp if sp >= cap // 2 else cap        # a word boundary, else the bare cap (one unbroken token)
+    return _CutWhy(head[:cut].rstrip() + WHY_CUT_MARK)
+
+
+def why_was_cut(why):
+    """Whether a why object carries the cut fact (a _CutWhy from _cut_why); a stored node reads blockWhyCut instead.
+    Never a suffix test on the ellipsis: a complete why may end with one."""
+    return bool(getattr(why, "cut", False))
 
 # a PR/commit/compare link in a tool result — the result class the anchor study convicted (T218):
 # the substance of "shipped it" IS the link, so the atom holding it must be citable
@@ -2546,10 +2864,17 @@ def _unit_text(atoms, marker=None):
     ([m3]) so the model can CITE the one message its takeaway is grounded in (see _split_source).
     Sub-floor stubs (< CITE_MIN_CHARS) still ride along as context, just unlabeled — uncitable by
     construction."""
-    user_said, asst_said, tools, results = [], [], [], []
+    em.hydrate(atoms)   # bodies before the assembly cut: read on demand (T323 stage 4a)
+    user_said, asst_said, tools, results, reported = [], [], [], [], []
     for a in atoms:
         if a["type"] == "user" and a.get("author") is not None:
             t = _FOLLOWUP_MARKER_RE.sub("", _atom_text(a)).strip()   # the follow-up marker is plumbing, not user text
+            if t and a.get("author") in ("system", "teammate"):
+                # T319: a harness report (a background task's completion, a system reminder) or a teammate's
+                # line folds into the unit, but it is NOT what the user asked: under USER ASKED it read as a
+                # request, and the planner minted the session's own review round as the user's deliverable
+                reported.append(t)
+                continue
             if t:
                 # a PEER's postal report is SUBSTANCE, not just context (T218, the study's postal class:
                 # the summary's evidence was the peer's ready-report, but only assistant prose could be
@@ -2589,6 +2914,8 @@ def _unit_text(atoms, marker=None):
     out = []
     if user_said:
         out.append("USER ASKED: " + _shape(" | ".join(user_said), 1200, 1800))
+    if reported:
+        out.append("BACKGROUND REPORTED (not the user): " + _shape(" | ".join(reported), 600, 900))
     if asst_said:
         out.append("ASSISTANT SAID: " + _shape(" ".join(asst_said), 2500, 5500))
     if tools:
@@ -2618,6 +2945,21 @@ def _prompt_text(atoms):
     return ""
 
 
+def _unit_nonempty(atoms):
+    """Whether `_unit_text(atoms)` would be non-empty, decided from the atoms' scalars and the USER bodies alone (T396):
+    _unit_text frames three sources, a user atom (any author) whose text survives the romp-marker strip, an assistant atom
+    (not an API error) with text, and an assistant tool call. The assistant side is answered by the markers' scalars (nt,
+    the tool calls); the user side reads the user atoms' bodies, small, because a text made only of romp markers strips to
+    nothing (the one case a scalar cannot see). The planner's emptiness gate asks this in place of reading the unit text,
+    which hydrated every assistant body of every unplaced segment at every pass (42.8 MB on one boot)."""
+    for a in atoms:
+        if a.get("type") == "assistant" and not a.get("isApiError") \
+                and (em._has_text(a) or any(nm for _i, nm in em.atom_tool_uses(a))):   # a tool call counts with a NAME, as
+            return True                                                                  #  _unit_text frames it (round three, low 1)
+    return any(_FOLLOWUP_MARKER_RE.sub("", _atom_text(a)).strip()
+               for a in atoms if a.get("type") == "user" and a.get("author") is not None and em._has_text(a))
+
+
 def _has_asst_work(atoms):
     """True if a unit has any real ASSISTANT output — its own text or a tool_use. The captioner has nothing
     to gloss without it (it refuses or returns empty), so a work-less unit (a bare user message, an
@@ -2629,18 +2971,15 @@ def _has_asst_work(atoms):
     usage-limit / auto-nudge storm the captioner (and the archiver behind it) then fired a call per errored
     retry turn, a flood of judge calls captioning nothing but error noise. Skipping isApiError atoms means a
     turn whose only assistant output is the error is work-less → no caption; a turn that did real work THEN
-    errored still captions the real work."""
-    for a in atoms:
-        if a.get("type") == "assistant" and not a.get("isApiError"):
-            if _atom_text(a):
-                return True
-            for b in (a.get("message") or {}).get("content", []):
-                if isinstance(b, dict) and b.get("type") == "tool_use":
-                    return True
-    return False
+    errored still captions the real work.
+
+    Reads scalars only (em.atom_has_work: a lazy atom answers from its marker's nt and tu), so no body is hydrated
+    (T358). The assembly document stores this verdict per pre-cut segment (`w`): a change to the rule is a document
+    version bump (em._ASM_CKPT_V), pinned by tests/test_asm_index.py."""
+    return any(em.atom_has_work(a) for a in atoms)
 
 
-def _ready_tasks(session, store=None):
+def _ready_tasks(session, store=None, done=()):
     """Caption tasks. Two kinds (the user 2026-06-19):
       - kind 'prompt' = the MESSAGE caption, a gist of the user's ask. READY THE MOMENT THE MESSAGE LANDS
         (even the open final segment), so the timeline dot gets a gloss without waiting for the work. Keyed
@@ -2653,33 +2992,59 @@ def _ready_tasks(session, store=None):
         request. Only the open final TURN-grain caption is still withheld (no turn caption until it ends)."""
     turns = session["turns"]
     tasks = []
+    done = set(done or ())                             # units captioned already: skipped BEFORE any atom is built or read (T358)
     for ti, turn in enumerate(turns):
         is_last_turn = ti == len(turns) - 1
-        has_idle = any(a["type"] == "idle" for a in turn["atoms"])
+        has_idle = is_last_turn and any(a["type"] == "idle" for a in turn["atoms"])   # only the last turn can be open
         turn_open = is_last_turn and not turn["ended"] and not has_idle
         segs = _segs(turn, store) if store is not None else em.segments(turn)   # seam-aware: the tail gets its own caption
         single = len(segs) == 1
         for si, seg in enumerate(segs):
-            trig = next((a for a in seg["atoms"] if a.get("uuid") == seg.get("trigger")), None) or (seg["atoms"][0] if seg["atoms"] else None)
-            if trig and trig.get("author") == "human":   # MESSAGE caption — ready now, even mid-work
-                tasks.append({"kind": "prompt", "atoms": [trig],
-                              "writes": [{"id": seg["id"] + "#p", "grain": "prompt", "t": seg["t"]}]})
+            want_p = seg["id"] + "#p" not in done
+            want_w = seg["id"] not in done or (single and not turn_open and turn["id"] not in done)
+            if not want_p and not want_w:
+                continue                               # captioned at every grain: no atom of it is built or read
+            want_p = want_p and seg.get("hp") is not False   # a restored segment stores whether its message is human-authored (hp)
+            want_w = want_w and (turn_open and si == len(segs) - 1 or _seg_work(seg))   # ...and whether it has work (w)
+            if not want_p and not want_w:
+                continue                               # nothing to caption here: no atom built, no body read (arm low 1)
+            em.hydrate(seg["atoms"])                   # ONE read per planned segment: the prompt and unit texts below then hit the
+            if want_p:                                 # memo, so the judge thread takes the leaf's read lock once per segment, not
+                trig = em.seg_prompt_atom(seg)         # once per prompt and once per unit (the base's granularity; T358 CI red)
+                if trig and trig.get("author") == "human":   # MESSAGE caption — ready now, even mid-work
+                    tasks.append({"kind": "prompt", "atoms": [trig],
+                                  "writes": [{"id": seg["id"] + "#p", "grain": "prompt", "t": seg["t"]}]})
             if turn_open and si == len(segs) - 1:      # the OPEN final segment → a LIVE in-progress work caption
                 if _has_asst_work(seg["atoms"]):       # ...only once it has real assistant work to gloss
                     tasks.append({"kind": "work", "live": True, "natoms": len(seg["atoms"]),
                                   "atoms": seg["atoms"],
                                   "writes": [{"id": seg["id"], "grain": "segment", "t": seg["t"]}]})
                 continue                               # no turn-grain while open; the final caption supersedes on close
-            if not _has_asst_work(seg["atoms"]):       # a work-less segment (bare prompt / aborted) → no WORK caption
-                continue                               # (its #p message caption still glosses the ask)
+            if not want_w:                             # a work-less segment (bare prompt / aborted) → no WORK caption
+                continue                               # (its #p message caption still glosses the ask; want_w carried _seg_work)
             writes = [{"id": seg["id"], "grain": "segment", "t": seg["t"]}]
             if single and not turn_open:               # the turn IS this segment → mirror, no 2nd call
                 writes.append({"id": turn["id"], "grain": "turn", "t": turn["t"]})
+            writes = [w for w in writes if w["id"] not in done]
             tasks.append({"kind": "work", "atoms": seg["atoms"], "writes": writes})
-        if not turn_open and not single and _has_asst_work(turn["atoms"]):   # multi-segment turn → its own work caption
+        if not turn_open and not single and turn["id"] not in done and _turn_work(turn, segs):   # multi-segment turn → its own work caption
             tasks.append({"kind": "work", "atoms": turn["atoms"],
                           "writes": [{"id": turn["id"], "grain": "turn", "t": turn["t"]}]})
     return tasks
+
+
+def _seg_work(seg):
+    """_has_asst_work over a segment: the verdict a restored pre-cut segment stores (`w`, written by the assembly
+    checkpoint from the same rule), else the rule over its atoms (T358)."""
+    w = seg.get("w")
+    return _has_asst_work(seg["atoms"]) if w is None else bool(w)
+
+
+def _turn_work(turn, segs):
+    """_has_asst_work over a whole turn, from its segments' stored verdicts when every one carries one."""
+    if segs and all(sg.get("w") is not None for sg in segs):
+        return any(sg["w"] for sg in segs)
+    return _has_asst_work(turn["atoms"])
 
 
 # ───────────────────────── parse + units, (mtime,size) cached ─────────────────────────
@@ -2697,7 +3062,223 @@ def _fileset_key(files):
     return out
 
 
-_PARSE_CACHE = {}          # fsid -> (fileset_key, parsed_session)
+# THE parse cache (T323 stage 2, 2026-09-11): one parsed session tree per (fsid, pending cut, leaf transcript), shared
+# by the judges and the kernel's display parse (kernel._parse delegates here), least-recently-used, _PARSE_CACHE_MAX
+# slots. A slot holds {sdk_human: entry}; an entry is (key, session, leaf_path, sdk_human, fsid, asm_mode) with
+# key = (fileset stat pair over the candidates and the states file, the pending cut), the pass frame's pair shape
+# unchanged: every fact either caller keyed on before the two caches were one, plus the sid the parse ran under (the
+# kernel's path-keyed view never derives one from a filename) and the assembly mode of the parse that built the tree
+# (a hit reports it). The cut is in the SLOT as well as the key so a store under a new cut can drop the spent cut's
+# slot: one tree per session through a rollback. The LEAF is in the slot because the kernel parses OTHER transcripts
+# under a session's sid (a subagent viewer's agent file, an episode render, build_session's path_override) whose keys
+# can never equal the live leaf's: sharing the slot made each miss evict the other's tree every pusher cycle (review
+# find, 2026-09-11), so an override parse sits beside the live leaf's tree, never in its place.
+class _ParseStore(collections.OrderedDict):
+    """The shared store's dictionary: slots are (fsid, cut, leaf) tuples, least recently used first. A bare fsid string
+    reads as that session's NEWEST slot (the pass-frame tests and the courier keys look a session up by id), and
+    writes under a bare fsid land in the slot of the live cut, so a stand-in dict a test installs and the readers
+    that predate the (fsid, cut, leaf) slots keep working."""
+
+    @staticmethod
+    def _k(k):
+        return k if isinstance(k, tuple) else None
+
+    def _newest(self, fsid):
+        for k in reversed(list(self.keys())):
+            if isinstance(k, tuple) and k[0] == fsid:
+                return k
+        return None
+
+    def __getitem__(self, k):
+        if not isinstance(k, tuple):                     # a bare id: the newest slot's newest tree, as (key, session, leaf, flag)
+            nk = self._newest(k)
+            if nk is None:
+                raise KeyError(k)
+            trees = super().__getitem__(nk)
+            ent = _newest_of(trees)
+            if ent is None:
+                raise KeyError(k)
+            return ent
+        return super().__getitem__(k)
+
+    def get(self, k, default=None):
+        try:
+            return self[k]
+        except KeyError:
+            return default
+
+    def __contains__(self, k):
+        return (self._newest(k) is not None) if not isinstance(k, tuple) else super().__contains__(k)
+
+    def __setitem__(self, k, v):
+        if not isinstance(k, tuple):                     # a bare id write (a test stand-in): one tree under the live cut
+            flag = bool(v[3]) if isinstance(v, tuple) and len(v) > 3 else False
+            leaf = str(v[2]) if isinstance(v, tuple) and len(v) > 2 else ""
+            k, v = (k, _pending_cut(k), leaf), {flag: v}
+        super().__setitem__(k, v)
+
+
+_PARSE_CACHE = _ParseStore()   # (fsid, cut, leaf) -> {sdk_human: (key, session, leaf, sdk_human, fsid, asm_mode)}; a bare fsid reads the newest slot
+_PARSE_CACHE_MAX = 256
+_PARSE_CACHE_LOCK = threading.Lock()
+_PARSE_HITS = [0]              # served from the cache (whoever asked); misses are _PARSE_MISSES
+_SDK_OWNER_FN = None           # kernel wiring: fn(fsid) -> whether an SDK or Codex backend owns the session
+
+
+def set_sdk_owner_provider(fn):
+    """Kernel wiring: the ONE answer to "is this session's composer input the human" (sdk_human), the backends'
+    owns(); without it _sdk_owned falls back to the SDK registry file, which misses Codex sessions. Installing
+    the hook drops every cached parse: the flag rides each entry (read at parse time, never on a hit, so a hit
+    reads no registry file the stage gate's signature would have to list) and a new answer must re-parse."""
+    global _SDK_OWNER_FN
+    _SDK_OWNER_FN = fn
+    parse_cache_clear()
+
+
+def _lru_touch(cache, k):
+    """Mark k most recently used; a plain dict standing in for the store (a test's raced cache) has no order."""
+    touch = getattr(cache, "move_to_end", None)
+    if touch is not None:
+        touch(k)
+
+
+def _newest_of(trees):
+    return trees[next(reversed(trees))] if trees else None
+
+
+def _parse_slot(fsid, cut, leaf, human=None):
+    """The cache entry for (fsid, cut, leaf) under the sdk_human flag `human`, marked most recently used; None when absent.
+    A slot holds one tree per flag: a display parse and a judge parse that answer "is the composer input the human"
+    differently (a process with no owner hook: the kernel asks its backend, the judges the registry file) each keep
+    their own tree rather than one reading the other's; with the hook both answer alike and share one tree. `human`
+    None (a judge caller) takes the slot's only tree when it has exactly one and no hook is installed, so a hit reads
+    no registry file (the stage gate's signature lists none); otherwise the judges' own answer picks."""
+    slot = (fsid, cut, str(leaf))
+    with _PARSE_CACHE_LOCK:
+        trees = _PARSE_CACHE.get(slot)
+        if not trees:
+            return None
+        _lru_touch(_PARSE_CACHE, slot)
+        if human is None and _SDK_OWNER_FN is None and len(trees) == 1:
+            return _newest_of(trees)
+    if human is None:
+        human = _sdk_owned(fsid)
+    with _PARSE_CACHE_LOCK:
+        trees = _PARSE_CACHE.get(slot) or {}
+        return trees.get(bool(human))
+
+
+def _parse_store(fsid, cut, key, session, leaf, human, mode="full"):
+    """Store a parse under (fsid, cut, leaf). A slot stored under a NEW cut drops the fsid's other cut slots: a bare
+    rollback parses under its cut, the next record spends the cut and every caller parses under the plain one, and
+    the spent cut's tree was staying resident until the store filled (review find, 2026-09-11); a cut is never read
+    again once spent, so one tree per session holds. The entry carries the fsid (the kernel's path-keyed view must
+    never derive a sid from a filename: a /clear's leaf is named after the CLI session, not the romp sid) and the
+    assembly mode of the parse that built it (a hit reports it, so the chat fold sees fold or serve, never a blank).
+    The leaf is part of the slot: a parse of another transcript under the same sid (a subagent viewer's agent file
+    while the live leaf is parsed by the lanes, the feed and the judges) keeps a slot of its own instead of evicting
+    the live leaf's tree and being evicted by it in turn, twice per cycle (review find, 2026-09-11). A leaf a /clear
+    or a resume fork rotated away is released at the event that rotates it: discover, on first handing out the
+    session's new leaf, drops the previous leaf's slots (_note_leaf), so one tree per session holds across clears;
+    a parse stored under that retired leaf afterwards (a pass working from rows it snapshotted before the flip, an
+    episode render of the pre-clear transcript) is handed back to its caller and not stored, since the release is
+    a one-shot and nothing would drop it again. A leaf discover never handed out (a subagent's agent file) is
+    never retired and stores as an override slot."""
+    if _leaf_retired(fsid, leaf):
+        return
+    slot = (fsid, cut, str(leaf))
+    with _PARSE_CACHE_LOCK:
+        for k in [k for k in _PARSE_CACHE if k[0] == fsid and k[1] != cut]:
+            del _PARSE_CACHE[k]
+        trees = _PARSE_CACHE.get(slot)
+        if trees is None:
+            trees = _PARSE_CACHE[slot] = {}
+        trees.pop(bool(human), None)
+        trees[bool(human)] = (key, session, str(leaf), bool(human), str(fsid), str(mode or "full"))
+        _lru_touch(_PARSE_CACHE, slot)
+        while len(_PARSE_CACHE) > _PARSE_CACHE_MAX:
+            del _PARSE_CACHE[next(iter(_PARSE_CACHE))]   # the least recently used goes, never everything at once
+
+
+def _parse_entry(fsid, session=None, turns=None):
+    """The newest cached entry for fsid across cuts, leaves and flags, or with `session` (or its `turns` list)
+    given the entry holding that very tree: the chain and courier keys hold the judges' session object and the
+    nudge gate its turns, and the newest slot may be an override parse of another transcript under the same sid
+    (a subagent viewer's agent file stored between the walk's parse and the gate's read). None when absent."""
+    with _PARSE_CACHE_LOCK:
+        for k in reversed(_PARSE_CACHE):
+            if k[0] != fsid:
+                continue
+            if session is None and turns is None:
+                return _newest_of(_PARSE_CACHE[k])
+            for ent in reversed(list(_PARSE_CACHE[k].values())):
+                if ent[1] is session or (turns is not None and isinstance(ent[1], dict) and ent[1].get("turns") is turns):
+                    return ent
+    return None
+
+
+def parse_entry_for_leaf(leaf):
+    """The newest cached entry whose parse read `leaf` as its leaf transcript (the kernel's path-keyed view)."""
+    leaf = str(leaf)
+    with _PARSE_CACHE_LOCK:
+        for k in reversed(_PARSE_CACHE):
+            for ent in reversed(list(_PARSE_CACHE[k].values())):
+                if ent[2] == leaf:
+                    return ent
+    return None
+
+
+def parse_cache_paths():
+    """The leaf paths of every cached parse, one per slot, newest last (the kernel's view iterates these)."""
+    with _PARSE_CACHE_LOCK:
+        return [_newest_of(trees)[2] for trees in _PARSE_CACHE.values() if trees]
+
+
+def parse_cache_drop(fsid):
+    """Drop every cut's entry for fsid (a dead timeline lane releasing its parse); returns how many went."""
+    with _PARSE_CACHE_LOCK:
+        gone = [k for k in _PARSE_CACHE if k[0] == fsid]
+        for k in gone:
+            del _PARSE_CACHE[k]
+    return len(gone)
+
+
+def parse_cache_drop_leaf(leaf, fsid=None):
+    """Drop every slot holding a parse of `leaf` (the kernel's view pops by path; a leaf's stem is not the sid), or
+    with `fsid` only that session's slots of it: a fork child's registry is born naming the PARENT's transcript until
+    its own init flips it, so the child's flip must not take the parent's live slot with it (review find)."""
+    leaf = str(leaf)
+    with _PARSE_CACHE_LOCK:
+        gone = [k for k, trees in _PARSE_CACHE.items()
+                if (fsid is None or k[0] == fsid) and any(ent[2] == leaf for ent in trees.values())]
+        for k in gone:
+            del _PARSE_CACHE[k]
+    return len(gone)
+
+
+def parse_cache_clear():
+    with _PARSE_CACHE_LOCK:
+        _PARSE_CACHE.clear()
+
+
+def parse_hits():
+    return int(_PARSE_HITS[0])
+
+
+def parse_cached(fsid, files, states=None, sdk_human=None):
+    """The cached session for fsid under the LIVE key (files as they stand now, the live cut, the caller's
+    sdk_human or the judges' answer), or None: NEVER parses, so the feed's cache-only read costs nothing cold
+    (kernel._parse_cached)."""
+    try:
+        cands, _states, keyfiles = _parse_key_files(fsid, files, states)
+        pair = _fileset_key(keyfiles)
+    except Exception:
+        return None
+    cut = _pending_cut(fsid)
+    ent = _parse_slot(fsid, cut, str(files[0]), None if sdk_human is None else bool(sdk_human))
+    if ent is not None and ent[0] == (pair, cut):
+        return ent[1]
+    return None
 
 # ── the courier's change gate (2026-09-09) ──
 # run_courier scanned every session's transcript and goal store on every triage pass, loading the store
@@ -2722,41 +3303,219 @@ _COURIER_SEEN = {}         # fsid -> the scan key of its last pass that found no
 # The key is every input the pass reads, taken BEFORE the store read (the chain-memo rule): the parse
 # cache's fileset key bound to the session object, the store file's key with its journal's and archive's,
 # the episode log's key, the LEAF's task-store files (each name with its key: the declared-plan sync reads
-# the leaf fsid's directory, which a /clear forks away from an SDK session's sid), the reg file's key, the
+# the leaf fsid's directory, which a /clear forks away from an SDK session's sid), the reg by the VALUES the
+# pass reads (spawnedAt and the SDK-owned bit; a reg that cannot be read is a sentinel, never keyed), the
 # captions file's key (the floor-title heal reads it), each running background launch with whether it has
 # crossed its deadline under the pass clock (the settle's one input no file records; see _bg_expiry_key),
-# and the transcript path. Recorded only when the pass did nothing, the store's key after the pass
+# the transcript path, the death marker's key (_cli_epoch), cleared.jsonl's key (plan_units through
+# _live_anchor_gone) and this session's stall records by value (rollup_status): every file the plan tier's
+# inventory (_sig_inputs) names, held by a completeness pin; the reg and the stall slice by value because
+# both files are rewritten at every boot (derivation 2, 2026-09-14). Recorded only when the pass did nothing, the store's key after the pass
 # equals the one before it (a heal, a mint, a retirement or a rollup change moves it), and the pass was
 # COMPLETE by the evidence gate's bit (_judge_ctx.stage_incomplete, reset by _gated before the run: a
 # deferral without a write or a side file that exists and did not read sets it); a pass with units,
 # placements, a moved store or that bit is planned again next pass whatever the key says. A parse the cache
 # does not hold is never keyed, nor is an expiry view that cannot be computed. Pruned to the sessions the
 # pass discovered; a rebound root clears. This gate sits INSIDE _plan_session; the evidence gate
-# (GATED_TIERS, _gate_check and _gated in run_plan) sits around it and keys on these same inputs (on this
-# fork the key below carries cleared.jsonl, the death marker and the stall slice too); the outer key's only
-# terms of its own are the reg's by-value ones, spawnedAt and _sdk_owned, where this key stats the reg. So
-# most skips happen there, and this table sees the sessions it let through.
-_PLANNER_SEEN = {}         # fsid -> the plan key of its last pass that had nothing to do
-_PLANNER_STATS = {"skipped": 0, "planned": 0, "recorded": 0}
-_PLANNER_STATS_LOCK = threading.Lock()   # guards the counters' read-modify-write: run_plan's pool bumps them from
-#                                          every planner worker at once, and `d[k] += 1` is a read, an add and a
-#                                          write. Under a GIL the gap between them is a rare switch point; with
-#                                          the GIL off (CI's free-threaded 3.14t cell, 2026-09-10 to -12) two
-#                                          workers read the same value, both write value + 1, and a settled pass
-#                                          counts one skip fewer than its sessions: (0, 2, 0) for three.
+# (GATED_TIERS, _gate_check and _gated in run_plan) sits around it and keys on the same files by identity,
+# the same reg and stall-slice values, and the task-store fingerprint this key does not read, so most skips
+# happen there and this table sees the sessions it let through.
+_PLANNER_SEEN = {}         # fsid -> the plan key of its last pass that had nothing to do (JSON-normalized: lists, not tuples)
+_PLANNER_STATS = {"skipped": 0, "planned": 0, "recorded": 0, "restored": 0, "refused": 0, "persisted": 0, "mismatchByTerm": {}}
+#                            mismatchByTerm: for every row that stood in the table (restored or recorded this boot) and compared
+#                            unequal at a pass, the INDEXES of the key terms that differed, counted (str(index) -> count, reset per
+#                            boot with the process): the instrument that names a term moving at boot instead of leaving it to a
+#                            guess (the 5c follow-up: the second deploy boot read restored 20 and skipped 0 because the reg's and the
+#                            stall slice's STATS moved at every boot; this histogram would have read {"5": 20, "10": 20})
+#                            restored: rows a boot loaded (served only when their key stands); refused: rows the load would not
+#                            trust; persisted: the rows on disk after the last write (T401 (5c): every boot re-planned every
+#                            session because this memo lived in memory alone: plannerSkip skipped 0, planned 20 on 2026-09-14)
+_PLANNER_SEEN_FILE = "planner-seen.json"   # STATE/planner-seen.json: {"v": 1, "derivation": [<_PLANNER_SEEN_DERIVATION_V>, <PLACEMENTS_V>],
+#                                                                  "rows": {fsid: <the normalized plan key>}}
+_PLANNER_SEEN_V = 1                        # the DOCUMENT's shape (a reader of another shape loads nothing)
+_PLANNER_SEEN_DERIVATION_V = 2             # the PLANNER's derivation under which a row means "nothing to do": a persisted row asserts
+#                                            that under the code that wrote it, and before T401 (5c) every restart discarded the
+#                                            assertion; now a file whose derivation pair differs from the running code's is refused
+#                                            whole (every row counted refused), so the first pass after the change plans every
+#                                            session once and the rows are rewritten under the new derivation. PLACEMENTS_V rides
+#                                            beside it: the store's placementsV seal sits below the skip return in _plan_session, so
+#                                            a seg-id migration must invalidate the rows or a standing row would keep a store at the
+#                                            old placementsV. BUMP THIS when a change to _plan_session's reads or writes would make
+#                                            a pass that had nothing to do under the old code have something under the new (a heal,
+#                                            a new unit shape, a retire rule), or when the KEY's shape changes (the rows would compare
+#                                            unequal anyway; the bump refuses them once, explicitly, and rewrites them).
+#                                            v1 = the memo's first persisted shape (2026-09-14); v2 = the reg (index 5) and the stall
+#                                            slice (index 10) keyed by value instead of by stat, since both files are rewritten at
+#                                            every boot and no v1 row stood across one (2026-09-14, the second deploy boot's read).
+_PLANNER_SEEN_LOCK = threading.Lock()
+_PLANNER_SEEN_DIRTY = [False]
+_PLANNER_SEEN_LOADED = [False]
+_PLANNER_SEEN_SAID = [False]               # the persist's failure said once per fault episode (re-armed by a clean write)
+_PLANNER_SEEN_READ_FAULT = [False]         # the load's read or decode fault, counted ONCE per fault spell (re-armed by a successful load):
+#                                            the latch stays unset on a fault so the next pass retries the read, and a file that stays
+#                                            unreadable must not count a refusal per pass (the 5c follow-up, the manager's refinement)
+_PLANNER_FSID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
-def _planner_stat(name):
-    """One bump of a planner gate counter (`skipped`, `planned` or `recorded`), serialized across the pass's
-    workers by _PLANNER_STATS_LOCK. Every bump goes through here; tests/test_planner_skip.py pins that."""
-    with _PLANNER_STATS_LOCK:
-        _PLANNER_STATS[name] += 1
+def _planner_key_norm(pkey):
+    """The plan key as JSON carries it (tuples to lists, ints and floats kept), or None for a key that cannot be persisted: a
+    _file_key sentinel (a fresh object() for a file that exists but cannot be read) is never equal to anything, so such a key is
+    neither recorded nor compared (the in-memory memo never matched it either). Both sides of every comparison go through here."""
+    try:
+        return json.loads(json.dumps(pkey))
+    except (TypeError, ValueError):
+        return None
+
+
+def _planner_seen_read_fault(what):
+    """A read or decode fault of the memo file: counted once and SAID once per fault spell (the flag re-arms on a successful
+    load), the way persist_planner_seen says its write fault; the latch stays unset so the next pass retries. The
+    check-and-set and the bump are under the memo lock, as every planner counter is (the pool's workers bump together)."""
+    with _PLANNER_SEEN_LOCK:
+        if _PLANNER_SEEN_READ_FAULT[0]:
+            return
+        _PLANNER_SEEN_READ_FAULT[0] = True
+        _PLANNER_STATS["refused"] += 1
+    sys.stderr.write("planner-seen memo: %s (said once per episode; retried by the next pass)\n" % what)
+
+
+def _planner_bump(key):
+    """One planner counter, under the memo lock: the pool's workers bump skipped, planned and recorded together, and an
+    unlocked += under-counted (the histogram had the same fault; round one of the tidy)."""
+    with _PLANNER_SEEN_LOCK:
+        _PLANNER_STATS[key] += 1
+
+
+def _load_planner_seen():
+    """The previous kernel's planner memo into _PLANNER_SEEN, once per boot (best-effort; a missing or torn file is an empty memo).
+    Every row is checked: a uuid-shaped fsid and a list value, else refused (counted, never trusted); a row is an ANSWER only when
+    its key, recomputed at the next pass, equals the persisted one (the tick-seen rule: recompute and compare, never trust).
+    The load LATCHES only after a successful read and parse (a missing file is a successful empty load and latches too): a read or
+    decode fault leaves the latch unset, so the next pass retries the read and the exit drain's forced persist declines meanwhile
+    (the previous kernel's rows stand on disk); the fault counts one refusal per fault spell, said once until a load succeeds.
+    Before the 5c follow-up the latch was set before the read, so a present-but-unreadable file latched an empty table and a
+    kernel exiting before any pass emptied the file through the drain."""
+    if _PLANNER_SEEN_LOADED[0]:
+        return 0
+    try:
+        raw = (STATE / _PLANNER_SEEN_FILE).read_bytes()
+    except FileNotFoundError:
+        _PLANNER_SEEN_LOADED[0] = True                                 # a fresh root: an empty memo, nothing to refuse, latched
+        _PLANNER_SEEN_READ_FAULT[0] = False
+        return 0
+    except OSError as e:
+        _planner_seen_read_fault("not read: %s: %s" % (type(e).__name__, str(e)[:120]))   # one refusal and one line per fault
+        return 0                                                       #  spell; the latch stays unset (the next pass retries)
+    try:
+        d = json.loads(raw.decode("utf-8"))                            # the decode under the parse try: a UnicodeDecodeError is a
+    except ValueError as e:                                            #  ValueError, and round two's read_text let it out of run_plan
+        _planner_seen_read_fault("not decoded: %s: %s" % (type(e).__name__, str(e)[:120]))   # (round three, medium 2); torn or
+        return 0                                                       #  not UTF-8: one refusal and one line per fault spell, the latch unset
+    _PLANNER_SEEN_LOADED[0] = True                                     # read and parsed: this boot's load, whatever the rows say
+    _PLANNER_SEEN_READ_FAULT[0] = False
+    rows = d.get("rows") if isinstance(d, dict) and d.get("v") == _PLANNER_SEEN_V else None
+    if not isinstance(rows, dict):
+        _PLANNER_STATS["refused"] += 1                                 # empty, null, another shape or version: one refusal
+        return 0
+    if d.get("derivation") != [_PLANNER_SEEN_DERIVATION_V, PLACEMENTS_V]:
+        _PLANNER_STATS["refused"] += len(rows)                         # written under another derivation: every row refused, the
+        return 0                                                       #  first pass plans everything once (round two, medium 3)
+    n = 0
+    with _PLANNER_SEEN_LOCK:
+        for fsid, v in rows.items():
+            if not (isinstance(fsid, str) and _PLANNER_FSID_RE.match(fsid) and isinstance(v, list)):
+                _PLANNER_STATS["refused"] += 1
+                continue
+            _PLANNER_SEEN[fsid] = v; n += 1
+    _PLANNER_STATS["restored"] = n
+    return n
+
+
+def _planner_seen_set(fsid, norm):
+    with _PLANNER_SEEN_LOCK:
+        if _PLANNER_SEEN.get(fsid) != norm:
+            _PLANNER_SEEN[fsid] = norm; _PLANNER_SEEN_DIRTY[0] = True       # dirty by CHANGE only
+
+
+def _planner_seen_pop(fsid):
+    with _PLANNER_SEEN_LOCK:
+        if _PLANNER_SEEN.pop(fsid, None) is not None:
+            _PLANNER_SEEN_DIRTY[0] = True
+
+
+def _planner_seen_drop(alive):
+    """Drop every row whose fsid is not in `alive`: bounded by the sessions this pass discovered."""
+    with _PLANNER_SEEN_LOCK:
+        for gone in [f for f in _PLANNER_SEEN if f not in alive]:
+            _PLANNER_SEEN.pop(gone, None); _PLANNER_SEEN_DIRTY[0] = True
+
+
+def persist_planner_seen(force=False):
+    """Write the memo when a row changed since the last write (or `force`, the kernel's exit): serialized under the lock before the
+    flag clears, staged under a per-writer tmp (pid and thread id), the tmp unlinked and the flag re-armed on a failed replace,
+    the failure said once per episode; best-effort, never raises for a write fault."""
+    with _PLANNER_SEEN_LOCK:
+        if not (_PLANNER_SEEN_DIRTY[0] or force):
+            return False
+        if not _PLANNER_SEEN_DIRTY[0] and not _PLANNER_SEEN and not _PLANNER_SEEN_LOADED[0]:
+            return False                                               # a forced write over a memo NO pass has loaded (a kernel that
+        #                                                                took SIGTERM before its first planner pass) would replace the
+        #                                                                previous kernel's rows with an empty document (T401 (5c) round
+        #                                                                three, medium 1: 3 rows to 0, the next boot restored 0)
+        snap = {"v": _PLANNER_SEEN_V, "derivation": [_PLANNER_SEEN_DERIVATION_V, PLACEMENTS_V], "rows": {k: v for k, v in _PLANNER_SEEN.items()}}
+        try:
+            body = json.dumps(snap)                                        # every row went through _planner_key_norm: JSON-native;
+        except (TypeError, ValueError) as e:                               #  serialized BEFORE the flag clears, under the lock
+            if not _PLANNER_SEEN_SAID[0]:                                  #  (the tick-seen shape): an unserializable row is a bug,
+                _PLANNER_SEEN_SAID[0] = True                               #  said once, re-raised with the flag still dirty so the
+                sys.stderr.write("planner-seen memo: not serialized: %s: %s (said once per episode; retried by the next persist)\n"
+                                 % (type(e).__name__, str(e)[:120]))       #  next persist retries once the row is gone (round two, low 2)
+            raise
+        _PLANNER_SEEN_DIRTY[0] = False
+    p = STATE / _PLANNER_SEEN_FILE
+    tmp = p.with_name(p.name + ".tmp.%d.%x" % (os.getpid(), threading.get_ident()))
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, p)
+        _PLANNER_STATS["persisted"] = len(snap["rows"])
+        _PLANNER_SEEN_SAID[0] = False
+        return True
+    except Exception as e:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        with _PLANNER_SEEN_LOCK:
+            _PLANNER_SEEN_DIRTY[0] = True
+        if not _PLANNER_SEEN_SAID[0]:
+            _PLANNER_SEEN_SAID[0] = True
+            sys.stderr.write("planner-seen memo: not written: %s: %s (said once per episode; retried by the next persist)\n" % (type(e).__name__, str(e)[:120]))
+        return False
 
 
 def planner_skip_stats():
-    """A copy of the planner gate's counters for /perf (memos.plannerSkip), read under their lock."""
-    with _PLANNER_STATS_LOCK:
-        return dict(_PLANNER_STATS)
+    """A copy of the planner gate's counters for /perf (memos.plannerSkip); the histogram copied too."""
+    d = dict(_PLANNER_STATS); d["mismatchByTerm"] = dict(_PLANNER_STATS["mismatchByTerm"]); return d
+
+
+def _planner_seen_stands(fsid, norm):
+    """Whether the row the table holds for fsid equals `norm`, the key recomputed this pass. A row that stands skips the pass; a
+    row that does not is counted by the indexes of the terms that differed (mismatchByTerm), so a read boot names the moving term."""
+    row = _PLANNER_SEEN.get(fsid)
+    if row is None:
+        return False
+    if row == norm:
+        return True
+    with _PLANNER_SEEN_LOCK:                          # the pool workers bump it together: unlocked, a boot read under-counted
+        hist = _PLANNER_STATS["mismatchByTerm"]
+        if isinstance(row, list) and isinstance(norm, list):
+            for i in range(max(len(row), len(norm))):
+                if i >= len(row) or i >= len(norm) or row[i] != norm[i]:
+                    hist[str(i)] = hist.get(str(i), 0) + 1
+        else:
+            hist["shape"] = hist.get("shape", 0) + 1
+    return False
 
 
 def _task_store_key(fsid):
@@ -2775,37 +3534,54 @@ def _task_store_key(fsid):
     return tuple((n, _file_key(str(d / n))) for n in names)
 
 
-def _stall_term(fsid):
-    """This sid's stall slice as a key term (by value: auto-nudge.json moves for every session's record), or a
-    fresh sentinel when it cannot be read (never equal: the session is planned every pass, _task_store_key's
-    listing-error rule; the evidence gate ran the stage without a stamp on the same failure)."""
+def _plan_key(fsid, path, session, now):
+    """Every input _plan_session reads, or None when the parse is not the cache's own (never skip what cannot
+    be keyed). Taken before the store read. Index 2 is the store key: the record rule compares it after the
+    pass, so new terms go after the existing ones. Beyond the files the pass opens by sid: the LEAF's task
+    store (the directory the declared-plan sync reads, which differs from the sid's for every SDK session
+    after a /clear), the captions file (the floor-title heal reads it), each running background launch with
+    whether it has crossed its deadline under the pass clock `now` (_bg_expiry_key: the settle reads that
+    crossing and no file records it), and every file the plan tier's inventory names (_sig_inputs("plan")):
+    the death marker and cleared.jsonl by stat, the reg and the stall slice by the VALUES the pass reads
+    (spawnedAt and the SDK-owned bit; this session's stall records), as the outer gate keys them. THE RULE
+    (the 5c follow-up, from the second deploy boot's read: restored 20, skipped 0): a persisted key term
+    must be stable across the event it persists over, and a file rewritten at every boot (the reg at attach,
+    the stall slice by the jobs pass) is keyed by the values the pass reads, never by its stat."""
+    pk = _parse_entry(fsid, session)
+    if pk is None or pk[1] is not session:
+        return None
+    return (str(path), pk[0], _store_key(fsid), _file_key(str(EPIDIR / (fsid + ".jsonl"))),
+            _task_store_key(session.get("leafFsid") or fsid), _reg_key(fsid),
+            _file_key(str(CAPDIR / (fsid + ".jsonl"))), _bg_expiry_key(path, now),
+            # T401 (5c) round two: the three files of the plan tier's inventory (_sig_inputs) this key lacked: the death marker
+            # (_cli_epoch), cleared.jsonl (plan_units through _live_anchor_gone) and the stall slice (rollup_status). The in-memory
+            # memo forgot every row at each restart, so a move between boots was planned by that amnesty; a persisted row must
+            # carry every input the pass reads (the completeness pin holds this tuple against _sig_inputs("plan")).
+            _file_key(str(GONEDIR / (fsid + ".json"))), _file_key(str(STATE / "cleared.jsonl")), _stall_slice_key(fsid))
+
+
+def _reg_key(fsid):
+    """The reg's values the pass reads, [spawnedAt, the SDK-owned bit], or a fresh sentinel when the reg exists and cannot be
+    read or parsed: a sentinel key is never recorded and never compared, so the session is planned. The outer gate reads
+    the same reg through the same strict _reg_spawned_at, whose raise makes _gate_check run the stage without a stamp, so
+    the two gates agree on the fault (round two of the tidy: the gate's read was lenient, answered None as for a reg with
+    no spawnedAt, and a stamp taken while the reg was readable skipped the session for as long as it stayed unreadable).
+    An absent reg is [None, owned]: a genuine state, keyed."""
+    try:
+        v = _reg_spawned_at(fsid)
+    except OSError:
+        return object()
+    return [v, _sdk_owned(fsid)]
+
+
+def _stall_slice_key(fsid):
+    """This session's stall records by value (_stall_slice, the outer gate's term), or a fresh sentinel when auto-nudge.json exists
+    and does not read (the strict raise): a sentinel key is never recorded and never compared, so a session whose slice cannot be
+    read is planned, as the outer gate runs its stage without a stamp."""
     try:
         return _stall_slice(fsid)
     except Exception:
         return object()
-
-
-def _plan_key(fsid, path, session, now):
-    """Every input _plan_session reads, or None when the parse is not the cache's own (never skip what cannot
-    be keyed). Taken before the store read. Index 2 is the store key: the record rule compares it after the
-    pass, so new terms go after the existing ones. Three terms beyond the files the pass opens by sid: the
-    LEAF's task store (the directory the declared-plan sync reads, which differs from the sid's for every SDK
-    session after a /clear), the captions file (the floor-title heal reads it), and each running background
-    launch with whether it has crossed its deadline under the pass clock `now` (_bg_expiry_key: the settle
-    reads that crossing and no file records it)."""
-    pk = _PARSE_CACHE.get(fsid)
-    if pk is None or pk[1] is not session:
-        return None
-    return (str(path), pk[0], _store_key(fsid), _file_key(str(EPIDIR / (fsid + ".jsonl"))),
-            _task_store_key(session.get("leafFsid") or fsid), _file_key(str(SDKDIR / (fsid + ".json"))),
-            _file_key(str(CAPDIR / (fsid + ".jsonl"))), _bg_expiry_key(path, now),
-            # Three more inputs of the planner's decision path, from the fork's evidence-gate inventory (the
-            # SIGNATURE INPUTS comment above GATED_TIERS; fold of 2026-09-09, appended after upstream's terms since
-            # index 2 is compared after the pass): cleared.jsonl (plan_units -> _live_anchor_gone -> _view_cleared),
-            # the death marker (_cli_epoch's ghost floor for the settle: a tmux session has no reg to move on a
-            # death) and this sid's stall slice (rollup_status's stall-warn retire reads stalled_facts). A key
-            # that omits an input the pass reads serves a stale answer silently.
-            _file_key(str(STATE / "cleared.jsonl")), _file_key(str(GONEDIR / (fsid + ".json"))), _stall_term(fsid))
 
 
 def _store_key(fsid):
@@ -2837,7 +3613,7 @@ def _courier_scan_key(fsid, path, session):
     peer authors alike, and the scan reads only dict authors, so the flag cannot change what the scan sees);
     the settle (_session_settled reads the bg-launch scan, the reg and the marker), read at the WRITE sites
     only, from the store being written, never on the idle path."""
-    pk = _PARSE_CACHE.get(fsid)
+    pk = _parse_entry(fsid, session)
     if pk is None or pk[1] is not session:
         return None
     return (str(path), pk[0], _file_key(str(GOALDIR / (fsid + ".json"))), _journal_key(fsid), _archive_key(fsid),
@@ -2988,7 +3764,8 @@ def _chain_membership(fsid, path, cut):
                     _CHAIN_STATS["hit"] += 1
                     return dict(mem)
             _CHAIN_STATS["miss"] += 1
-    raw = em.chain_membership(path, candidate_files=cands, states=states_s, leaf_override=cut or None)
+    raw = em.chain_membership(path, candidate_files=cands, states=states_s, leaf_override=cut or None,
+                              rompuuid=fsid, sdk_human=_sdk_owned(fsid))   # the parse's own entry answers when it stands (T323 stage 4a)
     mem = {k: frozenset(v) for k, v in raw.items()}
     if base is not None:
         with _CHAIN_LOCK:
@@ -3063,6 +3840,11 @@ def _sdk_owned(fsid):
     human (it parses with sdk_human=True), the dotted placeholder sticks for the whole open turn — forever if
     the turn reads as 'working' indefinitely — and each new message just re-renders a fresh one (the user
     2026-06-29). Computed from the live STATE global so it follows _rebind_state in tests."""
+    if _SDK_OWNER_FN is not None:
+        try:
+            return bool(_SDK_OWNER_FN(fsid))
+        except Exception:
+            pass
     return (STATE / "sdk" / (fsid + ".json")).exists()
 
 
@@ -3126,18 +3908,19 @@ def _pass_frame():
     return _frame if getattr(_judge_ctx, "in_pass", False) else None
 
 
-def _parse_key_files(fsid, files):
+def _parse_key_files(fsid, files, states=None):
     """The files the judge parse of `fsid` reads, as the filesystem shows them now: the candidate
     transcripts (_judge_candidates over the RAW leaf list every caller hands in) plus states/<fsid>.jsonl
     when it exists. Takes the raw list on purpose: _judge_candidates over an already-expanded list would
     append a fork lane's anchor a second time, and a key computed that way would never equal the one the
     parse cache holds (one spurious parse per fork lane per pass)."""
     cands = _judge_candidates(fsid, files)
-    states = STATESDIR / (fsid + ".jsonl")
+    states = Path(states) if states else STATESDIR / (fsid + ".jsonl")   # the caller's states log (the kernel's display
+    #                                                                       parse names its own path) or the judges' default
     return cands, states, list(cands) + ([str(states)] if states.exists() else [])
 
 
-def _frame_parse_key(fsid, files):
+def _frame_parse_key(fsid, files, states=None):
     """The (fileset key, pending cut) pair this pass judges `fsid` under, pinned in the pass frame
     (2026-09-07).
 
@@ -3168,7 +3951,7 @@ def _frame_parse_key(fsid, files):
             hit = fr["keys"].get(("parse", fsid), _NO_PIN)
         if hit is not _NO_PIN:
             return hit, None, fr
-    _cands, _states, key_files = _parse_key_files(fsid, files)
+    _cands, _states, key_files = _parse_key_files(fsid, files, states)
     cut = _pending_cut(fsid)
     try:
         key = (_fileset_key(key_files), cut)
@@ -3191,7 +3974,7 @@ def _frame_pin_parse(fr, fsid, session, key):
     return won
 
 
-def parsed_session(fsid, files, now):
+def parsed_session(fsid, files, now, asm_mode_out=None, stats=None, states=None, sdk_human=None):
     """ONE event-model parse per (transcript+states, mtime+size), reused across the captioner, planner,
     sweep, courier, and grouper — which all re-parsed the SAME leaf every pass (up to 4× per change, and
     once per pass even when nothing changed, which is what forced the PLAN_SESSIONS cap). In-memory: the
@@ -3224,8 +4007,10 @@ def parsed_session(fsid, files, now):
     # The pass's (fileset key, cut) pair, pinned BEFORE this read: a gate that pinned first fixes the
     # fileset component for the pass; a first toucher pins the live one here. `fr` is the frame the pin
     # went into, and the parse below is pinned into that same frame.
-    pair, cut, fr = _frame_parse_key(fsid, files)
-    states = STATESDIR / (fsid + ".jsonl")
+    pair, cut, fr = _frame_parse_key(fsid, files, states)
+    states = Path(states) if states else STATESDIR / (fsid + ".jsonl")   # the same log the key was taken over
+    leaf = str(files[0])                   # the transcript this parse is OF: part of the slot (an override parse of
+    #                                        another file under the same sid never takes the live leaf's slot)
     # A FORKED leaf (SDK /clear: discover hands the lastSid file under the stable romp sid) parses with
     # the session's anchor transcript among the candidates, so a fork whose chain back-links across files
     # (a resume-style fork) keeps its history — the FileAdapter walk crosses files by design, and a /clear
@@ -3243,28 +4028,34 @@ def parsed_session(fsid, files, now):
     # shows up as a served pair that differs from the pinned one, which withholds the gate's stamp.
     if cut is None:                        # a pin answered and read nothing: the live cut is ours to read
         cut = _pending_cut(fsid)
-    key = (pair[0], cut) if pair is not None else None
-    hit = _PARSE_CACHE.get(fsid)
+    key = (pair[0], cut) if pair is not None else None   # the frame's pair shape; sdk_human is the slot's tree pick (stage 2)
+    hit = _parse_slot(fsid, cut, leaf, None if sdk_human is None else bool(sdk_human))
     if key is not None and hit and hit[0] == key:
+        _PARSE_HITS[0] += 1
+        if stats is not None:
+            stats["miss"] = False
+        if asm_mode_out is not None:
+            asm_mode_out.append(hit[5] if len(hit) > 5 else "full")   # the mode of the parse that built this tree (review find)
         if fr is not None:                 # a WARM first touch pins too (review 2026-09-06): this path used to
             with _frame_lock:              #  return unpinned, so a session already in the cache froze nothing
                 return _frame_pin_parse(fr, fsid, hit[1], key)   # and a mid-pass append reached a later stage
         return hit[1]                      #  only - the two-worlds shape the frame exists to prevent
     session = em.parse_session(files[0], rompuuid=fsid, candidate_files=list(files),
                                states=str(states), postal_log=str(MESSAGES), now=now,
-                               sdk_human=_sdk_owned(fsid),   # SDK session → composer input is promptSource "sdk" = the human (mirrors the kernel)
-                               leaf_override=cut or None)
+                               sdk_human=(human := bool(sdk_human) if sdk_human is not None else bool(_sdk_owned(fsid))),   # the caller's answer, else the judges', read on a miss
+                               leaf_override=cut or None, asm_mode_out=(_am := asm_mode_out if asm_mode_out is not None else []))
+    if stats is not None:
+        stats["miss"] = True
+    _PARSE_MISSES[0] += 1                                  # a cold parse (T323: /perf parses)
     if key is not None:
-        if len(_PARSE_CACHE) > 256:        # bounded by fleet size; a wholesale clear on overflow is fine
-            _PARSE_CACHE.clear()
-        _PARSE_CACHE[fsid] = (key, session)
+        _parse_store(fsid, cut, key, session, leaf, human, (_am[-1] if _am else "full"))   # LRU, never a wholesale clear
     if fr is not None:                     # pin under the frame the KEY went into (never a re-read _frame: a
         with _frame_lock:                  #  parse spanning a pass boundary must not land keyless in the next
             return _frame_pin_parse(fr, fsid, session, key)   # frame); a concurrent first toucher wins
     return session
 
 
-def tasks_for(fsid, leaf, files, now):
+def tasks_for(fsid, leaf, files, now, done=None):
     """The transcript's ready caption tasks [{text, writes:[{id,grain,t}]}], memoized on disk
     by the pass's parse pair — repeated passes don't re-parse an unchanged transcript
     (ports the romp-events cache; the per-second-polling / 14MB-transcript guard). The memo key IS
@@ -3281,6 +4072,13 @@ def tasks_for(fsid, leaf, files, now):
     if pair is None:
         return []
     key = list(pair)                                   # as JSON reads it back: [[[mtime, size], ...], cut]
+    cap_key = _file_key(str(CAPDIR / (fsid + ".jsonl")))   # the captions file's stat beside it (T358): the memo holds the UNDONE
+    if cap_key is not None and not isinstance(cap_key, tuple):   #  units' tasks only, so a caption filed since must miss it (a strike
+        _CAPTIONS_STATS["unstatable"] += 1             #  files none). The sentinel (a file that exists but will not stat): this
+        _say_once_judge("captions: %s's captions file exists but cannot be stat'ed: no caption is planned for it until it can "
+                        "(/perf memos.captions.unstatable counts the passes)" % fsid)   # session plans nothing this pass; the others'
+        return []                                      #  captions proceed (arm low 3: loud, and counted, never silent)
+    cap_key = list(cap_key) if cap_key else None
     cf = PCACHE / (fsid + ".json")
     # The cache read is strict about the FILE (the evidence gate, 2026-09-07): absent is a miss; a file
     # that exists and does not read or decode is a miss too, but one that marks the running stage
@@ -3290,7 +4088,9 @@ def tasks_for(fsid, leaf, files, now):
     # was a silent miss.
     try:
         o = json.loads(cf.read_text())
-        hit = o["tasks"] if (o.get("key") == key and o.get("v") == 6) else None   # v6 = absorbed atoms placed at their landing time, so their seg ids moved (T252d, 2026-09-08);
+        hit = o["tasks"] if (o.get("key") == key and o.get("capKey") == cap_key and o.get("v") == 9) else None   # v8 = the harness skill-load wrapper no longer emits a command atom, so the prompt segment grows (T333, 2026-09-11; with PLACEMENTS_V 14);
+        #                                                                            v7 = machine-written triggers key their segment on the anchor uuid, so those seg ids moved (T318, 2026-09-10; with PLACEMENTS_V 13);
+        #                                                                            v6 = absorbed atoms placed at their landing time, so their seg ids moved (T252d, 2026-09-08);
         #                                                                            v5 = absorbed SDK-injection atoms carry real text (2026-07-06); older caches regenerate
     except (FileNotFoundError, NotADirectoryError):   # absent, as _ident reads it: a plain miss
         hit = None
@@ -3313,7 +4113,9 @@ def tasks_for(fsid, leaf, files, now):
         _judge_ctx.stage_incomplete = True
         return []
     tasks = []
-    for t in _ready_tasks(session, store):
+    if done is None:
+        done = captioned_ids(fsid)
+    for t in _ready_tasks(session, store, done):       # captioned units are skipped before their bodies are read (T358)
         kind = t.get("kind", "work")
         text = _prompt_text(t["atoms"]) if kind == "prompt" else _unit_text(t["atoms"])
         task = {"kind": kind, "text": text, "writes": t["writes"]}
@@ -3340,7 +4142,7 @@ def tasks_for(fsid, leaf, files, now):
     try:
         PCACHE.mkdir(parents=True, exist_ok=True)
         tmp = cf.with_suffix(".tmp.%d" % os.getpid())
-        tmp.write_text(json.dumps({"key": key, "v": 6, "tasks": tasks}))
+        tmp.write_text(json.dumps({"key": key, "capKey": cap_key, "v": 9, "tasks": tasks}))
         tmp.rename(cf)
     except Exception as e:
         # the decision stands for this pass (the tasks are returned) but the next pass cannot read it back:
@@ -3372,7 +4174,22 @@ def tasks_for(fsid, leaf, files, now):
 # memo serves READERS only (load_goal_archive_shared): every archiver keeps load_goal_archive, a fresh
 # private object it mutates and saves.
 _CAPTIONS_MEMO = {}        # fsid -> (file key taken before the read, the parsed rows)
-_CAPTIONS_STATS = {"served": 0, "parsed": 0}
+_SAID_ONCE = set()
+
+
+def _say_once_judge(line):
+    """One stderr line per distinct text for the process (a condition that recurs every pass is said the first time)."""
+    if line in _SAID_ONCE:
+        return
+    _SAID_ONCE.add(line)
+    try:
+        sys.stderr.write(line + "\n")
+    except Exception:
+        pass
+
+
+_CAPTIONS_STATS = {"served": 0, "parsed": 0, "unstatable": 0}   # unstatable: passes that planned nothing for a session whose
+#                                                                  captions file exists but will not stat (T358 arm low 3)
 _GOALARCH_MEMO = {}        # fsid -> (file key taken before the read, the guarded archive store: read-only)
 _GOALARCH_STATS = {"served": 0, "loaded": 0}
 _FILE_MEMO_MAX = 256
@@ -3738,7 +4555,12 @@ PLAN_SYS = (
     "A card born **blocked** is the tell: when all a new goal would hold is a question about work that "
     "has not started, it is not a goal. Work the assistant merely **offers** (a fix it proposes after "
     "diagnosing, a follow-up it volunteers) is not an ask, so block the goal that surfaced the offer, "
-    "with the offer as the why, and mint nothing. It earns a card of its own once the user says go.\n"
+    "with the offer as the why, and mint nothing. It earns a card of its own once the user says go. "
+    "The session's own background workflows, review rounds and agents are its process, not deliverables: "
+    "file them as steps under the goal they serve, never as a new top-level goal. Every mint carries "
+    "\"kind\": \"ask\" (a deliverable the user's message asked for, e.g. \"Add retries to the client\") or "
+    "\"kind\": \"process\" (work the session started for itself: a review round, an audit, a workflow or agent it "
+    "launched, e.g. \"Adversarial review of the retry diff\").\n"
     '- {\"why\",\"do\":\"sub\",\"under\":<n>,\"text\":\"<step ≤10 words>\"}: a step or progress under '
     "card #n, where #n must be a **top-level card** (a flush-left line in <open-goals>; the indented "
     "sub-goals are context and done/block targets, not filing spots — where inside the card the step "
@@ -3951,7 +4773,7 @@ def _parse_plan(raw, menu_len, allow_extend=False):
         if not isinstance(o, dict):
             continue
         do = str(o.get("do", "")).strip().lower()
-        why = " ".join(str(o.get("why", "")).split())[:300]
+        why = _cut_why(o.get("why", ""), WHY_MAX)
         text = " ".join(str(o.get("text", "")).split())[:120]
         if not do and why.lower() == "skip":
             do = "skip"                            # the model sometimes answers {"why": "skip"} with no
@@ -3960,7 +4782,13 @@ def _parse_plan(raw, menu_len, allow_extend=False):
             ops.append({"do": "skip", "why": why})
         elif do == "mint":
             if _has_alpha(text):
-                ops.append({"do": "mint", "why": why, "text": text})
+                op = {"do": "mint", "why": why, "text": text}
+                kind = str(o.get("kind") or "").strip().lower()
+                if kind in ("ask", "process"):
+                    op["kind"] = kind                  # the planner's label: the user's deliverable, or the session's own process (T319)
+                elif o.get("ask") is True:
+                    op["kind"] = "ask"                 # the earlier mark's spelling
+                ops.append(op)
         elif do == "sub":
             n, r = _int(o, "under"), _int(o, "ref")
             if not _has_alpha(text):
@@ -4148,6 +4976,84 @@ def _quarantine_store(path, reason, st):
     return aside
 
 
+# ── the writer loader's parse memo (2026-09-15) ──────────────────────────────────────────────────────
+# load_goals parsed its store file on every call. Every judge stage loads through it per session per pass,
+# and the pusher's tick jobs (the nudge tick's last-moment re-read, the lift, the spend guard) per session
+# per cycle; a busy session's store runs to 2 MB, and a live kernel read and parsed its goal stores about
+# fifteen times a second on the pusher thread. The parse is the cost (about 25 ms for a 2.5 MB store; the
+# read is 0.25 ms), so this memo keeps ONE parse per file version and hands every caller a FRESH object,
+# because load_goals is the WRITER's loader: callers mutate what they get and hand it to save_goals.
+#
+# The entry is the file's identity (inode, mtime_ns, size), its text, and a pickle of the parsed object. A
+# hit is a proof about CONTENT, not identity: the text read this call must equal the entry's (a compare,
+# about 1% of a parse), so the coarse-timestamp blind spot a stat-only key carries (the kernel's pass memo
+# note: inode numbers recycle between consecutive publishes, and an equal-size republish inside one clock
+# tick reproduces the key; a test fixture rewriting a store in place does the same) cannot serve a stale
+# parse to a writer. The stat is by path before the read, as _read_store_json always took it for the
+# quarantine's identity check: a publish landing between the two pairs the old identity with the new
+# text, and the entry is still a true fact about the text it holds, so the next call misses on the moved
+# identity and parses once more; it never answers wrong. The fresh object is pickle.loads of the entry's
+# pickle: about 10 ms for a 2.5 MB store, against 25 ms for the parse and 69 ms for copy.deepcopy of a
+# parsed object, which is why the entry holds a pickle and not the object (and holds far less memory). The
+# pickle is our own, made from the parse in this process, never read from disk. The override journal is not
+# memoized: _finish_load replays it on every load, as before. One entry per store path, dropped when the
+# path reads as absent, cannot be read, or holds bytes that do not parse; the kernel's compaction sweep
+# drops the entries of removed stores (_raw_store_evict_absent) and of stores no discovered session owns
+# (_raw_store_evict_unowned: the sweep itself loads every store the directory holds once after boot, so
+# without it the resident set would be the directory, not the live board), and _rebind_state clears the memo.
+_RAW_STORE = {}                                  # store path → ((st_ino, st_mtime_ns, st_size), text, pickled parse)
+_RAW_STORE_LOCK = threading.Lock()
+_RAW_STORE_STATS = {"hit": 0, "miss": 0, "compare_miss": 0, "evict": 0}
+
+
+def _raw_bump(key):
+    with _RAW_STORE_LOCK:
+        _RAW_STORE_STATS[key] += 1
+
+
+def _raw_store_forget(path_s):
+    with _RAW_STORE_LOCK:
+        _RAW_STORE.pop(path_s, None)
+
+
+def _raw_store_evict_absent():
+    """Drop memo entries whose store file is gone (a removed session); the kernel's compaction sweep calls
+    this beside _disk_memo_evict_absent."""
+    with _RAW_STORE_LOCK:
+        gone = [k for k in _RAW_STORE if not os.path.exists(k)]
+        for k in gone:
+            del _RAW_STORE[k]
+        _RAW_STORE_STATS["evict"] += len(gone)
+    return len(gone)
+
+
+def _raw_store_evict_unowned(owned):
+    """Drop the entries of stores no session in `owned` (the discover set's sids) holds. The memo has no
+    cap, and the compaction sweep fills it with EVERY store the goals directory holds (its first sweep after
+    boot loads each one through load_goals), so without this the text and pickle of every store ever written
+    stayed resident for the process, as the two sibling memos of parsed stores did before their own
+    unowned eviction (review find, 2026-09-08). The kernel's compaction sweep calls this beside
+    _shared_evict_unowned; a later load of an evicted store is a miss that refills it."""
+    with _RAW_STORE_LOCK:
+        gone = [k for k in _RAW_STORE if os.path.basename(k)[:-5] not in owned]
+        for k in gone:
+            del _RAW_STORE[k]
+        _RAW_STORE_STATS["evict"] += len(gone)
+    return len(gone)
+
+
+def raw_store_stats():
+    """The memo's counters plus its occupancy. hit: identity and text matched, a fresh copy of the earlier
+    parse. miss: no entry, or its identity moved. compare_miss: identity matched and the text did not.
+    evict: entries the compaction sweep dropped for removed stores and for stores no discovered session
+    owns. Gauges: entries, and bytes (the text and the pickle held)."""
+    with _RAW_STORE_LOCK:
+        out = dict(_RAW_STORE_STATS)
+        out["entries"] = len(_RAW_STORE)
+        out["bytes"] = sum(len(e[1]) + len(e[2]) for e in _RAW_STORE.values())
+    return out
+
+
 def _read_store_json(path, *, quarantine=False, _tries=3):
     """The parsed JSON object at `path`, or None when the file is ABSENT (a session with no store yet).
 
@@ -4165,24 +5071,45 @@ def _read_store_json(path, *, quarantine=False, _tries=3):
 
     The stat comes BEFORE the read, so the quarantine can tell whether the file it is about to move is
     still the one whose bytes failed (see _quarantine_store); when it is not, a peer published meanwhile
-    and THEIR bytes get their own read, bounded by `_tries` (review find, 2026-09-08)."""
+    and THEIR bytes get their own read, bounded by `_tries` (review find, 2026-09-08).
+
+    The parse is memoized per file version (the _RAW_STORE note above): a read whose identity and text match
+    the entry answers a fresh copy of the earlier parse; any other outcome drops the path's entry."""
+    path_s = str(path)
     try:
         st = path.stat()
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
+        _raw_store_forget(path_s)
         return None
     except UnicodeError as e:
         bad, reason = e, "not UTF-8: %s" % e
+    except OSError:
+        _raw_store_forget(path_s)                    # nothing is remembered about a file that could not be read
+        raise
     else:
+        ident = (st.st_ino, st.st_mtime_ns, st.st_size)
+        with _RAW_STORE_LOCK:
+            ent = _RAW_STORE.get(path_s)
+        if ent is not None and ent[0] == ident:
+            if ent[1] == raw:
+                _raw_bump("hit")
+                return pickle.loads(ent[2])          # a fresh object: the caller may mutate it
+            _raw_bump("compare_miss")
+        else:
+            _raw_bump("miss")
         try:
             value = json.loads(raw)
         except ValueError as e:                      # json.JSONDecodeError is a ValueError
             bad, reason = e, "invalid JSON: %s" % e
         else:
             if isinstance(value, dict):
+                with _RAW_STORE_LOCK:                # pickled BEFORE the caller can touch it: the pristine parse
+                    _RAW_STORE[path_s] = (ident, raw, pickle.dumps(value, pickle.HIGHEST_PROTOCOL))
                 return value
             reason = "top-level JSON value is %s, not an object" % type(value).__name__
             bad = ValueError("%s: %s" % (path, reason))
+    _raw_store_forget(path_s)                        # bytes that did not parse: nothing to remember
     if not quarantine:
         raise bad
     if _quarantine_store(path, reason, st) is not None or _tries <= 1:
@@ -4479,6 +5406,56 @@ def _rebase_onto_disk(fsid, store):
             with _authority():
                 mnd["log"] = sorted((mnd.get("log") or []) + add,
                                     key=lambda e: (int(e.get("ev_t") or 0), int(e.get("at") or 0)))
+        # T334: the relay's record rides plain node keys two writers touch (the judge marks relayWanted; the kernel's tick
+        # replaces it with relayed): the NEWER record wins in either direction (by its t, the tick's clock, so a stale
+        # holder never republishes an older record over a newer one), and a marker is settled only by a record that
+        # NAMES it (its id): a re-block with the same words after a lift is a new marker, never popped by the record
+        # that settled the earlier one (the manager's fourth review)
+        for key in ("relayed", "relayDone"):        # the kernel's records of a relay sent, stood down or refused
+            d_, m_ = dnd.get(key), mnd.get(key)
+            if isinstance(d_, dict) and (not isinstance(m_, dict) or int(d_.get("t") or 0) > int(m_.get("t") or 0)):
+                mnd[key] = d_
+        if isinstance(dnd.get("relaySettled"), list):   # the settled markers: the union (each record slot is overwritten
+            ms = [x for x in (mnd.get("relaySettled") or []) if isinstance(x, str)]   #   by the next marker's; the list
+            mnd["relaySettled"] = (ms + [x for x in dnd["relaySettled"]           #   remembers, so a holder stale
+                                         if isinstance(x, str) and x not in ms])[-RELAY_SETTLED_CAP:]   # across two relays
+        #                                                                                never re-mints the first)
+        if isinstance(dnd.get("relayRecalled"), list):   # the recalls done ({mid, outcome, t}): the union, by mid
+            have = _relay_recalled_mids(mnd.get("relayRecalled"))
+            mnd["relayRecalled"] = ([x for x in (mnd.get("relayRecalled") or [])]
+                                    + [x for x in dnd["relayRecalled"] if _relay_recalled_mid(x) not in have])[-RELAY_SETTLED_CAP:]
+        if isinstance(mnd.get("relayRecall"), list) or isinstance(dnd.get("relayRecall"), list):
+            done = _relay_recalled_mids(mnd.get("relayRecalled"))   # the recalls owed: the union, minus the ones done on
+            mine = {str(r.get("pendingMid") or ""): r for r in (mnd.get("relayRecall") or []) if isinstance(r, dict)}
+            for r in (dnd.get("relayRecall") if isinstance(dnd.get("relayRecall"), list) else []):   #   either side, whether
+                if not isinstance(r, dict):                                                      #   or not the disk still
+                    continue                                                                     #   owes any
+                mid = str(r.get("pendingMid") or "")
+                if mid not in mine:
+                    mine[mid] = r
+                else:                                      # the same recall on both sides: the tick's hold and count newer-wins
+                    for k in ("unknownAt", "attempts"):
+                        if int(r.get(k) or 0) > int(mine[mid].get(k) or 0):
+                            mine[mid][k] = r[k]
+            owed = [r for r in mine.values() if str(r.get("pendingMid") or "") not in done][-RELAY_SETTLED_CAP:]
+            if owed:
+                mnd["relayRecall"] = owed
+            else:
+                mnd.pop("relayRecall", None)
+        if isinstance(mnd.get("relayWanted"), dict) and _relay_settled(mnd, mnd["relayWanted"]):
+            mnd.pop("relayWanted", None)               # ours is settled: popped FIRST, so the disk's live marker is adopted
+        d_rw, m_rw = dnd.get("relayWanted"), mnd.get("relayWanted")
+        if isinstance(d_rw, dict) and not _relay_settled(mnd, d_rw):
+            if not isinstance(m_rw, dict):
+                mnd["relayWanted"] = d_rw                  # the other writer's live marker
+            elif d_rw.get("id") == m_rw.get("id"):
+                _relay_carry_tick_keys(m_rw, d_rw)         # the SAME marker on both sides: the kernel's fields on it (the
+                                                           #   pending stamp, the hold after a stalled bus) are facts a stale
+                                                           #   copy without them would undo, and the question would go again
+            elif d_rw.get("pendingMid") or not m_rw.get("pendingMid"):
+                mnd["relayWanted"] = d_rw                  # two holders minted a marker for one wait: the one already handed
+                                                           #   to a far host wins, else the published one (its entry is
+                                                           #   flushed); the loser never reaches the queue
         # `mt` is a monotonic last-touched stamp the read side orders and anchors on (a block's mt feeds the
         # card's disp_t), so it must not regress to our older snapshot — take the newer of the two. The
         # verdict FLAGS need no such care: rollup_status below re-derives them all from the merged log.
@@ -4838,8 +5815,9 @@ def _replay_overrides(fsid, store, lines=None):
     return applied
 
 
-_NONCONTENT_KEYS = ("rev", "_baseRev", "_unread")   # the revision counter + the transient CAS base and
-#                                                      unread-journal mark (_replay_overrides): not store CONTENT
+_NONCONTENT_KEYS = ("rev", "_baseRev", "_unread", "_relayPending")   # the revision counter + the transient CAS base,
+#                                                      unread-journal mark (_replay_overrides) and the relay entries
+#                                                      awaiting this holder's publish (_relay_enqueue): not store CONTENT
 
 
 def _store_content(store):
@@ -5565,9 +6543,12 @@ def save_goals(fsid, store):
     #                                               measured so a conditional tail save (P3 of the judge perf
     #                                               plan) is judged from `romp perf`, not estimated
     if mine is not None and _matches_disk(fsid, store, mine):
+        if store.get("_relayPending"):               # the file already holds our markers: their entries go out now
+            _relay_flush(fsid, store, store.pop("_relayPending", None))
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
     unread = store.pop("_unread", None)              # likewise transient (_replay_overrides' unread-journal mark)
+    pending = store.pop("_relayPending", None)       # likewise: the relay entries this publish carries (_relay_enqueue)
     rebased = published = False
     try:
         if base is not None:
@@ -5592,6 +6573,8 @@ def save_goals(fsid, store):
         published = True
         _shared_forget(str(GOALDIR / (fsid + ".json")))   # the shared read-only view of the old version goes
         #                                               with it (its identity check would miss anyway; this frees the bytes)
+        if pending:
+            _relay_flush(fsid, store, pending)        # T334: the relay entries of the markers this publish carried
     finally:
         if base is not None:
             # published: the file holds exactly this content at this revision, so the holder's NEXT save
@@ -5601,6 +6584,8 @@ def save_goals(fsid, store):
             store["_baseRev"] = store["rev"] if published else base
         if not published and unread is not None:
             store["_unread"] = unread                # the mark describes the object still held
+        if not published and pending:
+            store["_relayPending"] = pending         # the holder's retry publishes the markers, then flushes
 
 
 def load_goal_archive(fsid):
@@ -5940,6 +6925,7 @@ def _per_file_rewound(fsid, files):
     out, seen, fails = set(), set(), 0
     leaf = Path(files[0])
     cands = [Path(f) for f in files]
+    lineage = set(cands)                                  # the live session's own files (the leaf, its /clear anchor): resident
     for row in episode_rows(fsid):
         fs = str(row.get("fsid") or "")
         if fs:
@@ -5951,15 +6937,47 @@ def _per_file_rewound(fsid, files):
         if not fp.exists():
             continue
         try:
-            ad = em.FileAdapter([str(fp)], str(fp))
-            if not ad.by_uuid and fp.stat().st_size > 0:
-                # the incremental reader swallows OSError into an empty record list with no row of
-                # its own (a permissions break, say) — a non-empty transcript that yields ZERO
-                # records is a failed read, not an empty file, and must count like one
-                raise OSError("transcript read yielded no records")
-            for u, v in ad.chain_verdicts().items():
-                if v == "rewind":
-                    out.add(u)
+            # em.file_rewound: the one-file walk; for the leaf with an assembly document it runs over the document's
+            # pre-cut verdicts and the tail read now instead of the whole file (T323 stage 4a). A non-empty
+            # transcript that yields ZERO records raises OSError there (the incremental reader swallows a
+            # permissions break into an empty list): a failed read, not an empty file, and it must count like one.
+            if fp == leaf and em.asm_document_seeds(fp):  # the leaf road: the document's pre-cut verdicts and the tail read now.
+                em.rewound_memo_forget(fp)                #  asm_document_seeds reads the sidecar's own inputs list, so a document
+                #                                           written over a two-file lineage (a /clear anchor beside, or a resume
+                #                                           fork's from-file among its inputs) answers False there and the leaf takes
+                #                                           the memo road (round one, low 1); the memo's cursor from the leaf's
+                #                                           documentless days is dropped at the flip so the checkpoint's cut follows the
+                #                                           live folds (low 2). Until 2026-09-15 a `len(files) == 1` guard sat beside
+                #                                           it, so a ONE-file document whose session had another candidate file (a dead
+                #                                           episode file named by its episode rows) fell to the memo road, whose boot
+                #                                           restore over a live growing leaf comes back without its state and walks the
+                #                                           file whole: the largest live transcript (282 MB) decoded once at every
+                #                                           boot's first judge pass (checkpoints.refolds.rewoundUuids, wholeReads
+                #                                           upgrade<-_per_file_rewound); the sidecar's list is the one-file answer
+                out |= em.file_rewound(fp, rompuuid=fsid, sdk_human=_sdk_owned(fsid))
+            elif em.asm_document_seeds(fp) and _sdk_owned(fp.stem) and _sdk_last_sid(fp.stem) is None:
+                # ANOTHER live SDK session's CURRENT leaf, named by this session's episode rows (a fork's episode log names its
+                # parent's leaf), whose own one-file document stands (2026-09-15): the seeded walk under that document with that
+                # leaf's own owner bit (an SDK session's, the parse cache keys on it), the tail read from the cut. The memo road below
+                # reads a file whole whenever its memo is stale (fold_records folds from record zero), and a live growing leaf's memo
+                # is stale at every boot: three live leaves, 570 MB, read whole on every boot's first judge pass as other sessions'
+                # candidates. A frozen file (a dead episode's, a /clear anchor: the reg's lastSid has moved on) keeps the memo road,
+                # whose fresh memo is served with no read; a live leaf no registry names (a Codex session's, a forked leaf named by
+                # a reg's lastSid rather than its sid) keeps it too, a known residue until a liveness signal exists for it
+                out |= em.file_rewound(fp, rompuuid=fp.stem, sdk_human=True)
+            else:                                         # a dead episode's frozen file, or a leaf with no assembly document (no
+                #                                           compaction boundary yet, or ever: its seeded walk had nothing to seed
+                #                                           and read the file whole at every boot, 104 MB on one): the walk once, its
+                #                                           verdict set memoized in the file's fold document and restored at the next
+                #                                           process; a leaf's memo is retired by its next append like any other's
+                out |= em.rewound_uuids(fp, drop=fp not in lineage and not _sdk_owned(fp.stem))   # the file's fold document,
+            #     ^ restored at the next process (T391); a live session's anchor keeps its records resident, since the chain walk
+            #       above reads it whole at every pass and a drop here made that a whole read per pass (round one, medium); so does
+            #       ANY registered session's own file (<sid>.jsonl with a reg): a fork's episode log names its parent's anchor,
+            #       and the fork's scan dropping it made the parent's chain walk read it whole once more per process, by pass
+            #       order (round two, low 2)
+            #     ^ the one-file walk asks for the leaf's document quietly: a lineage document (a /clear's anchor, a
+            #       resume fork) is not this walk's and stays the display's
         except Exception as e:
             fails += 1
             _log_judge_error("romp", fsid, "rewound-reconcile-file",
@@ -5976,7 +6994,8 @@ def reconcile_rewound_goals(fsid, path, now):
     "eclipsed" is kept content (a machine spur's abandonment, T209) and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
     the whole-graph walk can only ever call "clear", is caught by its own file's walk, exactly the
     incident scan's dead-episode-vs-dead-branch discriminator. This is the only cover for the
-    rewinds romp never sees: CLI-native Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the
+    rewinds romp never sees: a CLI-native Esc-Esc in a terminal session (the tmux backend's, until its
+    removal 2026-09-11), the SDK forkAt resume, a cut the
     gesture path could not resolve, and a crash between arm and take — every one applies
     --resume-session-at with no sweep, and 28 live orphans existed when this shipped (one still
     being actively judged a day after its conversation stopped existing). Cards ARCHIVE
@@ -6575,6 +7594,251 @@ def _restrict_retitle(ops, allowed):
     return [o for o in ops if o["do"] != "retitle" or o.get("goal") == allowed]
 
 
+_LAUNCH_TOOLS = {"Workflow": "workflow", "Agent": "agent", "Task": "agent"}
+_WF_META_RE = re.compile(r"\b(name|description)\s*:\s*(['\"])(.*?)\2", re.S)
+_WF_META_LITERAL_RE = re.compile(r"export\s+const\s+meta\s*=\s*\{(.*?)\}", re.S)   # the meta object only, never a schema field
+
+
+def _meta_literal(script):
+    """The text inside a Workflow script's FIRST `export const meta = {...}` literal, matched by brace depth (a
+    nested object or array inside meta, phases: [{...}], never ends the scan early); '' when none."""
+    src = str(script or "")[:8000]
+    m = re.search(r"export\s+const\s+meta\s*=\s*\{", src)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(src) and depth:
+        c = src[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        i += 1
+    return src[m.end():i - 1] if depth == 0 else src[m.end():]
+
+
+def _wf_meta(script):
+    """{name, description} read off a Workflow script's meta literal (the FIRST one, by brace depth), {} when none:
+    a quoted description elsewhere in the script (a schema field's, an agent prompt's) is never the run's own
+    words."""
+    lit = _meta_literal(script)
+    if not lit:
+        return {}
+    return {mm.group(1): mm.group(3) for mm in _WF_META_RE.finditer(lit)}
+
+
+def _seg_launches(seg):
+    """The BACKGROUND work this segment's assistant turns started, as [{"via": "workflow"|"agent", "desc": <the
+    dispatch's own words>}] in transcript order. The criterion is the event model's own (event_model._bg_step
+    registers a task on exactly these): a Workflow run (the tool only ever runs in the background), or an
+    Agent/Task tool_use whose input carries run_in_background or whose tool_result in this segment acked
+    asynchronously (toolUseResult.isAsync, or status "async_launched"). A FOREGROUND subagent (an Explore or a
+    review agent the turn waited on) is not a launch: counting it demoted a user's second ask under the first
+    (a review finding on this change). A Workflow's words come from its script's meta (description, else name)
+    or its scriptPath's file name; an agent's from its description, else the first line of its prompt."""
+    em.hydrate(seg.get("atoms") or [])   # bodies before the assembly cut: read on demand (T323 stage 4a)
+    atoms = seg.get("atoms") or []
+    acks = {}
+    for a in atoms:
+        if a.get("type") != "user":
+            continue
+        tur = a.get("toolUseResult")
+        tur = tur if isinstance(tur, dict) else {}
+        is_async = bool(tur.get("isAsync")) or tur.get("status") == "async_launched"
+        for b in (a.get("message") or {}).get("content", []) or []:
+            if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
+                acks[b["tool_use_id"]] = acks.get(b["tool_use_id"], False) or is_async
+    out = []
+    for a in atoms:
+        if a.get("type") != "assistant" or a.get("isApiError"):
+            continue
+        for b in (a.get("message") or {}).get("content", []) or []:
+            if not (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in _LAUNCH_TOOLS):
+                continue
+            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+            via = _LAUNCH_TOOLS[b["name"]]
+            if via != "workflow" and not inp.get("run_in_background") and acks.get(b.get("id")) is not True:
+                continue                                   # a foreground subagent: the turn waited on it, no launch
+            desc = ""
+            if via == "workflow":
+                meta = _wf_meta(inp.get("script"))
+                desc = meta.get("description") or meta.get("name") or ""
+                if not desc and inp.get("scriptPath"):
+                    desc = os.path.splitext(os.path.basename(str(inp["scriptPath"])))[0]
+            if not desc:
+                desc = str(inp.get("description") or "").strip()
+            if not desc:
+                first = str(inp.get("prompt") or "").strip().splitlines()
+                desc = first[0] if first else ""
+            out.append({"via": via, "desc": " ".join(str(desc).split())[:160]})
+    return out
+
+
+_TOKEN_STOP = {"the", "and", "for", "with", "over", "into", "from", "that", "this", "each", "then", "them", "they", "their", "your", "onto", "about"}   # function words: never a shared word
+
+
+def _tokens(text):
+    return {w for w in re.findall(r"[a-z0-9]+", str(text or "").lower()) if len(w) > 3 and w not in _TOKEN_STOP}
+
+
+def _overlap(a, b):
+    """Token overlap of two texts as a share of the smaller set (0..1); 0 when either is empty."""
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / float(min(len(ta), len(tb)))
+
+
+def _top_of(nodes, nid):
+    seen = set()
+    while nid in nodes and nodes[nid].get("parentId") and nid not in seen:
+        seen.add(nid)
+        nid = nodes[nid]["parentId"]
+    return nid if nid in nodes else None
+
+
+def _seg_trigger_author(seg):
+    atoms = seg.get("atoms") or []
+    trig = next((a for a in atoms if a.get("uuid") == seg.get("trigger")), None) or (atoms[0] if atoms else None)
+    return trig.get("author") if trig else None
+
+
+def _demote_session_mints(ops, seg, store, menu, p_target, human):
+    """The origin rule at minting time (T319, the user 2026-09-10: a card appears only for work that traces to
+    something they asked for; the sessions' own process, a Workflow run, a review round, an agent, never
+    stands as a top-level card). The PLANNER labels every mint `kind`: "ask" (a deliverable the user's message
+    asked for) or "process" (work the session started for itself), and this rule TRUSTS the labels (the fourth
+    review round: four rounds of word-overlap edge cases ended by asking the model, which knows):
+    - kind ask keeps its card, on both paths (an unplaced human segment and one whose prompt run already placed
+      the message);
+    - kind process nests as a step under the ask's top: the goal the turn ran in (the seam's own top, the
+      segment's placement), else this reply's ask, else the open top nearest in words to the launch or the step,
+      else nothing (files nothing; the chained ops go with it); born.via is the matching launch's kind when one
+      exists (workflow | agent, its words the why), else "work" with the planner's own why;
+    - a segment whose trigger is not a human ask (a seam tail, an autonomous stretch) treats every mint as process
+      whatever its label; a scheduled or programmatic prompt (trigger author "sdk") traces to the user's earlier
+      setup and is left untouched.
+    A MISSING label is filled by the words, and only then: in a human segment with no background launch a mint is
+    an ask; with a launch it is process, except exactly ONE unlabelled mint, the one nearest the user's own words
+    (its text against the message, never its why, never its position), which is an ask, and only among the mints
+    no launch's words fit better; when every unlabelled mint reads like a launch and a top exists to nest under,
+    all of them nest; when none exists (the message must place somewhere), the one least like a launch keeps the
+    card. Demoted steps carry born {kind: session, via, why, parentText}; a dropped mint takes the ops chained
+    onto it and surviving refs are remapped (a demoted mint still creates a node, so positions hold)."""
+    mints = [o for o in ops if o.get("do") == "mint"]
+    if not mints:
+        return ops
+    if _seg_trigger_author(seg) == "sdk":
+        return ops                                     # a scheduled firing is the user's, set up earlier
+    launches = _seg_launches(seg)
+    nodes = store.get("nodes", {})
+    parent = None
+    seam_top = (seg.get("seamOf") or {}).get("top") if isinstance(seg.get("seamOf"), dict) else None
+    for cand in (seam_top, p_target, (store.get("placements") or {}).get(seg.get("id") or "")):
+        if isinstance(cand, str) and cand in nodes:
+            parent = _top_of(nodes, cand)
+            break
+    open_tops = [m["id"] for m in menu if m.get("id") in nodes and nodes[m["id"]].get("parentId") is None
+                 and not nodes[m["id"]].get("nodeComplete") and not nodes[m["id"]].get("cleared")]
+    def launch_match(o):                               # the launch's words in the mint's TEXT only
+        return max([_overlap(l["desc"], o.get("text")) for l in launches] + [0.0])
+    prompt = _prompt_text(seg.get("atoms") or []) if human else ""
+    def prompt_match(o):                               # the user's words in the mint's TEXT only, never its why
+        return _overlap(prompt, o.get("text")) if prompt else 0.0
+    # the label of every mint: the planner's, else filled by the words
+    kind = {}
+    for o in mints:
+        k = str(o.get("kind") or "").strip().lower()
+        kind[id(o)] = k if k in ("ask", "process") else None
+    if not human:
+        for o in mints:
+            kind[id(o)] = "process"                    # the trigger is the event: no label can make this an ask
+    else:
+        unlabeled = [o for o in mints if kind[id(o)] is None]
+        if unlabeled and not launches:
+            for o in unlabeled:
+                kind[id(o)] = "ask"                    # no background work started: the words are the user's
+        elif unlabeled:
+            for o in unlabeled:
+                kind[id(o)] = "process"
+            if not any(kind[id(o)] == "ask" for o in mints):
+                fits_user = [o for o in unlabeled if launch_match(o) <= prompt_match(o)]
+                if fits_user:
+                    crown = max(fits_user, key=lambda o: prompt_match(o))
+                    kind[id(crown)] = "ask"
+                elif parent is None and not open_tops:  # nothing to nest under: the message must place somewhere
+                    crown = min(unlabeled, key=lambda o: launch_match(o))
+                    kind[id(crown)] = "ask"
+    if all(kind[id(o)] == "ask" for o in mints):
+        return ops
+    asks = [o for o in mints if kind[id(o)] == "ask"]
+    ask_op = None
+    if asks and parent is None:
+        # the reply's own ask hosts its process steps: the ask nearest the user's words, processed FIRST so a step
+        # can reference it wherever the planner listed it
+        ask_op = max(asks, key=lambda o: prompt_match(o))
+    # `ref` indexes the reply's CREATED nodes (mints and subs) in the reply's own order. Every op keeps its
+    # original created position for ref resolution (orig -> new); a dropped mint takes the ops chained onto it.
+    orig = {}
+    for o in ops:
+        if o.get("do") in ("mint", "sub"):
+            orig[id(o)] = len(orig) + 1
+    order = ([ask_op] if ask_op is not None else []) + [o for o in ops if o is not ask_op]
+    out, newpos, created_new = [], {}, 0
+    ask_ref, ask_text = None, ""
+    def dead(o):
+        r = o.get("ref")
+        return bool(r) and newpos.get(r) is None
+    def remap(o):
+        r = o.get("ref")
+        return dict(o, ref=newpos[r]) if r else o
+    for o in order:
+        do = o.get("do")
+        if do == "sub":
+            if dead(o):
+                newpos[orig[id(o)]] = None            # its parent died with a dropped mint: dropped with it
+                continue
+            created_new += 1; newpos[orig[id(o)]] = created_new; out.append(remap(o))
+            continue
+        if do != "mint":
+            if dead(o):
+                continue                               # a verdict aimed at a dropped node
+            out.append(remap(o))
+            continue
+        if kind[id(o)] == "ask":
+            created_new += 1; newpos[orig[id(o)]] = created_new
+            if o is ask_op:
+                ask_ref, ask_text = created_new, str(o.get("text") or "")
+            out.append(o)
+            continue
+        text = str(o.get("text") or "")
+        launch = max(launches, key=lambda l: _overlap(l["desc"], text)) if launches else None
+        if launch is not None and _overlap(launch["desc"], text) <= 0.0:
+            launch = launches[0] if len(launches) == 1 else None   # one launch in the segment: the step is its work
+        via = launch["via"] if launch else "work"
+        why = ("started a background %s (%s)" % (via, launch["desc"]) if launch and launch["desc"]
+               else str(o.get("why") or "the session started this on its own"))
+        born = {"kind": "session", "via": via, "why": " ".join(why.split())[:200]}
+        if ask_ref is not None:
+            created_new += 1; newpos[orig[id(o)]] = created_new
+            born["parentText"] = ask_text[:120]
+            out.append({"do": "sub", "why": str(o.get("why") or why), "ref": ask_ref, "text": text, "born": born})
+            continue
+        p = parent
+        if p is None and open_tops:
+            p = max(open_tops, key=lambda nid: (_overlap(nodes[nid].get("text"), (launch or {}).get("desc") or text),
+                                                nodes[nid].get("t") or 0))
+        if p is None:
+            newpos[orig[id(o)]] = None                 # nothing the user asked for to nest under: files nothing
+            continue
+        created_new += 1; newpos[orig[id(o)]] = created_new
+        born["parentText"] = str(nodes[p].get("text") or "")[:120]
+        out.append({"do": "sub", "why": str(o.get("why") or why), "parentId": p, "text": text, "born": born})
+    if human and not out:
+        return ops                                     # a human segment never files nothing through this rule
+    return out
+
+
 def _strip_top_mints(ops):
     """Drop every top-level `mint` op — and every op chained onto a dropped node — remapping the
     surviving same-reply refs. The deterministic half of the bookkeeping-root gate (the user
@@ -6730,7 +7994,7 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
     place_key = place_key if place_key is not None else seg_id
     created = []                                       # nodes minted/subbed in THIS reply, in order (for "ref")
 
-    def new_node(text, parent, why):
+    def new_node(text, parent, why, born=None):
         store["seq"] = store.get("seq", 0) + 1
         while "%s:g%d" % (store["rompUuid"], store["seq"]) in nodes:
             # a stale/absent seq must never mint OVER a live node: the overwrite is silent data
@@ -6744,6 +8008,9 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
                    "t": seg_t, "mt": seg_t, "why": why, "log": []}  # an empty diary at birth = diary-era node (2026-07-07)
         if clear_wrap:
             payload["clearWrap"] = True                # born from a clear wrap-up → clearing it is final (no second round)
+        if isinstance(born, dict) and born.get("kind"):
+            payload["born"] = dict(born)               # T319: work the SESSION started (a workflow, an agent, its own
+            #                                            thread), demoted under the goal it ran in; the card says so
         nodes[nid] = GuardedNode(payload)
         created.append(nid)
         return nid
@@ -6773,6 +8040,8 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
         return created[r - 1] if (r and 1 <= r <= len(created)) else None
 
     def _parent_of(o):                                # a sub parent: a menu node OR a same-reply mint ("ref")
+        if o.get("parentId") in nodes:                # ...or a node named outright (the T319 demotion's form:
+            return o["parentId"]                      #    the goal the turn ran in, menu member or not)
         if "under" in o:
             return menu[o["under"] - 1]["id"]
         r = o.get("ref")
@@ -6784,7 +8053,7 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
         if do == "skip":
             continue
         if do == "mint":
-            nid = new_node(o["text"] or "(untitled goal)", None, o["why"])
+            nid = new_node(o["text"] or "(untitled goal)", None, o["why"], born=o.get("born"))
             _unblock_branch(nid); focus = touched = nid
         elif do == "sub":
             parent = _parent_of(o)                     # menu goal, or a "ref" to an umbrella minted this reply
@@ -6800,9 +8069,10 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
                     nodes[dup]["mt"] = seg_t
                     if not o.get("coerced"):           # a coerced landing is bookkeeping, not re-engagement
                         _unblock_branch(dup)           #  (the user 2026-07-21) — blocks on the branch stand
-                    focus = touched = dup
+                    created.append(dup)                # the reply's created-node positions hold: a later `ref` to this
+                    focus = touched = dup              #   sub lands on the twin, never on a neighbour (T319 review)
                     continue
-                nid = new_node(o["text"] or "(step)", parent, o["why"])
+                nid = new_node(o["text"] or "(step)", parent, o["why"], born=o.get("born"))
             # A _coerce_place sub is the never-vanish floor, not the user re-engaging this branch: it must
             # not clear blocks above it (the user 2026-07-21: an unrelated aside quietly pulled the lone
             # blocked card back to working). A planner-chosen sub keeps the newest-wins unblock.
@@ -6821,7 +8091,8 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
                     nodes[t].setdefault("trail", []).append(seg_id)
         elif do == "block":
             t = _target(o)
-            if t and record_verdict(store, nodes[t], "planner", "block", seg_t, why=o["why"], seg=seg_id):
+            _fb = file_block(store, nodes[t], "planner", o["why"], seg_t, seg=seg_id) if t else ("block", False)   # T334: a peer's
+            if _fb[1] and _fb[0] == "block":         #   block is a peer wait; an annotation, so no mt bump and no trail
                 nodes[t]["mt"] = seg_t; touched = t   # the event materialized the flags (blockWhy = why)
                 if seg_id and seg_id not in (nodes[t].get("trail") or []):
                     nodes[t].setdefault("trail", []).append(seg_id)   # same: the blocking segment is history
@@ -7745,6 +9016,39 @@ def _custom_title(p):
     return None
 
 
+_LEAF_SEEN = {}      # sid -> the leaf path discover last handed out for it: the parse store releases the previous
+_LEAF_RETIRED = {}   # sid -> the leaves discover handed out for it before the current one: never stored again
+_LEAF_LOCK = threading.Lock()
+
+
+def _note_leaf(sid, path_str):
+    """discover hands out `path_str` as sid's CURRENT leaf. When that differs from the leaf it handed out last (a
+    /clear minted a new fsid under the same romp sid, or a resume fork moved the head to a fresh file), the previous
+    leaf's parse slots OF THIS SID are dropped: nothing reads them again (the anchor is a non-leaf candidate of the
+    new parse, read through the record cache, never through the parse store), and without this every clear left one
+    more full tree resident until restart (review find, 2026-09-11). The event is the flip itself, observed at the
+    one read that gives every caller the new leaf; a candidate-based drop would release only the first anchor. Only
+    this sid's slots go: a fork child's registry names the parent's transcript until its own init flips it, and the
+    parent's live slot is not the child's to drop. The retired leaf is remembered so a parse stored under it AFTER
+    the flip (a pass that snapshotted its rows before a mid-pass /clear) is refused by _parse_store rather than
+    kept as a live slot; a leaf handed out again (the anchor, while a fresh lastSid names a file not yet on disk)
+    is current again and stores as before."""
+    with _LEAF_LOCK:
+        prev = _LEAF_SEEN.get(sid)
+        _LEAF_SEEN[sid] = path_str
+        retired = _LEAF_RETIRED.setdefault(sid, set())
+        retired.discard(path_str)
+        if prev is not None and prev != path_str:
+            retired.add(prev)
+    if prev is not None and prev != path_str:
+        parse_cache_drop_leaf(prev, sid)
+
+
+def _leaf_retired(sid, leaf):
+    with _LEAF_LOCK:
+        return str(leaf) in _LEAF_RETIRED.get(sid, ())
+
+
 _lastsid_memo = {}   # sid -> (sdk-registry mtime, diverged lastSid or None) — the registry is rewritten
                      # constantly while a session works (ctx%, queue mirror), but lastSid flips only on a
                      # /clear-style fork, so an mtime memo keeps the fingerprint's per-push reads cheap
@@ -7754,7 +9058,8 @@ def _sdk_last_sid(sid):
     """The CURRENT transcript fsid of an SDK session when it has FORKED away from its anchor (`/clear`
     mints a new fsid under the same romp sid), else None. Read from the SDK backend's own registry —
     the designed, authoritative record (SdkSession updates lastSid from the CLI's init message), the
-    SDK twin of the tmux fork's custom-title association (an SDK transcript never carries a title)."""
+    SDK twin of the custom-title association discover reads for a terminal-launched fork (an SDK
+    transcript never carries a title)."""
     p = SDKDIR / (sid + ".json")
     try:
         mt = p.stat().st_mtime
@@ -7970,13 +9275,14 @@ def _codex_rows(cutoff, seen):
     """Discovery rows for Codex sessions — (fsid=STABLE SID, materialized path, anchor sid, name),
     read from the Codex backend's registry (plans/codex-backend.md). The names/ loop above skips
     these naturally (no <sid>.jsonl under the Claude roots); this is the ONE extra fact the read
-    side needs. Dead sessions keep discovering like dead tmux/SDK ones do — history stays browsable;
+    side needs. Dead sessions keep discovering like dead SDK ones do — history stays browsable;
     the WINDOW cutoff is what ages them out. No forks: a Codex thread id is stable across resumes.
 
     The identity slot is the STABLE SID, never the app-server thread id: liveness
     (CodexBackend.live_sessions) keys on the SID, so a TID here meant live Codex rows never joined
     the alive set, the picker offered a not-running TID row, and reviving it shelled
-    `romp resume <TID>` through the tmux path — the TID rides only in the transcript PATH, which
+    `romp resume <TID>` through the terminal launcher of the time (the tmux backend, removed
+    2026-09-11) — the TID rides only in the transcript PATH, which
     is the one place it means anything to a reader (the v1.3.13 audit's P1, executed)."""
     try:
         reg = json.loads((CODEXDIR / "registry.json").read_text())
@@ -8070,6 +9376,32 @@ def _discover_fingerprint():
     return tuple(fp)
 
 
+_PARSE_MISSES = [0]          # cold parses parsed_session ran this process (T323: /perf parses.judge)
+
+
+def parse_misses():
+    """How many cold event-model parses the judges' parsed_session ran in this process."""
+    return int(_PARSE_MISSES[0])
+
+
+def by_recency(fleet):
+    """discover()'s rows ordered by transcript mtime, newest first (T323 stage 1): a pass reaches the sessions
+    someone is using now before the ones that have sat for a day, so the first pass after a boot spends its
+    parses where they show. A stat failure sorts last; the input list is left as it was."""
+    def key(row):
+        try:
+            return -os.stat(str(row[1])).st_mtime
+        except (OSError, IndexError, TypeError):
+            return 0.0
+    return sorted(fleet, key=key)
+
+
+def yield_between_sessions():
+    """Let the pusher and the session threads run between two sessions of a pass (T323 stage 1): a whole-fleet
+    pass holds the interpreter for its parses; one zero sleep per session hands the lock over."""
+    time.sleep(0)
+
+
 def discover(now, window=None, forks=True):
     """[(fsid, path, anchor_sid, name)] for every transcript of a romp session touched within `window`
     seconds (default WINDOW, 48h) —
@@ -8109,7 +9441,7 @@ def discover(now, window=None, forks=True):
 def _discover_impl(now, window=None, forks=True):
     """[(fsid, path, anchor_sid, name)] for every transcript of a romp session touched within
     `window` (default WINDOW): the session's anchor transcript plus any same-customTitle fork in its
-    project dir. File-based (names/), no tmux — works for headless sessions too.
+    project dir. File-based (names/), no liveness probe — works for dead and headless sessions too.
 
     Perf (the user 2026-07-03: cold-kernel startup is slow): this WAS a pathlib walk — `proj.iterdir()`
     re-listed each project dir ONCE PER SESSION that lives in it, and `.suffix`/`.stem`/`.stat()` re-parsed +
@@ -8165,13 +9497,25 @@ def _discover_impl(now, window=None, forks=True):
         # ever-growing work bar (the user 2026-07-10).
         last = _sdk_last_sid(sid)
         fork = next(((p, m) for st, p, m in listing if st == last), None) if last else None
+        if fork is None and last:
+            # The /clear race window: the registry's lastSid already names the new transcript but the CLI has not
+            # written its first record, so the file is not on disk yet. Handing out the ANCHOR here (the shape until
+            # 2026-09-11) made every build landing in the window parse the pre-clear anchor cold from the second clear
+            # on (its tree was released at the first clear) and flipped the noted leaf twice. The session's current
+            # transcript is the leaf discover handed out last, so that is what it hands out, when it still exists;
+            # only a fresh process, which noted nothing yet, falls to the anchor (review find carried from stage 2).
+            with _LEAF_LOCK:
+                prev = _LEAF_SEEN.get(sid)
+            fork = next(((p, m) for st, p, m in listing if p == prev), None) if prev else None
         if fork is not None:
             path_str, mt = fork
+            _note_leaf(sid, path_str)                    # the leaf flipped here: the previous leaf's trees go
             if mt >= cutoff and path_str not in seen:
                 seen.add(path_str); out.append((sid, Path(path_str), sid, name))
         else:
             for stem, path_str, mt in listing:           # anchor (<sid>.jsonl) first — mirrors the old exists()/stat() block
                 if stem == sid:
+                    _note_leaf(sid, path_str)
                     if mt >= cutoff and path_str not in seen:
                         seen.add(path_str); out.append((sid, Path(path_str), sid, name))
                     break
@@ -8234,7 +9578,7 @@ def _index_caption_tasks(fsid, path, anchor, now):
     done = captioned_ids(fsid)                            # served from the parse the read above filled
     live_n = _live_natoms(fsid)                          # the open segment's last live-caption sizes (cadence gate)
     out = []
-    for task in tasks_for(fsid, path, [path], now):
+    for task in tasks_for(fsid, path, [path], now, done=done):   # the done set handed in (T358): the ids are read once per session
         undone = [w for w in task["writes"] if w["id"] not in done]
         if task.get("live"):                              # re-caption the OPEN segment only every CHUNK new atoms
             undone = [w for w in undone
@@ -8295,7 +9639,7 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=None, ver
     ran == stamped + bypassed + incomplete holds through it."""
     if now is None:
         now = int(time.time())
-    fleet = discover(now)
+    fleet = by_recency(discover(now))                    # newest transcripts first (T323 stage 1)
     sigs, incomplete, work = {}, {}, set()               # per session this pass runs: its signature (None: run,
     #                                                       stamp nothing), the captured completeness bit, and
     #                                                       whether a body found work for it
@@ -8303,6 +9647,7 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=None, ver
         # ── captioner: one entry per undone caption task (a model call), newest-first ──
         pending = []
         for fsid, path, anchor, name in fleet:
+            yield_between_sessions()
             skip, sig = _gate_check("index", fsid, str(path), now)
             if skip:
                 continue
@@ -8446,15 +9791,25 @@ def _session_closed(session):
 _BG_SCAN_CACHE = {}                       # path -> em.fold_records entry (running tasks) — mirrors the kernel's _bg_scan_cached
 
 
+def _bg_scan(path):
+    """The judge's background-task pairing over `path`, resumable from the file's checkpoint (T323 stage 3). The name
+    rides the cursor dict and is registered at every call (em.name_fold_cache is idempotent): a test process
+    re-executes the event model under each kernel load, which resets its registry, and the scan's own call shape
+    stays the two arguments a test may stub."""
+    em.name_fold_cache(_BG_SCAN_CACHE, "bgJudge")
+    return em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
+
+
 def _bg_unresolved(path, now=None):
     """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), folded append-incrementally.
     The DURABLE awaited-work source: the pairing lives in the transcript, so unlike any live backend
-    snapshot it survives a kernel restart and covers tmux CLIs whose tasks outlive the kernel.
+    snapshot it survives a kernel restart (and covered the terminal CLIs whose tasks outlived the kernel,
+    until the tmux backend's removal 2026-09-11).
     `now`: the pass's clock when a gated tier hands it in (one clock for the stage's expiry view, the
     planner key's expiry term and the gate's not-before, so none of them can disagree at the crossing);
     the wall clock otherwise."""
     # folds append-incrementally since 2026-09-03: a changed transcript steps only its appended records
-    tasks = em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
+    tasks = _bg_scan(path)
     # expiry is applied OUTSIDE the cache with a fresh now: a monitor whose CLI died mid-watch has no
     # terminal record, and an idle transcript never busts the mtime key — a cached verdict would say
     # "running" forever (see em._bg_expired)
@@ -8477,7 +9832,7 @@ def _bg_expiry_key(path, now):
     computed is planned every pass; the settle's own call then raises as it does today."""
     try:
         return tuple(sorted((str(t.get("id") or ""), bool(em._bg_expired(t, now)))
-                            for t in em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)))
+                            for t in _bg_scan(path)))
     except Exception:
         return object()
 
@@ -8498,7 +9853,7 @@ def _settle_not_before(fsid, path, now):
     set is unchanged, so the stored instant is exact. The planner's key carries the same crossing as a boolean
     term, _bg_expiry_key (upstream, 2026-09-09): both read em._bg_expiry_t's instant and both take a `now` equal
     to it as not yet crossed (em._bg_expired is `now > expiry`)."""
-    tasks = em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
+    tasks = _bg_scan(path)
     sp = _cli_epoch(fsid)
     nb = None
     for t in tasks:
@@ -8536,8 +9891,9 @@ def _cli_epoch(sid):
     (2026-08-13): max(reg spawnedAt, the recorded death marker's t), None when neither exists (the
     pre-marker world, byte-for-byte today's SDK behavior). A task launched before the epoch died with
     its CLI — its <task-notification> can never arrive — and keying the gate on the recorded death
-    EVENT is what finally gives a dead tmux session's still-'running' launches an end: the RC7
-    unretirable hold. max() stays correct across every cycle: an SDK revival's fresh CLI stamps reg
+    EVENT is what finally gives a dead session's still-'running' launches an end when no reg names its
+    CLI: the RC7 unretirable hold (seen on the tmux backend, removed 2026-09-11). max() stays correct
+    across every cycle: an SDK revival's fresh CLI stamps reg
     spawnedAt above the old marker; a re-stamped marker (death after revival) lifts the floor to the
     second death. (The kernel's copy delegates here.)"""
     sp = None
@@ -8589,6 +9945,12 @@ def _awaiting_bg_hold(fsid, path, session, store, now=None):
     launch_turn = {}                      # tool_use id -> the turn that dispatched it (launch or its ack)
     for turn in reversed(session.get("turns") or []):
         for a in turn["atoms"]:
+            if a.get("lazy") is not None:         # an atom before the assembly cut carries its tool ids as scalars (T323 stage 4a)
+                for tid, _name in em.atom_tool_uses(a):
+                    launch_turn.setdefault(tid, turn.get("id"))
+                for tid in em.atom_tool_results(a):
+                    launch_turn.setdefault(tid, turn.get("id"))
+                continue
             blocks = (a.get("message") or {}).get("content")
             if not isinstance(blocks, list):
                 continue
@@ -8666,15 +10028,101 @@ def _mint_anchor_uuid(seg):
     author = ta.get("author")
     files_nothing = (isinstance(author, dict)
                      and (author.get("kind") or "") in ("coordinate", "question"))
-    if not files_nothing and not (author == "romp" or em.is_interrupt_record(ta)):
-        return t
+    if not files_nothing and not (author in ("romp", "system", "teammate") or em.is_interrupt_record(ta)):
+        return t                                       # system/teammate (T319): a harness report is never a root either
     for a in atoms:
         if a.get("type") == "assistant" and a.get("uuid"):
             return a["uuid"]
     return None
 
 
-def plan_units(session, store=None):
+_UNSET_FLOOR = object()               # _placed_key / plan_units: derive the episode floor from the key when no pass-wide value is handed
+
+
+class _PlacementIndex:
+    """The placement lookup _placed_key makes, built ONCE per planner call (T377 review, medium 2): the recorded keys by their
+    timestamp-invariant form, so the guard per segment is a dictionary lookup and not a walk of every recorded key (with 20
+    unplaced of 300 segments over 2,300 keys the nudge gate's derivation had grown twelve-fold). The episode floor is taken
+    once for the index (handed in by the pass, else derived from the first key that needs it) and never moves within it.
+    The build normalizes every recorded key once per plan_units call (about 2 ms at 2,300 keys; the nudge gate's derivation
+    sits at 1.4 to 2.1 times the pre-T377 base where the walk was 10 to 100 times); not memoized across calls on purpose: the
+    consumer mutates the placements dict between calls, and a stale fuzzy row would dedup a real unit away (review, low 6)."""
+
+    def __init__(self, placements, live, floor=_UNSET_FLOOR):
+        self.placements, self.live, self.floor = placements, live, floor
+        self.by_want = {}
+        for k in placements:
+            rb = k.split("#")[0]
+            self.by_want.setdefault(_seg_key(k), []).append((rb, _key_t(rb)))
+
+    def placed(self, key):
+        if key in self.placements:
+            return True
+        cands = self.by_want.get(_seg_key(key))
+        if not cands:
+            return False
+        kb = key.split("#")[0]
+        for rb, rt in cands:
+            if rb != kb:
+                if self.live is not None and rb in self.live:
+                    continue                          # the recorded key IS another live segment (a twin), not our drift
+                if self.floor is _UNSET_FLOOR:
+                    parts = key.split(":")
+                    self.floor = (episode_floor(":".join(parts[:-2])) if len(parts) >= 3 else None) or 0
+                if rt is not None and rt < (self.floor or 0):
+                    continue                          # recorded in a PRIOR episode (pre-/clear), not our drift
+            return True
+        return False
+
+
+def _seam_text(seg):
+    """The unit text of a segment as the planner frames it: _unit_text, with the seam note when the segment is a settle-time
+    seam tail (plans/segment-regrowth.md: work that came after a completed goal, the planner told so)."""
+    t = _unit_text(seg["atoms"])
+    if t and seg.get("seam"):
+        t = ("Note: everything below happened **after** the goal \"%s\" was already completed "
+             "and closed. If it is merely wrap-up, verification, or cleanup of that finished "
+             "goal, **skip** it — do not reopen. Only if it is a genuinely **new** or different "
+             "thread of work, mint a goal for it.\n\n" % ((seg.get("seamOf") or {}).get("text") or "?")) + t
+    return t
+
+
+def _work_note(seg):
+    """The note the planner prepends to an ended segment's WORK unit: a kernel status notice woke this stretch, or it is the
+    one-round wrap-up of cleared cards; '' otherwise."""
+    if _seg_system(seg):                              # a kernel status notice woke this stretch, not the user
+        return ("Note: this stretch was triggered by an automated romp notice (a kernel "
+                "restart or session resume), not by the user. If it is merely resuming, "
+                "re-verifying, or tidying up after the interruption, **skip** it — file "
+                "nothing and mint nothing. Only work that advances an open goal, or a "
+                "genuinely **new** thread of work, belongs on the board.\n\n")
+    if _seg_clearwrap(seg):                           # the ONE-round wrap-up of cleared card(s) (the user 2026-07-29)
+        return ("Note: this stretch is the one-time wrap-up of goals the user just "
+                "**cleared** off their board — a dismissal, not a completion. Never "
+                "re-create or reopen the cleared goals themselves. The wrap-up asks for "
+                "NO reply (the user 2026-07-29), so the DEFAULT is to **skip**: file "
+                "nothing and mint nothing. A session that merely stops, or reports what "
+                "it parked, or says nothing is pending, files nothing. Mint exactly "
+                "**one** new top-level goal, blocked on the user, ONLY when the session "
+                "raises something that genuinely needs them: an explicit question it is "
+                "waiting on, or a warning that the dismissal looks premature. The why is "
+                "that question, naming where any parked work is.\n\n")
+    return ""
+
+
+def unit_text_for(seg, phase):
+    """The text plan_units would have read for `seg`'s `phase` unit: what a consumer computes lazily when a unit yielded as
+    placed is nonetheless planned (T377: the planner reads no text for a placed unit)."""
+    if phase == "prompt":
+        ptext = _prompt_text(seg["atoms"])
+        return _strip_cmd_prefix(ptext, seg) if _seg_command(seg) else ptext
+    if phase == "work":
+        t = _seam_text(seg)
+        return (_work_note(seg) + t) if t else ""
+    return _seam_text(seg)
+
+
+def plan_units(session, store=None, floor=_UNSET_FLOOR, lazy_text=False):
     """Ordered (seg_id, phase, t, text, human, followup, trigger) planner units for the TWO-RUN model (the
     user 2026-06-21, via link_audit), oldest-first. `trigger` (the user 2026-07-01, via bugs) is the
     segment's trigger atom uuid (seg["trigger"], None for an autonomous/continuation segment with no
@@ -8707,6 +10155,20 @@ def plan_units(session, store=None):
     unit mints so follow-ups/nudges can quote the user's own words back (the user 2026-07-01, g13)."""
     turns = session["turns"]
     out = []
+    # T377 (2026-09-12): every consumer skips a unit the store already places (or reads its key alone), yet the unit TEXT was read
+    # for every ended segment first; over a restored tree that hydrated every pre-cut body from disk (1.06 GB per boot on the
+    # devbox, the judges' first pass). A placed unit is yielded with its key, time and scalars and NO text (None); the rest read
+    # their text after the placement check, exactly as before. `live_ids` is the current parse's segment ids (_placed_key's
+    # orphan rule, as run_plan hands it).
+    placed = (store.get("placements") or None) if isinstance(store, dict) else None
+    index = None
+    if placed:
+        live_ids = {sg["id"] for t_ in turns for sg in (_segs(t_, store) if store is not None else em.segments(t_))}
+        index = _PlacementIndex(placed, live_ids, floor)   # built once: the guard below is a lookup (review, medium 2)
+
+    def _placed_phase(seg, phase):
+        return index is not None and index.placed(_unit_key(seg["id"], phase))
+
     for ti, turn in enumerate(turns):
         turn_open = (ti == len(turns) - 1 and not turn["ended"]
                      and not any(a["type"] == "idle" for a in turn["atoms"]))
@@ -8719,22 +10181,41 @@ def plan_units(session, store=None):
                 #                                           real ask in its args — falls through and is planned like any
                 #                                           other prompt (the user 2026-07-22: a `/jld <request>` session
                 #                                           ran with NO card at all, not even a provisional one).
-            work_text = _unit_text(seg["atoms"])           # left framed ("USER ASKED: /jld …") — honest, and the
-            #                                               planner has the whole exchange for context. Only the raw
-            #                                               PROMPT gist below is stripped, since that one IS the title.
-            if not work_text:
-                continue
-            if seg.get("seam"):                           # settle-time seam tail (plans/segment-regrowth.md): work that
-                # continued past its goal's close. Tell the planner so wrap-up files without reopening
-                # and only a genuine PIVOT mints its own goal.
-                work_text = ("Note: everything below happened **after** the goal \"%s\" was already completed "
-                             "and closed. If it is merely wrap-up, verification, or cleanup of that finished "
-                             "goal, **skip** it — do not reopen. Only if it is a genuinely **new** or different "
-                             "thread of work, mint a goal for it.\n\n" % ((seg.get("seamOf") or {}).get("text") or "?")
-                             ) + work_text
+            _memo = []
+
+            def _wt(seg=seg, _memo=_memo):                # the unit text, read once and only when a unit of this segment is not
+                if not _memo:                             #  placed yet: a hydration over a restored tree (T377)
+                    _memo.append(_seam_text(seg))
+                return _memo[0]
+            _nonempty = []
+
+            def _ne(seg=seg, _nonempty=_nonempty):        # whether the unit text is non-empty: lazy_text decides it from the
+                if not _nonempty:                         #  scalars and the user bodies (_unit_nonempty, T396), never reading
+                    _nonempty.append(_unit_nonempty(seg["atoms"]) if lazy_text else bool(_wt()))   # the assistant bodies
+                return _nonempty[0]
+            if not any(_placed_phase(seg, ph) for ph in ("work", "prompt", "delegation", "live")) and not _ne():
+                continue                                  # an unplaced empty segment drops, as before; a placed segment yields its
+            #                                               unit without the emptiness check (no text is read for it), an inert unit
+            #                                               at worst, which every consumer skips as placed (review, low 1)
             is_open_final = turn_open and si == len(segs) - 1
             trig = _seg_anchor(seg)      # trigger, else the segment head — a minted node always gets an anchor
-            vq = _mint_quote(seg)
+            _vq = []
+
+            def _quote(seg=seg, _vq=_vq):                 # the minting quote reads the trigger's text: for an unplaced unit only
+                if not _vq:                               #  (a placed unit mints nothing; T377)
+                    _vq.append(_mint_quote(seg))
+                return _vq[0]
+
+            def _put(phase, text_fn, human_, followup_, seg=seg, trig=trig):
+                if _placed_phase(seg, phase):             # placed already: the key, time and scalars; no text and no quote read
+                    out.append((seg["id"], phase, seg["t"], None, human_, followup_, trig, None)); return
+                if lazy_text and phase != "prompt":       # T396: the unit's text and quote are read by the consumer, after its own
+                    if _ne():                             #  filters (unit_text_for, _mint_quote: _plan_session's placed-yield road),
+                        out.append((seg["id"], phase, seg["t"], None, human_, followup_, trig, None))   # so a unit that never
+                    return                                #  reaches the model is never read; the emptiness gate is the scalar one.
+                t = text_fn()                             # a prompt unit's text is its one user atom: read here, as before
+                if t:
+                    out.append((seg["id"], phase, seg["t"], t, human_, followup_, trig, _quote()))
             if not is_open_final and not _has_asst_work(seg["atoms"]):
                 # The segment ENDED with no assistant work at all — the turn died before producing anything
                 # (an API-error storm that exhausted; isApiError records don't count, same rule as the
@@ -8748,11 +10229,8 @@ def plan_units(session, store=None):
                 # stays re-nudgeable, a workless delegation stays unfiled.
                 if (_seg_human(seg) and not _seg_followup(seg) and not _seg_nudge(seg)
                         and not _seg_peer(seg)):
-                    ptext = _prompt_text(seg["atoms"])
-                    if _is_cmd:
-                        ptext = _strip_cmd_prefix(ptext, seg)
-                    if ptext:
-                        out.append((seg["id"], "prompt", seg["t"], ptext, True, None, trig, vq))
+                    _put("prompt", lambda: (_strip_cmd_prefix(_prompt_text(seg["atoms"]), seg) if _is_cmd   # the ask, not the invocation
+                                         else _prompt_text(seg["atoms"])), True, None)
                 elif _seg_followup(seg) and not _seg_nudge(seg) and not _seg_peer(seg):
                     # A workless FOLLOW-UP is still JUDGED (the user 2026-08-08, the beacon g10 card):
                     # the card reply armed the fold's msg-reopen latch (followupPending — the card pins
@@ -8765,13 +10243,13 @@ def plan_units(session, store=None):
                     # own reopen/dismiss row is the release, and _strip_unevidenced_dones keeps a
                     # workless reply from CLAIMING completion (the closer holds done authority). Nudges
                     # keep their skip: their machinery re-asks and escalates on its own.
-                    out.append((seg["id"], "work", seg["t"], work_text, _seg_human(seg),
-                                _seg_followup(seg), trig, vq))
-                continue
+                    _wn = _work_note(seg)                 # ONE text rule with the ended work-run below and with unit_text_for
+                    _put("work", (lambda: (_wn + _wt()) if _wt() else "") if _wn else _wt, _seg_human(seg), _seg_followup(seg))
+                continue                                  #  (round three, low 2: the lazy road resolves through unit_text_for)
             _pm = _seg_peer(seg)
             if _pm and _pm[0]:                            # POSTAL segment with a KNOWN sender → DELEGATION work-run
                 if not is_open_final:                     # ended → the recipient's work is known; place it under G
-                    out.append((seg["id"], "delegation", seg["t"], work_text, False, None, trig, vq))
+                    _put("delegation", _wt, False, None)
                 continue                                  # peer segs never get a prompt-run or a normal work-run
             # A SENDER-LESS postal delivery (author.peer None: mail whose id the postal index can't
             # resolve — an external tool posting through the kernel's send route with no session
@@ -8788,11 +10266,8 @@ def plan_units(session, store=None):
                 if human and not followup and not _seg_slash_shaped(seg):
                     # slash-shaped → DEFER to the close (the CLI 2.1.215+ raw-record window; see
                     # _seg_slash_shaped): mid-window it may be a command whose wrapper hasn't landed
-                    ptext = _prompt_text(seg["atoms"])
-                    if _is_cmd:                           # same: the ask, not the invocation
-                        ptext = _strip_cmd_prefix(ptext, seg)
-                    if ptext:
-                        out.append((seg["id"], "prompt", seg["t"], ptext, human, followup, trig, vq))
+                    _put("prompt", lambda: (_strip_cmd_prefix(_prompt_text(seg["atoms"]), seg) if _is_cmd   # the ask, not the invocation
+                                         else _prompt_text(seg["atoms"])), human, followup)
                 if (human and store is not None and not _seg_nudge(seg)
                         and _live_anchor_gone(store, seg["id"], followup)):
                     # LIVE RE-PLAN (the user 2026-07-05): the user CLEARED this open segment's card out from
@@ -8802,34 +10277,14 @@ def plan_units(session, store=None):
                     # NUDGE segment (_seg_nudge): a nudge is an automated status check, and its reply
                     # re-minting a card the user just cleared would be the nudge system resurrecting
                     # dismissed work — the loop-interaction the design must rule out.
-                    out.append((seg["id"], "live", seg["t"], work_text, human, followup, trig, vq))
+                    _put("live", _wt, human, followup)
                 continue                                  # no work unit yet — its work hasn't ended
             if _seg_nudge(seg) and followup:              # a romp NUDGE on a goal → RESOLVE it (done/block), not a plain step
-                out.append((seg["id"], "nudge", seg["t"], work_text, False, followup, trig, vq))
+                _put("nudge", _wt, False, followup)
             else:
-                if _seg_system(seg):                      # a kernel status notice woke this stretch, not the user —
-                    # post-restart housekeeping files nowhere (the user 2026-07-08, g133: a resume-notice
-                    # verification sweep minted its own top-level card)
-                    work_text = ("Note: this stretch was triggered by an automated romp notice (a kernel "
-                                 "restart or session resume), not by the user. If it is merely resuming, "
-                                 "re-verifying, or tidying up after the interruption, **skip** it — file "
-                                 "nothing and mint nothing. Only work that advances an open goal, or a "
-                                 "genuinely **new** thread of work, belongs on the board.\n\n") + work_text
-                elif _seg_clearwrap(seg):                 # the ONE-round wrap-up of cleared card(s) (the user
-                    # 2026-07-24). It asks for NO reply since 2026-07-29, so this files NOTHING by default;
-                    # only a session that raises something needing the user mints one card, blocked on them.
-                    # Never the cleared goal reborn.
-                    work_text = ("Note: this stretch is the one-time wrap-up of goals the user just "
-                                 "**cleared** off their board — a dismissal, not a completion. Never "
-                                 "re-create or reopen the cleared goals themselves. The wrap-up asks for "
-                                 "NO reply (the user 2026-07-29), so the DEFAULT is to **skip**: file "
-                                 "nothing and mint nothing. A session that merely stops, or reports what "
-                                 "it parked, or says nothing is pending, files nothing. Mint exactly "
-                                 "**one** new top-level goal, blocked on the user, ONLY when the session "
-                                 "raises something that genuinely needs them: an explicit question it is "
-                                 "waiting on, or a warning that the dismissal looks premature. The why is "
-                                 "that question, naming where any parked work is.\n\n") + work_text
-                out.append((seg["id"], "work", seg["t"], work_text, human, followup, trig, vq))   # ENDED segment → WORK-run
+                prefix = _work_note(seg)                  # a kernel notice woke this stretch, or the cleared-cards wrap-up
+                _put("work", (lambda: (prefix + _wt()) if _wt() else "") if prefix else _wt, human, followup)   # ENDED segment →
+                #                                                                    WORK-run; a note alone is no unit (review, low 3)
     return out
 
 
@@ -9360,6 +10815,9 @@ def _reassert_blocks(store, seg_id, seg_t, items):
         if nd is None or nd.get("blocked") or nd.get("cleared") or nd.get("nodeComplete"):
             continue
         ev = max(seg_t or 0, _floor_of(store, nd) + 1)
+        src_rows = [e for e in (nd.get("log") or []) if e.get("kind") == "block" and str(e.get("why") or "") == str(why)]
+        if src_rows and src_rows[-1].get("whyCut"):    # the why comes back from a row the parser cut: the fact rides the new
+            why = _CutWhy(why)                         # row too, or the brief judge's note would vanish on the re-assert (T388)
         if record_verdict(store, nd, "planner", "block", ev, why=why, seg=seg_id):
             nd["mt"] = seg_t or ev
             if seg_id and seg_id not in (nd.get("trail") or []):
@@ -9489,6 +10947,7 @@ def record_verdict(store, nd, src, kind, ev_t=None, why=None, seg=None, msg=Fals
         log = nd.setdefault("log", [])
         log.append({"ev_t": ev_t, "src": src, "kind": kind,
                     **({"why": why} if why else {}), **({"seg": seg} if seg else {}),
+                    **({"whyCut": True} if why_was_cut(why) else {}),   # the parser's cut, stored beside the text (T388)
                     **({"msg": True} if msg else {}),  # a user message rides this reopen (chip derivation)
                     **({"undo": True} if undo else {}),   # an undo-restore reopen: not a "not done" assertion
                     **({"lift": True} if lift else {}),   # an `awaiting` row that ENDS the wait, not asserts it
@@ -9604,6 +11063,7 @@ def _fold_node(nd):
     cur_settle, prev_settle = None, None
     awaiting_why = awaiting_at = awaiting_kind = awaiting_peers = None     # the live ⏳ stamp (see docstring); None = not awaiting
     done_why = block_why = None           # the landing verdicts' rationale (doneWhy/blockWhy derivation)
+    block_why_cut = False                 # the landing block's why was cut by the parser's cap (row whyCut, T388)
     held = pending = False                # held: an unanswered USER reopen pins the node open (no bottom-up
     #                                       re-completion); pending: an unanswered msg-reopen wears the chip.
     #                                       "Answered" = ANY later non-user event — the judges looked.
@@ -9661,7 +11121,8 @@ def _fold_node(nd):
         elif kind == "block":
             if src in ("user", "agent") or t > floor:
                 state = "blocked"
-                block_why = e.get("why") or block_why
+                if e.get("why"):
+                    block_why, block_why_cut = e["why"], bool(e.get("whyCut"))
                 reopen_snap = None
                 awaiting_why = awaiting_at = awaiting_kind = awaiting_peers = None
         elif kind == "unblock":
@@ -9706,7 +11167,7 @@ def _fold_node(nd):
             "awaitingAt": awaiting_at if state == "open" else None,
             "awaitingKind": awaiting_kind if state == "open" else None,
             "awaitingPeers": awaiting_peers if state == "open" else None,
-            "doneWhy": done_why, "blockWhy": block_why}
+            "doneWhy": done_why, "blockWhy": block_why, "blockWhyCut": block_why_cut}
 
 
 def _fold_node_state(nd):
@@ -10035,8 +11496,13 @@ def _materialize_node(nd):
         if st == "blocked":
             if f["blockWhy"]:
                 nd["blockWhy"] = f["blockWhy"]         # the landing block's rationale; a why-less event
+                if f.get("blockWhyCut"):               # the parser cut it: the brief's material says so (T388)
+                    nd["blockWhyCut"] = True
+                else:
+                    nd.pop("blockWhyCut", None)
         else:                                          # (legacy synth) keeps whatever text is already there
             nd.pop("blockWhy", None)                   # cache hygiene: the why goes with the block
+            nd.pop("blockWhyCut", None)
         if st == "done" and f["doneWhy"]:
             nd["doneWhy"] = f["doneWhy"]
         for key, val in (("followupAt", f["floor"]), ("settledAt", f["settledAt"]),
@@ -10137,7 +11603,7 @@ def _migrate_placements(store, ready_keys, live):
     return True
 
 
-def _placed_key(placements, key, live=None):
+def _placed_key(placements, key, live=None, floor=_UNSET_FLOOR):
     """Timestamp-invariant membership: is `key` (a seg id, bare or '#p'/'#d'-suffixed) already recorded in
     placements? Exact hit first (the common no-drift case), else via _seg_key — so a segment whose parse t
     drifted after its placement was recorded still dedups instead of being re-planned (double-minted).
@@ -10160,8 +11626,8 @@ def _placed_key(placements, key, live=None):
         return True
     want = _seg_key(key)
     kb = key.split("#")[0]
-    floor = None
-    for k in placements:
+    floor = None if floor is _UNSET_FLOOR else (floor or 0)   # a pass hands its one floor (T377): the planner and its consumer
+    for k in placements:                                        #  must agree, and a /clear landing mid-pass must not move it
         if _seg_key(k) != want:
             continue
         rb = k.split("#")[0]
@@ -10321,6 +11787,332 @@ def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
     return ctx
 
 
+_SKILL_LOAD_WHY = ("rooted in the %s skill the harness loaded for the session, never a request; "
+                   "its work stays in the session's own view")
+ROMP_BLOCK_SRCS = ("nudge", "interrupt", "romp")   # a block romp's own machinery filed; every other block source (planner,
+#                                                    closer, user, agent) is the agent's question to the user, a real needs-you
+
+
+def _asks_user(nodes, nid):
+    """True when `nid` or any node under it is blocked by a block romp did not file itself (ROMP_BLOCK_SRCS): the
+    agent asked the user something and is waiting. Read by the skill-load stamp (never resolved away) and by the
+    feed's heal (such a top keeps its card)."""
+    kids = {}
+    for k, v in nodes.items():
+        if isinstance(v, dict) and v.get("parentId") in nodes:
+            kids.setdefault(v["parentId"], []).append(k)
+    todo = [nid]
+    for x in todo:
+        xn = nodes.get(x)
+        if isinstance(xn, dict) and xn.get("blocked") and not xn.get("cleared"):
+            src = next((e.get("src") for e in reversed(xn.get("log") or []) if e.get("kind") == "block"), None)
+            if src not in ROMP_BLOCK_SRCS:
+                return True
+        todo.extend(kids.get(x, []))
+    return False
+
+
+def _latch_prompt_msg_ids(session, store):
+    """Stamp promptMsgId on every parentless promptUuid-bearing top whose anchor atom the parse holds: the id of the
+    DELEGATE-kind postal marker its delivery text carries (em.postal_pairs pairs each id with the kind declared after
+    it; the last delegate when a drained inbox holds several, the rule author_of applies to the delivery's peer), or ""
+    when it carries no delegate (checked: a batched inbox whose first mail is a peer's coordinate and whose second the
+    manager's dispatch is the manager's, and a delivery with no dispatch in it leaves _delegator_of its fallback, the
+    newest delegate at or before the mint whose relation stands, its own top open at the mint, walking past a stray
+    that anchored nothing (_standing_delegator); the manager's fourth review and the 2026-09-12 fix). The delegating
+    peer of a top is then the
+    sender of THAT mail (_delegator_of), never merely the latest delegate the session received (a worker dispatched by
+    two managers relays each block to the manager that asked, T334)."""
+    cands = [nd for nd in store.get("nodes", {}).values()
+             if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid") and "promptMsgId" not in nd]
+    if not cands:
+        return 0
+    by_uuid = {a["uuid"]: a for turn in session.get("turns") or [] for a in turn.get("atoms") or [] if a.get("uuid")}
+    sid = str(store.get("rompUuid") or "")
+    n = 0
+    for nd in cands:
+        a = by_uuid.get(nd["promptUuid"])
+        if a is None:
+            continue                                    # not in this parse: left for a parse that holds it
+        dels = [m for m, k in em.postal_pairs(_atom_text(a)) if k == "delegate" and _delegate_sender(m, sid)]
+        nd["promptMsgId"] = str(dels[-1]) if dels else ""   # a delegate marker QUOTED in a body (another session's
+        #                                                       dispatch) is no dispatch to this session: not the anchor
+        n += 1
+    return n
+
+
+def _latch_skill_load_anchors(store, loads, now=None):
+    """Stamp every parentless, promptUuid-bearing, origin-less top anchored on one of `loads` (T333, 2026-09-11:
+    {record uuid: skill name} of the harness's own skill-load wrappers, the parse's own report of the records
+    its emit skipped, session["skillLoads"], so it spans exactly the files the walk crossed and costs no read)
+    askAnchor "machine" with askAnchorRecord {kind: skill-load, skill}, for
+    the feed's heal (its why, and the no-host rule). Such a wrapper no longer parses to an atom, so the class
+    is read off the RECORD; an older "human" latch on one is re-stamped once (it was the wrapper's reading as
+    a typed command, since corrected: new information about the record), and the stamp is idempotent. Runs
+    before _latch_ask_anchors, which then skips these as latched. The stamp also RESOLVES the top: romp's
+    done verdict (the obsolete verdict, done with the why saying so) on the top and every open node under
+    it, so the rollup never reads it as working, the nudge walk never asks about it and the stall gate never
+    holds it (the manager's review of T333, item 1: a hidden top that stayed a live working goal came back as
+    a nudge-failed root card). A top whose subtree holds a block romp did not file (_asks_user: the closer's or
+    planner's block, the agent's own question to the user) is stamped but NOT resolved: that question must
+    keep its card. Returns the number stamped."""
+    n = 0
+    nodes = store.get("nodes", {})
+    for nid, nd in list(nodes.items()):
+        if not (isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid") in (loads or {})
+                and not isinstance(nd.get("origin"), dict) and not isinstance(nd.get("handoff"), dict)
+                and not isinstance(nd.get("askAnchorRecord"), dict)):
+            continue
+        skill = loads[nd["promptUuid"]]
+        nd["askAnchor"] = "machine"                     # the harness loading a skill for the model: nobody asked
+        nd["askAnchorRecord"] = {"kind": "skill-load", "skill": skill, "at": int(now or time.time())}
+        n += 1
+    _resolve_skill_load_tops(store, now)
+    return n
+
+
+def _resolve_skill_load_tops(store, now=None):
+    """Romp's done verdict on every stamped skill-load top not yet resolved and its open subtree, unless the agent is
+    waiting on the user under it (_asks_user): that top keeps its block and is revisited on every later call (the
+    planner pass runs this each time), so it resolves once the answer clears the block (the manager's second
+    review, item 2). The done's EVIDENCE time is the top's own mint time (else the stamp's), never the pass clock
+    (the manager's fourth review): it predates any user gesture, so once the user has replied on the card the
+    follow-up floor (_floor_of) stands above it and may_apply refuses the done; such a top is skipped outright
+    here and keeps its card, and a node born after the stamp (the reply's own step) is never resolved either.
+    Returns the number of tops resolved."""
+    nodes = store.get("nodes", {})
+    kids = {}
+    for k, v in nodes.items():
+        if isinstance(v, dict) and v.get("parentId") in nodes:
+            kids.setdefault(v["parentId"], []).append(k)
+    n = 0
+    for nid, nd in list(nodes.items()):
+        rec = nd.get("askAnchorRecord") if isinstance(nd, dict) else None
+        if not (isinstance(rec, dict) and rec.get("kind") == "skill-load" and nd.get("parentId") is None
+                and not nd.get("nodeComplete") and not nd.get("cleared")):
+            continue
+        if _asks_user(nodes, nid) or _floor_of(store, nd):
+            continue                                    # the agent is waiting on the user under it, or the user replied
+        at = int(rec.get("at") or now or time.time())   #   on the card: theirs now, it stays open and keeps its card
+        ev_t = int(nd.get("t") or at)                   # the mint time: evidence that predates any user gesture
+        todo = [nid]                                    # the top and its whole subtree, open nodes resolved
+        for x in todo:
+            xn = nodes.get(x)
+            if isinstance(xn, dict) and not xn.get("nodeComplete") and not xn.get("cleared") and (xn.get("t") or 0) <= at:
+                record_verdict(store, xn, "romp", "done", ev_t, why=_SKILL_LOAD_WHY % rec.get("skill"))
+            todo.extend(kids.get(x, []))
+        n += 1
+    return n
+
+
+_WRAP_INDEX = {}             # transcript path -> (size, offset, tail, {wrapper uuid: skill name}): append-incremental,
+#                              persisted under STATE (skill-load-index.json) so a later boot reads only what grew
+_WRAP_READS = {"n": 0, "bytes": 0}   # files and bytes read raw this boot (the sweep's log line and /perf)
+_CHECKED = set()             # prompt anchors known NOT to be skill-load wrappers (the negative memo, persisted)
+_WRAP_DIRTY = {"v": False}   # the index or the memo changed since the last save
+_WRAP_LOADED = {"v": False}  # the persisted index was read this boot
+_SKILL_SWEEP = {"done": False}
+SKILL_SWEEP_WINDOW = 180 * 86400
+SKILL_SWEEP_BYTE_BUDGET = 2 * 1024 * 1024 * 1024   # raw bytes one boot may read for the pass; the rest waits for the next
+
+
+_SKILL_INDEX_FAILED = set()   # paths whose read raised this boot: said once each
+
+
+def _skill_index_fail(path, e):
+    if str(path) not in _SKILL_INDEX_FAILED:
+        _SKILL_INDEX_FAILED.add(str(path))
+        _log_judge_error("skill-load-index", "-", "transcript %s unreadable for the skill-load index (%r): its directory stays "
+                         "incomplete and no anchor there is checked" % (path, e))
+    return None
+
+
+def _skill_load_index(path):
+    """{uuid: skill} of the harness's skill-load wrappers in ONE transcript file, from a raw line scan that is
+    APPEND-INCREMENTAL: the memo keeps the byte offset after the last complete line and the bytes just before
+    it, so a grown file (every live transcript, between any two boots) is read from that offset only after the
+    kept bytes still match (a rewrite that happens to be larger would otherwise splice), and a shrunk or
+    mismatching file is re-read whole; an unchanged size serves the memo. Only lines carrying <skill-format>
+    are decoded, and the records never enter the parse's cache. The memo persists under STATE
+    (skill-load-index.json) for the next boot. uuids are unique, so a directory indexes as one map.
+    A file that cannot be read answers None, said once per path in judge-errors: an unreadable transcript is no
+    evidence of absence, so the caller leaves its directory incomplete and its candidates unchecked."""
+    try:
+        size = os.stat(path).st_size
+    except OSError as e:
+        return _skill_index_fail(path, e)
+    ent = _WRAP_INDEX.get(str(path))              # (size, offset, tail, map)
+    if ent and ent[0] == size:
+        return ent[3]
+    start, out = 0, {}
+    if ent and size > ent[0] and ent[1] <= size:
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(max(0, ent[1] - len(ent[2])))
+                if fh.read(len(ent[2])) == ent[2].encode("latin-1"):
+                    start, out = ent[1], dict(ent[3])   # the kept prefix stands: read the tail only
+        except OSError as e:
+            return _skill_index_fail(path, e)
+    offset, tail = start, ""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            _WRAP_READS["n"] += 1
+            for raw in fh:
+                if not raw.endswith(b"\n"):
+                    break                              # a writer caught mid-append: picked up next time
+                offset += len(raw)
+                _WRAP_READS["bytes"] += len(raw)
+                if b"<skill-format>" not in raw:
+                    continue
+                try:
+                    r = json.loads(raw.decode("utf-8", errors="replace"))
+                except Exception:
+                    continue
+                if r.get("type") != "user" or not r.get("uuid"):
+                    continue
+                c = (r.get("message") or {}).get("content")
+                txt = c if isinstance(c, str) else (em._text_of(c) or "") if isinstance(c, list) else ""
+                if em.is_skill_load_wrapper(txt):
+                    m = em.COMMAND_NAME_ANY_RE.search(txt)
+                    out[r["uuid"]] = (m.group(1).strip() if m else "") or "skill"
+            fh.seek(max(0, offset - 64))
+            tail = fh.read(offset - max(0, offset - 64)).decode("latin-1")
+    except OSError as e:
+        return _skill_index_fail(path, e)
+    _WRAP_INDEX[str(path)] = (size, offset, tail, out)
+    _WRAP_DIRTY["v"] = True
+    return out
+
+
+def _skill_load_candidates(nodes):
+    """The tops a store may still hold from the old parse: parentless, promptUuid-bearing, latched human or absent
+    (or not yet), origin-less, handoff-less, not cleared, not stamped, and not yet CHECKED (_CHECKED: the prompt
+    anchors a parse showed to be atoms, or a complete directory index showed to be no wrapper; the memo that
+    makes the boot pass converge instead of re-checking every real prompt every boot)."""
+    return [nd for nd in nodes.values() if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
+            and nd.get("askAnchor") in (None, "human", "absent") and not nd.get("cleared")
+            and not isinstance(nd.get("origin"), dict) and not isinstance(nd.get("handoff"), dict)
+            and not isinstance(nd.get("askAnchorRecord"), dict) and nd["promptUuid"] not in _CHECKED]
+
+
+def _note_checked(store, atom_uuids):
+    """The planner pass's converge step: a candidate top whose prompt anchor IS an atom of the current parse is
+    anchored on something the parse emits (a prompt, a mail, the agent's own record), never on the harness's
+    wrapper (which emits nothing), so it is checked for good and the boot pass never reads a file for it.
+    Returns how many were noted."""
+    n = 0
+    for nd in _skill_load_candidates(store.get("nodes") or {}):
+        if nd["promptUuid"] in atom_uuids:
+            _CHECKED.add(nd["promptUuid"])
+            _WRAP_DIRTY["v"] = True
+            n += 1
+    return n
+
+
+def _wrap_index_load():
+    """The persisted index and negative memo (skill-load-index.json under STATE), read once per boot."""
+    if _WRAP_LOADED["v"]:
+        return
+    _WRAP_LOADED["v"] = True
+    idx_path = STATE / "skill-load-index.json"
+    if not idx_path.exists():
+        return
+    try:
+        o = json.loads(idx_path.read_text())
+        for k, v in (o.get("files") or {}).items():
+            if isinstance(v, list) and len(v) == 4:
+                _WRAP_INDEX[k] = (v[0], v[1], v[2], v[3])
+        _CHECKED.update(str(u) for u in (o.get("checked") or []))
+    except Exception as e:                             # a bad index is rebuilt from the transcripts, said once
+        _log_judge_error("skill-load-index", "-", "skill-load-index.json unreadable (%r): re-indexing" % (e,))
+
+
+def _wrap_index_save():
+    """Persist the index and the negative memo when either changed this boot; vanished files are dropped first."""
+    if not _WRAP_DIRTY["v"]:
+        return
+    for k in [k for k in _WRAP_INDEX if not os.path.exists(k)]:
+        del _WRAP_INDEX[k]
+    idx_path = STATE / "skill-load-index.json"
+    try:
+        tmp = idx_path.with_name(idx_path.name + ".tmp.%d" % os.getpid())
+        tmp.write_text(json.dumps({"v": 2, "files": {k: list(v) for k, v in _WRAP_INDEX.items()}, "checked": sorted(_CHECKED)}))
+        tmp.rename(idx_path)
+        _WRAP_DIRTY["v"] = False
+    except Exception as e:
+        _log_judge_error("skill-load-index", "-", "skill-load-index.json not written (%r): the next boot re-reads" % (e,))
+
+
+def restamp_skill_load_tops_all(now=None, window=SKILL_SWEEP_WINDOW, byte_budget=None):
+    """The STORE-SIDE pass (the manager's review of T333, item 2): the planner's stamp reaches only the wrappers
+    on the walked chain of a session it passes over, so a top minted before a /clear (its wrapper in a file the
+    lineage no longer links) or in a session idle beyond the planner's discover window kept its human latch,
+    stood as a root card titled from the skill and hosted other tops. Once per boot (run_plan's first pass),
+    for every store with a candidate top (_skill_load_candidates: not yet checked), the candidates' prompt
+    anchors are looked up RAW by uuid in the skill-load index of every transcript in the session's project
+    directory (_skill_load_index: append-incremental, one tail read per grown file, persisted across boots),
+    the stores' OWN transcripts indexed first and the rest of each directory after, so a budget cut still
+    stamps every store whose wrapper sits where it almost always does (the budget is checked before each file,
+    so the last file read may run past it by its own size),
+    and a hit is stamped and resolved like the planner's (_latch_skill_load_anchors), rolled up before the
+    save. CONVERGENCE (the manager's second review, item 1): a candidate a COMPLETE directory index does not
+    hold is checked for good (_CHECKED), and the pass reads at most `byte_budget` bytes per boot
+    (SKILL_SWEEP_BYTE_BUDGET): a directory the budget cut is left incomplete, its candidates unchecked, for
+    the next boot. The discover window is wide (`window`, 180 days) so idle sessions are reached. Returns
+    (stores, tops)."""
+    now = now or int(time.time())
+    budget = SKILL_SWEEP_BYTE_BUDGET if byte_budget is None else byte_budget
+    _wrap_index_load()
+    lanes = {fsid: Path(path) for fsid, path, anchor, name in discover(now, window, forks=False)}
+    stores = tops = 0
+    todo = []                                          # (sid, candidates, leaf) for every store with a candidate top in reach
+    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+        try:
+            raw = json.loads(p.read_text())
+        except Exception:
+            continue
+        cands = _skill_load_candidates(raw.get("nodes") or {}) if isinstance(raw, dict) else []
+        leaf = lanes.get(p.stem)
+        if cands and leaf is not None:                 # no transcript in reach: nothing to look the anchor up in
+            todo.append((p.stem, cands, leaf))
+    dirs = {}                                          # dir -> [index, files done]
+    def index(f, d):
+        idx, done = dirs.setdefault(d, [{}, set()])
+        if str(f) in done or _WRAP_READS["bytes"] >= budget:
+            return                                     # done, or the budget is spent: the rest waits for the next boot
+        got = _skill_load_index(f)
+        if got is None:
+            return                                     # unreadable: not done, so the directory stays incomplete
+        idx.update(got)
+        done.add(str(f))
+    for sid, cands, leaf in todo:                      # phase one: every store's OWN transcript, where the wrapper almost
+        index(leaf, str(leaf.parent))                  #   always is, so a cut budget still stamps every such store
+    for sid, cands, leaf in todo:                      # phase two: the rest of each directory (a pre-/clear file, and the
+        for f in sorted(leaf.parent.glob("*.jsonl")):  #   completeness a negative memo needs)
+            index(f, str(leaf.parent))
+    for sid, cands, leaf in todo:
+        idx, done = dirs.get(str(leaf.parent)) or ({}, set())
+        complete = all(str(f) in done for f in leaf.parent.glob("*.jsonl"))
+        want = {nd["promptUuid"]: idx[nd["promptUuid"]] for nd in cands if nd["promptUuid"] in idx}
+        if complete:
+            for nd in cands:
+                if nd["promptUuid"] not in idx:
+                    _CHECKED.add(nd["promptUuid"])   # looked up in every file the directory holds: not a wrapper, for good
+                    _WRAP_DIRTY["v"] = True
+        if not want:
+            continue
+        store = load_goals(sid)
+        n = _latch_skill_load_anchors(store, want, now)
+        if n:
+            rollup_status(store, False)                # the exports (status, confirming) never staler than the flags
+            save_goals(sid, store)
+            stores += 1
+            tops += n
+    _wrap_index_save()
+    return stores, tops
+
+
 def _latch_ask_anchors(fsid, session, store):
     """LATCH the ask-unit exemption's anchor verdict durably on the node. The kernel's
     _pure_delegation_top must decide "is this promptUuid-anchored top the dictated ask?" by
@@ -10329,7 +12121,8 @@ def _latch_ask_anchors(fsid, session, store):
     shown→hidden on every restart/cache-cold beat: cache temperature, not new information (the
     cards-move-on-new-information rule). The verdict is a fact about a record that never changes
     once readable, so resolve it ONCE from the judge's own WARM parse and stamp `askAnchor` on the
-    node: 'human' (the dictated ask), 'machine' (a peer mail, the agent's own atom, romp
+    node: 'human' (the dictated ask), 'scheduled' (a scheduled or programmatic prompt, author
+    sdk: the user's configured work, which the feed's heal never nests), 'machine' (a peer mail, the agent's own atom, romp
     bookkeeping — _human_prompt_record, the one definition of 'dictated'), or 'absent' (the
     stitched chain no longer holds the uuid: rewound/compacted/pre-/clear — durable doubt, which
     keeps failing open exactly as the per-beat read did, just stably). The write rides the planner
@@ -10338,7 +12131,8 @@ def _latch_ask_anchors(fsid, session, store):
     parentless, promptUuid-bearing, no origin (a courier top's evidence is T105's userAsk, never
     its mail anchor), not itself a tracker. A parse with NO atoms at all latches nothing — a
     missing/unreadable transcript is no evidence of absence, and 'absent' must never be minted
-    from one. Returns the number latched; the caller's unconditional save persists them."""
+    from one. Returns the number latched; the caller's unconditional save persists them. A top anchored
+    on the harness's own skill-load wrapper is stamped by _latch_skill_load_anchors first (T333)."""
     cands = [nd for nd in store.get("nodes", {}).values()
              if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
              and not isinstance(nd.get("origin"), dict)
@@ -10359,9 +12153,17 @@ def _latch_ask_anchors(fsid, session, store):
         if a is None:
             nd["askAnchor"] = "absent"
         else:
-            nd["askAnchor"] = "human" if _human_prompt_record(a, fsid) else "machine"
+            nd["askAnchor"] = ("human" if _human_prompt_record(a, fsid)
+                               else "scheduled" if a.get("author") == "sdk"   # a scheduled or programmatic prompt: the
+                               else "machine")                                #   user's configured work, never machine (T319)
         n += 1
     return n
+
+
+em.register_whole_read_passthrough(parsed_session, parse_cached, _parse_store)   # the judges' parse family: a whole read through
+#                                                                                   them names the walker beyond (T384)
+em.register_hydrate_text_reader(_unit_text, _prompt_text, _atom_text)   # the judges' shared text readers: a hydration through them is
+#                                                                          attributed with the walker that called them (T377, T384)
 
 
 def _plan_session(fsid, path, now):
@@ -10379,16 +12181,18 @@ def _plan_session(fsid, path, now):
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     pkey = _plan_key(fsid, path, session, now)        # BEFORE the store read (the chain-memo rule)
-    if pkey is not None and _PLANNER_SEEN.get(fsid) == pkey:
-        _planner_stat("skipped")                     # nothing moved since a pass that had nothing to do
+    norm = _planner_key_norm(pkey) if pkey is not None else None
+    if norm is not None and _planner_seen_stands(fsid, norm):   # the persisted or in-memory row stands: recomputed and compared,
+        _planner_bump("skipped")                     # never trusted (T401 (5c)); nothing moved since a pass that had nothing to do
         return 0
-    _planner_stat("planned")
+    _planner_bump("planned")
     _judge_ctx.stage_incomplete = False               # the record rule at the end reads it (the evidence gate's
     #                                                   completeness bit, 2026-09-07): a strict read that failed on
     #                                                   a file that exists (_read_failed) or a deferral without a
     #                                                   write leaves the session planned again next pass
     store = load_goals(fsid)                          # a store that does not read raises: the runner files the
     #                                                   pass-crash row and nothing is recorded for the session
+    _judge_ctx.relay_turns = (str(fsid), session.get("turns") or [])   # the block writer's excerpt source (T334 relay)
     if _heal_quote_titles(store) + _heal_floor_titles(fsid, store) \
             + _heal_ticket_titles(store):              # + ticket-led titles (T146, the live-failure heal)
         save_goals(fsid, store)                       # own words; raw-head → the landed prompt caption), both
@@ -10397,24 +12201,28 @@ def _plan_session(fsid, path, now):
     # planner that one goal's own raw history alongside its menu title (the user 2026-07-01) — no LLM
     # call, just an index over already-parsed atoms. Seam-aware (_segs) so a settle-split tail resolves.
     seg_by_id = {seg["id"]: seg for turn in session["turns"] for seg in _segs(turn, store)}
+    floor = episode_floor(fsid)                       # the placement verdict's one volatile input, taken ONCE for this pass and
+    #                                                   handed to the planner and to every re-derivation below (T377 review, medium
+    #                                                   1: a /clear landing mid-pass raised it between the two, and a unit the
+    #                                                   planner had yielded as placed reached the model with no text)
     live = set(seg_by_id)                             # current parse's seg ids: the _placed_key live-twin guard —
     #                                                   an identical-text twin (crash-heal restart resumes) must
     #                                                   not be swallowed as a "drift" of an already-placed one
     if store.get("placementsV") != PLACEMENTS_V:      # P2: seal/adopt on identity-version change (199118f)
-        ready = [_unit_key(u[0], u[1]) for u in plan_units(session, store)]
+        ready = [_unit_key(u[0], u[1]) for u in plan_units(session, store, floor=floor, lazy_text=True)]
         if _migrate_placements(store, ready, live):
             save_goals(fsid, store)
     units, retired, seen = [], False, set()
-    for u in plan_units(session, store):
+    for u in plan_units(session, store, floor=floor, lazy_text=True):
         seg_id, phase = u[0], u[1]
         key = _unit_key(seg_id, phase)
         if key in seen:                               # plan_units yields one unit per TURN, so a same-second
             continue                                  # identical-prompt burst (an auto-retry storm) repeats ONE
         #                                               seg id hundreds of times — each copy would get its own
         #                                               LLM call and file its own duplicate node (2026-07-06)
-        if _placed_key(store["placements"], key, live):   # drift-safe: a recorded key whose parse t has since
+        if _placed_key(store["placements"], key, live, floor=floor):   # drift-safe: a recorded key whose parse t has since
             continue                                  # shifted still dedups (this phase already placed)
-        if u[2] and u[2] < (episode_floor(fsid) or 0):
+        if u[2] and u[2] < (floor or 0):
             # PRE-EPISODE unit (the user 2026-07-27): its segment predates the current episode's head —
             # evidence from a conversation the agent can no longer see (_placed_key's own scoping rule),
             # reachable because the parse stitches the anchor transcript behind a /clear fork. Planning
@@ -10428,7 +12236,7 @@ def _plan_session(fsid, path, now):
             store["placements"][key] = None
             retired = True
             continue
-        if phase in ("prompt", "live") and _placed_key(store["placements"], seg_id, live):
+        if phase in ("prompt", "live") and _placed_key(store["placements"], seg_id, live, floor=floor):
             # Work already placed (legacy/fast segment) → this phase is moot, a FINAL ruling like the
             # courier's "fyi" below. RETIRE it rather than skipping: a bare `continue` left the key
             # ABSENT, and auto-nudge's placement gate (kernel `_auto_nudge_session`, `_unplanned`) asks
@@ -10443,7 +12251,7 @@ def _plan_session(fsid, path, now):
             continue
         if phase == "delegation":
             tgt = _placement_of(store["placements"], seg_id, live)   # the COURIER's verdict for this peer segment
-            if _placed_key(store["placements"], seg_id, live) and not (isinstance(tgt, str) and tgt in store["nodes"]):
+            if _placed_key(store["placements"], seg_id, live, floor=floor) and not (isinstance(tgt, str) and tgt in store["nodes"]):
                 # The courier RESOLVED this peer segment as COORDINATION ("fyi") — a FINAL verdict, never
                 # work to file under a goal. RETIRE the #d phase here (mark it processed, the user 2026-06-22
                 # via link_audit) so it stops being re-collected and re-skipped EVERY pass. (Historically this
@@ -10459,8 +12267,24 @@ def _plan_session(fsid, path, now):
         save_goals(fsid, store)                       # persist the retirements so they dedup out next pass
     placed = 0
     for seg_id, phase, seg_t, text, human, followup, trig, vq in units:
-        if _placed_key(store["placements"], _unit_key(seg_id, phase), live):
+        if _placed_key(store["placements"], _unit_key(seg_id, phase), live, floor=floor):
             continue                                  # placed while THIS pass applied an earlier unit — the
+        if text is None:                              # yielded as placed (no text read) yet planned here: the text is read now,
+            seg = seg_by_id.get(seg_id)               #  lazily, never None to the model (T377 review, medium 1), and the quote with
+            if seg is None:                           #  it, so a node minted on this branch carries the trigger's verbatim head
+                continue
+            text = unit_text_for(seg, phase)
+            if not text:
+                # A unit the lazy gate yielded whose text reads empty (a shape the scalars cannot see: an assistant message
+                # whose content is a bare string; a blind spot of any later kind): RETIRE it, never skip it. Skipped, it
+                # wrote no placement and no retirement, and the nudge placement gate read its key as unplanned on every
+                # tick and silenced the session's escalation ladder (the 2026-08-16 wedge shape; round three, low 1). The
+                # unit's OWN key: `key` here is the collection loop's last binding, not this unit's (round four, medium).
+                store["placements"][_unit_key(seg_id, phase)] = None
+                save_goals(fsid, store)
+                continue
+            if vq is None:
+                vq = _mint_quote(seg)
         #                                               apply loop must uphold the same idempotence the
         #                                               collection loop checked at pass START (2026-07-06)
         away = _rewound_away(fsid, path, trig) if trig else False
@@ -10834,6 +12658,11 @@ def _plan_session(fsid, path, now):
                 store["placements"][seg_id] = None
                 save_goals(fsid, store)
                 continue
+        ops = _demote_session_mints(ops, seg_by_id.get(seg_id) or {}, store, menu, p_target, human)   # T319: the
+        if not ops:                                    # session's own process never stands as a top card; with
+            store["placements"][seg_id] = None         # nothing the user asked for to nest under, it files nothing
+            save_goals(fsid, store)
+            continue
         ops = _restrict_retitle(ops, pgi)              # only the segment's own prompt-run node is retitle-eligible
         ops = _card_route_subs(store, ops, menu)       # card-first: route subs to the card, then the placer
         if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu, prompt_uuid=trig, quote=vq,
@@ -10870,6 +12699,10 @@ def _plan_session(fsid, path, now):
         #   segment's chain liveness, not about anchor suitability.
         _group_store(store, fsid, now)
         save_goals(fsid, store)
+    _note_checked(store, {a.get("uuid") for turn in session.get("turns") or [] for a in turn.get("atoms") or [] if a.get("uuid")})
+    _latch_prompt_msg_ids(session, store)             # T334: the mail a top's anchor names, for its delegating peer
+    _latch_skill_load_anchors(store, session.get("skillLoads") or {}, now)   # the parse's own report of the wrappers its
+    #                                                   emit skipped: a top the harness's skill load minted (T333)
     _latch_ask_anchors(fsid, session, store)          # durable ask-unit anchor verdicts — no LLM,
     #                                                   idempotent (latched nodes skip), persisted
     #                                                   by the save just below
@@ -10877,11 +12710,11 @@ def _plan_session(fsid, path, now):
     save_goals(fsid, store)
     if pkey is not None:
         if placed == 0 and not units and not retired and _store_key(fsid) == pkey[2] \
-                and not getattr(_judge_ctx, "stage_incomplete", False):
-            _PLANNER_SEEN[fsid] = pkey               # nothing to do and nothing written: skipped until an input moves
-            _planner_stat("recorded")
+                and not getattr(_judge_ctx, "stage_incomplete", False) and norm is not None:
+            _planner_seen_set(fsid, norm)            # nothing to do and nothing written: skipped until an input moves (persisted)
+            _planner_bump("recorded")
         else:
-            _PLANNER_SEEN.pop(fsid, None)            # work done, the store moved, or the pass was INCOMPLETE (the
+            _planner_seen_pop(fsid)                  # work done, the store moved, or the pass was INCOMPLETE (the
             #                                          completeness bit the evidence gate reads, _gated: a stand-down
             #                                          without a write, or a side file that exists and did not read):
             #                                          planned again next pass. A recorded incomplete pass would skip
@@ -10910,9 +12743,37 @@ def run_plan(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbose=Fal
     time-order is the courier's need; the planner's tree is per-session.)"""
     if now is None:
         now = int(time.time())
+    _wrap_index_load()                                # T333: the persisted index and negative memo, once per boot
+    if not _SKILL_SWEEP["done"]:                      # T333: the store-side skill-load pass, once per boot, before the first plan
+        _SKILL_SWEEP["done"] = True
+        try:
+            _t0 = time.time()
+            _sw_stores, _sw_tops = restamp_skill_load_tops_all(now)
+            if _WRAP_READS["n"] or _sw_tops:            # said whenever it read or wrote anything: the cost is visible
+                sys.stderr.write("judge: skill-load sweep read %d transcript(s), %.1f MB, raw (%d indexed) in %.1fs; re-stamped "
+                                 "and resolved %d top(s) in %d store(s)\n" % (_WRAP_READS["n"], _WRAP_READS["bytes"] / 1e6,
+                                                                              len(_WRAP_INDEX), time.time() - _t0, _sw_tops, _sw_stores))
+        except Exception as e:
+            _log_judge_error("skill-load-sweep", "-", "the store-side skill-load pass raised: %r" % (e,))
+    if not _PEER_SWEEP["done"]:                       # T334: blocks already filed toward a peer become peer waits, once per boot
+        _PEER_SWEEP["done"] = True
+        try:
+            _pw_stores, _pw_nodes = restamp_peer_wait_blocks_all(now)
+            _rq = _requeue_relays_all()
+            if _rq:
+                sys.stderr.write("judge: %d relay marker(s) re-queued at boot\n" % _rq)
+            if _pw_nodes:
+                sys.stderr.write("judge: %d block(s) in %d store(s) addressed to a peer became peer waits\n" % (_pw_nodes, _pw_stores))
+        except Exception as e:
+            _log_judge_error("peer-wait-sweep", "-", "the store-side peer-wait pass raised: %r" % (e,))
     fleet = [s for s in discover(now) if not _hidden_from_feed(s[0])][:sessions_cap]   # muted sessions are out of task tracking
-    for _gone in [f for f in _PLANNER_SEEN if f not in {s[0] for s in fleet}]:
-        _PLANNER_SEEN.pop(_gone, None)                # the planner gate, bounded by the sessions this pass discovered
+    _load_planner_seen()                              # T401 (5c): the previous kernel's rows, once per boot, before the first gate check
+    if fleet:
+        _planner_seen_drop({s[0] for s in fleet})     # the planner gate, bounded by the sessions this pass discovered. An EMPTY
+    #                                                   discovery is unknown, not every session gone (discover reads an unreadable
+    #                                                   names root as no sessions): the rows stay until the next non-empty pass,
+    #                                                   which costs nothing, since a stale row never serves without its key
+    #                                                   (the 5c follow-up; before it one such pass rewrote the file empty)
     placed = 0
     with ThreadPoolExecutor(max_workers=_conc(concurrency)) as ex:
         futs = {}
@@ -10929,6 +12790,8 @@ def run_plan(now=None, sessions_cap=PLAN_SESSIONS, concurrency=None, verbose=Fal
     _gate_evict("plan", {f[0] for f in fleet})
     if verbose:
         sys.stderr.write("romp-judge: planner placed %d segments across %d sessions\n" % (placed, len(fleet)))
+    _wrap_index_save()                                # T333: the negative memo grew this pass? persist it
+    persist_planner_seen()                            # T401 (5c): a row changed this pass? persist it
     return placed
 
 
@@ -11064,7 +12927,7 @@ def fast_forward_placements(fsid, path=None, now=None):
     session = parsed_session(fsid, [path], now)
     placements = store["placements"]
     n = 0
-    for u in plan_units(session, store):
+    for u in plan_units(session, store, lazy_text=True):   # keys alone: no unit text read (T396)
         seg_id, phase = u[0], u[1]
         keys = {_unit_key(seg_id, phase)}
         if phase == "prompt":
@@ -11291,7 +13154,7 @@ def _parse_group(raw, menu_len):
         if not isinstance(o, dict):
             continue
         do = str(o.get("do", "")).strip().lower()
-        why = " ".join(str(o.get("why", "")).split())[:300]
+        why = _cut_why(o.get("why", ""), WHY_MAX)
         text = " ".join(str(o.get("text", "")).split())[:120]
         if do in ("mint", "group"):
             # RETIRED (the user 2026-08-26, T101): the board's unit is the individual ask — no
@@ -11499,6 +13362,19 @@ def apply_group(store, menu, ops, t):
             child = menu[o["goal"] - 1]["id"]          # it) to a top-level card of its own — the inverse
             if child not in nodes or nodes[child].get("parentId") is None:
                 continue                               # merged away this reply, or already a top
+            ptop = nodes.get(_top_of(nodes, child) or "") or {}
+            if ptop.get("askAnchor") and ptop.get("askAnchor") != "machine" and not isinstance(nodes[child].get("origin"), dict):
+                for k in ("askAnchor", "askAnchorRecord", "promptMsgId"):   # a NON-machine parent's verdict (human,
+                    if k in ptop:                      #   scheduled, absent) comes along: the child's own mint record is
+                        nodes[child][k] = ptop[k]      #   a step's (a system record after a compaction, a notice), which
+                    else:                              #   a later latch would read as a machine anchor and hand the
+                        nodes[child].pop(k, None)      #   user's own decision to a peer (the manager's live case,
+                #                                          2026-09-12). A MACHINE parent's child is left to latch itself
+                #                                          from its own record: a system record reads machine with no
+                #                                          stamp and meets the standing-relation check, a typed record
+                #                                          reads human, where an inherited machine verdict would have
+                #                                          mailed the user's own question to the peer and dropped the top
+                #                                          out of the feed heal's hosts set (the verifier's first round)
             nodes[child]["parentId"] = None            # of group: a drifted tangent gets its own card
             if o.get("retitle"):                       # a step-phrased title may not stand alone as a card
                 nodes[child]["text"] = o["retitle"]
@@ -12068,6 +13944,727 @@ def _open_peer_asks(sid, since=0):
     return bool(_open_ask_peers(sid, since))
 
 
+# ── T334 (2026-09-11): a block addressed to a PEER is a peer wait, not the user's needs-you ──────────
+# CLAUDE.md: interrupt only when the human is the bottleneck; waiting on a peer, a build or another session is
+# not that. A worker session that ends its turn asking its manager (or any peer it has an open question to)
+# used to get the closer's or planner's BLOCK, which the feed shows as the user's needs-you card. The block's
+# ADDRESSEE is read from evidence, never from words alone: (a) the session's own open ask (a kind=question it
+# sent to a live peer with no record back since, the wait graph's and the peer-kind awaiting gate's one
+# source), (b) failing that, the peer that DELEGATED the goal the block sits under (the courier-planted top's
+# origin.peer: the team relation as recorded), and (c) words only to pick AMONG open asks (a peer's session
+# name in the block's text), never to invent a peer. A block in a managed session whose text names the user
+# explicitly still resolves to the delegating peer: the manager relays, and a worker's card reaches the user
+# only through the debt ladder's escalation event. The write is the existing awaiting/peer verdict in place
+# of the block (the chip "Awaiting <peer>" in Working, the auto-nudge already skipping peer waits, the peer's
+# reply the lift). Nothing resolves: the user, the block exactly as before.
+
+
+def _peer_name(sid):
+    """The session name NAMES records for `sid` ("" when none), or the name a cross-host key carries itself
+    ("peer:<host>:<name>" or "peer:<name>"): words pick among peers by this."""
+    key = str(sid)
+    if key.startswith("peer:"):
+        return key.rsplit(":", 1)[-1].strip()
+    try:
+        return (NAMES / key).read_text().split("\t", 1)[0].strip()
+    except Exception:
+        return ""
+
+
+_DELEG_CACHE = [None, {}]    # (mtime_ns, size), {to_sid: [(t, from_id, mid), ...] ascending}: one scan per log change
+_DELEG_BY_MID = {}           # message id -> (from_id, to_sid) of that delegate row (filled by the same scan)
+
+
+def _delegates_to():
+    """{recipient sid: [(t, from_id, mid), ...] ascending} for every DELEGATE row in the postal log that reached its recipient
+    (a returned or withdrawn send, _learn_return, makes no entry): the team relation as the mail recorded it. The
+    courier's planted origin, when present, is derived from these rows; today's stores hold none, so this is the
+    primary record (T334). Cross-host rows key on the resolved to_sid like _postal_ask_maps."""
+    try:
+        st = MESSAGES.stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _DELEG_CACHE[0] == key:
+        return _DELEG_CACHE[1]
+    out, rows, returned, by_mid = {}, [], {}, {}
+    try:
+        for line in MESSAGES.read_text(errors="replace").splitlines():
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(o, dict):
+                rows.append(o)
+                _learn_return(returned, o)
+        for o in rows:
+            if o.get("kind") != "delegate" or o.get("ev") not in (None, "sent"):
+                continue
+            f, t_, ts = o.get("from_id"), o.get("to_sid") or o.get("to_id"), o.get("t")
+            if not (f and t_ and ts) or str(o.get("id") or "") in returned or str(t_).startswith("peer:"):
+                continue
+            out.setdefault(str(t_), []).append((int(ts), str(f), str(o.get("id") or "")))
+            if o.get("id"):
+                by_mid[str(o["id"])] = (str(f), str(t_))
+        for v in out.values():
+            v.sort()
+    except OSError:
+        return {}
+    _DELEG_BY_MID.clear(); _DELEG_BY_MID.update(by_mid)
+    _DELEG_CACHE[0], _DELEG_CACHE[1] = key, out
+    return out
+
+
+def _delegate_sender(mid, sid=None):
+    """The from_id of the DELEGATE row with message id `mid` (the mail a top's anchor record names), or None; with `sid`,
+    only when that row was addressed TO `sid` (a dispatch to another session, quoted in a body, names nobody here)."""
+    _delegates_to()
+    ent = _DELEG_BY_MID.get(str(mid))
+    if not ent:
+        return None
+    frm, to = ent
+    return frm if sid is None or str(to) == str(sid) else None
+
+
+def _open_at(nd, at):
+    """Whether node `nd` was open (neither done nor cleared) at evidence time `at`: its log folded up to that time, the
+    same fold that materializes its live state (_fold_node). A node whose log holds events, none of them by `at`, was
+    open then (its story had not begun); a node with NO log at all reads its live flags (an older store's node
+    completed before the log carried the story)."""
+    full = nd.get("log") or []
+    if not full:
+        return not nd.get("nodeComplete") and not nd.get("cleared")
+    log = [e for e in full if int(e.get("ev_t") or 0) <= int(at or 0)]
+    if not log:
+        return True
+    return _fold_node(dict(nd, log=log)).get("state") not in ("done", "cleared")
+
+
+def _dispatch_tops_open_at(nodes, at, exclude=None):
+    """{message id: whether a top it anchored was open at evidence time `at`} over the parentless nodes other than
+    `exclude`, keyed by the latch's stamp (promptMsgId) and the courier's planted origin (origin.msgId) alike; a mail
+    two tops name is open when either was (_open_at). Built once per attribution, so the walk over the delegate rows
+    costs a lookup per row rather than a pass over the store (the verifier's second round: rows times tops per call)."""
+    out = {}
+    for tid, tn in nodes.items():
+        if tid == exclude or not isinstance(tn, dict) or tn.get("parentId") is not None:
+            continue
+        o = tn.get("origin") if isinstance(tn.get("origin"), dict) else {}
+        mids = {str(tn.get("promptMsgId") or ""), str(o.get("msgId") or "")} - {""}
+        if not mids:
+            continue
+        opened = _open_at(tn, at)
+        for m in mids:
+            out[m] = out.get(m, False) or opened
+    return out
+
+
+def _standing_delegator(nodes, rows, at, exclude=None):
+    """The sender of the NEWEST delegate row ((t, from_id, mid) of _delegates_to) at or before `at` whose relation
+    stands, else None. A relation stands when a top of this store other than `exclude` carries the row's mail as its
+    anchor, by the latch's stamp or the courier's planted origin, and was open at `at` (_dispatch_tops_open_at). A
+    dispatch that anchored no top (handled without a goal) or whose top had finished is no standing relation; a row
+    with no message id sustains nothing (nothing could name it); and a stray later delegate from another peer that
+    anchored nothing (a hand-off note) is walked past, so it neither captures the block nor strands it as the user's
+    while the manager's dispatch top is open (the verifier's first round)."""
+    before = [r for r in rows if r[0] <= at]
+    if not before:
+        return None
+    open_by_mid = _dispatch_tops_open_at(nodes, at, exclude=exclude)
+    for row in reversed(before):
+        mid = str(row[2] or "") if len(row) > 2 else ""
+        if mid and open_by_mid.get(mid):
+            return row[1]
+    return None
+
+
+def _delegator_of(store, nid):
+    """The peer that delegated the work `nid` sits under, or None when the goal is the user's own. Two records, the
+    courier's first: the top's planted origin.peer; else the sender of the DELEGATE mail the top's anchor names
+    (promptMsgId, the latch's stamp of the delivery's own dispatch), provided the latch has POSITIVELY read the top's
+    anchor as a machine record (askAnchor "machine": the dispatch mail, never a prompt the user typed). An unlatched
+    top, one whose anchor is gone ("absent") or a scheduled prompt's top is left to the user (fail open to the block),
+    whatever mail the session got before. A top whose anchor names no dispatch (a delivery holding only a peer's
+    heads-up, a watch notice, a record after a compaction; an unlatched stamp gets the same bound) falls back to the
+    newest delegate this session received at or before its mint whose dispatch stands as a relation: its own top,
+    latched or courier-planted, open at the mint (_standing_delegator, walking the rows newest first past any stray
+    delegate that anchored nothing; a row with no message id sustains nothing). A worker under a manager's standing dispatch mints later tops from notices and peers'
+    mails, and those blocks still go to the manager; a dispatch that anchored no top or whose top has finished is no
+    relation, and the fallback would otherwise hand the user's own decisions to whichever peer last sent any delegate
+    mail (the manager's live case, 2026-09-12: three decisions relayed to an unrelated peer nine hours after its mail,
+    whose reply lifted a wait nobody should have been in). The time proxy stands only on that event."""
+    nodes = store.get("nodes", {})
+    top = _top_of(nodes, nid) if nid in nodes else None
+    tn = nodes.get(top) or {}
+    o = tn.get("origin")
+    if isinstance(o, dict) and o.get("peer"):
+        return None if ":" in str(o["peer"]) else str(o["peer"])   # same rule for a planted ext: origin
+    if not top or tn.get("askAnchor") != "machine":
+        return None
+    sid = str(store.get("rompUuid") or str(nid).rsplit(":", 1)[0])
+    peer = _delegate_sender(tn["promptMsgId"], sid) if tn.get("promptMsgId") else None   # the mail the anchor names, first
+    if not peer:                                  # no mail id on the anchor, or one that is no dispatch to this session (a
+        mint = int(tn.get("t") or 0)              #   stamp from before the delegate-kind rule, a quoted marker): the newest
+        peer = _standing_delegator(nodes, _delegates_to().get(sid, []), mint, exclude=top)   # delegate at or before the
+        #                                                                                       mint whose own top stood open then
+    return None if not peer or ":" in peer else peer   # an ext: mailer or an unresolved cross-host key is no session that
+                                                       #   could ever be asked (judge _presumed_closed: closed by construction)
+
+
+def block_addressee(store, nd, why):
+    """The peer a block on `nd` is addressed to, else None: block_addressee_via without the how."""
+    return block_addressee_via(store, nd, why)[0]
+
+
+def block_addressee_via(store, nd, why):
+    """(peer, via) for a block on `nd`: via "ask" when the session's own open question names the peer (an ending
+    exists: the reply), "delegator" when only the courier's origin does (no question was ever sent, so the kernel
+    RELAYS the block's why to that peer as a question on the worker's behalf, once per block: relayWanted below),
+    or (None, None) when the block is the user's (T334, the rule above). Only a node
+    under a DELEGATED goal (a courier-planted top) is ever redirected: a managed session's block is the case, and the
+    user's own session, however many open questions it has out, keeps its blocks as its own decisions (an unrelated
+    open ask must never hide the user's own call behind "Awaiting <peer>"). An empty why is never redirected. The
+    USER's own follow-up on the delegated card (the reopen floor, _floor_of: the node's and its ancestors') newer than
+    every edge the block could wait on (the top's mint, a standing peer wait up the same chain, the open ask it would
+    name, the handoff) makes the block theirs: their decision, never relayed (the manager's fifth and sixth reviews)."""
+    if not str(why or "").strip():
+        return None, None
+    if not _delegator_of(store, str(nd.get("id") or "")):
+        return None, None
+    peer, via, edge_t = _block_peer_edge(store, nd, why)
+    if not peer:
+        return None, None
+    nodes = store.get("nodes", {})
+    tn = nodes.get(_top_of(nodes, str(nd.get("id") or "")) or "") or {}
+    since = max(int(tn.get("t") or 0), int(edge_t or 0))
+    seen, cur = set(), str(nd.get("id") or "")
+    while cur and cur in nodes and cur not in seen:             # loop-ok: the ancestor walk, cycle-guarded
+        seen.add(cur)
+        n_ = nodes[cur]
+        if n_.get("awaitingKind") == "peer":
+            since = max(since, int(n_.get("awaitingAt") or 0))
+        cur = n_.get("parentId")
+    if int(_floor_of(store, nd) or 0) > since:
+        return None, None
+    return peer, via
+
+
+def _block_peer_edge(store, nd, why):
+    """The addressee of a block under a delegated goal, before the follow-up gate: (peer, via, edge_t), where edge_t is
+    the time of the edge the block would wait on (the open ask's send time, the handoff's time, 0 for the delegator's
+    relay), or (None, None, 0)."""
+    ho = nd.get("handoff") if isinstance(nd.get("handoff"), dict) else None
+    if ho and ho.get("peer") and ":" not in str(ho["peer"]):
+        return str(ho["peer"]), "ask", int(ho.get("t") or 0)   # a block on a "delegated to <peer>" tracker under a delegated
+                                                       #   goal waits on that peer: the delegate is a reply-expecting send
+                                                       #   its report ends
+    sid = str(store.get("rompUuid") or str(nd.get("id") or "").rsplit(":", 1)[0])
+    nodes = store.get("nodes", {})
+    delegator = _delegator_of(store, str(nd.get("id") or ""))
+    top = _top_of(nodes, str(nd.get("id") or "")) if str(nd.get("id") or "") in nodes else None
+    since = int((nodes.get(top) or {}).get("t") or nd.get("t") or 0)   # an ask sent once the GOAL existed counts, even
+    peers = _open_ask_peers(sid, since=since)                          #   for a step minted after the worker asked
+    text = str(why or "").lower()
+    def named(p):
+        return bool(_peer_name(p)) and bool(re.search(r"\b%s\b" % re.escape(_peer_name(p).lower()), text))
+    if peers:
+        _la, last_ask, _al = _postal_ask_maps()
+        if delegator in peers and not any(named(p) for p in peers if p != delegator):
+            return delegator, "ask", int(last_ask.get((sid, delegator), 0))   # the open ask to the delegator IS the edge
+        hits = [p for p in peers if named(p)]
+        if len(hits) == 1:
+            return hits[0], "ask", int(last_ask.get((sid, hits[0]), 0))   # the words pick among the open asks
+        if delegator and not hits:
+            return delegator, "delegator", 0           # an open ask to a peer the block never names does not capture a
+                                                       #   block in the delegator's work: the delegator, relayed
+        best = max(peers, key=lambda p: last_ask.get((sid, p), 0))
+        return best, "ask", int(last_ask.get((sid, best), 0))   # else the latest ask, the wait graph's rule
+    return delegator, "delegator", 0
+
+
+def file_block(store, nd, src, why, ev_t, t=None, seg=None):
+    """The one block writer for the judges (closer, planner): a block addressed to a peer (block_addressee) is
+    filed as the awaiting/peer stamp instead (an already-blocked node is unblocked by romp first, so the card
+    leaves Blocked), and only a block addressed to the user is filed as a block. Returns (kind, landed):
+    kind "peer" or "block"; landed True when a verdict was written."""
+    peer, via = block_addressee_via(store, nd, why)
+    if not peer:
+        _relay_retire_marker(store, nd)                    # the block is the user's: a peer wait's marker on this node (the
+        #                                                    wait ended, or the user's follow-up reclaimed the card) is
+        #                                                    retired: settled, and recalled when it was handed to a far host
+        return "block", bool(record_verdict(store, nd, src, "block", ev_t, why=why, seg=seg))
+    if any(e.get("kind") in ("awaiting", "done") and (e.get("lift") or e.get("kind") == "done")
+           and _wait_end_ev(e) > (ev_t or 0) for e in nd.get("log") or []):
+        return "peer", False                           # the wait this block describes already ENDED in the diary after
+                                                       #   this turn's evidence (the awaiting branch's own stand-down):
+                                                       #   a late closer neither re-stamps nor re-relays it
+    if nd.get("blocked") and next((e.get("src") for e in reversed(nd.get("log") or []) if e.get("kind") == "block"), None) \
+            not in ("closer", "planner"):
+        return "peer", False                           # the standing block is the ladder's escalation or an interrupt, romp's
+                                                       #   own once-ever record: a re-asserted judge block never lifts it
+    prior_standing = nd.get("awaitingKind") == "peer" and peer in (nd.get("awaitingPeers") or ())   # read BEFORE any write:
+    #                                                   record_verdict materializes awaitingKind at once (the manager's third review)
+    if not prior_standing:
+        _relay_retire_marker(store, nd)                # the ENDED wait's marker: a new wait never reuses it (the tick would relay
+        #                                                the old words for the new question, or its stand-down of the old id
+        #                                                would leave a wait with nothing to end it; the manager's fifth review);
+        #                                                one handed to a far host is recalled (the sixth)
+    landed = False
+    if nd.get("blocked"):
+        landed = bool(record_verdict(store, nd, "romp", "unblock", ev_t)) or landed
+    if not prior_standing:
+        landed = bool(record_verdict(store, nd, src, "awaiting", t if t is not None else ev_t, why=why,
+                                     await_kind="peer", await_peers=[peer], seg=seg)) or landed
+    # a peer wait on the same peer already standing is not re-filed, whatever the re-asserted words: the stamp keeps
+    # its since-time, so the relay sent after it (and the peer's reply after that) end exactly this wait
+    if via == "delegator" and not prior_standing:  # a fresh marker for every new wait (the ended wait's went above)
+        nd["relayWanted"] = {"peer": peer, "why": str(why), "t": int(t if t is not None else ev_t),
+                             "id": _relay_marker_id(t if t is not None else ev_t, peer, nd.get("id"))}   # its identity:
+        ctx = _relay_context_for(store, t if t is not None else ev_t)   # the conversation the question ends, for the peer
+        if ctx:
+            nd["relayWanted"]["context"] = ctx
+        _relay_enqueue(store, nd)                  #   that settle it name it. The kernel's relay tick sends it as the
+        landed = True                              #   worker's question, once per block: a re-asserted block on a
+                                                   #   standing relayed wait never relays twice
+    return "peer", landed
+
+
+RELAY_CONTEXT_BYTES_DEFAULT = 24 * 1024     # the conversation excerpt a relayed question carries: 24 KiB of text
+RELAY_CONTEXT_BYTES_MAX = 768 * 1024        # the bus reads a megabyte per request: the excerpt leaves headroom for the rest
+RELAY_CONTEXT_KNOB = Path(os.path.expanduser("~/.config/romp/relay-context-bytes"))
+_RELAY_MARKER_RE = re.compile(r"<!--\s*romp-.*?-->", re.S)   # to the marker's own close: a payload may hold a '>'
+
+
+def relay_context_bytes():
+    """The bound on the conversation excerpt a relayed question carries, in bytes of text: $ROMP_RELAY_CONTEXT_BYTES,
+    else the first non-comment line of ~/.config/romp/relay-context-bytes, else RELAY_CONTEXT_BYTES_DEFAULT (24 KiB,
+    about six thousand tokens: a typical three-to-eight-turn exchange whole, well under a tenth of a peer's window, and
+    far under the bus's megabyte). Read at CALL time like the other ~/.config/romp knobs, so the user raises it
+    without a release; a value that is not a positive integer is ignored (said once per value)."""
+    for raw, src in ((os.environ.get("ROMP_RELAY_CONTEXT_BYTES"), "$ROMP_RELAY_CONTEXT_BYTES"), (_relay_knob_line(), str(RELAY_CONTEXT_KNOB))):
+        if raw is None:
+            continue
+        try:
+            n = int(str(raw).strip().replace("_", ""))
+            if n > RELAY_CONTEXT_BYTES_MAX:               # past the bus's own limit the send would be refused (a 413 read as
+                if raw not in _RELAY_KNOB_SAID:            #   definitive, every wait reverted): the cap stands in its place
+                    _RELAY_KNOB_SAID.add(raw)
+                    sys.stderr.write("relay context: %s holds %r, over the %d-byte cap; the cap stands\n" % (src, raw, RELAY_CONTEXT_BYTES_MAX))
+                return RELAY_CONTEXT_BYTES_MAX
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+        if raw not in _RELAY_KNOB_SAID:
+            _RELAY_KNOB_SAID.add(raw)
+            sys.stderr.write("relay context: %s holds %r, not a positive integer; the default stands\n" % (src, raw))
+    return RELAY_CONTEXT_BYTES_DEFAULT
+
+
+_RELAY_KNOB_SAID = set()
+
+
+def _relay_knob_line():
+    try:
+        for line in RELAY_CONTEXT_KNOB.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                return line
+    except Exception:                                      # unreadable, undecodable, not a file: the default stands
+        return None
+    return None
+
+
+def _relay_turn_text(turn, who):
+    """One turn of the conversation as the peer will read it: the user's prompt text and the assistant's reply text,
+    labelled, in order; tool calls collapsed to one line with their count (the code the assistant WROTE stays in its
+    text; the tool noise goes); romp's own markers stripped. Empty when the turn holds no text."""
+    lines, tools = [], 0
+    for a in turn.get("atoms") or []:
+        if a.get("lazy") is not None:
+            em.hydrate([a])                                # a body before the assembly cut: read on demand
+        msg = a.get("message") or {}
+        role = msg.get("role") or a.get("type")
+        blocks = msg.get("content") or []
+        if isinstance(blocks, str):
+            blocks = [{"type": "text", "text": blocks}]
+        tools += sum(1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use")
+        text = "\n".join(str(b.get("text") or "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+        text = _RELAY_MARKER_RE.sub("", text).strip()
+        if not text:
+            continue
+        label = "user:" if role == "user" else "%s:" % (who or "assistant")
+        # a one-line text sits after its label; a text that opens with a code fence or spans lines goes UNDER the
+        # label on its own lines, so a fence opener stays at a line start (the review: a label on the fence's line
+        # hid the opener from the shortener, which then cut the block mid-fence)
+        lines.append(label + (" " + text if "\n" not in text and not re.match(r"^\s*(`{3,}|~{3,})", text) else "\n" + text))
+    if tools:
+        lines.append("(%d tool call%s)" % (tools, "" if tools == 1 else "s"))
+    return "\n".join(lines)
+
+
+def _relay_units(text):
+    """A turn's text as atomic units for shortening: a fenced code block is ONE unit (never cut), else a paragraph."""
+    units, cur, fence = [], [], None
+    for line in text.split("\n"):
+        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if fence is None and m:
+            if cur:
+                units.append(("text", "\n".join(cur))); cur = []
+            fence = m.group(1); cur = [line]
+            continue
+        if fence is not None:
+            cur.append(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                units.append(("code", "\n".join(cur))); cur = []; fence = None
+            continue
+        if not line.strip():
+            if cur:
+                units.append(("text", "\n".join(cur))); cur = []
+            continue
+        cur.append(line)
+    if cur:
+        units.append(("code" if fence is not None else "text", "\n".join(cur)))
+    return units
+
+
+def _relay_shorten(text, budget):
+    """The question's own turn when it alone exceeds the bound: its LAST complete units that fit (paragraphs, and code
+    blocks kept whole or left out whole with a line saying so), under a line saying what was left out. A text unit that
+    alone exceeds what is left (a turn with no paragraph break: a long list, a pasted log, a table) is shortened by its
+    LAST lines, and a single line past the budget by its last bytes at a character boundary, so the question's own
+    words always ride (the manager's review: a 27 KB unbroken turn used to vanish into a one-line note)."""
+    note_room = 80
+    units = _relay_units(text)
+    kept, size = [], 0
+    for kind, u in reversed(units):
+        n = len(u.encode("utf-8")) + 2
+        room = budget - note_room - size
+        if n > room:
+            if kind == "code":
+                note = "(a code block of %d lines left out)" % u.count("\n")
+                if len(note) + 2 <= room:
+                    kept.append(note); size += len(note) + 2
+                continue
+            tail = _relay_tail_lines(u, room - 2)
+            if tail:
+                kept.append(tail); size += len(tail.encode("utf-8")) + 2
+            break
+        kept.append(u); size += n
+    kept.reverse()
+    out = "\n\n".join(kept)
+    left = max(0, len(text) - len(out))
+    return "(shortened: this turn's earlier %d characters left out)\n\n%s" % (left, out) if left else out
+
+
+def _relay_tail_lines(text, room):
+    """The last whole lines of `text` that fit `room` bytes; when even the last line does not, its last bytes cut at a
+    character boundary. Empty when there is no room at all."""
+    if room <= 0:
+        return ""
+    lines = text.split("\n")
+    kept, size = [], 0
+    for line in reversed(lines):
+        n = len(line.encode("utf-8")) + 1
+        if size + n > room:
+            break
+        kept.append(line); size += n
+    if kept:
+        kept.reverse()
+        return "\n".join(kept)
+    last = lines[-1].encode("utf-8")[-room:]
+    return last.decode("utf-8", errors="ignore")
+
+
+_RELAY_EXCERPT_HEAD = 96      # the header line's room inside the bound
+_RELAY_EXCERPT_SEP = 40       # a turn's separator line and joins
+_RELAY_EXCERPT_RESERVE = 128  # kept back from a shortened own turn while earlier turns exist, so a one-line earlier
+#                               exchange rides beside it by design rather than by the shortener's line-rounding slack
+
+
+def _relay_wire_len(s):
+    """The bytes `s` takes on the bus: JSON-encoded UTF-8 without the quotes. A newline, a quote or a backslash is two
+    bytes there, so a newline-dense excerpt measured raw could double on the wire past the bound (the third verdict);
+    the bound is measured in this form."""
+    return len(json.dumps(s, ensure_ascii=False).encode("utf-8")) - 2
+
+
+def _relay_excerpt(turns, upto_t, budget, who=""):
+    """The conversation a relayed question sits in, for the peer: whole turns only, selected newest first from the
+    turn the question ends (always included, shortened only when it alone exceeds the bound, to the bound less a small
+    reserve while earlier turns exist so a one-line earlier exchange still rides beside it) back while they fit
+    the bound, shown oldest first under a line that says how many turns are shown and how many were left out (the
+    earlier ones, and any holding no text). The bound is measured as the bus carries the excerpt (_relay_wire_len).
+    Turns are the parse's (event_model): the user's prompt text and the assistant's reply text, tool calls collapsed
+    to a count. Empty when there is nothing to show."""
+    upto = int(upto_t or 0)
+    sel = [t for t in turns or [] if int(t.get("t") or 0) <= upto]   # nothing at or before the block's evidence: no excerpt
+    total = len(sel)
+    kept, size = [], _RELAY_EXCERPT_HEAD
+    for i in range(total - 1, -1, -1):                     # newest first, rendered (and hydrated) one turn at a time: the
+        txt = _relay_turn_text(sel[i], who)                #   walk stops at the bound, so a long session's history is
+        if not txt:                                        #   never read for two turns' worth of excerpt (the review)
+            continue
+        n = _relay_wire_len(txt) + _RELAY_EXCERPT_SEP
+        if not kept:
+            if size + n > budget:
+                cap = budget - (_RELAY_EXCERPT_RESERVE if i > 0 else 0)   # the own turn's share of the bound
+                txt = _relay_shorten(txt, max(256, cap - size - _RELAY_EXCERPT_SEP))
+                for _ in range(4):                         # the shortener counts raw bytes: tighten while the wire form is over
+                    n = _relay_wire_len(txt) + _RELAY_EXCERPT_SEP
+                    raw = len(txt.encode("utf-8"))
+                    if size + n <= cap or raw <= 256:
+                        break
+                    txt = _relay_shorten(txt, max(256, int(raw * (cap - size - _RELAY_EXCERPT_SEP) / max(1, n - _RELAY_EXCERPT_SEP))))
+                n = _relay_wire_len(txt) + _RELAY_EXCERPT_SEP
+            kept.append((i, txt)); size += n
+            continue
+        if size + n > budget:
+            break
+        kept.append((i, txt)); size += n
+    if not kept:
+        return ""
+    kept.reverse()
+    shown = len(kept)
+    left = total - shown                                   # every other turn: earlier than the oldest shown, or holding no
+    head = "The conversation this question ends, oldest first: %d of %d turn%s shown" % (shown, total, "" if total == 1 else "s")
+    head += (", %d left out (earlier, or holding no text)." % left) if left else "."   # text (the third verdict: an
+    #   empty turn above the oldest shown left shown + left-out short of the total)
+    parts = [head] + ["--- turn %d of %d ---\n%s" % (i + 1, total, txt) for i, txt in kept]
+    return "\n\n".join(parts)
+
+
+def _relay_context_for(store, t):
+    """The excerpt for a marker filed on `store` at evidence time `t`, from the parsed turns the judging pass left on
+    the thread (_judge_ctx.relay_turns, set by _close_session and _plan_session for the session they hold); None when
+    the pass left none for this session (a boot conversion, a hand-run), so the marker rides without an excerpt."""
+    held = getattr(_judge_ctx, "relay_turns", None)
+    sid = str(store.get("rompUuid") or "")
+    if not held or str(held[0]) != sid:
+        return None
+    try:
+        return _relay_excerpt(held[1], t, relay_context_bytes(), who=_peer_name(sid) or "") or None
+    except Exception as e:
+        _log_judge_error("relay-context", sid, "the excerpt could not be built (%r); the question rides alone" % (e,))
+        return None
+
+
+def _relay_marker_id(ev_t, peer="", nid=""):
+    """A relay marker's identity: the block's evidence time, the peer and the node. The records that settle a marker
+    (relayed, relayDone), the queue entry and the bus's sent row name it, so a re-block after a lift (later evidence)
+    is a new marker nothing older can settle (the manager's fourth review), two holders filing ONE wait (the same
+    evidence, peer and node) mint the same id and each other's records settle it (the fifth), and two nodes blocked
+    toward one peer in one pass (one evidence time) keep two markers and two questions (the sixth)."""
+    return "%d-%s-%s" % (int(ev_t or 0), str(peer or "")[:8] or "peer", str(nid or "").rsplit(":", 1)[-1] or "node")
+
+
+def _relay_owes_recall(nd):
+    """True when the node owes at least one recall ROW (a dict in relayRecall). The flush, the boot pass and the tick's
+    recall entry all ask this rather than the raw list's truth, so a list holding no dict (a hand-edited store, a
+    future writer's shape) never writes, re-queues or keeps an entry (the manager's fourth verdict)."""
+    lst = nd.get("relayRecall") if isinstance(nd, dict) else None
+    return isinstance(lst, list) and any(isinstance(r, dict) for r in lst)
+
+
+def _relay_retire_marker(store, nd):
+    """Retire the node's marker for a wait that ended (a new wait replaces it, or the block became the user's): it is
+    settled (relaySettled), and when it had already been handed to a far host (pendingMid: parked or unacked) it is
+    remembered on the node (relayRecall) for the kernel's tick to RECALL, so the far host never delivers a stale
+    question with no record; an entry brings the tick to the node (the manager's sixth review)."""
+    old = nd.pop("relayWanted", None)
+    if not isinstance(old, dict):
+        return
+    _relay_mark_settled(nd, old.get("id") or "")
+    nd.pop("relayCarried", None)                           # this road ends a wait without the kernel's settle (file_block
+    #                                                        deciding the block is the user's, a new wait replacing an ended
+    #                                                        one), and a stale "still parked" note would annotate every
+    #                                                        later block on the node and feed the distiller through _owed_why
+    if old.get("pendingMid"):
+        lst = [r for r in (nd.get("relayRecall") or []) if isinstance(r, dict)
+               and str(r.get("pendingMid") or "") != str(old.get("pendingMid"))]
+        lst.append({k: old.get(k) for k in ("id", "peer", "pendingMid", "pendingHost", "pendingAt") if old.get(k) is not None})
+        nd["relayRecall"] = lst[-RELAY_SETTLED_CAP:]
+        _relay_enqueue(store, nd)
+
+
+RELAY_SETTLED_CAP = 8        # settled marker ids a node remembers (relaySettled), newest last
+RELAY_TICK_KEYS = ("pendingMid", "pendingAt", "pendingHost", "unknownAt", "attempts", "recallUnknownAt", "recallAttempts")
+#                                                                                        the tick owns these on a marker
+#                                                                                        on a marker; the judge never writes them
+
+
+def _relay_recalled_mid(x):
+    """The message id a done-recall record names (a dict since the seventh review; a bare id before)."""
+    return str(x.get("mid") or "") if isinstance(x, dict) else str(x)
+
+
+def _relay_recalled_mids(lst):
+    return {_relay_recalled_mid(x) for x in (lst or [])}
+
+
+def _relay_carry_tick_keys(mine, theirs):
+    """Carry the tick-owned fields of the same marker from `theirs` onto `mine` (the store merge, in whichever process
+    runs it): a field absent here is taken, and a counter or a clock (attempts, unknownAt) takes the newer value, so a
+    judge's copy loaded before the tick wrote them never drops the pending stamp or the hold after a stalled bus, and
+    the kernel's own copy never loses its own (the manager's seventh review)."""
+    for k in RELAY_TICK_KEYS:
+        if k not in theirs:
+            continue
+        if k not in mine or (k in ("attempts", "unknownAt", "recallUnknownAt", "recallAttempts")
+                             and int(theirs.get(k) or 0) > int(mine.get(k) or 0)):
+            mine[k] = theirs[k]
+
+
+def _relay_mark_settled(nd, marker):
+    """Remember `marker` as settled on the node: the kernel's record slots (relayed, relayDone) hold one record each and
+    the next marker's record overwrites them, so a holder stale across two relays would find nothing naming the first
+    marker and republish it; the capped list remembers what the slots forgot."""
+    if not marker:
+        return
+    lst = [x for x in (nd.get("relaySettled") or []) if isinstance(x, str) and x != str(marker)]
+    nd["relaySettled"] = (lst + [str(marker)])[-RELAY_SETTLED_CAP:]
+
+
+def _relay_settled(node, want):
+    """True when the marker `want` is settled on `node`: a record (relayed, relayDone) or the settled list NAMES its id.
+    Words and times never settle a marker. A marker with no id (none is written today) is settled by any record, the
+    reading the kernel's tick gives such an entry, so the two rules agree."""
+    mk = str((want or {}).get("id") or "")
+    recs = [node.get(k) for k in ("relayed", "relayDone") if isinstance(node.get(k), dict)]
+    if not mk:
+        return bool(recs)
+    return mk in (node.get("relaySettled") or []) or any(str(r.get("marker") or "") == mk for r in recs)
+
+
+def _relay_queue_dir():
+    return STATE / "relay-queue"
+
+
+def _relay_entry_path(sid, nid):
+    return _relay_queue_dir() / ("%s__%s.json" % (str(sid), re.sub(r"[^A-Za-z0-9_.-]", "_", str(nid))))
+
+
+def _relay_recall_entry_path(sid, nid):
+    """The recalls a node owes ride their OWN entry file beside the marker's (the ninth review): the two are written by
+    different hands at different times, and a rewrite of one path by the other's writer lost whichever entry was there."""
+    return _relay_queue_dir() / ("%s__%s.recall.json" % (str(sid), re.sub(r"[^A-Za-z0-9_.-]", "_", str(nid))))
+
+
+def _relay_enqueue(store, nd):
+    """Remember `nd` on the STORE OBJECT for the kernel's relay tick. save_goals writes the entry (one file per entry
+    in a queue directory: append = create, consume = unlink, so the judge's thread and the kernel's tick never rewrite
+    each other's list) once THIS object is published, and only the saver holding the object flushes its own entries:
+    a save of the same sid by another holder, whose copy may not carry the marker yet, flushes nothing of ours (the
+    manager's fourth review; a module-level list shared by every tier and thread needed a lock and still flushed on
+    any save of the sid). The list is transient, a non-content key never serialized. A failed write is said; the
+    boot pass re-queues every marker without an entry (_requeue_relays_all)."""
+    pend = store.get("_relayPending")
+    if not isinstance(pend, list):
+        pend = store["_relayPending"] = []
+    nid = str(nd.get("id") or "")
+    if nid not in pend:
+        pend.append(nid)
+
+
+def _relay_write_entry(sid, nid, marker="", rev=0):
+    """One queue entry: the node, the marker it was written for (its id) and the store revision whose publish carried
+    the marker, so the tick can tell a spent entry (a record names the marker; the node moved on to a newer marker; a
+    published revision at or past this one lacks the marker) from one whose publish it has not read yet. The marker
+    "recall" names the node's recall entry, its own file beside the marker's. Every entry carries a token of its own,
+    so the spend's re-read tells a fresh entry flushed over the path from the one it read (see _relay_spend)."""
+    try:
+        d = _relay_queue_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = d / (".tmp-%s-%d-%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", nid), os.getpid(), secrets.token_hex(3)))
+        #             the judge's flush and the tick's rewrite share one process: a private name each
+        tmp.write_text(json.dumps({"sid": sid, "nid": nid, "t": int(time.time()), "marker": str(marker or ""),
+                                   "rev": int(rev or 0), "token": secrets.token_hex(4)}))
+        #   token: the entry's own identity, compared by the tick's spend on its re-read (the third verdict: every
+        #   recall entry's marker is the constant "recall", so a fresh one the judge flushed over the path DURING a
+        #   pass read as the spent one and was unlinked with it; the marker id told marker entries apart, nothing did recalls)
+        tmp.rename(_relay_recall_entry_path(sid, nid) if marker == "recall" else _relay_entry_path(sid, nid))
+        return True
+    except OSError as e:
+        _log_judge_error("relay-queue", sid, "relay queue entry not written (%r)" % (e,))
+        return False
+
+
+def _relay_flush(fsid, store, pending):
+    """Write the queue entries of the nodes in `pending` (the store object's own list, popped by save_goals) now that
+    `store` is on disk at store["rev"]. A node whose marker the publish's rebase settled and popped gets none (nothing
+    is left to relay). Returns the number written."""
+    n = 0
+    for nid in pending or []:
+        nd = (store.get("nodes") or {}).get(nid)
+        rw = nd.get("relayWanted") if isinstance(nd, dict) else None
+        if isinstance(rw, dict):
+            n += 1 if _relay_write_entry(str(fsid), str(nid), rw.get("id") or "", store.get("rev") or 0) else 0
+        if _relay_owes_recall(nd):                         # recalls owed ride their own entry, beside the marker's
+            n += 1 if _relay_write_entry(str(fsid), str(nid), "recall", store.get("rev") or 0) else 0
+    return n
+
+
+def _requeue_relays_all():
+    """Once per boot: every node carrying relayWanted with no queue entry gets one (a marker whose entry was lost to a
+    failed write, a kernel restart between the publish and the flush, or a stale merge would otherwise wait forever),
+    and so does every node that owes recalls (relayRecall) with no entry, so a parked question retired by the judge is
+    withdrawn whatever became of its entry (the manager's eighth review). Returns the number re-queued."""
+    n = 0
+    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+        try:
+            raw = json.loads(p.read_text())
+        except Exception:
+            continue
+        for nid, nd in ((raw or {}).get("nodes") or {}).items():
+            if not isinstance(nd, dict):
+                continue
+            if isinstance(nd.get("relayWanted"), dict) and not _relay_entry_path(p.stem, nid).exists():
+                n += 1 if _relay_write_entry(p.stem, nid, nd["relayWanted"].get("id") or "", (raw or {}).get("rev") or 0) else 0
+            if _relay_owes_recall(nd) and not _relay_recall_entry_path(p.stem, nid).exists():   # recalls owed: their own entry
+                n += 1 if _relay_write_entry(p.stem, nid, "recall", (raw or {}).get("rev") or 0) else 0
+    return n
+
+
+_PEER_SWEEP = {"done": False}
+
+
+def restamp_peer_wait_blocks_all(now=None):
+    """Rows already filed before T334: once per boot, every store's nodes blocked by the closer or the planner
+    (the newest block row's src) whose block resolves to a peer today are converted the way file_block does
+    (romp's unblock, then the awaiting/peer stamp with the block's own why), rolled up and saved. Idempotent: a
+    converted node is no longer blocked. Returns (stores, nodes)."""
+    now = now or int(time.time())
+    stores = nodes_n = 0
+    for p in (sorted(GOALDIR.glob("*.json")) if GOALDIR.is_dir() else []):
+        try:
+            raw = json.loads(p.read_text())
+        except Exception:
+            continue
+        if not isinstance(raw, dict):
+            continue
+        hits = [nid for nid, nd in (raw.get("nodes") or {}).items()
+                if isinstance(nd, dict) and nd.get("blocked") and not nd.get("cleared")
+                and next((e.get("src") for e in reversed(nd.get("log") or []) if e.get("kind") == "block"), None)
+                in ("closer", "planner")]
+        if not hits:
+            continue
+        store = load_goals(p.stem)
+        n = 0
+        for nid in hits:
+            nd = store["nodes"].get(nid)
+            if not isinstance(nd, dict) or not nd.get("blocked"):
+                continue
+            if block_addressee(store, nd, nd.get("blockWhy")):
+                kind, landed = file_block(store, nd, "romp", nd.get("blockWhy"), now)
+                n += 1 if landed else 0
+        if n:
+            rollup_status(store, False)
+            save_goals(p.stem, store)
+            stores += 1
+            nodes_n += n
+    return stores, nodes_n
+
+
 def _parse_close(raw, menu_len):
     """Parse the closer's {"done":[{goal,why}], "block":[{goal,why}], "awaiting":[{goal,why,kind}]} reply
     into {"done": {1-based idx: doneWhy}, "block": {1-based idx: blockWhy}, "awaiting": {1-based idx:
@@ -12100,7 +14697,7 @@ def _parse_close(raw, menu_len):
             except (TypeError, ValueError):
                 continue
             if 1 <= n <= menu_len and n not in out and n not in skip:
-                why = " ".join(str(it.get("why", "")).split())[:300]
+                why = _cut_why(it.get("why", ""), WHY_MAX)   # the user-facing question, never cut mid-word
                 if kinds:
                     k = str(it.get("kind") or "").strip().lower()
                     out[n] = {"why": why, "kind": k if k in AWAIT_KINDS_JUDGED else None}   # a closer files a specific kind, never "mixed"
@@ -12574,10 +15171,11 @@ def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None, t
                 nd["mt"] = ev
             newly.append(nd["id"])
         elif i in block:
-            if not record_verdict(store, nd, "closer", "block", ev, why=block[i] or None):   # the user's follow-up postdates this turn's evidence —
-                continue                               # their reply owns the verdict now, not this stale close
-            if ev is not None:                        # (the event materialized the flags + blockWhy)
-                nd["mt"] = ev
+            kind, landed = file_block(store, nd, "closer", block[i] or None, ev, t)   # T334: a peer's block is a peer wait
+            if not landed:                            # the user's follow-up postdates this turn's evidence: their reply
+                continue                              #   owns the verdict now, not this stale close (or a same stamp)
+            if ev is not None and kind == "block":    # (the event materialized the flags + blockWhy; a peer wait is an
+                nd["mt"] = ev                         #   annotation and never bumps mt)
         elif i in awaiting:
             aw_why = (awaiting[i] or {}).get("why") or None
             aw_kind = (awaiting[i] or {}).get("kind")
@@ -13012,6 +15610,7 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     swept = _closed_turns(store)
     sig = dict(store.get("closedSig") or {})
     turns = session["turns"]
+    _judge_ctx.relay_turns = (str(fsid), turns)      # the block writer's excerpt source (T334 relay)
     newly, did, cut = [], 0, False
     for ti, turn in enumerate(turns):
         if _turn_open(turn, turns):
@@ -13152,9 +15751,11 @@ DEATH_DRAIN_PER_PASS = CONCURRENCY   # a QUEUE-DRAIN bound on death-pending fina
 #   NOT a fairness cap on live sessions (those were removed 2026-06-30 and stay removed): the pending
 #   set is a finite backlog that strictly shrinks (every drained marker gains endedAt, superseded ones
 #   retire), so the bound only spreads the one-time upgrade backfill over successive passes instead of
-#   letting the first post-upgrade pass submit hundreds of dead stores at once. ONE exception (2026-09-03):
-#   a marker whose walk was sweep-CUT stays pending (its turns are reachable only through this drain),
-#   and _death_rotate moves it to the BACK of the oldest-first queue, so it costs one call per pass
+#   letting the first post-upgrade pass submit hundreds of dead stores at once. TWO exceptions, both
+#   handled the same way: a marker whose walk was sweep-CUT stays pending (its turns are reachable only
+#   through this drain; 2026-09-03), and a marker whose states file EXISTS but could not be read stays
+#   pending too (_death_finalize defers rather than decide revived-vs-dead on a failed read; 2026-09-15).
+#   Either way _death_rotate moves it to the BACK of the oldest-first queue, so it costs one call per pass
 #   behind every newer marker instead of pinning a slot at the head.
 DEATH_BACKFILL_WINDOW = 365 * 86400  # how far back the drain resolves a dead sid's transcript (cached
 #   per (window, forks) like the picker's wide walk — one filesystem walk, not one per marker)
@@ -13176,18 +15777,29 @@ def _write_death_marker(fsid, m):
 
 
 def _newest_states_t(fsid):
-    """The newest states-row t for a sid, any row shape — the finalize's supersession read."""
+    """The newest states-row t for a sid, any row shape — the finalize's supersession read. 0 when the file
+    is absent or carries no t (a real state: nothing newer than the marker). None when the file EXISTS and
+    cannot be read: that is not "no newer evidence", and answering 0 there let a revived session's marker
+    take the real-end branch (an `ended` record naming its open cards, irreversible). The failed read marks
+    the running stage incomplete and logs one `states-unreadable` row per failure episode (_read_failed), so
+    no closer stamp lands and the marker stays in the drain until the file reads."""
+    path_s = str(STATESDIR / (fsid + ".jsonl"))
     try:
         rows = (STATESDIR / (fsid + ".jsonl")).read_text().splitlines()
-        for ln in reversed(rows):
-            try:
-                r = json.loads(ln)
-                if isinstance(r, dict) and r.get("t") is not None:
-                    return int(r["t"])
-            except (ValueError, TypeError):
-                continue
-    except OSError:
-        pass
+    except (FileNotFoundError, NotADirectoryError):
+        _read_ok(path_s)                               # absent is the common case and a real state
+        return 0
+    except OSError as e:
+        _read_failed(path_s, "states-unreadable", fsid, e)
+        return None
+    _read_ok(path_s)
+    for ln in reversed(rows):
+        try:
+            r = json.loads(ln)
+            if isinstance(r, dict) and r.get("t") is not None:
+                return int(r["t"])
+        except (ValueError, TypeError):
+            continue
     return 0
 
 
@@ -13224,14 +15836,16 @@ def _death_pending(exclude):
 
 
 def _death_rotate(fsid):
-    """A sweep-CUT walk left this dead session's marker pending (see _close_session). _death_pending drains
-    the OLDEST marker first, so a marker whose walk is cut every pass — a turn whose call dies the same way
-    each time — would hold the head of the queue for good, and DEATH_DRAIN_PER_PASS such sessions would
-    starve every newer dead session of its sweep and its 'ended' settle (review find, 2026-09-03). Touch the
-    marker so it takes its place at the BACK: one doomed call per pass, behind everyone else, and the
+    """A sweep-CUT walk (see _close_session) or a states file that exists and cannot be read (see
+    _death_finalize) left this dead session's marker pending. _death_pending drains the OLDEST marker first,
+    so a marker whose walk is cut every pass — a turn whose call dies the same way each time — or whose
+    states file never reads would hold the head of the queue for good, and DEATH_DRAIN_PER_PASS such sessions
+    would starve every newer dead session of its sweep and its 'ended' settle (review find, 2026-09-03). Touch
+    the marker so it takes its place at the BACK: one doomed call per pass, behind everyone else, and the
     drain's bound stays honest. Bounded for kills: DISTILL_FAIL_CAP killed calls on one turn give it up
     and the walk goes on (_close_session), so a marker waits back here at most that many passes per
-    doomed turn; a transient storm rotates it for as long as the storm lasts — the storm's bound, not ours."""
+    doomed turn; a transient storm, or an unreadable file, rotates it for as long as that lasts — the
+    storm's bound, not ours."""
     m = _death_marker(fsid)
     if not isinstance(m, dict) or "endedAt" in m:
         return
@@ -13251,12 +15865,20 @@ def _death_finalize(fsid, store, settled):
     (nothing-open sessions included — the dedup must fire for the common case, the gate's second
     finding), and only when open (non-complete, non-cleared) tops remain, ONE 'ended' settle record
     (keyed on the marker's t, so it can never re-fire) lists the still-open cards on the same
-    episodes channel the /clear bell reads — cards end loudly instead of vanishing."""
+    episodes channel the /clear bell reads — cards end loudly instead of vanishing. A states file that
+    exists and cannot be read DEFERS the finalize (None from _newest_states_t, which marked the stage
+    incomplete): unreadable never decides revived-vs-dead, and the marker rotates to the BACK of the drain
+    (_death_rotate, the cut walk's move) to wait for a pass that can read it — a permission bit never
+    clears on its own, and a marker left at the head would cost the oldest-first drain a slot every pass."""
     m = _death_marker(fsid)
     if not isinstance(m, dict) or "endedAt" in m:
         return
     mt = int(m.get("t") or 0)
-    if _newest_states_t(fsid) > mt:
+    newest = _newest_states_t(fsid)
+    if newest is None:
+        _death_rotate(fsid)                            # …and waits at the BACK of the drain, not its head
+        return
+    if newest > mt:
         m["endedAt"] = mt
         m["superseded"] = True
         _write_death_marker(fsid, m)
@@ -14505,8 +17127,8 @@ def _live_prompt_since(fsid):
     Memoized on the states file's (ino, mtime_ns, size) since 2026-09: the scan read every session's whole
     states log on every distiller pass, 31 ms of the tier's 135 ms idle pass on a 31-session state copy
     against under 1 ms of stats. The key is exact for this file's writers: every one APPENDS a row (the
-    tmux and SDK status hooks, the kernel's picker watcher and its interrupt idle row, the idle-dots CLI
-    all open it "a"), so no two versions share a size; the one write an identity memo cannot see, a
+    SDK backend's state writer, the kernel's picker watcher and its interrupt idle row all open it
+    "a"), so no two versions share a size; the one write an identity memo cannot see, a
     rewrite in place of equal size within one mtime tick, is a pattern nothing uses on this file (the
     evidence gate's value inputs are read by value because their fixtures did). Stat before read: a row
     landing between the two pairs an old identity with new content, which costs one extra scan next
@@ -14752,6 +17374,20 @@ def review_boundary(nd):
     return b
 
 
+def _owed_why(nd):
+    """The owed question the block brief is fed for a blocked node: its blockWhy, and, when a relay of that question to
+    the peer that delegated the work was refused (relayRefusal, the kernel's note beside the block: nobody could be
+    asked), that note in brackets after it, so the brief can say why the decision came back to the user (the manager's
+    eighth review: the note was written and read by nothing); the same for the kernel's note on a question a far
+    host still holds after the wait ended (relayCarried: carried on before it could be withdrawn, or the host
+    unreachable; the third verdict)."""
+    why = str((nd or {}).get("blockWhy") or "")
+    if (nd or {}).get("blockWhyCut"):               # the stored reason ends where the cap cut it: say so, or the brief
+        why += " (the recorded reason ends here; the rest was not kept)"   # reads the stump as an owed question (T388)
+    notes = [s for s in (str((nd or {}).get(k) or "").strip() for k in ("relayRefusal", "relayCarried")) if s]
+    return "%s (%s)" % (why, "; ".join(notes)) if notes else why
+
+
 def _distill_session(fsid, path, now):
     """Distill each newly-(re)resolved TOP goal of ONE session, COMPLETED and BLOCKED alike (the user
     2026-06-18). Gather the goal's full WORK history — the text of every segment in its trail and its whole
@@ -14938,8 +17574,8 @@ def _distill_session(fsid, path, now):
             proc_whys = [d.get("blockWhy") for d in blkd if procedural_block_why(d.get("blockWhy"))]
             proc_only = bool(blkd) and len(proc_whys) == len(blkd)
             blkd = [d for d in blkd if not procedural_block_why(d.get("blockWhy"))]
-            owed = ([(d.get("text", ""), d.get("blockWhy", "")) for d in blkd] if len(blkd) > 1
-                    else blkd[0]["blockWhy"] if blkd else "")
+            owed = ([(d.get("text", ""), _owed_why(d)) for d in blkd] if len(blkd) > 1
+                    else _owed_why(blkd[0]) if blkd else "")
             if proc_only:                              # no SUBSTANTIVE decision is owed — but a card in Blocked
                 # must still say where things stand (the user 2026-07-23: every blocked card presents a
                 # distilled summary; the bare red chip over silence left look-alike cards inconsistent). A
@@ -16362,6 +18998,7 @@ def _human_prompt_record(a, sender):
     an attachment record (a queued_command wrapping what the user dictated mid-turn) exactly when
     it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, the
     agent's assistant atoms, machine input — is None."""
+    if a.get("lazy") is not None: em.hydrate([a])   # a body before the assembly cut: read on demand (T323 stage 4a)
     if a.get("author") == "human":
         if em.is_interrupt_record(a):
             return None

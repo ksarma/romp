@@ -66,8 +66,8 @@ class MidCycleWakeStartsTheNextCycle(unittest.TestCase):
     must take it as the NEXT cycle's event, not clear it on the way out. The tick jobs' inline pushes were
     removed on the strength of this ordering (wait, then clear), which nothing pinned behaviourally."""
 
-    class _Stop(Exception):
-        pass
+    class _Stop(BaseException):             # a BaseException: the pusher loop counts and skips a cycle that raises an
+        pass                                #  ordinary Exception (pusher.cycleFailed), so only this ends the while loop
 
     def test_a_wake_set_during_the_cycle_is_the_next_cycles_event(self):
         kinds, n = [], [0]
@@ -97,7 +97,7 @@ class ControlRouteLatency(unittest.TestCase):
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self._saved_push = km._push_all
         self.builds = []
-        def slow_build(tmux=None):
+        def slow_build(live_map=None):
             self.builds.append(time.time())
             time.sleep(2.0)
         km._push_all = slow_build

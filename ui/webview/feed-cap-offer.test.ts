@@ -32,13 +32,20 @@ test("only the explicit pick switches — the gesture census, both surfaces", ()
   // the feed's ONE setAuth send is this button; the chat gear's ONE is the billing selector.
   // Any new sender shows up as a count change here before it ships.
   assert.equal((FEED.match(/type: "setAuth"/g) || []).length, 1, "feed: the offer button only");
-  assert.equal((RENDER.match(/type: "setAuth"/g) || []).length, 1, "chat: the gear billing pick only");
+  // T380: the Billing flyout gained a SECOND sender, the machine-default pick, which carries scope "machine" and
+  // switches no session (it writes the seed new sessions and unpicked sessions launch on); the per-session pick stays
+  // the one sender that switches a session
+  assert.equal((RENDER.match(/type: "setAuth"/g) || []).length, 2, "chat: the Billing flyout's session pick and its machine-default pick");
+  // T387: the machine-default pick moved into the Set default billing submenu, whose entries and its Automatic way back all
+  // post through ONE helper (post(value)), so the second sender reads `value`, not `c.value`; still two senders in the chat
+  assert.equal((RENDER.match(/type: "setAuth", id, value, scope: "machine"/g) || []).length, 1, "the second sender is the machine default: scope machine, no session switched");
+  assert.equal((RENDER.match(/type: "setAuth", id, value: c\.value \}/g) || []).length, 1, "the per-session pick stays the one session switcher");
   assert.match(KERNEL, /a session must NEVER\s*\n\s*silently switch billing in either direction/, "the ruling, verbatim at the mint");
 });
 
 test("the offer retires with the window and rides beside the auto-retry, never instead", () => {
   assert.match(KERNEL, /\(w\.get\("resets_at"\) or 0\) > now/, "resets_at passing ends the mint — the deciding event");
-  assert.match(KERNEL, /_cap_off = _cap_switch_offer\(fsid, aerr\) if aerr else None/);
+  assert.match(KERNEL, /_cap_off = _cap_switch_offer\(fsid, aerr, now\) if aerr else None/);   // the build's clock (T368: the memo key reads the same window)
   assert.match(KERNEL, /\*\*\(\{"capOffer": _cap_off\} if _cap_off else \{\}\),/, "sparse — absent payloads are byte-identical");
   // the auto-retry contract is untouched: the retry button (a manual retry, as the chat pane sends) + auto ladder stay
   assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "apiRetry", id: it\.sid, manual: true \}\);/);

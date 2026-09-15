@@ -157,7 +157,7 @@ class EachEventAppendsItsLine(_Sandbox):
         saved = (km._name_of, km._sdk, km._send_or_park, km._push_soon)
         km._name_of = lambda sid: "web"
         km._sdk = lambda: None
-        km._send_or_park = lambda be, sid, text, echo=None, user_todo=None: True
+        km._send_or_park = lambda be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None: False   # handed over now
         km._push_soon = lambda: None
         try:
             km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "OAuth, please"}, client)

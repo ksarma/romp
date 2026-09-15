@@ -393,18 +393,6 @@ class WakeCause(unittest.TestCase):
             with km._clients_lock:
                 km._clients[:] = saved
 
-    def test_the_tmux_echo_is_a_live_wake_for_its_sid(self):
-        saved = km._sdk
-        km._sdk = lambda: None                        # no SDK backend owns the sid: the tmux echo path
-        try:
-            km._optimistic_echo(OTHER, "a typed message")
-        finally:
-            km._sdk = saved
-            with km._tmux_echo_lock:
-                km._tmux_echo.pop(OTHER, None)
-        self.assertTrue(km._pusher_wake.is_set())
-        self.assertEqual(km._take_live_wake_sids(), frozenset({OTHER}))
-
     def test_the_kernel_hands_the_sdk_backend_the_cause_carrying_wake(self):
         with open(os.path.join(BIN, "romp-kernel")) as f:
             src = f.read()

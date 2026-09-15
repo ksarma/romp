@@ -39,22 +39,42 @@ PY
 @test "install.sh: wires hooks, settings.json, and the MCP config on a fresh machine" {
     run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
-    [ -L "$HOME/.claude/hooks/tmux-status.sh" ]
-    [[ "$(readlink "$HOME/.claude/hooks/tmux-status.sh")" == *"/hooks/tmux-status.sh" ]]
-    [ "$(count_cmd Stop tmux-status.sh)" = "1" ]
-    [ "$(count_cmd Stop romp-summarize.sh)" = "1" ]
+    [ -L "$HOME/.claude/hooks/romp-wake.sh" ]
+    [[ "$(readlink "$HOME/.claude/hooks/romp-wake.sh")" == *"/hooks/romp-wake.sh" ]]
+    [ "$(count_cmd Stop romp-wake.sh)" = "1" ]
+    [ "$(count_cmd Stop romp-summarize.sh)" = "0" ]   # retired 2026-09-11, never registered again
+    [ "$(count_cmd Stop tmux-status.sh)" = "0" ]      # retired the same day, never registered again
     [ "$(count_cmd Stop romp-postal-drain.sh)" = "1" ]
     [ "$(count_cmd SessionStart romp-postal-ensure.sh)" = "1" ]
     [ "$(count_cmd SessionStart romp-usertodo-context.sh)" = "1" ]
     [ -L "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
-    [ "$(count_cmd PostToolUse tmux-status.sh)" = "1" ]
-    # a compaction's END wakes the kernel too: a parked op behind a tmux /compact delivers on this event
-    [ "$(count_cmd PostCompact tmux-status.sh)" = "1" ]
+    [ "$(count_cmd UserPromptSubmit romp-wake.sh)" = "1" ]
+    # a compaction's END wakes the kernel too: the op parked behind a /compact delivers on this event
     [ "$(count_cmd PostCompact romp-wake.sh)" = "1" ]
     [ -L "$HOME/.claude/romp-postal.mcp.json" ]
     # romp's own Bash-side track guard (hooks/romp-track-bash-guard.mjs) is linked with the rest
     [ -L "$HOME/.claude/hooks/romp-track-bash-guard.mjs" ]
     [ "$(readlink "$HOME/.claude/hooks/romp-track-bash-guard.mjs")" = "$ROMP_DIR/hooks/romp-track-bash-guard.mjs" ]
+}
+
+@test "install.sh: registers no status hook — the SDK backend records a session's state itself" {
+    # Until 2026-09-11 a status hook (hooks/tmux-status.sh) sat on seven events. It painted the tmux
+    # status bar; the states/<sid>.jsonl rows of a Claude Code session were always the SDK backend's
+    # own writes, so nothing replaced it. A fresh install links and registers nothing of that shape on
+    # any event, and the three events only it sat on (PostToolUse, Notification, PreCompact) are not
+    # created: an event with no hooks would be `[{"hooks": []}]` litter. On this fork PreToolUse is the
+    # fifth event: it holds the two tracked-changes guards (the vendored track-guard.mjs and romp's own
+    # Bash-side guard), registered by the same install.
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ -z "$(find "$HOME/.claude/hooks" -name '*-status.sh')" ]
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+hooks = json.load(open(sys.argv[1]))["hooks"]
+cmds = [(ev, h["command"]) for ev, groups in hooks.items() for g in groups for h in g.get("hooks", [])]
+assert not [c for c in cmds if c[1].endswith("-status.sh")], cmds
+assert sorted(hooks) == ["PostCompact", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"], sorted(hooks)
+PY
 }
 
 @test "install.sh: idempotent — a second run adds no duplicate hook entries" {
@@ -63,8 +83,8 @@ PY
     run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"already registered"* ]]
-    [ "$(count_cmd Stop tmux-status.sh)" = "1" ]
-    [ "$(count_cmd UserPromptSubmit romp-summarize.sh)" = "1" ]
+    [ "$(count_cmd Stop romp-wake.sh)" = "1" ]
+    [ "$(count_cmd UserPromptSubmit romp-summarize.sh)" = "0" ]
     # regression: a re-run used to FOLLOW the existing skill dir-symlink and drop a new link INSIDE
     # the repo (claude/skills/romp-postal/romp-postal → an absolute personal path). ln -sfn replaces
     # the link.
@@ -116,19 +136,167 @@ PY
     [ -f "$HOME/.claude/skills/romp/SKILL.md" ]
 }
 
+@test "install.sh: upgrading de-registers the retired announcer hook and unlinks it, leaving other hooks alone" {
+    # hooks/romp-summarize.sh (the live tmux phrase) was removed 2026-09-11 with the tmux backend's
+    # dead leaves. An install from before still registers it on UserPromptSubmit and Stop and holds a
+    # symlink to a file this repo no longer ships; upgrading must clear both, or Claude Code shells a
+    # missing path on every prompt and every turn end. Other hooks, romp's and the user's, stay.
+    mkdir -p "$HOME/.claude/hooks"
+    ln -s "$ROMP_DIR/hooks/romp-summarize.sh" "$HOME/.claude/hooks/romp-summarize.sh"
+    cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "UserPromptSubmit": [ { "hooks": [
+      { "type": "command", "command": "~/.claude/hooks/romp-summarize.sh", "timeout": 10, "async": true } ] } ],
+    "Stop": [ { "hooks": [
+      { "type": "command", "command": "my-own-hook.sh" },
+      { "type": "command", "command": "~/.claude/hooks/romp-summarize.sh", "timeout": 10, "async": true } ] } ],
+    "SubagentStop": [ { "hooks": [
+      { "type": "command", "command": "~/.claude/hooks/romp-summarize.sh", "timeout": 10, "async": true } ] } ]
+  }
+}
+JSON
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp-summarize.sh"* ]]          # the upgrade says what it removed
+    [ ! -L "$HOME/.claude/hooks/romp-summarize.sh" ]
+    [ ! -e "$HOME/.claude/hooks/romp-summarize.sh" ]
+    [ "$(count_cmd UserPromptSubmit romp-summarize.sh)" = "0" ]
+    [ "$(count_cmd Stop romp-summarize.sh)" = "0" ]
+    [ "$(count_cmd Stop my-own-hook.sh)" = "1" ]       # the user's own hook survives
+    [ "$(count_cmd Stop romp-wake.sh)" = "1" ]         # the live hooks are registered as before
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))
+assert "SubagentStop" not in s["hooks"], list(s["hooks"])   # an event emptied by the removal is pruned, no litter
+PY
+}
+
+@test "install.sh: a real file named like the retired announcer hook is left alone" {
+    # Someone's own hook of that name is theirs; only the symlink install.sh once wrote is removed.
+    mkdir -p "$HOME/.claude/hooks"
+    echo "mine" > "$HOME/.claude/hooks/romp-summarize.sh"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ -f "$HOME/.claude/hooks/romp-summarize.sh" ]
+    [ "$(cat "$HOME/.claude/hooks/romp-summarize.sh")" = "mine" ]
+}
+
+@test "install.sh: the retired-hook prune leaves a user's own empty and matcher-only groups alone" {
+    # The prune drops only a group OUR removal emptied and an event it left with no groups. A user's
+    # placeholder group (a matcher with no hooks yet, an empty group on an event romp never registers)
+    # is theirs and must survive both a fresh install (which writes the file) and an upgrade re-run.
+    # On this fork the user's Bash placeholder is also where romp's Bash-side track guard registers (the
+    # merge keys PreToolUse groups by matcher, the coexist tests): the group keeps its matcher and gains
+    # that one hook, and the vendored guard gets its own Write|Edit|MultiEdit group beside it.
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.json" <<'JSON'
+{
+  "hooks": {
+    "PreToolUse": [ { "matcher": "Bash", "hooks": [] } ],
+    "SubagentStart": [ { "hooks": [] } ],
+    "Stop": [ { "hooks": [
+      { "type": "command", "command": "~/.claude/hooks/romp-summarize.sh", "timeout": 10, "async": true } ] } ]
+  }
+}
+JSON
+    for _pass in fresh upgrade; do
+        run "$ROMP_DIR/install.sh"
+        [ "$status" -eq 0 ]
+        python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))["hooks"]
+assert [g.get("matcher") for g in s["PreToolUse"]] == ["Bash", "Write|Edit|MultiEdit"], s.get("PreToolUse")
+assert [h["command"] for h in s["PreToolUse"][0]["hooks"]] == ["~/.claude/hooks/romp-track-bash-guard.mjs"], s["PreToolUse"][0]
+assert s["SubagentStart"] == [{"hooks": []}], s.get("SubagentStart")
+stop = [h["command"] for g in s["Stop"] for h in g["hooks"]]
+assert not any(c.endswith("romp-summarize.sh") for c in stop), stop
+assert any(c.endswith("romp-wake.sh") for c in stop), stop
+PY
+    done
+}
+
+@test "install.sh: a symlink to someone else's live script of the retired hook's name survives" {
+    # Only a link install.sh could have written goes: one into this checkout, or a dangling one of that
+    # shape (a checkout since moved). A user's own live script linked from their dotfiles is theirs.
+    mkdir -p "$HOME/dotfiles/hooks" "$HOME/.claude/hooks"
+    echo "mine" > "$HOME/dotfiles/hooks/romp-summarize.sh"
+    ln -s "$HOME/dotfiles/hooks/romp-summarize.sh" "$HOME/.claude/hooks/romp-summarize.sh"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ -L "$HOME/.claude/hooks/romp-summarize.sh" ]
+    [ "$(cat "$HOME/.claude/hooks/romp-summarize.sh")" = "mine" ]
+    [[ "$output" != *"retired romp-summarize.sh"* ]]
+    # ...while a DANGLING link of that shape (a romp checkout that has since moved) is still removed
+    rm "$HOME/.claude/hooks/romp-summarize.sh"
+    ln -s "$HOME/old-romp/hooks/romp-summarize.sh" "$HOME/.claude/hooks/romp-summarize.sh"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ ! -L "$HOME/.claude/hooks/romp-summarize.sh" ]
+    [ ! -e "$HOME/.claude/hooks/romp-summarize.sh" ]
+}
+
+@test "install.sh: upgrading de-registers the retired status hook on all seven events and unlinks it, wiring nothing in its place" {
+    # hooks/tmux-status.sh, the hook that painted the tmux status bar, left 2026-09-11 with the tmux
+    # backend; nothing replaces it, since the SDK backend records a Claude Code session's state
+    # itself. An install from before registers it on seven events and holds a symlink to a path this
+    # repo no longer ships: left in place, Claude Code would shell a missing path on every one of
+    # those events in every session. Upgrading clears both, prunes the three events only it sat on
+    # rather than leaving empty groups, and links nothing of that shape; the user's own hooks and
+    # romp's other hooks stay.
+    mkdir -p "$HOME/.claude/hooks"
+    ln -s "$ROMP_DIR/hooks/tmux-status.sh" "$HOME/.claude/hooks/tmux-status.sh"
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+old = {"type": "command", "command": "~/.claude/hooks/tmux-status.sh", "timeout": 5, "async": False}
+events = ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "Notification", "PreCompact", "PostCompact")
+hooks = {ev: [{"hooks": [dict(old)]}] for ev in events}
+hooks["Stop"][0]["hooks"].insert(0, {"type": "command", "command": "my-own-hook.sh"})
+json.dump({"hooks": hooks}, open(sys.argv[1], "w"), indent=2)
+PY
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tmux-status.sh"* ]]              # the upgrade says what it removed
+    [ ! -L "$HOME/.claude/hooks/tmux-status.sh" ]
+    [ ! -e "$HOME/.claude/hooks/tmux-status.sh" ]
+    [ -z "$(find "$HOME/.claude/hooks" -name '*-status.sh')" ]
+    for ev in SessionStart UserPromptSubmit PostToolUse Stop Notification PreCompact PostCompact; do
+        [ "$(count_cmd "$ev" -status.sh)" = "0" ]
+    done
+    python3 - "$HOME/.claude/settings.json" <<'PY'
+import json, sys
+hooks = json.load(open(sys.argv[1]))["hooks"]
+for ev in ("PostToolUse", "Notification", "PreCompact"):
+    assert ev not in hooks, (ev, hooks[ev])       # emptied by the removal, so pruned: no litter
+PY
+    [ "$(count_cmd Stop my-own-hook.sh)" = "1" ]        # the user's own hook survives
+    [ "$(count_cmd Stop romp-postal-drain.sh)" = "1" ]  # romp's other hooks are wired as on a fresh install
+    [ "$(count_cmd Stop romp-wake.sh)" = "1" ]
+}
+
+@test "install.sh: a real file named like the status hook's old name is left alone" {
+    mkdir -p "$HOME/.claude/hooks"
+    echo "mine" > "$HOME/.claude/hooks/tmux-status.sh"
+    run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [ -f "$HOME/.claude/hooks/tmux-status.sh" ]
+    [ "$(cat "$HOME/.claude/hooks/tmux-status.sh")" = "mine" ]
+    [ -L "$HOME/.claude/hooks/romp-wake.sh" ]           # romp's own hooks are wired regardless
+}
+
 @test "install.sh: preflight fails clearly when node is missing" {
     ROMP_NODE=romp-test-no-such-node run "$ROMP_DIR/install.sh"
     [ "$status" -ne 0 ]
     [[ "$output" == *"Node.js not found"* ]]
     [[ "$output" == *"brew install node"* ]]
     # nothing was installed: the preflight runs before any mutation
-    [ ! -e "$HOME/.claude/hooks/tmux-status.sh" ]
+    [ ! -e "$HOME/.claude/hooks/romp-wake.sh" ]
 }
 
 @test "install.sh: ROMP_SKIP_PREFLIGHT bypasses the checks" {
     ROMP_NODE=romp-test-no-such-node ROMP_SKIP_PREFLIGHT=1 run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
-    [ -L "$HOME/.claude/hooks/tmux-status.sh" ]
+    [ -L "$HOME/.claude/hooks/romp-wake.sh" ]
 }
 
 # The login-service step (the user's rescue_me, 2026-07-21): a webview deploy must never bootout a
@@ -139,8 +307,10 @@ _svc_stub() {   # write a fake romp-service to $1; behavior toggled by ROMP_SVC_
 #!/usr/bin/env bash
 echo "$1" >> "$ROMP_SVC_LOG"
 case "$1" in
-  status) echo "installed: /tmp/plist"; [[ -n "${ROMP_SVC_RUNNING:-}" ]] && echo "running" ;;
-  install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; } ;;
+  status) echo "installed: /tmp/plist"; [[ -n "${ROMP_SVC_RUNNING:-}" ]] && echo "running"
+          [[ -n "${ROMP_SVC_DYING:-}" ]] && echo "loaded but not running (last exit code: 134); launchd keeps respawning it — check /tmp/manager.log" ;;
+  install) [[ -n "${ROMP_SVC_FAIL:-}" ]] && { echo "romp-service: bootstrap lost the drain-race" >&2; exit 1; }
+           [[ -n "${ROMP_SVC_HELD:-}" ]] && { echo "romp-service: the agent's manager exited at once because a manager is ALREADY serving on :7432 outside the login service" >&2; exit 3; } ;;
 esac
 exit 0
 SH
@@ -159,12 +329,41 @@ SH
     ! grep -qx install "$TEST_DIR/svc.log"
 }
 
+@test "install.sh: a loaded manager that keeps dying is reinstalled, not left up (the status line that is not running)" {
+    # issue 1600, the status fix: romp-service says "loaded but not running (last exit code: N)" for a crash-looping
+    # job; the shortcut keys on the bare line `running` (an exact whole-line grep), so this takes the reinstall branch
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_DYING=1
+    ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"already running"* ]]
+    grep -qx install "$TEST_DIR/svc.log"
+}
+
 @test "install.sh: installs the service when romp-manager is NOT running" {
     unset ROMP_NO_SERVICE
     _svc_stub "$TEST_DIR/romp-service"
     export ROMP_SVC_LOG="$TEST_DIR/svc.log"   # ROMP_SVC_RUNNING unset -> not running
     ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
     [ "$status" -eq 0 ]
+    grep -qx install "$TEST_DIR/svc.log"
+}
+
+@test "install.sh: a manager already serving outside the service is named as such, not as a dead dashboard (romp-service exit 3)" {
+    unset ROMP_NO_SERVICE
+    _svc_stub "$TEST_DIR/romp-service"
+    export ROMP_SVC_LOG="$TEST_DIR/svc.log" ROMP_SVC_HELD=1
+    ROMP_INSTALL_TOKEN_TRIES=1 ROMP_SERVICE_BIN="$TEST_DIR/romp-service" run "$ROMP_DIR/install.sh"
+    [ "$status" -ne 0 ]                                            # the service is still not the one running
+    [[ "$output" == *"a manager already serving on the control port holds it"* ]]
+    [[ "$output" == *"most likely a hand-run romp up outside the service"* ]]
+    [[ "$output" != *"dashboard will be dead"* ]]
+    [[ "$output" != *"dashboard is up"* ]]                          # the control port proves a manager, not the dashboard
+    # round two: romp IS serving in this state, so the run goes on to the finish line (the link, or how to print it) and
+    # the end-of-run banner, and exits non-zero at the END, not before them
+    [[ "$output" == *"romp url"* ]]
+    [[ "$output" == *"exiting non-zero"* ]]
     grep -qx install "$TEST_DIR/svc.log"
 }
 
@@ -230,7 +429,7 @@ s = json.load(open(sys.argv[1]))
 assert s["model"] == "opus", "unrelated settings preserved"
 stop = [h["command"] for r in s["hooks"]["Stop"] for h in r["hooks"]]
 assert "my-own-hook.sh" in stop, stop
-assert any(c.endswith("tmux-status.sh") for c in stop), stop
+assert any(c.endswith("romp-wake.sh") for c in stop), stop
 PY
 }
 
@@ -653,40 +852,6 @@ EOF
     [ "$(grep -c -- 'git push --no-verify' <<<"$output")" -eq 1 ]
     [[ "${output##*personal identifier}" == *"git push --no-verify"* ]]
     [[ "${output##*gitleaks found a credential}" == *"git push --no-verify"* ]]
-}
-
-# ─── Claude Code version notice ──────────────────────────────────────
-
-_stub_claude() {   # $1 = the version the stub reports; PATH-prepended so install.sh's probe sees it
-    mkdir -p "$TEST_DIR/mock"
-    cat > "$TEST_DIR/mock/claude" <<STUB
-#!/usr/bin/env bash
-echo "$1 (Claude Code)"
-STUB
-    chmod +x "$TEST_DIR/mock/claude"
-    export PATH="$TEST_DIR/mock:$PATH"
-}
-
-@test "install.sh: an old Claude Code gets the upgrade notice at the end" {
-    _stub_claude "2.1.220"
-    run "$ROMP_DIR/install.sh"
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"2.1.220"* ]]
-    [[ "$output" == *"claude update"* ]]
-}
-
-@test "install.sh: a current Claude Code gets no upgrade notice" {
-    _stub_claude "2.1.226"
-    run "$ROMP_DIR/install.sh"
-    [ "$status" -eq 0 ]
-    [[ "$output" != *"claude update"* ]]
-}
-
-@test "install.sh: the version floor matches bin/romp's (no drift)" {
-    a="$(sed -n 's/^ROMP_CLAUDE_FLOOR="\(.*\)"$/\1/p' "$ROMP_DIR/install.sh" | head -1)"
-    b="$(sed -n 's/^ROMP_CLAUDE_FLOOR="\(.*\)"$/\1/p' "$ROMP_DIR/bin/romp" | head -1)"
-    [ -n "$a" ]
-    [ "$a" = "$b" ]
 }
 
 # ─── the tracked-changes tooling (vendor/track-changents) ─────────────

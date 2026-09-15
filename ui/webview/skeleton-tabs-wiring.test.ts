@@ -14,6 +14,7 @@ import { atBottomDist } from "./scroll-keep";
 import { isReplyReady } from "./reply-ready";
 import { hostOf } from "./host-prefix";
 import { hideEdges, staysEnumerable } from "../test-dom-shim";
+import { isProvisionalId } from "./provisional";   // the loading branch's one "opening" gate (2026-09-11): the real module
 
 const requireCjs = createRequire(__filename);
 const WEBVIEW = path.resolve(process.cwd(), "..", "ui", "webview");
@@ -27,7 +28,7 @@ const fn = (name: string): string => {
 };
 
 test("render.ts holds ONE skeleton set, declared beside tabMeta, and reads the active session through liveSession", () => {
-  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind \} from "\.\/skeleton-tabs";/);
+  assert.match(RENDER, /import \{ newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch, renderKind \} from "\.\/skeleton-tabs";/);
   // beside tabMeta / closingTabs / pendingTabMeta (below them: tab-close-optimistic.test.ts wants closingTabs within
   // 900 characters of tabMeta) — renderTabs reads it and can run before the module finishes evaluating
   assert.match(RENDER, /const pendingTabMeta = new Map<string, PendingTabMeta>\(\);\n(?:\/\/[^\n]*\n)*const skeletonTabs = newSkeletonState\(\);/);
@@ -59,19 +60,20 @@ test("renderTabs draws a skeleton tab BEFORE the placeholder branch; both draw t
   assert.match(rt, /const s = sessions\.get\(id\);\s*\n(?:\s*\/\/[^\n]*\n)?\s*if \(renderKind\(skeletonTabs, id, !!s\) === "skeleton"\) \{\s*\n\s*const sk = makeSkeletonTab\(id\);\s*\n\s*if \(copyGroup !== undefined\) sk\.dataset\.copy = copyGroup \?\? "";[^\n]*\n\s*bar\.appendChild\(sk\); continue;\s*\n\s*\}\s*\n\s*if \(!s\) \{\s*\n\s*const ph = makePlaceholderTab\(id\);/,
     "skeleton first: a stale session entry must not make the tab read as loaded");
   assert.match(rt, /const st = applyTabStatus\(tab, s\);/, "the loaded tab's chip comes from the shared helper");
-  assert.match(rt, /appendTabCtxGauge\(tab, s\);/, "…and its gauge");
+  assert.match(rt, /appendTabAfterWidgets\(tab, s\);/, "…and its after-the-name widgets (the gauge, the hot-key keycap; T379)");
   assert.match(rt, /wireTabDrag\(tab, id\);/, "…and its drag listeners");
   // exactly ONE status→class/dot block in the file: the helper (the "MISSING state" ring included — since T262g the
   // dot's class is tab-state.ts's tabDotClass, one slot in every state, so the file has ONE call and no ring literal)
-  assert.equal(RENDER.split("const dotCls = tabDotClass(st);").length - 1, 1, "one dot-slot site: applyTabStatus");
+  assert.equal(RENDER.split("const dotCls = tabDotClass(st);").length - 1, 0, "no dot-slot site in render.ts: the dot is a widget (tab-widgets.ts, T379)");
+  assert.equal(RENDER.split('composeTabWidgets(tab, "before"').length - 1, 1, "one before-slot composition: applyTabStatus");
   assert.equal(RENDER.split('el("span", "tab-dot unknown")').length - 1, 0, "no hand-rolled unknown ring anywhere");
   // …and the state → class step inside it is tab-state.ts's shared rule (tab groups, 2026-09-04: the folded
   // section header's pip reads the same function), so the file has ONE such call and no hand-rolled class literal
   assert.equal(RENDER.split("const stateCls = tabStateClass(s.status);").length - 1, 1, "one state-class site: applyTabStatus wears the shared rule");
   assert.equal(RENDER.split('tab.classList.add("tab-working")').length - 1, 0, "no hand-rolled state class anywhere");
   const chip = fn("applyTabStatus");
-  assert.match(chip, /^function applyTabStatus\(tab: HTMLElement, s: \{ status: Partial<Status> \}\): ChipState \| undefined \{\s*\n\s*const st = s\.status\.state;/);
-  assert.match(chip, /const dotCls = tabDotClass\(st\);\s*\n\s*if \(dotCls\) tab\.appendChild\(el\("span", dotCls\)\);/, "no state → the honest unknown ring (tabDotClass: a missing state is the gray ring)");
+  assert.match(chip, /^function applyTabStatus\(tab: HTMLElement, s: \{ id\?: string; status: Partial<Status> \}\): ChipState \| undefined \{\s*\n\s*const st = s\.status\.state;/);
+  assert.match(chip, /composeTabWidgets\(tab, "before", s\.id \|\| "", s\.status, settings\.tabWidgets\);/, "no state → the honest unknown ring: the dot widget renders tabDotClass, a missing state is the gray ring (T379)");
   assert.match(chip, /return st;\s*\n\}/);
 });
 
@@ -84,11 +86,11 @@ test("makeSkeletonTab: the loaded-tab chrome minus what it does not know — no 
   assert.match(sk, /tab\.dataset\.id = id;/);
   assert.match(sk, /tab\.dataset\.act = "select";/, "the stable #tabs delegate — click-safe like every tab");
   assert.match(sk, /tab\.addEventListener\("keydown", onTabKey\);/);
-  assert.match(sk, /tab\.draggable = !fedMissing;\s*\n\s*wireTabDrag\(tab, id\);/, "a real live session: reordering is legitimate — unless the page has no manager to arrange it (2026-09-10)");
+  assert.match(sk, /tab\.draggable = !fedMissing && !settings\.tabsLocked;\s*\n\s*wireTabDrag\(tab, id\);/, "a real live session: reordering is legitimate — unless the page has no manager to arrange it (2026-09-10), or the tabs are locked (T395)");
   assert.match(sk, /tab\.classList\.add\("colored"\)/);
-  assert.match(sk, /const status = skeletonTabs\.status\.get\(id\) as Status \| undefined;\s*\n\s*applyTabStatus\(tab, \{ status: status \?\? \{\} \}\);/,
+  assert.match(sk, /const status = skeletonTabs\.status\.get\(id\) as Status \| undefined;\s*\n\s*applyTabStatus\(tab, \{ id, status: status \?\? \{\} \}\);/,
     "the chip reads ONLY the kernel's status frames; none yet → an empty status → the unknown ring");
-  assert.match(sk, /if \(status\) appendTabCtxGauge\(tab, \{ status \}\);/, "the gauge only from a kernel-sent status");
+  assert.match(sk, /if \(status\) appendTabAfterWidgets\(tab, \{ id, status \}\);/, "the gauge (and the keycap) only from a kernel-sent status");
   assert.match(sk, /const dead = status\?\.state === "closed";\s*\n\s*closeBtn\.title = dead \? "Close tab" : "End session";\s*\n\s*if \(dead\) closeBtn\.dataset\.dead = "1";/,
     "a dead session drawn as a skeleton drops like a dead loaded tab (the delegate's dead branch), no End confirm (review find 2026-09-08)");
   assert.match(sk, /tab\.title = "Not loaded yet — click to load";/);
@@ -98,20 +100,24 @@ test("makeSkeletonTab: the loaded-tab chrome minus what it does not know — no 
   assert.doesNotMatch(sk, /showTabTip/, "no rich hover tip — it reads a session's dir/model");
   assert.match(fn("makePlaceholderTab"), /tab-ph-swirl/, "the placeholder keeps its swirl");
   // DOM order label → gauge → ✕ (the ✕ keeps the right edge), as on a loaded tab
-  const label = sk.indexOf("tab.appendChild(label);"), gauge = sk.indexOf("appendTabCtxGauge(tab"), close = sk.indexOf('const closeBtn = el("span", "tab-close");');
+  const label = sk.indexOf("tab.appendChild(label);"), gauge = sk.indexOf("appendTabAfterWidgets(tab"), close = sk.indexOf('const closeBtn = el("span", "tab-close");');
   assert.ok(label >= 0 && label < gauge && gauge < close);
   // the builders sit ABOVE makePlaceholderTab: tabs-first.test.ts slices makePlaceholderTab→renderTabs and
   // forbids close/drag there, and tab-ctx-gauge.test.ts orders the file's first label < gauge < `const close`
   const ph = RENDER.indexOf("function makePlaceholderTab(");
-  for (const f of ["applyTabStatus", "wireTabDrag", "makeSkeletonTab", "appendTabCtxGauge"]) assert.ok(RENDER.indexOf(`function ${f}(`) < ph, f + " above the placeholder builder");
+  for (const f of ["applyTabStatus", "wireTabDrag", "makeSkeletonTab", "appendTabAfterWidgets"]) assert.ok(RENDER.indexOf(`function ${f}(`) < ph, f + " above the placeholder builder");
 });
 
-test("statusOnly begins with the skeleton branch: store + scheduleRenderTabs (one frame for a burst), never renderTabs or the no-base ask", () => {
+test("statusOnly begins with the skeleton branch: store + scheduleRenderTabs (one frame for a burst), never renderTabs; a status for a session the page holds nothing of is HELD for its strip, never the no-base ask", () => {
   const body = RENDER.split("function statusOnly(msg: any) {")[1].split("\n}")[0];
   const first = body.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("//"))[0];
   assert.equal(first, 'if (onStatus(skeletonTabs, msg.id, msg.status) === "skeleton") { scheduleRenderTabs(); return; }');
-  assert.ok(body.indexOf("onStatus(skeletonTabs") < body.indexOf('if (!s) { requestFullSession(msg.id, "nobase"); return; }'),
-    "the no-base repair still follows, unchanged, for every non-skeleton sid");
+  // The shim's FIFO carries a newer strip to the END of a burst, so a skeleton's statuses can land ahead of the strip that
+  // names the set (a later chat column's open sends two strips, 2026-09-11): the status waits for the strip. The ask that
+  // stood here loaded the whole board into a column opened as a view of one session, one ask per withheld tab.
+  assert.match(body, /const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*holdStatus\(skeletonTabs, msg\.id, msg\.status\); return;\s*\n\s*\}/,
+    "no session and not a skeleton: the status is held for the strip");
+  assert.doesNotMatch(body, /"nobase"/, "statusOnly never asks for a full: a status frame is only ever a skeleton tab's");
   const skel = body.slice(0, body.indexOf("const s = sessions.get(msg.id);"));
   assert.doesNotMatch(skel, /\brenderTabs\(\)/, "sixteen status frames land in one burst — one animation frame, not sixteen synchronous repaints");
 });
@@ -126,8 +132,8 @@ test("chatTail and update ask for the full on a skeleton id BEFORE their no-base
 test("showActive gates the active session on the set, shows the loader with LOADING copy, and asks after notifyActive", () => {
   const sa = fn("showActive");
   assert.match(sa, /const s = activeId \? liveSession\(activeId\) : null;\s*\n\s*if \(!s\) \{/, "a skeleton active takes the existing !s branch");
-  assert.match(sa, /const skeleton = skeletonTabs\.ids\.has\(activeId\);\s*\n\s*skeletonLoading = skeleton \? activeId : null;[^\n]*\n\s*if \(skeleton\) wait\.appendChild\(rompLoaderInner\("loading " \+ what \+ "…"\)\);\s*\n\s*else wait\.appendChild\(rompLoaderInner\("opening " \+ what \+ "…"\)\);/,
-    "a running session is LOADING; 'opening' would claim a start that is not happening (the placeholder keeps its line)");
+  assert.match(sa, /const skeleton = skeletonTabs\.ids\.has\(activeId\);\s*\n\s*skeletonLoading = skeleton \? activeId : null;[^\n]*\n\s*if \(isProvisionalId\(activeId\)\) wait\.appendChild\(rompLoaderInner\("opening " \+ what \+ "…"\)\);\s*\n\s*else wait\.appendChild\(rompLoaderInner\("loading " \+ what \+ "…"\)\);/,
+    "a running session is LOADING, a skeleton or not; 'opening' is the provisional's alone — a new split column's session on its way said 'opening' and read as a create (2026-09-11)");
   assert.match(sa, /if \(skeleton\) requestFullSession\(activeId, "skeleton-click"\);/);
   // activeTab (notifyActive) precedes needFull on the wire → the kernel builds the new active first
   assert.ok(sa.indexOf("notifyActive();") < sa.indexOf('requestFullSession(activeId, "skeleton-click")'));
@@ -136,7 +142,7 @@ test("showActive gates the active session on the set, shows the loader with LOAD
   // prefetch skips the active tab by design, so nothing else would load it
   assert.equal(RENDER.split('"skeleton-click"').length - 1, 2, "one call site (+ the type's literal)");
   assert.match(fn("setActive"), /renderTabs\(\);\s*\n\s*showActive\(\);/, "the click path: strip repaint, then showActive → loader + ask");
-  assert.match(fn("dismissSession"), /activeId = mru\.find\([\s\S]*?showActive\(\);/, "the fallback path lands in showActive too");
+  assert.match(fn("dismissSession"), /activeId = next\.activeId;[\s\S]*?showActive\(\);/, "the fallback path (and the unfocused one, T357) lands in showActive too");
   // The branch ends by taking the leaving tab's chips down (run in the chip tests below). They were measured
   // against ITS transcript, and a tab left at the top of a long one fires none of the chips' events on the switch:
   // no scroll clamp (scrollTop is 0 and stays 0) and no #content resize (the pane's height is the body minus its
@@ -160,7 +166,8 @@ test("upsert computes wasSkeleton beside awaitingFull.delete and routes a just-l
 
 test("the idle prefetch: runPrebuild asks nextPrefetch (hidden = document.hidden || the pane display:none) for exactly one, and viewState is null for a skeleton", () => {
   const run = fn("runPrebuild");
-  assert.match(run, /if \(pendingBuildRaf != null\) \{ schedulePrebuild\(\); return; \}[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const next = nextPrefetch\(skeletonTabs, activeId, awaitingFull, document\.hidden \|\| paneHidden\(\), tabInView\);\s*\n\s*if \(next\) requestFullSession\(next, "prefetch"\);/);
+  assert.match(run, /if \(pendingBuildRaf != null\) \{ schedulePrebuild\(\); return; \}[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const next = nextPrefetch\(skeletonTabs, activeId, awaitingFull, document\.hidden \|\| paneHidden\(\), stripShowsTab\);\s*\n\s*if \(next\) requestFullSession\(next, "prefetch"\);/,
+    "…for exactly one tab the strip SHOWS (tabInView and the #only= filter, the user 2026-09-14: hidden tabs are not built until shown)");
   assert.match(run, /const viewState = \(id: string\): ViewState \| null => \{\s*\n\s*if \(skeletonTabs\.ids\.has\(id\)\) return null;/,
     "the pure planner never builds DOM for a stale session");
   assert.match(RENDER, /function paneHidden\(\): boolean \{\s*\n\s*try \{ return \(window\.parent !== window && \(window\.innerWidth === 0 \|\| window\.innerHeight === 0\)\) \|\| \(window as PaneHiddenHost\)\.__rompPaneHidden === true; \}/,
@@ -193,22 +200,23 @@ test("run: render.ts's paneHidden() over window stand-ins says hidden when the p
 });
 
 test("requestFullSession(id, why): every ask names its why, from the fixed vocabulary", () => {
-  assert.match(RENDER, /type NeedFullWhy = "gap" \| "nobase" \| "skeleton-click" \| "prefetch" \| "skeleton-delta";/);
-  // the three anchors in order; this fork's body keeps its provisional/closing-tab and detached-host gates between the
-  // first and the second (standing since 2026-08-18), so the pin reads the anchors, not one contiguous regex
+  assert.match(RENDER, /type NeedFullWhy = "gap" \| "nobase" \| "skeleton-click" \| "prefetch" \| "skeleton-delta";/);   // reattach retired with the detached client (T386 stage 2)
+  // the three anchors in order; this fork's body keeps its provisional/closing-tab gate (standing since 2026-08-18) and its
+  // host gate between the first and the second, so the pin reads the anchors, not one contiguous regex
   const rfs = fn("requestFullSession");
   assert.match(rfs, /^function requestFullSession\(id: string, why: NeedFullWhy\): void \{\s*\n\s*if \(!id \|\| awaitingFull\.has\(id\)\) return;/, "the guard first");
   const addAt = rfs.indexOf("awaitingFull.add(id);"), postAt = rfs.indexOf('vscodeApi?.postMessage({ type: "needFull", id, why });');
   assert.ok(addAt > 0 && postAt > addAt, "awaitingFull.add(id), then the needFull post carrying the why");
   assert.equal((rfs.match(/postMessage\(/g) || []).length, 1, "one post, the wire's");
   const calls = [...RENDER.matchAll(/requestFullSession\(([^()]*?)\)/g)].map((m) => m[1]).filter((a) => !a.startsWith("id: string"));
-  assert.ok(calls.length >= 6, "the gap, no-base ×5, skeleton-delta ×2, skeleton-click and prefetch sites");
+  assert.ok(calls.length >= 10, "the gap ×3, no-base ×3, skeleton-delta ×2, skeleton-click and prefetch sites (the reattach site and a missing chatMore's gap retired with the detached client, T386 stage 2)");
   for (const c of calls) assert.match(c, /, "(gap|nobase|skeleton-click|prefetch|skeleton-delta)"$/, `call site without a why: requestFullSession(${c})`);
   const why = (w: string) => RENDER.split(`, "${w}")`).length - 1;
-  assert.equal(why("gap"), 1);
-  assert.equal(why("nobase"), 5, "upstream's three (update, chatTail and statusOnly, a push for a session this page does not hold) "
-    + "plus this fork's two: the tabOrder teardown-then-relist re-ask (2026-08-18) and the endFailed arm, which re-asks for the tab the End dropped");
-  assert.equal(why("skeleton-delta"), 2);
+  assert.equal(why("gap"), 3, "the index tail's, the uuid tail's and a missing chatHead's (an anchor gone from the transcript; chatMore is retired)");
+  assert.equal(why("nobase"), 3, "upstream's two (chatTail and update; statusOnly holds a status for its strip instead, 2026-09-11) "
+    + "plus this fork's tabOrder teardown-then-relist re-ask (2026-08-18); the endFailed arm's re-ask retired with the arm, which no kernel sends since the "
+    + "kill path stopped corroborating an end (the pull-in ruling of 2026-09-15, item 16)");
+  assert.equal(why("skeleton-delta"), 2); assert.equal(why("reattach"), 0, "no detached client, no re-attach (T386 stage 2)");
   assert.equal(why("skeleton-click"), 1); assert.equal(why("prefetch"), 1);
 });
 
@@ -249,7 +257,8 @@ test("the click path's loader latch: showActive latches the skeleton it is loadi
 
 test("the statusline over a skeleton tab says Loading, the word its loader uses, not Opening", () => {
   const usl = fn("updateStatusline");
-  assert.match(usl, /const loading = skeletonTabs\.ids\.has\(activeId\) \|\| skeletonLoading === activeId;\s*\n\s*sl\.replaceChildren\(openingLine\(loading \? "Loading session" : "Opening session"\)\);/);
+  assert.match(usl, /sl\.replaceChildren\(openingLine\(isProvisionalId\(activeId\) \? "Opening session" : "Loading session"\)\);/,
+    "Loading for every id whose payload has not landed, a skeleton or not; Opening only for a provisional (2026-09-11: a new split column's session on its way is not being created)");
   assert.match(RENDER, /function openingLine\(text = "Opening session"\): HTMLElement \{/);
 });
 
@@ -294,14 +303,16 @@ type ChipApi = { showActive: () => void; updateJumpBtn: () => void; sig: () => s
 
 /** A page with two tabs: A, a loaded session whose transcript is `transcript` px tall; B, a skeleton (a stale
  *  pre-outage copy under it with an unread reply on it, its hidden view kept, its name in tabMeta). The pane is
- *  `clientHeight` px in a `innerHeight` px window. */
-function chipWorld(opts: { clientHeight: number; innerHeight: number; transcript: number }) {
+ *  `clientHeight` px in a `innerHeight` px window. `awaiting` adds a third tab the strip listed (its name in tabMeta)
+ *  whose payload has not landed: neither a session nor a skeleton, a new column's own session on its way. */
+function chipWorld(opts: { clientHeight: number; innerHeight: number; transcript: number; awaiting?: string }) {
   assert.equal(LOADER_VH, 60, "the loader's min-height rule (styles.css) is the model's premise");
   assert.match(CSS, /^#content \{[^}]*padding: 8px 0 12px;/m, "the pane's 20px of vertical padding");
   const pane = new ChipPane(opts.clientHeight, opts.innerHeight - 40);
   const win = { innerHeight: opts.innerHeight };
   const doc = { getElementById: (id: string): ChipEl | null => id === "content" ? pane : (pane.children.find((c) => c.id === id) ?? null),
-                body: { style: { removeProperty(_k: string): void {} } } };
+                body: { style: { removeProperty(_k: string): void {} },
+                        classList: { add(..._c: string[]): void {}, remove(..._c: string[]): void {}, toggle(_c: string, _on?: boolean): void {}, contains(_c: string): boolean { return false; } } } };   // body.snap-mode (T322): showActive toggles the mode class
   const viewA = new ChipEl("session", opts.transcript);
   pane.appendChild(viewA);
   const viewB = new ChipEl("session", 900); viewB.style.display = "none";   // the stale copy's view, hidden as a non-active view is
@@ -309,29 +320,34 @@ function chipWorld(opts: { clientHeight: number; innerHeight: number; transcript
   const HOOKS: ChipHooks = { fulls: [], captions: [] };
   const jumpBtn = { hidden: true, offsetHeight: 28, style: {} as Record<string, string> };
   const replyChips = { hidden: true, style: {} as Record<string, string> };
+  const tabMeta = new Map<string, { name: string; color: null }>([["B", { name: "api", color: null }]]);
+  if (opts.awaiting) tabMeta.set(opts.awaiting, { name: "tests", color: null });
   const W = {
     sessions: new Map<string, unknown>([["A", { id: "A", events: [], status: { state: "idle" } }],
                                         ["B", { id: "B", events: [], status: { state: "working" } }]]),   // B's stale copy stays underneath
     views: new Map<string, unknown>([["A", { el: viewA, scrollTop: 0, stick: false, shown: true, stale: false, winStart: 0 }],
                                      ["B", { el: viewB, scrollTop: 0, stick: false, shown: false, stale: true, winStart: 0 }]]),
-    tabMeta: new Map([["B", { name: "api", color: null }]]),
+    tabMeta,
     skeletonTabs: { ids: new Set(["B"]) },
     // B's stale copy carries an unread open reply: with its view kept and a ready thread, the liveSession read is
     // the ONE clause of updateReplyChips' gate that hides the chips over the skeleton (the read #1226 narrowed)
     commentThreads: new Map<string, unknown[]>([["B", [{ tid: "t1", anchorUuid: "22222222-3333-4444-5555-666666666666", status: "open", unread: true }]]]),
-    jumpBtn, replyChips, atBottomDist, isReplyReady, hostOf, HOOKS,
+    jumpBtn, replyChips, atBottomDist, isReplyReady, hostOf, isProvisionalId, HOOKS,
     el: (_tag: string, cls?: string): ChipEl => new ChipEl(cls || "", cls === "tab-loading-wait" ? Math.round(LOADER_VH / 100 * win.innerHeight) : 0),
     rompLoaderInner: (caption: string): ChipEl => { HOOKS.captions.push(caption); return new ChipEl("romp-loader", 0); },
   };
   const js = requireCjs("esbuild").transformSync(["liveSession", "atBottom", "showActive", "updateJumpBtn", "updateReplyChips"].map(fn).join("\n"), { loader: "ts" }).code;
   const prelude = `
-    const { sessions, views, tabMeta, skeletonTabs, commentThreads, jumpBtn, replyChips, atBottomDist, isReplyReady, hostOf, el, rompLoaderInner, HOOKS } = W;
+    const { sessions, views, tabMeta, skeletonTabs, commentThreads, jumpBtn, replyChips, atBottomDist, isReplyReady, hostOf, isProvisionalId, el, rompLoaderInner, HOOKS } = W;
     let activeId = null, skeletonLoading = null, replyChipSig = "";
     const placeReviveLoader = () => {}, notifyActive = () => {}, renderLedger = () => {}, renderLiveAsk = () => {}, renderBgTasks = () => {}, renderSubHead = () => {}, updateStatusline = () => {};
     const renderPinnedNotes = () => {};   // this fork's pinned notes swap at the top of showActive (fork PR 379), inert here
+    // the unfocused body's painter and the box's name overlay (T357): inert here, the strip test is about the chips
+    const paintEmptyState = () => {}, syncComposerPh = () => {}, order = [];
     // the section-at-a-glance view, inert: no section shows (snapView null), so showActive's branch is not taken
     let snapView = null, snapKeep = null;
     const renderSnapshot = () => false, hideSnapshot = () => {}, composerRestingPlaceholder = () => "";
+    const setSnapMode = () => {}, growComposer = () => {};   // the overview mode's switch and the box re-measure on leaving it (T322)
     const requestFullSession = (id, why) => { HOOKS.fulls.push(why + ":" + id); };
   `;
   const epilogue = `
@@ -389,4 +405,21 @@ test("run: the gate reads the skeleton set, not the session map; the last tab cl
   assert.deepEqual(w.HOOKS.captions, [], "no loader, so no caption");
   assert.equal(w.jumpBtn.hidden, true, "no chip over the no-sessions copy");
   assert.equal(w.replyChips.hidden, true, "no reply chip over the no-sessions copy");
+});
+
+test("run: a column's own session, listed by the strip but not among its skeletons, is shown loading and asked for by nobody while its full is in flight", () => {
+  // The second full on a new chat column's socket (a slow runner, 2026-09-12) was a kernel race, not this path
+  // (tests/test_chat_skeleton_reconnect.py test_11_d). A new column opens as a skeleton client of one session: the strip's
+  // skeleton list names every OTHER tab (the kernel excludes the active hint), and the page's restore of its wanted tab
+  // can land here between that strip and the session's full of the same burst. showActive's ask fires only for a tab the
+  // skeleton set names, so the restore shows the loader and posts nothing: the full on its way is the burst's own.
+  const w = chipWorld({ clientHeight: 600, innerHeight: 800, transcript: 4980, awaiting: "C" });
+  w.api.set({ activeId: "C" }); w.api.showActive();
+  assert.deepEqual(w.HOOKS.fulls, [], "no needFull for the session whose full the burst carries");
+  assert.deepEqual(w.HOOKS.captions, ["loading “tests”…"], "the loader over the tab, with the LOADING word");
+  const loader = w.doc.getElementById("tab-loading");
+  assert.ok(loader && loader.cls === "tab-loading-wait", "the loader is up");
+  // …the neighbouring skeleton still asks on its pick: the gate is the set, not the missing session
+  w.api.set({ activeId: "B" }); w.api.showActive();
+  assert.deepEqual(w.HOOKS.fulls, ["skeleton-click:B"]);
 });

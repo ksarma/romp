@@ -182,13 +182,13 @@ class World:
         km._sdk = lambda: None
         self.injected = []
 
-        def fake_send_or_park(be, sid, text, echo=None, user_todo=None):
+        def fake_send_or_park(be, sid, text, echo=None, qid=None, user=False, paths=None, user_todo=None):
             self.injected.append({"sid": sid, "text": text, "echo": echo, "user_todo": user_todo})
-            return True
+            return False                                 # handed over now (upstream's contract, 2026-09-15)
         km._send_or_park = fake_send_or_park
         # the one live session and its tree, and the door a trace goes through (Sessions.backend_for(...).send)
-        self.saved_trace = (km._tmux_sessions, km._cwd_of, km.Sessions.__dict__["backend_for"])
-        km._tmux_sessions = lambda: {SID: {}}
+        self.saved_trace = (km._live_map, km._cwd_of, km.Sessions.__dict__["backend_for"])
+        km._live_map = lambda: {SID: {}}
         km._cwd_of = lambda s: str(self.root) if s == SID else ""
         self.traced, self.order = [], []
         world = self
@@ -213,7 +213,7 @@ class World:
 
     def close(self):
         km._name_of, km._sdk, km._send_or_park = self.saved
-        km._tmux_sessions, km._cwd_of, backend_for = self.saved_trace
+        km._live_map, km._cwd_of, backend_for = self.saved_trace
         km.Sessions.backend_for = backend_for
         km._set_file_editing(False)
         jd.STATE = self.saved_state

@@ -52,27 +52,25 @@ def _aline(t, text, uuid, parent, stop="end_turn"):
 
 
 def _tm():
-    """One live tmux entry, every key the feed builder reads."""
+    """One live entry, every key the feed builder reads."""
     return {"state": "ready", "color": "#888888", "since": NOW - 60, "model": "", "effort": "",
-            "context": None, "backend": "tmux"}
+            "context": None, "backend": "sdk"}
 
 # The pusher-side READ-ONLY sites, wired (kernel.py). Each reads nodes / status / seams / confirming / log
 # rows and hands nothing to rollup_status, record_verdict or save_goals (audited 2026-09-06; the deep
-# freeze would raise if one did). Two spellings since upstream #1019 landed (steer 1 of the 2026-09-08
-# fold): a site where one session's read FAULT must be contained to that session (the builders and the
-# feed's live store read, which used to take every session down under the pusher's single outer try)
-# reads through jd.load_goals_shared_or_fault, the per-session boundary around the same shared cache
-# ((store, None) or (None, exc), one store-unreadable row per fault episode); a site already inside a
-# per-session catch of its own stays on the bare jd.load_goals_shared, which now raises on a fault
-# instead of falling back to an empty store.
-BOUNDARY = {"build_feed": 1,               # the peer-origin read; the main store read is _feed_goals_view's
-            "build_session": 2, "build_timeline": 2,
-            "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
-#                                     snapshot (B5) stays as it is and serves the mid-pass builds
+# freeze would raise if one did). Five sit inside a per-session catch of their own and take the shared view
+# directly; the builders (six sites) read it through the per-session store-fault boundary
+# (load_goals_shared_or_fault), so one session's unreadable store costs that session's goal-derived data
+# and files one row per fault episode, never the frame.
+BOUNDARY = {"_feed_session_entry": 1, "_feed_peer_facts": 1,   # T368: the feed's per-session body reads the origin
+            "build_session": 2,                                #   sender's store through the boundary; its memo key's
+            "build_timeline": 2}                               #   peer facts probe the same boundary
+#   build_timeline reads twice on this fork (upstream's count is 1): the bars build's lane read, and the skeleton
+#   build's one deferred read of a dead lane's store (the skeleton reads no live lane's store, 2026-09-06)
 SHARED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
           "_msg_sum_scan_session": 1, "_bg_placed_tops": 1}
-# TWO-PHASE (performance plan 4, P16): one shared PROBE (through the boundary: a fault forgets the gate so
-# the next tick retries), one writer load taken only when the probe found a lift due (jd.load_goals_or_fault,
+# TWO-PHASE: the awaiting-lift job takes one shared PROBE (through the boundary: a fault forgets the gate so
+# the next tick retries) and one writer load only when the probe found a lift due (jd.load_goals_or_fault,
 # the same boundary around the writer's loader); the decision body (_lift_decisions) loads nothing and
 # writes nothing.
 TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
@@ -156,10 +154,13 @@ class WiringPins(unittest.TestCase):
     def test_the_compaction_sweep_evicts_the_caches_absent_paths(self):
         src = inspect.getsource(km._compact_goal_stores)
         self.assertIn("jd._disk_memo_evict_absent()", src)
+        self.assertIn("jd._raw_store_evict_absent()", src)   # the writer loader's parse memo (2026-09-15)
         self.assertIn("jd._shared_evict_absent()", src)
-        # ...and, for the two memos holding PARSED stores, the entries of stores no discovered session owns
-        # (review find, 2026-09-08: neither had a cap)
+        # ...and, for the three memos holding PARSED stores, the entries of stores no discovered session owns
+        # (review find, 2026-09-08: neither of the first two had a cap; the writer loader's parse memo of
+        # 2026-09-15 is filled by this very sweep, so it needs the same trim)
         self.assertIn("jd._shared_evict_unowned(", src)
+        self.assertIn("jd._raw_store_evict_unowned(", src)
         self.assertIn("_goals_memo_evict_unowned(", src)
 
     def test_perf_reports_the_cache_beside_the_snapshot_memo(self):
@@ -183,7 +184,7 @@ class SharedViewInBuilds(unittest.TestCase):
             jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "Goal %d" % i}], [])
             jd.rollup_status(s, session_closed=False)
             jd.save_goals(sid, s)
-        km._timeline_sessions = lambda now, tmux, live_only=False: [
+        km._timeline_sessions = lambda now, live_map, live_only=False: [
             {"sid": sid, "name": "s%d" % i, "path": os.path.join(self.td.name, "no-such-transcript-%d" % i)}
             for i, sid in enumerate(SIDS)]
         # the compaction sweep evicts the entries of stores no DISCOVERED session owns, so the three synthetic
@@ -381,7 +382,7 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
     not a silent degrade and a build that fails every cycle is not a traceback every cycle (review find,
     2026-09-08). The episode is the fault text: a repeat says nothing, a different fault is a new episode,
     and a build that succeeds ends it."""
-    STUBS = ("NAMES", "_tmux_sessions", "_live_names", "_tab_list_tmux", "_chat_tab_sessions", "build_session",
+    STUBS = ("NAMES", "_live_map", "_live_names", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
              "_retry_parked_creates")
     A, B = SIDS[1], SIDS[2]
@@ -402,19 +403,18 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         km.NAMES = names
         km.jd.STATE = Path(self.tmp) / "state"
         km.jd.STATE.mkdir(parents=True, exist_ok=True)
-        km._tmux_sessions = lambda: {}
+        km._live_map = lambda: {}
         km._live_names = lambda tm: {"web": self.A, "api": self.B}
-        km._tab_list_tmux = lambda tmux: dict(tmux)
-        km._chat_tab_sessions = lambda now, tmux: [
+        km._chat_tab_sessions = lambda now, live_map: [
             {"sid": sid, "name": nm, "path": str(self.tx[sid]), "anchor": sid}
             for sid, nm in ((self.A, "web"), (self.B, "api"))]
         km.build_session = self._build_session
-        km._cached_feed = lambda now, tmux, sig, connect=False: {"working": [], "awaiting": [], "now": now}
-        km._cached_timeline = lambda now, tmux, sig, connect=False: {"turns": {}, "judging": [], "messages": [],
+        km._cached_feed = lambda now, live_map, sig, connect=False: {"working": [], "awaiting": [], "now": now}
+        km._cached_timeline = lambda now, live_map, sig, connect=False: {"turns": {}, "judging": [], "messages": [],
                                                                       "now": now}
-        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
-        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
-        km._comments_frame = lambda sid, tmux: None
+        km.build_timeline = lambda now, live_map, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, live_map: {"probe": 1}
+        km._comments_frame = lambda sid, live_map: None
         km._retry_parked_creates = lambda: None
         km._built_chat.clear(); km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
         self.saved_bell = list(km._SYNC_NOTICES)          # the dashboard bell ring the fault reaches
@@ -437,7 +437,7 @@ class PushSurvivesOneFailedChatBuild(unittest.TestCase):
         km._last_tab_order[:] = lo
         km._SYNC_NOTICES[:] = self.saved_bell
 
-    def _build_session(self, sid, now, tmux):
+    def _build_session(self, sid, now, live_map):
         self.built.append(sid)
         if sid == self.A and self.fail_with:
             raise RuntimeError(self.fail_with)

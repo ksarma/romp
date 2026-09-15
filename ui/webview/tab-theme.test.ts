@@ -38,10 +38,11 @@ test("the theme applies LIVE through the scheme plumbing — a body class, no re
   assert.match(RENDER, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\);/);
 });
 
-test("Classic: the pre-720 strip verbatim — line, gap 0, gray active fill, ring, stand-down", () => {
+test("Classic: the pre-720 strip verbatim — line, column gap 0 (a 1px row gap since T417), gray active fill, ring, stand-down", () => {
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/);
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
-  assert.match(CSS, /\.tab\.active \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.14\); \}/);
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 1px 0; position: relative; \}/);
+  assert.match(CSS, /\.tab\.active \{ color: var\(--fg\); background: var\(--tab-active-bg\); \}/, "the gray active fill, as the token the tag row's selected box shares (T322)");
+  assert.match(CSS, /--tab-active-bg: rgba\(255, 255, 255, 0\.14\);/, "…which IS the pre-720 gray");
   assert.match(CSS, /\.tab\.active\.colored \{ box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\); \}/);
   assert.match(CSS, /\.tab\.tab-blocked\.active\.colored \{ box-shadow: none; \}/, "blocked outranks the ring (2026-07-24)");
 });
@@ -59,7 +60,7 @@ test("Classic: NO identity tint — every tint rule lives under the theme class"
 test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps his full fade (T118)", () => {
   assert.match(RENDER, /const CLASSIC_FADE_SCALE = 0\.9;/);
   assert.match(RENDER, /const scale = settings\.chatTabTheme === "yatharth" \? 1 : CLASSIC_FADE_SCALE;/);
-  assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
+  assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale \* amount;/);   // × the caller's strength since T341 (1 for the strip)
 });
 
 test("Classic: ONE dark background — no band, no explicit body fill, baseline transparency (T141)", () => {

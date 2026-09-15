@@ -19,7 +19,7 @@
 //     270 s), and no tokenizer bounds a formula, so the fill stops at MATH_TEX_MAX_CHARS and shows the TeX as source; the
 //     three legs at the end run that bound, the macro bounds and the per-message budget for real (plans/markdown-viewer.md,
 //     Slice 1 review rounds 3 to 5).
-// Skips with a stated reason when no playwright browser is installed (CI installs none; tests/test_spend_modal_headless.py
+// Skips with a stated reason when no playwright browser is installed (CI installs none; tests/test_spend_modal_headless_served.py
 // is the precedent, skipping without a playwright install). Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

@@ -109,7 +109,7 @@ class _World:
     tests/test_kernel_timeline_split.py uses, plus _cached_feed — with every wire cache emptied first and
     restored after. `feed`/`timeline` are what the next push builds; reassign them for a rebuild."""
 
-    NAMES = ("_cached_feed", "_cached_timeline", "build_timeline", "_tmux_sessions", "_fleet_view_sig", "_DELTA_MAX_FRACTION")
+    NAMES = ("_cached_feed", "_cached_timeline", "build_timeline", "_live_map", "_fleet_view_sig", "_DELTA_MAX_FRACTION")
 
     def __init__(self, test, feed=None, timeline=None):
         self.feed, self.timeline = feed, timeline
@@ -117,11 +117,11 @@ class _World:
         saved_wire = (km._feed_wire, km._bars_wire, km._skel_wire, dict(km._delta_parts_cache), dict(km._delta_split_memo),
                       km._feed_cards_memo)
         saved_built = (list(km._built_feed), list(km._built_timeline))
-        km._cached_feed = lambda now, tmux, sig, connect=False: self.feed
-        km._cached_timeline = lambda now, tmux, sig, connect=False: self.timeline
-        km.build_timeline = lambda now, tmux, with_bars=True, live_only=False: self.timeline
-        km._tmux_sessions = lambda: {}
-        km._fleet_view_sig = lambda now, tmux: ("sig",)
+        km._cached_feed = lambda now, live_map, sig, connect=False: self.feed
+        km._cached_timeline = lambda now, live_map, sig, connect=False: self.timeline
+        km.build_timeline = lambda now, live_map, with_bars=True, live_only=False: self.timeline
+        km._live_map = lambda: {}
+        km._fleet_view_sig = lambda now, live_map: ("sig",)
         km._DELTA_MAX_FRACTION = 10.0        # synthetic payloads are tiny: the size guard would send wholes
         km._feed_wire = km._bars_wire = km._skel_wire = None
         km._delta_parts_cache.clear(); km._delta_split_memo.clear(); km._feed_cards_memo = None
@@ -246,8 +246,9 @@ class OneEncodePerBuild(unittest.TestCase):
         self.assertEqual(snap["memos"]["wire"], dict(km._wire_stats))
         self.assertEqual(set(snap["memos"]["wire"]),
                          {"feed_cards_hit", "feed_cards_miss", "split_hit", "split_miss", "feed_body", "bars_body",
-                          "bars_sig_fallback", "default_str"},
-                         "the feed's per-card memo (this fork), the slot path's split memo, the two bodies, the fallback, str()")
+                          "feed_sig_fallback", "feed_first", "bars_sig_fallback", "default_str"},
+                         "the feed's per-card memo (this fork), the slot path's split memo, the two bodies, upstream's cards-first "
+                         "connect frame and its one unkeyable path (feed_first, feed_sig_fallback), the bars fallback, str()")
 
 
 class ALedgersOnlyRefillEncodesNoCard(unittest.TestCase):
@@ -719,7 +720,7 @@ class ARaisingSerializerLeavesThePusherAlive(unittest.TestCase):
         self.assertIn("        try:\n            if c[\"app\"] in (\"feed\", \"fleet\", \"waiting\"):", push[i:])
         self.assertIn('sys.stderr.write("push send %s (%s): %s\\n"', push[i:])
         jobs = src[src.index("def _pusher_cycle_jobs("):]; jobs = jobs[:jobs.index("\ndef ")]
-        i = jobs.index("_push_all(tmux=tmux)")
+        i = jobs.index("_push_all(live_map=live_map)")
         self.assertLess(i, jobs.index("except Exception:", i)); self.assertLess(jobs.index("except Exception:", i), jobs.index("finally:", i))
 
 

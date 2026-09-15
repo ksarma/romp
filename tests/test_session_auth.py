@@ -12,9 +12,11 @@ The mechanics under test:
   * The CLI's init apiKeySource is compared against what _options actually launched with — a landing
     on the wrong side is a session billing the wrong account, flagged into the problems ring.
     Under a ROMP_EXPECTED_AUTH declaration the comparison is against the declared side, and on a helper
-    box the declaration is checked, never obeyed: an unpicked session bills the key whatever the box
-    declares (unpicked_auth reads key_available first), and a declared login rings on the keyed landing
-    instead of relabelling the session (the fold of upstream #1128, slice 2, 2026-09-09).
+    box the declaration is checked, never obeyed: an unpicked session bills what upstream's T346/T380 rule
+    decides (the explicit default when one is set, else the key when an apiKeyHelper is configured, else the
+    login: SdkBackend.fallback_auth; the fork's unpicked_auth read of the declaration retired with the
+    2026-09-15 pull-in), and a declared login rings on the keyed landing instead of relabelling the session
+    (the fold of upstream #1128, slice 2, 2026-09-09).
   * spend.json buckets carry a `key` sub-count for key-billed turns, so the rail's API readout on a
     mixed host sums ONLY the key's turns (_spend_windows(keyed_only=True)); a login turn's computed
     cost is dollars nobody is billed.
@@ -173,7 +175,9 @@ class _OptionsHarness(_Keyed):
         self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
         if self._fake_sdk:
             fake = types.ModuleType("claude_agent_sdk")
-            fake.HookMatcher = lambda **kw: kw
+            # an attribute-bearing stand-in, like the SDK's dataclass: with hosts on (the default since T348) the
+            # options loop sets each matcher's `timeout` to the host's hook bound, which a plain dict refused
+            fake.HookMatcher = lambda **kw: types.SimpleNamespace(**kw)
             sys.modules["claude_agent_sdk"] = fake
 
     def tearDown(self):
@@ -218,7 +222,8 @@ class OptionsInjection(_OptionsHarness):
         self.assertIsNone(s._launching)
         self.assertIsNone(s._launched_effort); self.assertIsNone(s._launched_mode); self.assertIsNone(s._launched_auth)
         kw = self._options_kw(s)
-        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key", "env": {}})
+        self.assertEqual(s._launching, {"effort": sb.effort_launch_shape("ultracode"), "mode": "plan", "auth": "key", "login": "", "env": {}},
+                         "the shape's `login` is the stored login the launch carries: empty for the key and the machine's own (T346)")
         self.assertEqual(s._launching["effort"], (kw["effort"], True), "the value handed to the CLI plus the ultracode key")
         self.assertIsNone(s._launched_effort, "nothing is stamped until the connect lands")
         s._connect_landed()
@@ -323,6 +328,35 @@ class OptionsInjection(_OptionsHarness):
         self.assertFalse(s._launched_keyed)
         self.assertTrue(s._launched_unkeyed_pick)
         self.assertEqual(s._pick_fell_said, "", "nothing to fall to: no fall, no notice")
+
+
+class UnpickedFollowsTheExplicitDefaultAtLaunch(_OptionsHarness):
+    def test_the_launch_suppresses_the_helper_for_an_unpicked_session_once_the_default_is_login(self):
+        """The round-2 review: the explicit default reached an unpicked session's STATUS but not its LAUNCH (the
+        options read sess.auth, empty when unpicked, so the helper ran and the turn billed the key while the flyout
+        said Login). The launch now resolves the side by the status's rule."""
+        s = self._sess(7)                                        # minted before any default: no pick of its own
+        kw0 = self._options_kw(s)
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw0), "no default: the launch stays plain, the CLI decides")
+        self.assertTrue(s._launched_keyed, "…and on a helper box that means the key")
+        self.assertTrue(self.be.set_auth_default("login"))
+        kw = self._options_kw(s)
+        self.assertEqual(self._settings_of(kw).get("apiKeyHelper"), "", "the explicit login default suppresses the helper for the next connect")
+        self.assertFalse(s._launched_keyed, "the launch means the login, as the status says")
+        self.assertEqual(s.effective_auth(), "login")
+        self.assertNotIn("ANTHROPIC_API_KEY", kw["env"])
+        self.assertFalse([p for p in self.be.problems(10) if "cannot apply" in p["text"]], "following a default is no fall: no problem row")
+        self.assertTrue(self.be.set_auth_default("key"))
+        kw2 = self._options_kw(s)
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw2), "an explicit key default: the helper runs")
+        self.assertTrue(s._launched_keyed)
+        self.assertTrue(self.be.set_auth_default("auto"))
+        kw3 = self._options_kw(s)
+        self.assertNotIn("apiKeyHelper", self._settings_of(kw3), "automatic again: plain")
+        # a session with its own pick is untouched by the default
+        p = self._sess(8, auth="login")
+        self.assertTrue(self.be.set_auth_default("key"))
+        self.assertEqual(self._settings_of(self._options_kw(p)).get("apiKeyHelper"), "", "its own login pick still suppresses the helper")
 
 
 class PickFallsToTheAvailableSide(_OptionsHarness):
@@ -501,27 +535,14 @@ class TheFallIsCarriedInStatus(_OptionsHarness):
         self.assertTrue(s._launched_keyed)
         self.assertEqual(self.be.pick_fall("login"), "key")
 
-    def test_the_webview_reads_the_carried_fall_on_both_surfaces(self):
-        # render.ts carries the field and hands BOTH surfaces to the one module that words the row and the
-        # sub-line (ui/webview/billing-label.ts, executed in billing-label.test.ts and billing-one-auth.test.ts);
-        # upstream's authFellTo lives there as billingFellTo, read once per surface (ruling C, slice 3)
-        web = Path(HERE).parent / "ui" / "webview"
-        src = (web / "render.ts").read_text()
-        self.assertIn("authPickFell?: string;", src)
-        self.assertIn('rows.push(["Billing", billingRowText(s.status)])', src, "the tab hover")
-        self.assertIn("sb.textContent = billingSubText(st);", src, "the Billing sub-line")
-        lbl = (web / "billing-label.ts").read_text()
-        self.assertIn("export function billingFellTo(f: BillingFacts): string", lbl)
-        self.assertEqual(lbl.count("const fell = billingFellTo(f);"), 2, "the row and the sub-line both read the fall")
-
 
 def _picker_backend(key):
     """A backend stand-in for the kernel's picker tests (_auth_avail over stubbed probes): key_available from the
-    stubbed world, and the REAL unpicked rule over it. _auth_avail's default calls new_session_auth directly
-    (slice-2 ruling 10: one rule, the backend's; a stand-in without the method is loud, never a login box), and
-    upstream #1147's both-ways fall lives inside that rule (seeded_auth's pick_unavailable check; ruling C, the
-    2026-09-09 fold), so the stand-in borrows SdkBackend's own pick_unavailable and auth_unavailable_why and stubs
-    only their three probes: login_ok as the kernel wires it, over the stubbed account state (None when the file
+    stubbed world, and the REAL default rule over it. _auth_avail's default is upstream's (T346/T380, folded
+    2026-09-15): the remembered pick while this box can bill it, else the side that exists, decided through the
+    backend's pick_unavailable both ways (upstream #1147's fall; the fork's one-rule readers new_session_auth and
+    seeded_auth retired with the pull-in), so the stand-in borrows SdkBackend's own pick_unavailable and
+    auth_unavailable_why and stubs only their three probes: login_ok as the kernel wires it, over the stubbed account state (None when the file
     cannot be read: cannot tell keeps a pick); key_state from the world's key; the helper source read as the
     backend reads it (an unreadable settings file is cannot tell, never managed)."""
     class _B:
@@ -541,9 +562,6 @@ def _picker_backend(key):
 
         auth_unavailable_why = sb.SdkBackend.auth_unavailable_why
         pick_unavailable = sb.SdkBackend.pick_unavailable
-
-        def new_session_auth(self):
-            return sb.new_session_auth(km.jd.STATE, self.key_available, self.pick_unavailable)
     return _B()
 
 
@@ -644,7 +662,7 @@ class AvailabilityOncePerCycle(unittest.TestCase):
             b = km._auth_avail_status()
             self.assertEqual(len(calls), 1, "one compute for the cycle")
             self.assertEqual(a, b)
-            self.assertEqual(a, {"login": True, "key": False, "keyWhy": km.jd._cred.WHY_NO_HELPER}, "the status half only")
+            self.assertEqual(a, {"login": True, "key": False, "keyWhy": km.jd._cred.WHY_NO_HELPER, "default": "login"}, "the status half, with the machine default since T380 (this stub of _auth_avail sends no explicit flag)")
             a["login"] = False
             self.assertTrue(km._auth_avail_status()["login"], "a caller's mutation does not leak into the memo")
             km._live_scope.auth = None                                # the cycle closes
@@ -788,7 +806,7 @@ class InitMismatchIsLoud(_Keyed):
 class DeclaredLoginOnAHelperBox(_Keyed):
     """A helper box whose service.env declares ROMP_EXPECTED_AUTH=login (the fold of upstream #1128, slice 2,
     2026-09-09). The helper is the one key path, so an unpicked session bills the key whatever the box declares
-    (sdk_backend.unpicked_auth reads key_available before the declaration), and the declaration is an
+    (upstream's fallback_auth reads the helper's presence; the declaration is no input of the rule), and the declaration is an
     expectation the init check judges each landing against, never a label the kernel writes onto the session:
     the keyed landing is a problem row naming the declaration and the CLI's report, and the session's pick, reg
     and default stay as they were. Before the fold the same box read every unpicked session as login (the rule's
@@ -839,6 +857,131 @@ class SetAuth(_Keyed):
         # …and the next spawn seeds from it
         sid2 = self.be.spawn("m", "/tmp")
         self.assertEqual(sb.read_reg(self.be.state_dir, sid2).get("auth"), "login")
+
+    def test_the_machine_default_is_set_explicitly_and_a_session_pick_then_moves_it_no_more(self):
+        """T380 (the user 2026-09-12): the Billing flyout's Default group writes the seed every new session and every
+        session with no pick of its own launches on; a session with its own pick keeps it; once set explicitly the
+        per-session pick no longer seeds the default (before, the last pick did)."""
+        picked = self.be.spawn("p", "/tmp", auth="login")
+        self.assertTrue(self.be.set_auth_default("key"))
+        d = sb.read_sdk_defaults(self.be.state_dir)
+        self.assertEqual((d.get("auth"), d.get("authExplicit")), ("key", True))
+        self.assertEqual(sb.read_reg(self.be.state_dir, picked)["auth"], "login", "a session with its own pick is untouched")
+        self.assertEqual(sb.read_reg(self.be.state_dir, self.be.spawn("q", "/tmp")).get("auth"), "key", "a new session follows the default")
+        # a per-session pick is about that session now: the default stays where the user set it
+        sid = self.be.spawn("n", "/tmp")
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "key", "the explicit default is not moved by a session pick")
+        self.assertEqual(sb.read_reg(self.be.state_dir, sid)["auth"], "login")
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "login")
+        self.assertFalse(self.be.set_auth_default("credit-card"), "junk is not a side")
+        # Automatic (review): the flag and the seed clear, the helper rule holds again, and a session pick seeds once more
+        self.assertTrue(self.be.set_auth_default("auto"))
+        d = sb.read_sdk_defaults(self.be.state_dir)
+        self.assertEqual((d.get("auth"), d.get("authExplicit")), ("", False))
+        self.assertEqual(self.be.fallback_auth(), "key", "the helper rule again")
+        self.assertTrue(self.be.set_auth(sid, "key"))
+        self.assertEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "key", "a session pick seeds the default again once it is automatic")
+
+    def test_a_session_with_no_pick_of_its_own_follows_the_explicit_default_at_once(self):
+        """The review of the first cut: the default reached only NEW sessions while the flyout's note promised that
+        sessions with no pick follow it too. default_auth (a dormant reg) and effective_auth (a live session) read
+        the explicit seed when this box can bill it; the launch applies it next time; the marks agree at once."""
+        u = self.be.spawn("u", "/tmp")
+        reg = sb.read_reg(self.be.state_dir, u)
+        self.assertNotIn("auth", reg)
+        self.assertEqual(self.be.default_auth(reg), "key", "the helper rule before any explicit default")
+        live = sb.SdkSession(self.be, reg)
+        self.assertEqual(live.effective_auth(), "key")
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(self.be.default_auth(reg), "login", "a dormant unpicked session follows the explicit default")
+        self.assertEqual(live.effective_auth(), "login", "…and a live one, in its status at once")
+        self.assertEqual(self.be.explicit_default_auth(), "login")
+        # the seed side this box cannot bill is not followed: the helper rule holds and the flyout greys that radio
+        self._no_helper()
+        self.assertTrue(self.be.set_auth_default("login"))
+        sb.write_sdk_default(self.be.state_dir, auth="key", authExplicit=True)   # a stale explicit key on a box that lost its helper
+        self.assertEqual(self.be.default_auth(reg), "login", "an explicit side this box cannot bill is not followed")
+        self.assertEqual(live.effective_auth(), "login")
+        # a session with its own pick is untouched by any of it
+        p = self.be.spawn("p", "/tmp", auth="login")
+        sb.write_sdk_default(self.be.state_dir, auth="key", authExplicit=True)
+        self.assertEqual(self.be.default_auth(sb.read_reg(self.be.state_dir, p)), "login")
+
+    def test_the_kernel_door_refuses_loudly_through_the_drive(self):
+        """The scoped arm's toast (review): a backend without the writer (Codex) is refused by name, a refused side
+        carries the backend's reason; neither raises inside the drive."""
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s))}
+        saved = (km.Sessions.backend_for, km._kernel_knows, km._push_soon)
+        try:
+            km._kernel_knows = lambda sid: True
+            km._push_soon = lambda: None
+            class NoWriter:          # a backend that keeps no machine default
+                pass
+            km.Sessions.backend_for = staticmethod(lambda sid: NoWriter())
+            self.assertTrue(km._drive({"type": "setAuth", "id": "11111111-2222-3333-4444-555555555555", "value": "login", "scope": "machine"}, client) is not False)
+            self.assertEqual(sent[-1]["type"], "warn")
+            self.assertIn("keeps no machine billing default", sent[-1]["text"])
+            class Refuser:
+                def set_auth_default(self, v): return False
+                def auth_unavailable_why(self, v): return "no apiKeyHelper configured"
+            km.Sessions.backend_for = staticmethod(lambda sid: Refuser())
+            km._drive({"type": "setAuth", "id": "11111111-2222-3333-4444-555555555555", "value": "key", "scope": "machine"}, client)
+            self.assertEqual(sent[-1]["text"], "Couldn't set this machine's default billing: no apiKeyHelper configured.")
+            # a session-scoped "auto" (an older remote kernel's flyout would post it) is refused with a toast, never dropped (review)
+            km._drive({"type": "setAuth", "id": "11111111-2222-3333-4444-555555555555", "value": "auto"}, client)
+            self.assertEqual(sent[-1]["type"], "warn")
+            self.assertIn("not for one session", sent[-1]["text"])
+            # a scoped STORED login (the user 2026-09-14: the Set default billing submenu offers every pick): the value
+            # reaches the machine-default writer, as a scoped "login" does, and never the per-session pick path
+            calls = []
+            class Recorder:
+                def set_auth_default(self, v): calls.append(("default", v)); return True
+                def set_auth(self, sid, v): calls.append(("session", v)); return True
+            km.Sessions.backend_for = staticmethod(lambda sid: Recorder())
+            parked = []
+            saved_park = km._set_auth_or_park
+            km._set_auth_or_park = lambda be, sid, v: (parked.append(v), True)[1]
+            try:
+                n_before = len(sent)
+                km._drive({"type": "setAuth", "id": "11111111-2222-3333-4444-555555555555", "value": "login:0123456789ab", "scope": "machine"}, client)
+                self.assertEqual(calls, [("default", "login:0123456789ab")], "the stored login is written as the machine default")
+                self.assertEqual(len(sent), n_before, "no toast: the writer took it")
+                self.assertEqual(parked, [], "and the value never reaches the per-session pick path")
+                # a scoped value that is no billing choice at all is still said, never dropped, and reaches no writer
+                calls.clear()
+                km._drive({"type": "setAuth", "id": "11111111-2222-3333-4444-555555555555", "value": "credit-card", "scope": "machine"}, client)
+            finally:
+                km._set_auth_or_park = saved_park
+            self.assertEqual(sent[-1]["type"], "warn")
+            self.assertIn("'credit-card' is not a billing choice", sent[-1]["text"])
+            self.assertEqual(calls, [], "no writer is called for a scoped value that is no choice")
+            self.assertEqual(parked, [], "and it never reaches the per-session pick path")
+        finally:
+            km.Sessions.backend_for, km._kernel_knows, km._push_soon = saved
+
+    def test_the_explicit_default_probe_sees_a_same_size_rewrite_with_an_unchanged_mtime(self):
+        """The review's forced probe: (mtime, size) alone kept login while the file said key."""
+        self.assertTrue(self.be.set_auth_default("login"))
+        self.assertEqual(self.be.explicit_default_auth(), "login")
+        p = sb._defaults_path(self.be.state_dir)
+        st = p.stat()
+        raw = p.read_text()
+        self.assertIn('"login"', raw)
+        rewritten = raw.replace('"login"', '"key"')
+        p.write_text(rewritten + " " * (len(raw) - len(rewritten)))   # the same byte length (trailing blanks are JSON's to ignore)
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))       # the mtime held back on purpose
+        self.assertEqual(p.stat().st_size, st.st_size, "same size")
+        self.assertEqual(p.stat().st_mtime_ns, st.st_mtime_ns, "same mtime")
+        self.assertEqual(self.be.explicit_default_auth(), "key", "ctime (or the inode) tells the rewrite apart")
+
+    def test_the_machine_default_refuses_a_side_this_box_cannot_bill_with_the_reason(self):
+        self._no_helper()
+        self.assertFalse(self.be.set_auth_default("key"))
+        self.assertEqual(self.be.last_auth_refusal, sb._cred.WHY_NO_HELPER)
+        self.assertNotEqual(sb.read_sdk_defaults(self.be.state_dir).get("auth"), "key")
 
     def test_the_picker_pick_beats_the_remembered_default(self):
         sb.write_sdk_default(self.be.state_dir, auth="login")
@@ -1021,7 +1164,7 @@ class AuthErrorClass(unittest.TestCase):
         # _api_last_failed read through, so the pin reads that function
         self.assertIn('"authErr": _is_auth_error(text)', inspect.getsource(km._api_error_pass))
         self.assertIn('"apiAuthErr": bool(aerr and aerr.get("authErr"))', inspect.getsource(km.build_session))
-        feed = inspect.getsource(km.build_feed)
+        feed = inspect.getsource(km._feed_session_entry)
         self.assertIn('aerr.get("authErr") or aerr.get("refusal"))))', feed, "the card floors to needs-you")
         self.assertIn("sign-in or API key isn't working", feed, "the card names the real remedy")
 
@@ -1038,9 +1181,9 @@ class Availability(unittest.TestCase):
         km._claude_account_state, km.jd._cred.helper_source = self.real_state, self.real_source
 
     def _world(self, key, acct, label="user@example.com", managed=False):
-        # the stand-in answers the real unpicked rule over this world (_auth_avail's default calls
-        # new_session_auth directly, and the remembered pick's both-ways fall is decided inside it; the declared
-        # cells run on a real backend in test_expected_auth)
+        # the stand-in answers the real default rule over this world (_auth_avail's default is upstream's
+        # T346/T380 read, with the remembered pick's both-ways fall decided through the backend's pick_unavailable;
+        # the declaration cells retired with the fork's rule, 2026-09-15)
         km._sdk = lambda: _picker_backend(key)
         km._claude_account = lambda: acct
         km._claude_account_label = lambda: (label if acct else "")
@@ -1105,16 +1248,22 @@ class Availability(unittest.TestCase):
         a = km._auth_avail()
         self.assertNotIn("loginWhy", a)
         self.assertNotIn("keyWhy", a)
-        self.assertEqual(km._auth_avail_status(), {"login": True, "key": True})
+        st = km._auth_avail_status()
+        self.assertEqual({k: st[k] for k in ("login", "key", "default", "defaultExplicit")},
+                         {"login": True, "key": True, "default": "key", "defaultExplicit": False},
+                         "the status half carries the machine default since T380 (the Billing flyout's Default group marks it), and whether it is explicit")
+        self.assertEqual(st["logins"][0]["machine"], True, "the login list rides beside (T346), the machine's own first")
         self._world(FAKE_KEY, "")
         a = km._auth_avail()
         self.assertEqual(a["loginWhy"], km.jd._cred.WHY_NO_LOGIN)
-        self.assertEqual(km._auth_avail_status(), {"login": False, "key": True, "loginWhy": km.jd._cred.WHY_NO_LOGIN})
+        self.assertEqual({k: v for k, v in km._auth_avail_status().items() if k != "logins"},
+                         {"login": False, "key": True, "loginWhy": km.jd._cred.WHY_NO_LOGIN, "default": "key", "defaultExplicit": False})
         self._world("", "aaaaaaaaaaaa")
         self.assertEqual(km._auth_avail()["keyWhy"], km.jd._cred.WHY_NO_HELPER)
         self._world(FAKE_KEY, "aaaaaaaaaaaa", managed=True)
         self.assertEqual(km._auth_avail()["loginWhy"], km.jd._cred.WHY_MANAGED_HELPER)
-        self.assertEqual(km._auth_avail_status(), {"login": False, "key": True, "loginWhy": km.jd._cred.WHY_MANAGED_HELPER})
+        self.assertEqual({k: v for k, v in km._auth_avail_status().items() if k != "logins"},
+                         {"login": False, "key": True, "loginWhy": km.jd._cred.WHY_MANAGED_HELPER, "default": "key", "defaultExplicit": False})
         self.assertNotIn(FAKE_KEY, json.dumps(km._auth_avail()), "the reasons carry no key material either")
 
     def test_the_default_falls_to_the_side_that_exists_both_ways(self):
@@ -1238,8 +1387,25 @@ class DrivePlumbing(unittest.TestCase):
     def test_the_op_is_routed_parked_and_replayed(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         self.assertIn('"setAuth", "endSession"', src.replace("\n", " "), "an ID_OPS member")
-        self.assertIn('elif t == "setAuth" and msg.get("value") in ("login", "key"):', src)
+        self.assertIn('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:', src)   # T346: 'login' | 'key' | 'login:<id>'
         self.assertIn("def _set_auth_or_park(be, sid, value):", src)
+        # the machine's default (T380): the same op with scope "machine" writes the seed on THIS kernel and touches no session
+        self.assertIn('elif t == "setAuth" and msg.get("scope") == "machine" and (msg.get("value") == "auto" or lg.parse_pick(msg.get("value"))[0]):', src)   # a stored login too (2026-09-14)
+        self.assertIn('_set_def = getattr(be, "set_auth_default", None)', src)
+        # the judges ask the same resolver the launch and the status use (round 3 of T380): the kernel wires it
+        ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn('jd._DEFAULT_AUTH_FN = getattr(_sdk_backend, "default_auth", None)', ksrc, "the one billing resolver, wired into the judges")
+        self.assertIn('jd._DEFAULT_LOGIN_FN = getattr(_sdk_backend, "default_login", None)', ksrc, "and WHICH stored login an unpicked session bills, beside it (2026-09-14)")
+        self.assertIn("keeps no machine billing default", src, "a backend without the writer (Codex) is refused by name, never a raise inside the drive")
+        plain = src.index('elif t == "setAuth" and lg.parse_pick(msg.get("value"))[0]:')
+        self.assertLess(src.index('msg.get("scope") == "machine"'), plain,
+                        "the scoped arm is tried first: the plain arm would otherwise swallow it as a per-session pick")
+        # a scoped value that is no billing choice at all is refused by name from an arm BEFORE the plain one, so it is never
+        # read as a session's own pick either (a stored login is a choice since 2026-09-14: the first scoped arm takes it)
+        refuse = src.index('elif t == "setAuth" and msg.get("scope") == "machine":')
+        self.assertLess(refuse, plain, "the scoped refusal sits before the per-session arm")
+        self.assertIn("is not a billing choice", src)
+        self.assertNotIn("a stored login can't be the machine's default yet", src)
         self.assertIn('_gate_or_park(sid, ("auth", value))', src)   # parks on the gate, or hands over (2026-09-05)
         self.assertIn('elif op[0] == "auth":', src)
         self.assertIn("be.set_auth(sid, op[1])", src)
@@ -1248,10 +1414,10 @@ class DrivePlumbing(unittest.TestCase):
         src = open(os.path.join(BIN, "romp-kernel")).read()
         # (parent + tags joined the signature with tab groups, 2026-09-04 — auth's slot is unchanged)
         self.assertIn("def _create_sdk_session(nm, cwd, auth=\"\", prefs=None, client=None, env=None, parent=\"\", tags=()):", src)
-        self.assertEqual(src.count('auth=(a if a in ("login", "key") else "")'), 2,
+        self.assertEqual(src.count('auth=(a if lg.parse_pick(a)[0] else "")'), 2,
                          "the WS op and POST /new both pass it")
 
-    def test_the_abc_names_the_control_and_tmux_refuses(self):
+    def test_the_abc_names_the_control_and_the_default_refuses(self):
         sbc = open(os.path.join(os.path.dirname(HERE), "kernel", "session_backend.py")).read()
         self.assertIn("def set_auth(self, sid: str, value: str) -> bool:", sbc)
         self.assertIn("return False", sbc.split("def set_auth", 1)[1][:900])

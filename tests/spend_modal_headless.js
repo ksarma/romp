@@ -1,4 +1,4 @@
-// Drives the served landing page (tests/test_spend_modal_headless.py serves it) with playwright:
+// Drives the served landing page (tests/test_spend_modal_headless_served.py serves it) with playwright:
 // click the usage readout → the spend modal opens over the dimmed dashboard, renders the per-session
 // table + the stacked histogram with its unattributed stack, the toggles re-render, a segment hover
 // shows the tooltip, Escape closes it. Prints one JSON line of observations; screenshots when asked.
@@ -110,6 +110,11 @@ const { chromium } = require('playwright');
   await pg.waitForFunction(() => document.querySelector('#rsp-panel [data-act="range:days"]').classList.contains('on')
     && document.querySelector('#rsp-panel [data-act="measure:tok"]').classList.contains('on'), null, { timeout: 5000 });
   const days = await pg.evaluate(() => ({
+    // T353: the session list follows the chart's range, so the FULL list (every session with spend in 90 days) is
+    // read here, with its pane's scroll: the seven days shown at open list only the sessions with hourly spend
+    rows: Array.from(document.querySelectorAll('#rsp-panel .rsp-tbl tbody tr')).map((tr) => tr.textContent),
+    deadRows: document.querySelectorAll('#rsp-panel .rsp-tbl tbody tr.rsp-dead').length,
+    pane: (() => { const p = document.getElementById('rsp-table'); const panel = document.getElementById('rsp-panel'); return { scrolls: !!p && p.scrollHeight > p.clientHeight + 4, h: p ? p.clientHeight : null, panelScrolls: panel.scrollHeight > panel.clientHeight + 2 }; })(),
     segs: document.querySelectorAll('#rsp-chart .rsp-seg').length,
     ylabels: Array.from(document.querySelectorAll('#rsp-chart .ru-tip-gy')).map((e) => e.textContent),
     xlabels: Array.from(document.querySelectorAll('#rsp-chart .ru-tip-gx span')).map((e) => e.textContent),
@@ -194,8 +199,9 @@ const { chromium } = require('playwright');
   await pg.waitForFunction(() => document.querySelector('#rsp-panel [data-act="merge:toggle"]').classList.contains('on'), null, { timeout: 5000 });
   const merge = await pg.evaluate(() => {
     const rows = Array.from(document.querySelectorAll('#rsp-panel .rsp-tbl tbody tr')).map((tr) => tr.textContent.trim());
-    const tagRow = document.querySelector('#rsp-panel .rsp-tbl tbody tr[data-tag] .tab-label');
-    return { rows, tagColor: tagRow ? getComputedStyle(tagRow).color : null,
+    const tagRow = document.querySelector('#rsp-panel .rsp-tbl tbody tr[data-tag] .rsp-tag-chip');
+    return { rows, tagColor: tagRow ? getComputedStyle(tagRow).color : null, tagWeight: tagRow ? getComputedStyle(tagRow).fontWeight : null,
+      tagBorder: tagRow ? getComputedStyle(tagRow).borderTopColor : null,
       notes: Array.from(document.querySelectorAll('#rsp-panel .rsp-note')).map((e) => e.textContent),
       stackNames: (() => { const names = new Set(); document.querySelectorAll('#rsp-chart .rsp-seg').forEach((p) => { names.add(p.getAttribute('data-s')); }); return Array.from(names).map((i) => (window.__rompSpendStackNames || [])[+i] || ''); })(),
       prefs: JSON.parse(localStorage.getItem('romp:spendModal') || '{}') };

@@ -6,87 +6,52 @@ test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isol
 top exactly as before."""
 import atexit
 import importlib.util
-import json
 import os
 import re
 import shutil
 import sys
 import tempfile
-import time
 
 import pytest
 from _pytest._code.code import ReprExceptionInfo, ReprFileLocation, ReprTracebackNative
 
 # Temp-directory hygiene, the child-process half (2026-09-06): every temp path a run creates lives
-# under ONE private root, removed when the run ends. tests/__init__.py's mkdtemp hook (the other
-# half; its comment has the leak's history) records and removes what THIS process mints through
-# tempfile.mkdtemp, but a test's children — kernels, git, `mktemp -d` in a shell — and mkstemp or
-# os.mkdir paths are outside its sight (a full run left ~5,600 of those per run at up to ten a
-# second). So the process's temp dir is redirected: tempfile.tempdir is set directly (gettempdir()
-# caches its first answer, and tests/__init__.py has already called it by the time this runs), and
-# TMPDIR is exported so every child inherits the same root. Import-time, not pytest_configure: this
-# module's own XDG floor below and every module-level mkdtemp at collection must land inside it.
+# under ONE private `romp-tests-*` root, removed when the run ends. The root, the redirect of
+# tempfile.tempdir and TMPDIR into it and the owner marker the kernel's sweep reads are the tests
+# PACKAGE's (tests/__init__.py, whose comments have the leak's history and the marker's): the
+# package imports before this file under pytest and before the module under `python -m unittest
+# tests.test_x`, so a bare run has the same root as a pytest run (until 2026-09-14 this file minted
+# it, and a bare run had no root, no redirect and no marker). This file keeps the pytest side: the
+# removal at run end with a survivor named, below. Imported, not looked up with a default: a conftest
+# running without the package has no root to remove and should say so (tests/test_env_value_redaction.py's
+# child runs load a COPY of this file from a scratch dir, with the checkout on PYTHONPATH for this line).
+# This module's own XDG floor below and every module-level mkdtemp at collection land inside the root
+# because the package redirected before either ran.
 # The two removals compose without overlap: pytest_sessionfinish runs the hook's sweep, whose scope
-# is gettempdir() and so the inside of this root; pytest_unconfigure then removes the root whole
-# (whatever the sweep could not see) and tests/__init__.py's romp-tests-state-* dir — the package
-# imports first, so that dir and this root were minted before the redirect and are the two things a
-# run puts outside the root; the hook recorded both but skips them as outside its scope. Under
-# pytest-xdist both hooks run in the controller and in every worker: each imported this file and so
-# owns a root of its own (a worker's sits inside the controller's, since it inherits that TMPDIR).
-# The atexit registrations are silent fallbacks for a normal exit that skipped the hooks, each a
-# no-op on what the other removed; nothing runs after an os._exit (pytest-timeout's thread method
-# ends a hung run that way), so a hang leaves two top-level entries in the system temp dir, this
-# root and that state dir, both under the romp-tests- prefix.
-# The system temp dir — the one the RUN was handed, before any redirect — is recorded once, by the
-# first conftest to import: an xdist worker inherits the controller's record along with its TMPDIR
-# (setdefault, not an assignment: a worker's own gettempdir() is the controller's root, and
-# recording that put the worker's fallback one level deeper than a socket path can bear under a
-# long TMPDIR — four socket tests failed at bind under -n 2). A test that must leave the root (an
-# AF_UNIX socket path that would not fit sun_path under a nested root) falls back to it, and only
-# to it — a literal system path in a `dir=` would bypass the redirect (one did).
-os.environ.setdefault("ROMP_TESTS_SYSTEM_TMPDIR", tempfile.gettempdir())
-_TMP_ROOT = tempfile.mkdtemp(prefix="romp-tests-")
-tempfile.tempdir = _TMP_ROOT
-os.environ["TMPDIR"] = _TMP_ROOT
-_PACKAGE_STATE_DIR = getattr(sys.modules.get("tests"), "STATE_DIR", None)
-
-# Owner marker (2026-09-10): a run that dies without reaching any removal below — pytest-timeout's
-# os._exit, a kernel restart cutting the tool shell, the cut-turn reaper's kill — leaves its root
-# standing, and on a shared machine those roots piled into millions of files that the next boot's
-# /tmp cleanup spent 39 minutes deleting. Nothing in this process can run after such a death, so the
-# removal has to come from outside: the kernel's boot reconcile sweeps `romp-tests-*` roots under the
-# system temp dir whose owner is dead (sdk_backend.sweep_dead_test_roots). This marker is what it
-# reads — the owning pid, written at mint time so it is there for the whole life of the root. A root
-# WITHOUT a marker is not touched (the sweep cannot tell a foreign directory from a pre-marker one).
-# The package state dir sits beside the root, not inside it, so it carries its own copy.
-TEST_ROOT_OWNER_MARKER = "romp-tests-owner.json"
-
-
-def _write_owner_marker(d):
-    if not d:
-        return
-    try:
-        with open(os.path.join(d, TEST_ROOT_OWNER_MARKER), "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"pid": os.getpid(), "started": time.time(),
-                                 "argv": [os.path.basename(a) for a in sys.argv[:3]]}))
-    except OSError:
-        pass                                 # a root we cannot write into is one we cannot leak into either
-
-
-_write_owner_marker(_TMP_ROOT)
-_write_owner_marker(_PACKAGE_STATE_DIR)
+# is gettempdir() and so the inside of the root; pytest_unconfigure then removes the root whole
+# (whatever the sweep could not see), the package's romp-tests-state-* dir included, which sits
+# inside it. Under pytest-xdist both hooks run in the controller and in every worker: each imported
+# the package and this file and so owns a root of its own (a worker's sits inside the controller's,
+# since it inherits that TMPDIR; the package records the system temp dir the run was handed with a
+# setdefault, so a worker keeps the controller's record — ROMP_TESTS_SYSTEM_TMPDIR — rather than
+# naming the controller's root, one level too deep for a socket path under a long TMPDIR).
+# The atexit registrations (the package's and this file's) are silent fallbacks for a normal exit
+# that skipped the hooks, each a no-op on what the other removed; nothing runs after an os._exit
+# (pytest-timeout's thread method ends a hung run that way), so a hang leaves ONE top-level entry
+# in the system temp dir, the root with its marker, for the kernel's sweep.
+import tests as _tests  # noqa: E402  the package; its import is what minted the root this file removes
+_TMP_ROOT = _tests.TMP_ROOT
+TEST_ROOT_OWNER_MARKER = _tests.TEST_ROOT_OWNER_MARKER   # tests/test_test_root_sweep.py pins it against the kernel's
 
 
 def _remove_run_dirs(report=False):
-    """Remove the root and the package state dir. A survivor is named on stderr when asked: rmtree
-    with ignore_errors swallows a child still writing under the root or a 000-mode directory a test
-    left behind, and the run would otherwise end green with the root standing. Only unconfigure
+    """Remove the root (the package state dir is inside it). A survivor is named on stderr when asked:
+    rmtree with ignore_errors swallows a child still writing under the root or a 000-mode directory a
+    test left behind, and the run would otherwise end green with the root standing. Only unconfigure
     asks; the atexit fallback stays silent so it neither repeats the notice nor contradicts it."""
-    for d in (_TMP_ROOT, _PACKAGE_STATE_DIR):
-        if d:
-            shutil.rmtree(d, ignore_errors=True)
-            if report and os.path.isdir(d):
-                print("[tests] not removed at run end: %s" % d, file=sys.stderr)
+    shutil.rmtree(_TMP_ROOT, ignore_errors=True)
+    if report and os.path.isdir(_TMP_ROOT):
+        print("[tests] not removed at run end: %s" % _TMP_ROOT, file=sys.stderr)
 
 
 atexit.register(_remove_run_dirs)
@@ -129,6 +94,38 @@ os.environ["GIT_AUTHOR_EMAIL"] = os.environ["GIT_COMMITTER_EMAIL"] = "tests@exam
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")   # inside the root; the hook records it
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sessions; it outranks the XDG floor
+# the postal bus port likewise (2026-09-11): a machine whose bus runs on a named port hands ROMP_POSTAL_PORT to every
+# session's shell, and a test run from one would carry the machine's name into every lab and in-process kernel; the
+# bus refuses its fixed port under a test unless the port is the run's own, which the marker beside a port says
+os.environ.pop("ROMP_POSTAL_PORT", None)
+os.environ["ROMP_POSTAL_HERMETIC"] = "1"
+os.environ["ROMP_CKPT_FIRST_DOC_KB"] = "0"   # the young-session floor is off for the suite's small fixtures (a document under 1 MB of
+#                                                pre-cut bytes is never written live); the floor's own test sets it. A plain assignment: an
+#                                                exported value in the shell (64, say) would red every checkpoint fixture (1721 round two);
+#                                                tests/__init__.py carries the same line for the unittest runner
+# No test spawns a per-session HOST by omission (2026-09-11, T348): hosts are on by default now, so a backend built over
+# a state dir with no `session-hosts` file starts a real bin/romp-session-host for any session it connects. The root the
+# runner floors carries the toggle set to off from the start, re-asserted per test below (a test that deletes or rewrites
+# it gets it back); the deliberate hosts-on tests write `on` into their OWN state roots and are unaffected.
+# THE BELT'S REACH: it covers this one root and nothing else. A test that mints its own temp state root (a bare
+# tempfile.mkdtemp() handed to SdkBackend, a lab kernel's xdg root) stands outside it and MUST write `off` into
+# `<its root>/session-hosts` itself unless it means to run a host, or the first connect it drives spawns a real
+# bin/romp-session-host on the developer's box (tests/test_cut_turn_tree_kill.py did, 2026-09-11). The rule for test
+# authors is in CLAUDE.md under Testing.
+_SESSION_HOSTS_OFF = os.path.join(os.environ["XDG_STATE_HOME"], "romp", "session-hosts")
+
+
+def _floor_session_hosts_off():
+    try:
+        os.makedirs(os.path.dirname(_SESSION_HOSTS_OFF), exist_ok=True)
+        if not os.path.exists(_SESSION_HOSTS_OFF) or open(_SESSION_HOSTS_OFF).read().strip().lower() != "off":
+            with open(_SESSION_HOSTS_OFF, "w") as f:
+                f.write("off\n")
+    except OSError:
+        pass
+
+
+_floor_session_hosts_off()
 
 # No test may resolve the REAL ~/.claude (2026-09-08): the judge module and the event model compute
 # their projects root at IMPORT from CLAUDE_CONFIG_DIR (default ~/.claude), the kernel and the SDK
@@ -258,6 +255,14 @@ def _no_real_claude_config():
 
 
 @pytest.fixture(autouse=True)
+def _hosts_off_in_the_floored_root():
+    """The floored state root reads hosts OFF before every test (T348): the file is re-written when a test removed or
+    changed it, so no later test spawns a real host by omission."""
+    _floor_session_hosts_off()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _dead_manager_port():
     """The import-time poison above covers collection, but a module-level env write in a test file
     ALSO executes during collection — so one module's write (or pop) would otherwise hold for the
@@ -292,7 +297,7 @@ os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 # module handed http.client a credential it rejects before a socket opens), but any
 # in-process _sdk() call is one exported key away from a real request no test asserts on, on a key
 # the test never chose. The kernel-SPAWNING tests floor it in their subprocess env
-# (test_gear_select_matrix, test_ship_reship, test_awaiting_box_sync); this floors every test,
+# (test_gear_select_matrix_served, test_ship_reship_served, test_awaiting_box_sync_served); this floors every test,
 # whatever the developer's shell exports.
 # Set, not setdefault: "off" is the only value the switch recognises, so no outer intent is being
 # overridden. The catalog suite unsets the var inside its own tests — FetchAndFallback pops it in
@@ -338,26 +343,6 @@ def _no_cli_scope():
     for v in _CLI_SCOPE_LIMIT_VARS:
         os.environ.pop(v, None)
     yield
-
-
-# No test may reach the machine's REAL tmux server (2026-09-06; the reason changed on 2026-09-08): the
-# retired key-source module used to scrub the live server's globals from inside a test, and any tmux-backed
-# test still runs its commands somewhere. The same private socket directory the bats suites use
-# (tests/tmux-private.bash): tmux puts every socket, `-L` ones included, under $TMUX_TMPDIR/tmux-<uid>/,
-# and the directory must exist or tmux 3.4 silently falls back to the default. No server ever exists
-# there, so a tmux command from a test exits with "no server running" instead of touching the live one.
-os.environ["TMUX_TMPDIR"] = tempfile.mkdtemp(prefix="romp-tests-tmux-")
-os.environ.pop("TMUX", None)
-os.environ.pop("ROMP_TMUX_SOCKET", None)
-
-
-@pytest.fixture(autouse=True)
-def _no_live_tmux_server():
-    os.environ["TMUX_TMPDIR"] = _TMUX_PRIVATE
-    yield
-
-
-_TMUX_PRIVATE = os.environ["TMUX_TMPDIR"]
 
 
 @pytest.fixture(autouse=True)
@@ -507,7 +492,7 @@ ENV_VALUE_REDACTED = "[REDACTED-ENV-VALUE]"
 _ENV_VALUE_PATH_NAMES = frozenset((
     "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
     "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
-    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "TMUX_TMPDIR", "ROMP_TESTS_SYSTEM_TMPDIR",
+    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "ROMP_TESTS_SYSTEM_TMPDIR",
     # the Claude settings dir conftest saved ahead of its CLAUDE_CONFIG_DIR floor (above), for the live
     # move test: a path a failure report may quote, like CLAUDE_CONFIG_DIR beside it
     "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR",

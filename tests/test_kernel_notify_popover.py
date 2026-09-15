@@ -454,10 +454,22 @@ class PushTestRoute(_LoopbackMixin, unittest.TestCase):
         pp.assert_not_called()
 
     def test_missing_crypto_is_the_loud_500(self):
-        with mock.patch.object(km, "_PUSH_CRYPTO", [False]):
-            code, body = self._post("/push/test", {"endpoint": self.ep})
+        # the package really unimportable (None in sys.modules for every cryptography module, the
+        # kernel's cache reset), not a sentinel: the body is the one message every push route answers,
+        # with the package and the command for this checkout (test_kernel_webpush pins the rest)
+        import sys
+        hidden = {k: None for k in list(sys.modules) if k == "cryptography" or k.startswith("cryptography.")}
+        hidden["cryptography"] = None
+        km._PUSH_CRYPTO[0] = None
+        try:
+            with mock.patch.dict(sys.modules, hidden):
+                code, body = self._post("/push/test", {"endpoint": self.ep})
+        finally:
+            km._PUSH_CRYPTO[0] = None
         self.assertEqual(code, 500)
-        self.assertIn("cryptography", body)
+        self.assertIn("'cryptography'", body)
+        self.assertIn(str(km.ROOT / "bin" / "romp-sdk-setup"), body)
+        self.assertEqual(body, km._push_crypto_missing())
 
     def test_gated_and_validated(self):
         code, _ = self._post("/push/test", {"endpoint": self.ep}, token=False)
@@ -558,14 +570,14 @@ class TurnFinishedPush(unittest.TestCase):
                 f.unlink()
         self.path = _transcript(SID_WEB, "Done: the login flow now redirects to the notes list.\n\nDetails below.")
         self.alive = [{"sid": SID_WEB, "name": "web", "path": self.path}]
-        self.tmux = {SID_WEB: {"state": "waiting"}}
+        self.live = {SID_WEB: {"state": "waiting"}}
 
     def _tick(self):
         pushed, fwd = [], []
         with mock.patch.object(km, "_alive_sessions", return_value=self.alive), \
              mock.patch.object(km, "_push_notify", side_effect=lambda *a, **k: pushed.append((a, k))), \
              mock.patch.object(km, "_push_forward", side_effect=lambda evs: fwd.append(evs)):
-            fired = km._turn_notify_tick(time.time(), self.tmux)
+            fired = km._turn_notify_tick(time.time(), self.live)
         return fired, pushed, fwd
 
     def test_first_sight_is_a_silent_baseline_then_a_new_end_fires(self):
@@ -603,10 +615,10 @@ class TurnFinishedPush(unittest.TestCase):
         _stamp_stop(SID_WEB, 1010)
         self.assertEqual(len(self._tick()[0]), 1, "…and with both on the next end fires")
 
-    def test_a_tmux_interrupt_settle_is_not_a_finished_turn(self):
+    def test_an_interrupt_settle_is_not_a_finished_turn(self):
         # a Stop press writes an idle row (romp's _record_idle, tagged by:interrupt) — the user's own
-        # act, not a turn the session finished, so the fallback key must skip it (#937 fold). A tmux
-        # session has no lastStopAt, so the fallback is what decides.
+        # act, not a turn the session finished, so the fallback key must skip it (#937 fold). A session
+        # with no lastStopAt in its ledger leaves the fallback to decide.
         km._set_notify_all(True)
         km._set_notify_turns(True)
         _append_state(SID_WEB, "working", 1000)
@@ -667,7 +679,7 @@ class TurnFinishedPush(unittest.TestCase):
         self.assertEqual(self._tick()[0][0]["body"], "finished a turn")
 
     def test_the_fallback_key_counts_only_stopped_transitions(self):
-        # a tmux session: no Stop-hook ledger; states/ is the record — and a turn STARTING (working)
+        # a session without a Stop-hook ledger: states/ is the record — and a turn STARTING (working)
         # must never read as an end
         km._set_notify_all(True)
         km._set_notify_turns(True)
@@ -683,8 +695,8 @@ class TurnFinishedPush(unittest.TestCase):
     def test_wired_into_the_pusher_cycle_after_the_feed_build(self):
         import inspect
         src = inspect.getsource(km._pusher_cycle_jobs)
-        self.assertIn("_turn_notify_tick(now, tmux)", src)
-        self.assertLess(src.index("_push_all(tmux=tmux)"), src.index("_turn_notify_tick(now, tmux)"),
+        self.assertIn("_turn_notify_tick(now, live_map)", src)
+        self.assertLess(src.index("_push_all(live_map=live_map)"), src.index("_turn_notify_tick(now, live_map)"),
                         "the feed builds first, so a same-settle bell event files its buzz first")
 
 
@@ -695,7 +707,7 @@ class TurnOpenerGate(unittest.TestCase):
     coordinating session, none about anything the user had asked at that moment. The Stop hook now stamps
     WHO opened the turn beside the settle (lastTurnOpener, sdk_backend) and the tick skips an end whose
     opener is not the human — without spending the buzz claim, so a bell event that turn raises keeps its
-    buzz. A registry without the field (an older ledger, a tmux session) reads as the human's: a missing
+    buzz. A registry without the field (an older ledger) reads as the human's: a missing
     fact never drops the user's buzz."""
 
     def setUp(self):
@@ -994,7 +1006,7 @@ class OneBuzzPerTurnEnd(unittest.TestCase):
         # a card push that yields the BUZZ to an already-fired turn push must still deliver the badge,
         # QUIET: a closed installed app learns the needs-you count only from a push (#937 fold)
         import inspect
-        src = inspect.getsource(km._cached_feed)
+        src = inspect.getsource(km._build_feed_locked)   # the build body, under the single-flight lock (2026-09-14)
         self.assertIn('_push_notify(_t, _b, _sid, _badge, kind="card", card_id=_iid, quiet=True)', src,
                       "the yielding branch still pushes, with the badge, quiet")
         self.assertLess(src.index('quiet=True'), src.index('_push_notify(_t, _b, _sid, _badge, kind="card", card_id=_iid)'),
@@ -1002,7 +1014,7 @@ class OneBuzzPerTurnEnd(unittest.TestCase):
 
     def test_the_feed_path_claims_before_it_pushes(self):
         import inspect
-        src = inspect.getsource(km._cached_feed)
+        src = inspect.getsource(km._build_feed_locked)   # the build body, under the single-flight lock (2026-09-14)
         self.assertIn('_buzz_claim(_sid, _turn_end_key(_sid), "bell")', src)
         self.assertLess(src.index("_buzz_claim("), src.index('_push_notify(_t, _b, _sid, _badge, kind="card", card_id=_iid)'))
         self.assertLess(src.index("_system_notify(_t, _b)"), src.index("_buzz_claim("),
@@ -1210,7 +1222,7 @@ class ShellPopover(unittest.TestCase):
                       "Escape closes it through the shell's shared chain")
         self.assertIn("if(e.target===back)close()", h, "an outside tap lands on the backdrop and closes")
         self.assertIn("m.type==='notifyTurns'&&window.__rompNotifyTurnsPaint", h)
-        self.assertIn("fetch('/notify-turns')", h)
+        self.assertIn("readSwitch('/notify-turns',function(on){turnsOn=on;},3);", h, "the switch is read through readSwitch: a status check, a bounded retry")
         self.assertIn("z-index:205", h)
 
     def test_the_menu_tokens_with_their_dark_fallbacks(self):
@@ -1263,7 +1275,8 @@ function node(attrs) {
 }
 const bell = node(), back = node(), pop = node(), devSub = node(), testBtn = node({ 'data-act': 'test' }), testOut = node();
 testBtn.textContent = 'Send a test notification'; testBtn.parentNode = pop;
-pop._q = { '[data-act=all]': node(), '[data-act=dev]': node(), '[data-act=turns]': node() };
+const devRow = node({ 'data-act': 'dev' }); devRow.parentNode = pop;   // the This-device switch, tappable by a driver
+pop._q = { '[data-act=all]': node(), '[data-act=dev]': devRow, '[data-act=turns]': node() };
 const frame = { contentDocument: null };      // the chat iframe: its document is the scenario
 let hasFrame = true;
 global.window = global;
@@ -1275,10 +1288,26 @@ global.document = {
 };
 global.Notification = { permission: 'granted', requestPermission: () => Promise.resolve('granted') };
 global.PushManager = function () {};
-const SUB = { endpoint: 'https://push.example.net/send/dev-1' };
+// this device's subscription: on file unless ROMP_TEST_NOSUB (a device that never opted in), reassignable by a driver
+let SUB = process.env.ROMP_TEST_NOSUB ? null : { endpoint: 'https://push.example.net/send/dev-1' };
+// the kernel's GET /push/vapid-key: the key, or (VAPID_FAIL, from ROMP_TEST_VAPID_500) the missing-package 500 whose
+// plain-text body is ROMP_TEST_VAPID_MSG — the kernel's own _push_crypto_missing text, handed in by the test
+let VAPID_FAIL = !!process.env.ROMP_TEST_VAPID_500;
+const VAPID_MSG = process.env.ROMP_TEST_VAPID_MSG || '';
+const GETS = [];
+const NEWSUB = { endpoint: 'https://push.example.net/send/dev-2', keys: { p256dh: 'p', auth: 'a' } };
 Object.defineProperty(global, 'navigator', { configurable: true,
-  value: { serviceWorker: { getRegistration: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(SUB) } }) } } });
+  value: { serviceWorker: { getRegistration: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(SUB) } }),
+                            register: () => Promise.resolve({}),
+                            ready: Promise.resolve({ pushManager: { subscribe: () => { SUB = NEWSUB; return Promise.resolve({ toJSON: () => NEWSUB }); } } }) } } });
+global.location = { origin: 'https://romp.example.net' };
+global.atob = global.atob || ((s) => Buffer.from(s, 'base64').toString('binary'));
 global.fetch = (path, init) => {
+  if (path === '/push/vapid-key') {
+    GETS.push(path);
+    if (VAPID_FAIL) return Promise.resolve({ ok: false, status: 500, text: () => Promise.resolve(VAPID_MSG) });
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ key: 'AAAA' }) });
+  }
   if (init && init.method === 'POST') {
     const b = JSON.parse(init.body); FETCHES.push([path, b]);
     const res = { ok: true, status: 201, detail: 'Created' };
@@ -1385,6 +1414,76 @@ class LandingPushExecutes(unittest.TestCase):
             self.assertEqual((r["pressed"]["disabled"], r["pressed"]["label"]), (True, "Sending…"), key)
             self.assertEqual(r["restored"], {"disabled": False, "label": "Send a test notification"}, key)
             self.assertEqual(r["notes"], [], key)
+
+
+# The This-device switch on a kernel without the `cryptography` package (2026-09-14): the bell's first
+# fetch, GET /push/vapid-key, answers the kernel's 500 whose body names the package and the command
+# (_push_crypto_missing). Before this the sub-line fell back to the generic invitation, "Turn on to get
+# them on this device", over a tap that had just been refused for a reason the kernel had spelled out;
+# only a toast carried it. Pins: the row's sub-line shows the kernel's text verbatim and wears the
+# status red; the toast still fires; nothing is posted to /push/subscribe. Then the package is in
+# (bin/romp-sdk-setup; the kernel retries on the next tap) and the same tap subscribes: the sub-line
+# is the subscribed line again and the red is gone.
+_DEV_DRIVER = r"""
+const tick = () => new Promise((r) => setTimeout(r, 0));
+async function tapDev() {
+  NOTES.length = 0; FETCHES.length = 0; GETS.length = 0;
+  pop._h.click({ target: devRow });
+  for (let i = 0; i < 4; i++) await tick();
+  return { sub: devSub.textContent, bad: devSub._cls.has('bad'), notes: NOTES.slice(), gets: GETS.slice(),
+           posts: FETCHES.map((f) => f[0]), checked: devRow.getAttribute('aria-checked') };
+}
+(async () => {
+  await tick(); await tick();                                    // boot: the switches read, this device unsubscribed
+  const out = { boot: { sub: devSub.textContent, bad: devSub._cls.has('bad'), checked: devRow.getAttribute('aria-checked') } };
+  out.missing = await tapDev();                                  // the kernel has no cryptography: the key fetch is the 500
+  VAPID_FAIL = false;                                            // the package installed since; the kernel finds it on this tap
+  out.again = await tapDev();
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+class LandingPushDeviceRowExecutes(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import subprocess
+        cls.msg = km._push_crypto_missing()
+        env = dict(os.environ, ROMP_TEST_NOSUB="1", ROMP_TEST_VAPID_500="1", ROMP_TEST_VAPID_MSG=cls.msg)
+        with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+            f.write(_PUSH_HARNESS + km._LANDING_PUSH_JS + _DEV_DRIVER)
+            path = f.name
+        try:
+            r = subprocess.run(["node", path], capture_output=True, text=True, timeout=30, env=env)
+        finally:
+            os.unlink(path)
+        assert r.returncode == 0, "the bell's script threw: " + r.stderr[:800]
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_kernels_message_names_the_package_and_the_command(self):
+        self.assertIn("'cryptography'", self.msg)
+        self.assertIn(str(km.ROOT / "bin" / "romp-sdk-setup"), self.msg)
+
+    def test_before_the_tap_the_row_is_the_plain_invitation(self):
+        self.assertEqual(self.out["boot"], {"sub": "Turn on to get them on this device.", "bad": False, "checked": "false"})
+
+    def test_a_refused_tap_leaves_the_kernels_reason_on_the_row_not_the_generic_line(self):
+        r = self.out["missing"]
+        self.assertEqual(r["gets"], ["/push/vapid-key"], "the key fetch is where the kernel refuses")
+        self.assertEqual(r["posts"], [], "nothing is subscribed or posted on a refusal")
+        self.assertEqual(r["sub"], self.msg, "the sub-line shows the kernel's text, verbatim")
+        self.assertTrue(r["bad"], "and wears the status red, as the test button's refusals do")
+        self.assertEqual(r["checked"], "false")
+        self.assertEqual(r["notes"], [["error", "Notifications: " + self.msg]], "the toast still fires")
+
+    def test_the_same_tap_once_the_package_is_in_subscribes_and_clears_the_reason(self):
+        r = self.out["again"]
+        self.assertEqual(r["gets"], ["/push/vapid-key"])
+        self.assertEqual(r["posts"], ["/push/subscribe"])
+        self.assertEqual(r["sub"], "This browser gets a notification when a session needs you or finishes.")
+        self.assertFalse(r["bad"])
+        self.assertEqual(r["checked"], "true")
+        self.assertEqual(r["notes"], [])
 
 
 if __name__ == "__main__":

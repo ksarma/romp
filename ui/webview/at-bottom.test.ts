@@ -80,16 +80,17 @@ test("follow mode and the chip read atBottom at every site", () => {
     /followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, atBottom\(c\), pendingBuildRaf != null\);/,   // the scroll record
     /cur\.stick = atBottom\(content\);/,                                                                  // the leaving tab's save
     /_wasNear = !_scrollContent \|\| !_v0 \|\| !_v0\.shown \|\| atBottom\(_scrollContent\);/,             // the rebuild branch
-    /content\.clientHeight > 0 && !atBottom\(content\) \? captureScrollAnchor\(content, av\) : null;/,      // rerenderAll's keep
+    /const bottom = live && atBottom\(content!\);/,                                                          // rerenderAll's one read, before the clear: the re-show follow flag and the keep
     /\(!atBottom\(content\) \? captureScrollAnchor\(content, v\) : null\)\) : null;/,                       // showActive's keep
     /content\.clientHeight > 0 && !atBottom\(content\)\) \{\s*\n\s*writeScroll\(content, content\.scrollTop \+ \(h - lastH\), "box-resize"\);/,   // box-resize compensation
     /stick = !!content && atBottom\(content\);/,                                                          // tab-strip drag
     /const wasAtBottom = !!contentX && contentX\.scrollHeight > contentX\.clientHeight \+ 2 && atBottom\(contentX\);/,   // the ✕ on a pending bubble (T262h)
     /unitChangeRow\(id, c\.dh, c\.cls, c\.fromTail, view3\.stick, atBottom\(content\), content\.scrollHeight, content\.clientHeight\)/,   // the unit-change row's measured bottom (T262n)
     /unitChangeRow\(activeId \|\| "", dh, cls, BOX_FROM_TAIL, v\.stick, atBottom\(c\), c\.scrollHeight, c\.clientHeight\)/,   // the scroller's boxes outside the thread (T262n follow-up)
+    /if \(c && v\) v\.stick = atBottom\(c\); \}/,                                                             // a deep-link landing ends follow mode unless it put the reader at the bottom (T386)
   ];
   for (const re of follow) assert.match(RENDER, re, String(re));
-  assert.equal((RENDER.match(/\batBottom\(/g) || []).length, 13, "twelve call sites plus the definition");
+  assert.equal((RENDER.match(/\batBottom\(/g) || []).length, 16, "fifteen call sites plus the definition (the re-show follow rule reads the same true bottom, T262 2026-09-09; the window ask's diagnostic row reads it too, T366; the landing's follow-mode end, T386)");
 });
 
 test("only the user's own send reveal keeps the 80 px band", () => {

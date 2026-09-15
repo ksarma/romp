@@ -145,13 +145,16 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   for a reload or a tab the browser discarded; a `resent: true` copy of the
   `return` row means the kept socket proved dead and the row was re-filed onto
   the redial.
-  A redial declares itself (`reconnect=1` on the `/ws` URL) once the bundle's
-  ready has left on a socket; before that, or with the ready still queued, it
-  dials as a fresh page. The kernel then sends the active tab in full and lists
-  every other session as a `skeleton` on the tab strip with one small `status`
-  frame each, and the chat pane loads a skeleton on click or one at a time in
-  idle, never while the tab is hidden; one `skeleton` client-diag row (count,
-  active) records the regime.
+  A redial declares itself (`reconnect=1` on the `/ws` URL) once the kernel's
+  caps frame has answered the bundle's ready; before that, with the ready still
+  queued, or after a socket that died before the caps frame came back, it dials
+  as a fresh page. A page whose ready was never answered dials fresh for its
+  life (the bundle posts ready once), so each of its redials is served whole.
+  On a declared redial the kernel sends the active tab in full and lists every
+  other session as a `skeleton` on the tab strip with one small `status` frame
+  each, and the chat pane loads a skeleton on click or one at a time in idle,
+  never while the tab is hidden; one `skeleton` client-diag row (count, active)
+  records the regime.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
@@ -179,6 +182,26 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   (open, nothing for you to do — including delegated work and waiting on a
   non-user trigger), **blocked** (needs *you*), **completed**. They map 1:1 onto
   the three feed columns.
+- **A block addressed to a peer is a peer wait, in working** (2026-09-11): the
+  judges read a block's addressee from the session's own open question to a live
+  peer, else from the peer that delegated the work it sits under (the planted
+  origin, or the delegate mail the goal's anchor names; a goal whose anchor
+  names no dispatch falls back to the newest delegate received before its mint
+  only while that dispatch's own goal was still open at the mint, an id-less
+  mail never; never a goal you typed, nor one split out of it, while a goal
+  split out of a delegated one reads its own record), and file the
+  awaiting-a-peer stamp instead of the block, so the card shows the "Awaiting
+  <peer>" chip in working and never a needs-you; when the worker never mailed
+  that peer, the kernel relays the block's why to it as the worker's own question,
+  once per block (each marker has an identity its queue entry and its record
+  name), so the reply can end the wait; a relay handed to a far host stays
+  pending by its id up to the far host's delivered row or the peer's answer; a
+  refusal the bus cannot retry reverts the block to yours; your own follow-up on a
+  delegated card, newer than the delegation, keeps its block yours. A block in a delegated goal that
+  names you still goes to the delegating manager; a worker's card reaches you only
+  when the debt ladder escalates, and for a manager debtor only at an idle turn end
+  with no unread mail waiting for it. Your own sessions' blocks are untouched,
+  whatever questions they have out.
 - **`blocked` has a deterministic floor the judge cannot override.** A live
   permission / decision prompt is a fact, not a judgment. `blocked = hard OR soft`,
   hard wins: the planner's output can never clear a hard block. This is a merge
@@ -225,35 +248,12 @@ single-writer.
 ### How mail reaches a session
 
 The bus stores mail per recipient (a Maildir) and the kernel owns the wake
-(`POST /deliver`). Three delivery legs, chosen by what the recipient is:
-
-1. **SDK session** — the kernel enqueues the banner on the session's SDK input
-   queue. First-class, nothing to scrape.
-2. **tmux session on Claude Code ≥ 2.1.224** — one JSON user record written to
-   the session's **inbox socket**, the per-session Unix socket the CLI binds and
-   registers (with its session id) in `~/.claude/sessions/<pid>.json`. The
-   kernel joins that registry on the session's current transcript id
-   (`lastSid`), connects, writes one line, done: instant, wakes an idle session,
-   delivers between tool calls mid-turn, and never touches the composer, so a
-   half-typed draft survives with no stash dance. The CLI treats socket arrivals
-   as another-session traffic; its inbound gate can HOLD mail from an
-   unverifiable sender (the kernel is one) when the session runs a bypass-class
-   permission mode, and a held message silently expires after ~5 minutes — and
-   the socket acks nothing, so a hold would read as delivered. That is why
-   `bin/romp` launches sessions with the CLI's inbound-accept setting
-   (`crossSessionInbound: accept`) and tags them `@romp-inbound-accept`, and the
-   kernel takes this leg ONLY for tagged sessions: the tag is written by the
-   same launch that made holds impossible, so tag and setting can never
-   disagree. Security shape: the socket is owner-only (0600 inside a 0700 dir),
-   unreachable from off-machine and from other local users; a same-user process
-   could already type into any pane via `tmux send-keys` with FULL user
-   authority, while socket mail arrives explicitly labeled as peer traffic with
-   approval power stripped — the lower-privilege injection path of the two.
-3. **Everything else** (older CLI, untagged launch, socket gone) —
-   draft-preserving pane injection at a live ❯ prompt, with the Stop-hook drain
-   (`hooks/romp-postal-drain.sh`) as the turn-boundary backstop. Unchanged, and
-   still the fallback whenever leg 2 fails for any reason: non-delivery is
-   caught by the maildir claim/retry and stuck-mail warnings either way.
+(`POST /deliver`): it hands the banner to the session's backend, which enqueues
+it on the session's input queue (a Claude Code session's SDK input queue).
+First-class, nothing to scrape, and never a touch on the composer, so a
+half-typed draft survives. The Stop-hook drain (`hooks/romp-postal-drain.sh`)
+is the turn-boundary backstop for mail a wake could not land, and non-delivery
+is caught by the maildir claim/retry and stuck-mail warnings either way.
 
 ## The two inputs
 
@@ -289,8 +289,17 @@ lose it) from `send()` until the transcript carries the same text. For a message
 into a running turn that record is the `queued_command` attachment the CLI writes
 when it splices the message in at its next tool boundary. On the SDK route no floor
 retires an echo: it retires when its text lands in a record stamped at or after the
-send (a user record or that attachment), or when the CLI dies holding it (`dropped`,
-which the chat shows as never delivered, with restore and dismiss). The chat's own
+send (a user record or that attachment), or it is flagged `dropped` (which the chat
+shows as never delivered, with restore and dismiss) on one of two events: the CLI dies
+holding it, or the transcript OVERTAKES it — a later genuine-human turn lands, in a
+later second, while the send's text has landed nowhere and no queue still owes it
+(the backend's own, or the CLI's queue ledger). The composer's messages travel one
+channel in order, so a later one going through means the CLI skipped this one: lost,
+not waiting (`settle_echoes`; before 2026-09-11 a
+CLI that wedged, swallowed a send and carried on left a solid bubble nothing could
+clear). At boot the same evidence turns the re-delivery of an unlanded human send
+into the flag: a message the conversation has moved past is not re-sent behind the
+newer ones. The chat's own
 pending bubble, painted at the press, has no lifetime either: it ends on the same
 events, read from the events after the send (a landing of the text, the kernel's
 never-delivered verdict, or the user's ✕), and a record the CLI wrote from several
@@ -304,7 +313,11 @@ at its send position, above those steps, while the model read it only after them
 so the order on screen contradicted the order the model saw; the read position is
 the one that matches. So the chat's pending bubble sits at the TAIL while pending,
 below every streaming step, and the landed atom appears in that same tail
-position, so nothing moves on landing; the send time rides along as `sentAt` for
+position, so nothing moves on landing. Every other window of the session sees the
+kernel's echo of that send in the same place: the live merge orders an in-flight
+echo after everything the turn holds (a never-delivered one keeps its time), and
+the pane dresses it as the sender's bubble is dressed, so one session in two split
+columns agrees on what is pending (2026-09-11). The send time rides along as `sentAt` for
 the bubble's hover ("sent at HH:MM", shown once landed when it differs from the
 landing by more than a minute). No header, no cue. This supersedes the
 in-place-at-send-position rule of T252/T252b; the kernel's per-copy identities
@@ -313,21 +326,15 @@ press: the client mints the copy's id (`qid`, in the kernel's echo form) and pos
 it with the send, the kernel parks the copy under it (the parked op's fourth slot)
 or queues it under it, and the ✕ names it, so the kernel cancels exactly the copy
 the bubble stands for, never a same-text neighbour by index or body. That holds
-wherever the copy carries the id: a parked send on any backend, and the SDK
-route's queue. A copy whose ✕ names no id (an op the kernel parked itself, such
-as a nudge or a re-delivery; a ✕ from an older client) is still cancelled by
-index and body. The tmux route's queue, which the CLI holds, has no ✕ at all:
-`TmuxBackend` has no `unqueue`, so `build_session` ships those copies
-`cancelable: false` and the chat draws no ✕ for them. Every copy the kernel
-queues itself (mail, a nudge, a re-delivery) is still minted an id where it
-enters the backend's queue. The CLI extracts
-no image paths on the stream-json route (its only image-path test belongs to the
+wherever the copy carries the id: a parked send, and the SDK route's queue. A
+copy whose ✕ names no id (an op the kernel parked itself, such as a nudge or a
+re-delivery; a ✕ from an older client) is still cancelled by index and body.
+Every copy the kernel queues itself (mail, a nudge, a re-delivery) is still
+minted an id where it enters the backend's queue. The CLI extracts no image
+paths on the stream-json route (its only image-path test belongs to the
 interactive composer's paste handler), so an image path in an SDK send lands as
-typed and the echo's text matches. `_path_bearing` and the extension set it tests
-(png, jpe?g, gif, webp, case-insensitive: the CLI bundle's single image-path test,
-pinned equal between kernel and backend) remain for the tmux settle path only, where
-the paste hook does run and rewrites the path to `[Image #N]`. The chat's own image
-previews (`_user_images`) use a separate set, built from the served MIME table
+typed and the echo's text matches. The chat's own image previews
+(`_user_images`) use a separate set, built from the served MIME table
 (`_IMG_MIME`, svg and bmp included), so a preview is never proposed for a file the
 image route cannot serve.
 
@@ -342,12 +349,10 @@ reads the whole file. The found verdict is recorded on the echo (`_landed`), and
 `prune_live` and the chat merge retire the echo on it without a text match, so a
 found echo always has an exit and a later boot never re-scans it. Every by-text
 comparison of an echo against a record (the guard's scan, `prune_live`'s retire on every
-backend (`SdkBackend`, `CodexBackend`, the tmux backend's), the Codex backend's own retire
-of an echo by the user record it just wrote (`CodexBackend._append`, one echo per landed
-text block, whose `_rec_texts` keys the record side), the kernel's `_atom_user_texts` and
-its folds, the fed-copy pairing `qids_for_landing`, the tmux echo's prune
-`_tmux_echo_prune` and the user-todo answer's landed check (`_paste_landed_texts`, the
-match set `_user_todo_answer_lost` reads)) uses the two keys in `session_backend.py`:
+backend (`SdkBackend`, `CodexBackend`), the Codex backend's own retire of an echo by the user
+record it just wrote (`CodexBackend._append`, one echo per landed text block, whose `_rec_texts`
+keys the record side), the kernel's `_atom_user_texts` and its folds, and the fed-copy pairing
+`qids_for_landing`) uses the two keys in `session_backend.py`:
 `echo_text_key` (outer whitespace stripped, nothing else) and, for a slash send,
 `command_text_key` (the tokens joined by single spaces). The second exists because the
 CLI records a slash or skill command as its `<command-name>` wrapper, which parses to
@@ -362,9 +367,10 @@ agree on the same records.
 - click any line to jump to that point in the transcript.
 
 The captioner emits both grains and the event model gives the turn→segment nesting,
-so the TOC is free. (Caveat: a live permission prompt's *content* may exist only in
-tmux, not the transcript; a live AskUserQuestion/ExitPlanMode is in the tree as an
-unanswered tool_use. The chip state comes from `states/` regardless.)
+so the TOC is free. (Caveat: a live permission prompt's *content* reaches the
+kernel through the session's backend, not the transcript; a live
+AskUserQuestion/ExitPlanMode is in the tree as an unanswered tool_use. The chip
+state comes from `states/` regardless.)
 
 ### Feed = top-level-goal cards, nothing else
 
@@ -374,6 +380,42 @@ blocked / completed). A sub-goal never gets its own card: a block anywhere in th
 tree rolls UP, so the *top-level card* moves to BLOCKED and its modal shows which
 leaf is blocking; likewise a completed step shows inside the modal, not as its own
 Completed card. No read-time DAG rebuild, no status derivation, no handoff repair.
+
+Work a session started on its own is never a card of its own (the user
+2026-09-10). At mint time the planner nests it under the goal it ran in (see the
+judges' origin rule); for stores written before that rule, `build_feed` heals
+read-side: a top rooted in a machine record (the judge's latched `askAnchor`
+verdict: a peer's line, the agent's own record, romp bookkeeping; never a top that
+merely lacks an anchor, and never a scheduled prompt's top, which the latch marks
+`scheduled` as the user's configured work), or anchored on the harness's own skill-load
+record (the bare-named `<skill-format>` command wrapper with no arguments slot that the CLI
+writes when it loads a skill for the model, never typed; the event model emits no atom for it since 2026-09-11,
+and the judge's latch stamps the tops older stores minted from it `machine` off the record,
+re-stamping an older `human` latch once and resolving the top with romp's done verdict
+naming the skill, so nothing nudges or stalls it; a once-per-boot store-side pass reads the
+wrapper records raw across the project directory for stores the chain or the discover
+window no longer reaches, append-incrementally and under a byte budget, and an anchor once
+checked (an atom of a parse, or absent from a complete directory index) is never re-read. Such a top never hosts, a block romp filed itself (a failed
+nudge, an interrupt) does not except it, and with no host in the store it is hidden from
+the feed rather than shown as a root: the session's own view keeps the work, and only a
+live floor or the agent's own question to the user (a closer's or planner's block under
+it, which the stamp never resolves away) keeps its card) is rendered inside the session's human-asked top that was current
+when it was minted; word overlap with the transcript's recorded background
+launches only picks which launch supplies the why and, among several open tops,
+the parent. Hosts are the asks that trace to the user: human-anchored tops and
+courier-planted delegated goals, never a handoff tracker; a completed host still
+holds its rows and a cleared host hides them with it. A blocked top keeps its
+card until the block lifts (needs-you breaks through) and still wears the face
+that says what it is; the top a live prompt or error floor stands on keeps its
+card too. The launch match reads the dispatch's own description, kept on the
+task record from launch time, never the completion's summary or the brief. Deterministic on the same store and stream
+(nothing moves between builds without a new record), never written back, and
+said once per rise on stderr. A tree row born
+of the session carries `born` with its why; a session-started root that still
+shows (its parent gone, or no top to nest under) carries `sessionStarted` and
+its face says in one line what it is and, when known, the request it served.
+The awaiting panel's `local_workflow` / `local_agent` rows are the run's own
+place in the parent card.
 
 - A card's modal shows the goal's trail (its filed segments + sub-goal tree,
   interleaved).
@@ -667,12 +709,19 @@ once per distinct error, and stops retrying until the file changes or a
 write succeeds.
 
 The kernel announces what it can do in a `{type: "caps", caps, viewsSeq}` frame
-in reply to every `ready` and lists the caps on `/version`; `tagEdit` covers the
-targeted op, the acks and the `seq`. A client uses the targeted op only when the
-cap is present and posts the whole blob otherwise. A message no handler takes is
-answered `{type: "unknownOp", op, writeId}`, which the client treats as a refusal
-of that write and as withdrawing the cap. The caps frame is also the reconnect
-signal, and the `ready` handler sends it after its own connect push. `viewsSeq`
+in reply to every `ready` (a pane's bundle posts one per page life; the shell
+page's own socket posts one at every open) and lists the caps on `/version`;
+`tagEdit` covers the targeted op, the acks and the `seq`. A client uses the
+targeted op only when the cap is present and posts the whole blob otherwise. A
+message no handler takes is answered `{type: "unknownOp", op, writeId}`, which
+the client treats as a refusal of that write and as withdrawing the cap. The
+`ready` handler sends the caps frame after its own connect push, and the pane
+shim latches on it as the kernel's word that the ready was processed and the
+page served whole: a redial declares itself only once the frame has arrived.
+It is not a reconnect signal for a pane: a pane's shim re-sends no `ready` on a
+reconnect, so a reconnected pane socket gets a caps frame only when the
+bundle's ready queued across the drop and flushed onto it; the shell's socket,
+which posts `ready` at every open, learns the caps again each time. `viewsSeq`
 is the write seq of the views blob that push put on the socket: the tabOrder
 frame's, the timeline skeleton's or the feed frame's, the highest when the push
 carried more than one. When the push carried no views frame (a chat page that
@@ -729,6 +778,13 @@ same rule. Until the
 2026-09-05 review any adoption cleared the slot, so a re-emit in that window
 cleared the pane's; the pane turned the restored store away while the router
 held it, and the two diverged until the next write.
+
+The adoption on the caps frame and the drop of writes still in flight, above,
+wait on a caps frame, and the kernel sends one only in answer to a `ready` on
+that socket: the shell page's socket, which posts `ready` at every open, gets
+one on every reconnect; a pane's socket gets one at page load and, on a
+reconnect, only when the bundle's ready queued across the drop and flushed onto
+it. A reconnected pane socket that flushed no `ready` gets no caps frame.
 
 The Outline pane's tag filter posts its lens the same way: the frame copy it
 holds with only the outline lens changed, with a `writeId` and `edited: []`, so

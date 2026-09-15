@@ -48,11 +48,13 @@ test("every input the strip renders is in the signature", () => {
     "settings.tabCtx", "settings.stripGroupRows", "settings.theme", "settings.colormap", 'titleWithKey("Open a session", "session.new")',
     "settings.denseChrome",   // compact tabs: a body class re-heights every strip item with no width change, so only a rebuild lays the hairlines and keep breaks under the new rows (review round 2 of the keep-with-next change)
     'surfaceLens(effViews(), "chat")', "unions",
-    "snapView",   // the section whose snapshot the pane shows: a header's snap-shown mark and its way-back act derive from it (makeGroupHead), and leaveSnapshot changes it with no fold change
+    "snapView",   // the section the pane shows at a glance: a header's mark, its way-back act and its words derive from it
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!s.sub", "!!(s.userTodos && s.userTodos.length)", "hostIsDown(id)", "hostDownNote(id)",
     "ledgers.get(id)?.needsInput === true",   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
+    "settings.tabWidgets", "tabHotkey(id)",   // T379: which widgets a tab carries (and their options), and the hot-key keycap's chord
+    "st.needsYou === true", "kst?.needsYou === true",   // the yellow ring's input (the ask ring, 2026-09-13; a widget since 2026-09-14): a card of the session's entering or leaving the feed's needs-you column repaints, on a loaded tab and a skeleton alike; the switches ride settings.tabWidgets above
   ]) assert.ok(sig.includes(needle), "the signature reads " + needle);
   assert.match(fn, /const unions = viewTagUnion\(effViews\(\)\);\s*\n\s*const plan = planStrip\(visibleIds, unions, readTabGroups\(unions\), activeId, phoneLayout\(\),/,
     "the plan reads the unions the signature carries");
@@ -64,12 +66,19 @@ test("every input the strip renders is in the signature", () => {
   const chip = RENDER.slice(RENDER.indexOf("function applyTabStatus("), RENDER.indexOf("function wireTabDrag("));
   assert.match(fn, /const st = applyTabStatus\(tab, s\);/);
   assert.match(chip, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
-  // the fork's hover title rides the same helper (2026-09-10 fold), so a skeleton tab's pip explains itself too
-  assert.match(chip, /const dotTip = dotCls \? tabDotTitle\(st\) : null;\s*\n\s*if \(dotTip\) \(tab\.lastElementChild as HTMLElement\)\.title = dotTip;/,
-    "tabDotTitle is applied inside applyTabStatus, right after the dot slot");
+  // the dot is a WIDGET since T379 (tab-widgets.ts): its render is the one rule's site, and the fork's hover title rides it
+  // there (tabDotTitle right after tabDotClass, the 2026-09-10 fold's twin), so a skeleton tab's pip explains itself too
+  const TW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "tab-widgets.ts"), "utf8");
+  assert.match(TW, /const cls = tabDotClass\(status\.state\);[^]*?const tip = tabDotTitle\(status\.state\);\s*\n\s*if \(tip\) d\.title = tip;/,
+    "tabDotTitle is applied inside the dot widget's render, on the dot the one rule classed");
+  // render.ts imports the state rule and the section pip's title from tab-state (this fork adds its tabhide names to the same
+  // line, so the pin reads the names, not one exact line), and neither dot name any more: the widget imports both itself
   const tabStateImport = RENDER.match(/^import \{([^}]*)\} from "\.\/tab-state";/m);
   assert.ok(tabStateImport, "render.ts imports from tab-state");
-  for (const name of ["tabStateClass", "tabDotClass", "tabDotTitle"]) assert.ok(tabStateImport![1].split(",").map((s) => s.trim()).includes(name), "the tab-state import carries " + name);
+  const tabStateNames = tabStateImport![1].split(",").map((s) => s.trim());
+  for (const name of ["tabStateClass", "sectionPipTitle"]) assert.ok(tabStateNames.includes(name), "the tab-state import carries " + name);
+  for (const name of ["tabDotClass", "tabDotTitle"]) assert.ok(!tabStateNames.includes(name), "the dot rule moved into the dot widget (T379): render.ts no longer imports " + name);
+  assert.match(RENDER, /^import \{ composeTabWidgets, composeTabRing, ringSwitch, tabHotkey, miniChord \} from "\.\/tab-widgets";/m, "the widgets the strip composes (the rings too, one class at a time), the ring switches the folded pip reads, and the hot-key chord the signature reads");
 });
 
 test("a tab drag resets the signature (its live reorder changes the strip's DOM outside renderTabs), and the tooltip reads the session fresh", () => {
@@ -77,7 +86,7 @@ test("a tab drag resets the signature (its live reorder changes the strip's DOM 
   // T264b (upstream) records the dragged node too (draggedEl); the signature reset follows it on the next line
   assert.match(fn, /wireTabDrag\(tab, id\);/);
   const wire = RENDER.slice(RENDER.indexOf("function wireTabDrag("), RENDER.indexOf("function makeSkeletonTab("));
-  assert.match(wire, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n(?:\s*if \(fedMissing\) \{ e\.preventDefault\(\); return; \}[^\n]*\n)?\s*draggedId = id; draggedEl = tab; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);   // the manager-missing refusal may lead (2026-09-10)
+  assert.match(wire, /tab\.addEventListener\("dragstart", \(e\) => \{\s*\n(?:\s*if \(fedMissing \|\| settings\.tabsLocked\) \{ e\.preventDefault\(\); return; \}[^\n]*\n)?\s*draggedId = id; draggedEl = tab; tabDragCommitted = false;\s*\n\s*tabStripSig = "";/);   // the manager-missing refusal may lead (2026-09-10)
   assert.match(fn, /showTabTip\(tab, sessions\.get\(id\) \?\? s\)/, "a tab node now outlives a frame that replaced the session object");
   assert.match(RENDER, /^let tabStripSig = "";/m);
   // a GROUP drag needs no reset: its dragover only marks the drop target (no live reorder of headers — the
@@ -86,8 +95,26 @@ test("a tab drag resets the signature (its live reorder changes the strip's DOM 
   assert.match(drag, /if \(draggedGroup\) \{[^]*?No live reorder of headers[^]*?return;\s*\n\s*\}/);
 });
 
+test("the column partition (the chat split, 2026-09-11): the sets are read once at the top, ahead of the filter and the plan, and tabInView reads columnHolds", () => {
+  const read = fn.indexOf("colSets = readColSets();");
+  assert.ok(read > 0 && read < fn.indexOf("const visibleIds = ids.filter((id) => stripShows(id, only));"), "one cross-window read per render, before the filter (stripShows reads tabInView, which reads the sets)");
+  assert.equal((fn.match(/readColSets\(\)/g) || []).length, 1, "read once");
+  assert.ok(read < fn.indexOf("const plan = planStrip("), "before the plan, which reads visibleIds");
+  assert.match(RENDER, /function heldHere\(id: string\): boolean \{ return isSubId\(id\) \|\| isProvisionalId\(id\) \|\| columnHolds\(colSets, COL, id\); \}/,
+    "a sub-agent viewer and a provisional tab are the page's own; every other id is the shell's sets' to place");
+  assert.match(RENDER, /function tabInView\(id: string\): boolean \{ return \(id === peekId \|\| chatVisible\(id\)\) && heldHere\(id\); \}/);
+  assert.match(RENDER, /^import \{ colFromSearch, columnHolds, columnEmptiness, type ColSets \} from "\.\/chat-columns";/m);   // …and the emptiness verdict (the host rule, 2026-09-14)
+  assert.match(RENDER, /^const COL = colFromSearch\(location\.search\);/m);
+  // the skip line and the signature list are unchanged: the partition reaches the signature through ids and visibleIds
+  assert.match(fn, /if \(stripSig === tabStripSig && !\(mslotEl && !mslotEl\.firstChild\)\) \{ stripAftermath\(visibleIds, ids\); return; \}/);
+  assert.ok(!sig.includes("colSets"), "the sets are not a signature input of their own: visibleIds already carries the filter");
+  // …and the shell's write of the sets re-renders through the storage event (the tab-groups idiom)
+  assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === "romp-chat-cols"\) renderTabs\(\); \}\);/);
+});
+
 test("what follows a render runs on both paths: the placeholder, the section snapshot's refresh and the all-hidden blank", () => {
-  assert.match(RENDER, /function stripAftermath\(visibleIds: readonly string\[\], ids: readonly string\[\]\): void \{\s*\n\s*syncNoSessionsPlaceholder\(visibleIds\.length, ids\.length\);/);
+  assert.match(RENDER, /function stripAftermath\(visibleIds: readonly string\[\], ids: readonly string\[\]\): void \{\s*\n\s*syncNoSessionsPlaceholder\(visibleIds\.length, ids\.length, ids\.filter\(heldHere\)\.length\);/);   // + how many this column holds (the chat split's copy, 2026-09-11)
+  assert.match(RENDER, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);/, "the section snapshot's refresh follows the placeholder (this fork's section at a glance)");
   assert.equal((fn.match(/stripAftermath\(visibleIds, ids\)/g) || []).length, 2, "the skip path and the rebuild path");
   // the all-hidden blank reads the active view, which is built lazily and can appear between two equal
   // strips: it lives in the aftermath, not behind the skip (session-views pins the block's shape)

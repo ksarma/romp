@@ -121,6 +121,7 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
   // Files pane's openHere) rides in as the fourth argument, read AFTER the gesture, so the tab decision stays here
   // `at` (Slice 6 of plans/markdown-viewer.md): where the open lands (a todo link's line or heading), handed to whichever opener takes the plain click
+  // (upstream's `frag` string, T351, is one of its arms: a `#slug` arrives as { heading })
   assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null, at: At \| null\) => void, at\?: At \| null\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null, at \?\? null\); else openFileView\(path, sid, \{ at: at \?\? null \}\);\n\}/);
   // no click site bypasses the gesture reader: the chat and the browser never call openFileView themselves
   assert.equal((RENDER.match(/openFileView\(/g) || []).length, 0, "render.ts opens files through openFileClick only");
@@ -155,6 +156,8 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 6, "each pill passes its click AND its middle-click");
   assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e, linkTarget\(a\)\)/g) || []).length, 1, "…and openLinkedPath passes its click with the target the link named (Slice 6, item 4)");
   assert.equal((RENDER.match(/openLinkedPath\(a, e\)/g) || []).length, 2, "the path link's click and middle-click both hand their gesture to openLinkedPath");
+  // T351 stage 2: a glossary term's click is the ninth gesture, its target the heading the term names, through the same At
+  assert.equal((RENDER.match(/openPath\([^()]*, e, s\.dataset\.frag \? \{ heading: s\.dataset\.frag \} : null\)/g) || []).length, 1, "the term link passes its click with the term's heading as the open's target");
 });
 
 test("the kernel serves a PDF inline WITH its name, so the tab is titled and a Save names the file", () => {
@@ -213,7 +216,7 @@ test("openPath, executed: a modified click on a PDF opens the tab on every route
     const text = RENDER.slice(start, RENDER.indexOf("\n}\n", start) + 3);
     const js = requireCjs("esbuild").transformSync(text, { loader: "ts" }).code;
     // every free identifier of the shipped function is a parameter: a new one throws ReferenceError, loudly
-    const make = new Function("vscodeApi", "location", "window", "settings", "panesOn", "activeId", "sessions", "tabMeta",
+    const make = new Function("vscodeApi", "location", "window", "settings", "panesOn", "panesAvail", "activeId", "sessions", "tabMeta",
       "fileLinkRoute", "openFileClick", js + "\nreturn openPath;");
     const PDF = "/repo/notes-api/docs/paper.pdf";
     type Case = { setting?: string; filesOpen?: boolean; framed?: boolean; ev: unknown; path?: string; sid?: string | null; blocked?: boolean };
@@ -226,7 +229,7 @@ test("openPath, executed: a modified click on a PDF opens the tab on every route
       g.window = win; g.location = loc;   // preview.ts reads the globals inside the gesture
       try {
         const openPath = make({ postMessage: () => { /* VS Code's poster, unused on the web */ } }, loc, win, { fileLinkPane: c.setting ?? "chat" },
-          { files: c.filesOpen === true }, SID, new Map([[SID, { name: "web", color: "#4a7" }]]), new Map(), fileLinkRoute, fv.openFileClick);
+          { files: c.filesOpen === true }, {}, SID, new Map([[SID, { name: "web", color: "#4a7" }]]), new Map(), fileLinkRoute, fv.openFileClick);   // panesAvail {}: every control available (T317; absent = available)
         openPath(c.path ?? PDF, c.sid, c.ev);
       } finally { g.window = win0; g.location = undefined; }
       return { opened, posted };

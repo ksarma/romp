@@ -56,10 +56,9 @@ class _ParkFixture(unittest.TestCase):
     def setUp(self):
         self.echoes = []
         self.stamps = []
-        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all,
                        km._working_now, km._stamp_user_todo_answered)
         km._push_all = lambda: None
-        km._optimistic_echo = lambda sid, text, author="human": self.echoes.append((text, author))
         km._stamp_user_todo_answered = lambda sid, tid, text, nonce=None: self.stamps.append((tid, text))
         km._working_now = lambda sid: False
         km._compacting_now = lambda sid: False
@@ -67,7 +66,7 @@ class _ParkFixture(unittest.TestCase):
         km._inflight_ops.pop(SID, None)
 
     def tearDown(self):
-        (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+        (km._compacting_now, km.Sessions.backend_for, km._push_all,
          km._working_now, km._stamp_user_todo_answered) = self._saved
         km._pending_ops.clear()
         km._inflight_ops.pop(SID, None)
@@ -75,9 +74,10 @@ class _ParkFixture(unittest.TestCase):
 
 class _TodoKeepingBackend:
     """An SDK-shaped backend for the drain: forwards its own sends and keeps a todo id on the queue entry
-    (queue_carries_todos, the capability flag _backend_send reads). Its send takes no `qid`, so a press-minted
-    copy id is left off (_takes_qid) and the keywords it records are the todo's alone."""
-    queue_carries_todos = True
+    (its send NAMES `user_todo`, the signature read _send_with_id makes through _takes_kw; the fork's
+    queue_carries_todos flag retired with _backend_send, 2026-09-15). Its send takes no `qid` and no `user`,
+    so a press-minted copy id and the user's word are left off (_takes_qid, _takes_user) and the keywords it
+    records are the todo's alone."""
 
     def __init__(self):
         self.calls = []
@@ -85,14 +85,16 @@ class _TodoKeepingBackend:
     def forwards_sends(self):
         return True
 
-    def send(self, sid, text, **kw):
-        self.calls.append((text, kw))
+    def send(self, sid, text, user_todo=None):
+        self.calls.append((text, {"user_todo": user_todo} if user_todo else {}))
         return True
 
 
 class ParkedAnswerCarriesItsTodo(_ParkFixture):
-    """_send_or_park parks an ANSWER with its todo id as the op's fifth slot, behind the copy's press-time id or
-    None (4e Q2 REFINED); the drain hands only a real todo id to the backend and stamps only the real answers.
+    """_send_or_park parks an ANSWER with its todo id as the op's SEVENTH slot, behind the copy's press-time id or
+    None (fourth), the user's word (fifth, True: an answer is a user send) and the attachment list (sixth, None
+    here); PLAN2 2c item 1 of the 2026-09-15 pull-in re-cut 4e Q2 REFINED's fifth slot onto upstream's padded
+    shape. The drain hands only a real todo id to the backend and stamps only the real answers.
     This class's copy-id cases retired 2026-09-15 with the fork's send-id identity (4e Q1; R1, R5), each with its
     twin in tests/test_queued_copy_press_id.py::ParkedSendCarriesItsPressId:
     the id half of test_the_parked_op_carries_the_id_as_its_fifth_slot_and_bare_shapes_stay_bare ->
@@ -102,27 +104,27 @@ class ParkedAnswerCarriesItsTodo(_ParkFixture):
     test_the_drain_hands_the_backend_the_id_and_only_a_real_todo_id -> test_the_drain_hands_each_parked_send_its_own_id.
     The two todo halves stay below, re-aimed onto the resolved op shape."""
 
-    def test_a_parked_answer_carries_its_todo_as_the_fifth_slot_and_a_plain_send_stays_three_slot(self):
+    def test_a_parked_answer_carries_its_todo_as_the_seventh_slot_and_a_plain_send_stays_three_slot(self):
         km._compacting_now = lambda sid: True
         be = _TodoKeepingBackend()
-        self.assertEqual(km._send_or_park(be, SID, "an answer alone", echo="human", user_todo="ut-2"), "parked")
-        self.assertEqual(km._send_or_park(be, SID, "Re: the ask, yes", echo="human", qid=QID, user_todo="ut-1"),
-                         "parked")
-        self.assertEqual(km._send_or_park(be, SID, "a plain send", echo="human"), "parked")
+        self.assertIs(km._send_or_park(be, SID, "an answer alone", echo="human", user=True, user_todo="ut-2"), True)
+        self.assertIs(km._send_or_park(be, SID, "Re: the ask, yes", echo="human", qid=QID, user=True, user_todo="ut-1"),
+                      True)
+        self.assertIs(km._send_or_park(be, SID, "a plain send", echo="human"), True)
         self.assertEqual(km._pending_ops[SID],
-                         [("send", "an answer alone", "human", None, "ut-2"),
-                          ("send", "Re: the ask, yes", "human", QID, "ut-1"),
+                         [("send", "an answer alone", "human", None, True, None, "ut-2"),
+                          ("send", "Re: the ask, yes", "human", QID, True, None, "ut-1"),
                           ("send", "a plain send", "human")],
-                         "the todo id is the 5th slot behind the copy's id or None; a plain send keeps the 3-slot shape")
+                         "the todo id is the 7th slot behind the copy's id or None, the user's word and no attachments; "
+                         "a plain send keeps the 3-slot shape")
         self.assertEqual(be.calls, [], "parked, not sent")
-        self.assertEqual(self.echoes, [], "a parked send stamps no echo until it fires")
 
     def test_the_drain_hands_the_backend_only_a_real_todo_id(self):
         be = _TodoKeepingBackend()
         km.Sessions.backend_for = lambda sid: be
         km._pending_ops[SID] = [("send", "a", "human"),
-                                ("send", "Re: the ask, yes", "human", None, "ut-9"),
-                                ("send", "an answer alone", "human", None, "ut-3"),
+                                ("send", "Re: the ask, yes", "human", None, True, None, "ut-9"),
+                                ("send", "an answer alone", "human", None, True, None, "ut-3"),
                                 ("send", "c", "human")]
         km._apply_pending_ops()
         self.assertEqual(be.calls, [("a", {}),
@@ -136,12 +138,16 @@ class ParkedAnswerCarriesItsTodo(_ParkFixture):
 
 
 class TheMirrorMigrationInLoadPendingOps(unittest.TestCase):
-    """_load_pending_ops's one-time layout migration (4e Q3; the shapes the K2 audit named): a pending-ops file
-    written by the kernel before the fourth slot took the copy's press-time id put a send's user-todo id fourth and
-    the client's send id fifth. A record with a todo loads as ('send', text, echo, None, todo); one with an EMPTY
-    todo (the common parked record: a composer send that answered no todo) loads as the bare ('send', text, echo);
-    the old fifth slot is dropped either way, so no reader takes a retired send id for a todo id. A record already
-    in the current layout (an id in the echo form fourth, or None fourth with the todo fifth) loads byte for byte."""
+    """_load_pending_ops's TWO one-time layout migrations (4e Q3, and PLAN2 2c item 1 of the 2026-09-15 pull-in):
+    a pending-ops file written by the kernel before the fourth slot took the copy's press-time id put a send's
+    user-todo id fourth and the client's send id fifth; the stage 1 kernel (one life) put the todo FIFTH. A record
+    with a todo loads as ('send', text, echo, None, True, None, todo): the todo id seventh, behind the user's word
+    (an answer is a user send) and no attachments; one with an EMPTY todo (the common parked record: a composer send
+    that answered no todo) loads as the bare ('send', text, echo); the old fifth slot is dropped either way, so no
+    reader takes a retired send id for a todo id. A record already in the current layout (an id in the echo form
+    fourth, upstream's five-slot user record, the six-slot attachment record, the seven-slot answer) loads byte for
+    byte: the second migration keys on a five-slot send whose fifth is a non-empty STRING, which upstream's records
+    (True or None fifth) never are."""
 
     def setUp(self):
         km._pending_ops.clear()
@@ -155,13 +161,22 @@ class TheMirrorMigrationInLoadPendingOps(unittest.TestCase):
         km._PENDING_OPS_FILE.write_text(json.dumps({SID: records}))
         return km._load_pending_ops().get(SID)
 
-    def test_an_old_record_with_a_todo_moves_the_todo_to_the_fifth_slot_behind_none(self):
+    def test_an_old_record_with_a_todo_moves_the_todo_to_the_seventh_slot_behind_none_and_the_users_word(self):
         self.assertEqual(self._load([["send", "Re", "human", "ut-1", "s-2"]]),
-                         [("send", "Re", "human", None, "ut-1")],
-                         "the todo id leaves the 4th slot for the 5th; the old client send id is dropped")
+                         [("send", "Re", "human", None, True, None, "ut-1")],
+                         "the todo id leaves the 4th slot for the 7th; the old client send id is dropped")
         self.assertEqual(self._load([["send", "an answer alone", "human", "ut-3"]]),
-                         [("send", "an answer alone", "human", None, "ut-3")],
+                         [("send", "an answer alone", "human", None, True, None, "ut-3")],
                          "the old four-slot answer (a todo and no send id) migrates the same way")
+
+    def test_a_stage_one_five_slot_answer_moves_its_todo_to_the_seventh_slot(self):
+        # the one-life shape of the stage 1 kernel (the todo fifth, behind the copy's id or None); upstream's own
+        # five-slot record carries the bool True fifth and is left alone by the guard's isinstance(str) read
+        self.assertEqual(self._load([["send", "Re", "human", None, "ut-2"], ["send", "Re", "human", QID, "ut-1"],
+                                     ["send", "typed", "human", None, True]]),
+                         [("send", "Re", "human", None, True, None, "ut-2"), ("send", "Re", "human", QID, True, None, "ut-1"),
+                          ("send", "typed", "human", None, True)],
+                         "the second migration: a five-slot send with a STRING fifth is a stage 1 answer")
 
     def test_an_old_record_with_an_empty_todo_loads_as_the_bare_three_slot_send(self):
         self.assertEqual(self._load([["send", "go ahead", "human", "", "s-1"]]),
@@ -176,12 +191,14 @@ class TheMirrorMigrationInLoadPendingOps(unittest.TestCase):
         qid = "echo:" + "a" * 16
         self.assertEqual(self._load([["send", "a", "human", qid]]), [("send", "a", "human", qid)],
                          "an id in the echo form fourth is the current layout: nothing moves")
-        current = [("send", "an answer alone", "human", None, "ut-2"), ("send", "Re", "human", QID, "ut-1"),
+        current = [("send", "an answer alone", "human", None, True, None, "ut-2"), ("send", "Re", "human", QID, True, None, "ut-1"),
+                   ("send", "typed", "human", None, True), ("send", "shot", "human", None, True, ["/tmp/notes-api/shot.png"]),
                    ("command", "/compact", "human", QID), ("send", "plain", "human")]
         km._pending_ops[SID] = list(current)
         km._save_pending_ops()
         self.assertEqual(km._load_pending_ops().get(SID), current,
-                         "a todo behind None or behind the copy's id, a command's id and a plain send round-trip")
+                         "a todo behind None or behind the copy's id, upstream's user and attachment records, a command's id "
+                         "and a plain send round-trip")
 
 
 # Retired 2026-09-15 with the fork's send-id identity (4e Q1; R1, R5), the twins in tests/test_queued_copy_press_id.py:
@@ -217,8 +234,9 @@ class _DriveFixture(_ParkFixture):
 
 
 class AFollowUpWithoutAnId(_DriveFixture):
-    """A feed-button follow-up (askFollowUp with `nudge`) posts no copy id and stays bare: the kernel invents none,
-    and parked it keeps the 3-slot shape. The chat-typed follow-up's identity cases retired 2026-09-15 with the
+    """A feed-button follow-up (askFollowUp with `nudge`) posts no copy id and stays bare: the kernel invents none;
+    parked, a typed follow-up is the USER's word (T315: `user=not msg.get("nudge")`, folded 2026-09-15), so its op is
+    upstream's five-slot user record with no id and no attachments, never a seven-slot answer. The chat-typed follow-up's identity cases retired 2026-09-15 with the
     fork's send-id identity (4e Q1; R1, R5), each with its twin in tests/test_queued_copy_press_id.py:
     test_a_parked_follow_up_carries_the_id_as_its_fifth_slot_and_its_cancel_finds_it ->
     TheWireCarriesTheId::test_a_follow_up_parks_its_wrapped_body_under_the_id and
@@ -236,7 +254,9 @@ class AFollowUpWithoutAnId(_DriveFixture):
         self.assertEqual(be.calls[0][1], {}, "no id was posted, none is invented")
         km._compacting_now = lambda sid: True
         self.assertTrue(km._drive(self.FU, self.client))
-        self.assertEqual(len(km._pending_ops[SID][0]), 3, "a bare follow-up parks in the 3-slot shape")
+        op = km._pending_ops[SID][0]
+        self.assertEqual((op[0], op[3], op[4], len(op)), ("send", None, True, 5),
+                         "a typed follow-up parks as the user's send with no id: upstream's five-slot shape, nothing invented")
 
 
 class _QueueBackend:

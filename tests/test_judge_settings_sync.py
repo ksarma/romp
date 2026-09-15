@@ -74,7 +74,7 @@ class ApplySettings(unittest.TestCase):
                          "garbage never reaches the files or `claude --model`")
 
     def test_judge_fast_applies_and_reports_raw(self):
-        # Fast judging rides the same cross-kernel door as the judge tiers: "on" | "off", off by default,
+        # the judges' Fast mode rides the same cross-kernel door as the judge tiers: "on" | "off", off by default,
         # answered RAW, a value outside the pair ignored and visible in the ack
         self.assertEqual(km._apply_judge_settings({})["judgeFast"], "off")
         res = km._apply_judge_settings({"judgeFast": "on"})
@@ -240,10 +240,9 @@ class OneHopNeverALoop(unittest.TestCase):
                      'args=({"commentModel": str(msg["model"]), "gt": _jgt},)',
                      'args=({"commentEffort": str(msg["effort"]), "gt": _jgt},)',
                      'args=({"commentFast": str(msg["fast"]), "gt": _jgt},)',
-                     'args=({"tmuxBackend": _tbv, "gt": _jgt},)',   # T288
-                     'args=({"judgeFast": _jfv, "gt": _jgt},)'):    # Fast judging
+                     'args=({_ffield: _jfv, "gt": _jgt},)'):    # Fast mode, one field per judge tier
             self.assertIn(frag, self.src, frag)
-        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 12,
+        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 11,
                                 "every judge-tier fan-out is gated on the pick actually applying")
 
     def test_the_gear_copy_says_the_pick_follows(self):

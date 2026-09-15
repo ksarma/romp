@@ -39,7 +39,8 @@ test("revealCard unfolds a collapsed thread before looking for the card (no sile
   assert.match(KERNEL, /if\(pc&&!\/\^\[A-Za-z0-9_\.:-\]\{1,128\}\$\/\.test\(pc\)\)pc='';/, "a non-id push-card is dropped before it lands");
   assert.match(SRC, /function revealCards\(keys: Set<string>\) \{\n  unfoldThreadsFor\(keys\);/);
   // and the existing fallback stands: a card gone from the feed still opens its session
-  assert.match(SRC, /\} else if \(m\.sid\) \{\n      vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\);/);
+  assert.match(SRC, /\} else if \(m\.sid\) \{\n      frameGesture = !!m\.gesture;[^\n]*\n      try \{ vscodeApi\?\.postMessage\(\{ type: "openSession", id: String\(m\.sid\) \}\); \} finally \{ frameGesture = false; \}/,
+    "the fallback still posts openSession for the sid; since T416 it carries the reader's gesture the shell marked on the frame, for that one post");
 });
 
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
@@ -54,7 +55,7 @@ test("a reveal outranks the persisted-tab restore: the focus handler retires wan
   assert.ok(focusBlock.length > 100, "found the focus handler");
   assert.match(focusBlock, /\n    wantActive = null;/);
   // …and the restore itself is still the one-shot it was: consumed on arrival, or retired here
-  assert.match(RENDER, /if \(wantActive && msg\.id === wantActive\) \{ wantActive = null; setActive\(msg\.id\); \}/);
+  assert.match(RENDER, /if \(wantActive && msg\.id === wantActive && stripLists\(msg\.id\) && heldHere\(msg\.id\)\) \{ wantActive = null; restoreIfShown\(msg\.id\); \}/, "consumed on arrival, through the one restore rule (shown takes focus; hidden stays unfocused), while this column holds it (the chat split, 2026-09-11)");
 });
 
 test("a focus on a federated session its host has not relayed yet shows the loader, not 'No session open'", () => {

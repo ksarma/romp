@@ -92,7 +92,8 @@ class PostalTrackedWire(unittest.TestCase):
                       "a checked boolean: the string \"false\" used to arm tracking")
         self.assertIn('tracked = tracked and kind == "delegate"', PSRC)
         self.assertIn("`tracked` deliberately does NOT ride the relay", PSRC)
-        self.assertIn('mid = deliver(a0["id"], frm, frm_id, body, kind=kind, tracked=tracked)', PSRC)
+        self.assertIn('mid = deliver(a0["id"], frm, frm_id, body, kind=kind, tracked=tracked, relayed=relayed,\n'
+                      '                              relay_marker=relay_marker)', PSRC)   # T334: relayed and its marker ride too
 
     def test_mcp_and_cli_expose_the_flag(self):
         self.assertIn('"tracked": {"type": "boolean"', PSRC, "the send_message schema offers it")
@@ -229,7 +230,7 @@ class FeedPayloadPins(unittest.TestCase):
         # review 2026-08-24: a needs-you block always surfaces, and a closed/cleared primary
         # un-hides the copy — a pair divergence self-heals to a visible card, never work in secret
         self.assertIn('**({"satellite": True} if isinstance(o, dict) and o.get("tracked")\n'
-                      '                   and origin and origin.get("live") and column != "needs_input" else {}),', KSRC)
+                      '               and origin and origin.get("live") and column != "needs_input" else {}),', KSRC)   # T368: the body's indent
 
     def test_completed_and_cleared_handoffs_drop_off_the_primary(self):
         self.assertIn('and not nodes[x].get("nodeComplete") and not nodes[x].get("cleared")]', KSRC)

@@ -123,7 +123,7 @@ class _Base(unittest.TestCase):
             self.calls[name] += 1
             return ret
         jd._segs = lambda tn, store: _count("segs", [])
-        jd.plan_units = lambda session, store: _count("plan_units", [])
+        jd.plan_units = lambda session, store, lazy_text=None: _count("plan_units", [])   # lazy_text: upstream's keys-alone call (T396)
         jd.load_goals = lambda sid: _count("load_goals", real_load(sid))
         jd.load_goals_shared = lambda sid: _count("load_goals_shared", real_shared(sid))
         self.turns = [{"id": "t1", "ended": True, "end": NOW - 8 * H, "t": NOW - 8 * H - 10, "atoms": []},
@@ -361,12 +361,12 @@ class TheWalkGateMemoOnlyServesTheSharedView(_Base):
         self._cycle()
         self.assertIn(SID, km._nudge_gate_memo)
         self.assertIn(SID, km._nudge_deleg_memo, "the unstamped top's delegated-work check filled the second memo")
-        before = dict(km._nudge_walk_stats)
-        km._alive_sessions = lambda now, tmux: []
+        km._alive_sessions = lambda now, live_map: []
         self._tick(NOW + 5)
         self.assertNotIn(SID, km._nudge_gate_memo, "a sid that left the alive set holds no entry")
         self.assertNotIn(SID, km._nudge_deleg_memo, "in either memo")
-        self.assertEqual(km._nudge_walk_stats["evict"] - before["evict"], 1, "one eviction per sid, both memos")
+        # the walk's own counters (the fork's memos.nudge_walk row, its evict count among them) retired with the
+        # 2026-09-15 pull-in for upstream's memos.nudgeWalk (the parse gate's counters, tests/test_nudge_walk_parse_gate.py)
 
 
 class FileWakeAnswerLoadsItsOwnCopy(_Base):
@@ -379,36 +379,6 @@ class FileWakeAnswerLoadsItsOwnCopy(_Base):
         rows = [e for e in self._node()["log"] if e.get("kind") == "awaiting" and e.get("src") == "nudge"]
         self.assertEqual(len(rows), 1)
         self.assertNoWriterSawTheSharedView()
-
-
-class PerfBlock(_Base):
-    def test_the_walk_reports_its_counters_under_memos(self):
-        snap = km._PERF_STATS.snapshot()
-        self.assertIn("nudge_walk", snap["memos"])
-        self.assertEqual(set(snap["memos"]["nudge_walk"]),
-                         {"walked", "gated", "loads", "shared", "deleg_hit", "deleg_miss", "lifted", "evict", "entries"})
-        for k, v in snap["memos"]["nudge_walk"].items():
-            self.assertIsInstance(v, int, k)
-        # the gate's own pair rides upstream's block (ruling A, slice 3)
-        self.assertEqual(set(snap["memos"]["nudgeGate"]), {"served", "derived"})
-        for k, v in snap["memos"]["nudgeGate"].items():
-            self.assertIsInstance(v, int, k)
-
-    def test_the_counters_move_with_the_walk(self):
-        self._toggle(False)
-        self._seed(kind="job", age=7 * H)
-        before = dict(km._nudge_walk_stats)
-        before_gate = dict(km._NUDGE_GATE_STATS)
-        self._cycle(); self._cycle(NOW + 5); self._cycle(NOW + 60)
-        d = {k: km._nudge_walk_stats[k] - before[k] for k in before}
-        g = {k: km._NUDGE_GATE_STATS[k] - before_gate[k] for k in before_gate}
-        self.assertEqual(d["walked"], 3)
-        self.assertEqual(d["gated"], 0, "every gate passed in this fixture")
-        self.assertEqual((d["loads"], d["shared"]), (3, 3), "three decision reads, all answered by the cache "
-                                                             "(the gate's currency re-reads are not walk loads)")
-        self.assertEqual((g["derived"], g["served"]), (2, 1), "computed on the first cycle and after the lift moved the store")
-        self.assertEqual(d["lifted"], 1)
-        self.assertEqual(d["evict"], 0, "the session stayed alive")
 
 
 if __name__ == "__main__":

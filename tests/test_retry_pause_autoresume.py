@@ -12,6 +12,7 @@ leaves the capped session's own record standing (only a human prompt clears a sp
 records its instant and the spend engage stands down on records older than it; a new record engages again.
 """
 import contextlib
+import errno
 import inspect
 import io
 import json
@@ -22,6 +23,7 @@ import unittest
 from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -80,7 +82,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._set_retry_paused(True)
         floor = km._retry_pause_ts()
         path = self._transcript("healthy.jsonl", floor + 5)   # wrote output AFTER the pause
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "path": path}]
         km._api_error = lambda p: None                        # not blocked on an API error
         km._auto_resume_retry(int(time.time()), {})
         self.assertFalse(km._retry_paused_on(), "a served request after the pause proves recovery → resume")
@@ -90,7 +92,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._set_retry_paused(True)
         floor = km._retry_pause_ts()
         path = self._transcript("errored.jsonl", floor + 5)   # fresh mtime, but the last record is an API error
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "path": path}]
         km._api_error = lambda p: {"text": "overloaded", "status": 529}
         km._auto_resume_retry(int(time.time()), {})
         self.assertTrue(km._retry_paused_on(), "a session still blocked on an API error must not clear the pause")
@@ -100,7 +102,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._set_retry_paused(True)
         floor = km._retry_pause_ts()
         path = self._transcript("stale.jsonl", floor - 60)    # last wrote BEFORE the pause
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "path": path}]
         km._api_error = lambda p: None
         km._auto_resume_retry(int(time.time()), {})
         self.assertTrue(km._retry_paused_on(), "no fresh output since the pause → no evidence the API recovered")
@@ -109,7 +111,7 @@ class RetryPauseAutoResume(unittest.TestCase):
     def test_noop_when_not_paused(self):
         km._set_retry_paused(False)
         called = []
-        km._alive_sessions = lambda now, tmux: called.append(1) or []
+        km._alive_sessions = lambda now, live: called.append(1) or []
         km._auto_resume_retry(int(time.time()), {})
         self.assertEqual(called, [], "not paused → the resume check does no work")
 
@@ -118,7 +120,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._set_retry_paused(True)
         floor = km._retry_pause_ts()
         path = self._transcript("healthy.jsonl", floor + 5)
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "path": path}]
         km._api_error = lambda p: None
 
     def test_the_clear_wakes_the_pusher_and_leaves_the_views_clean(self):
@@ -150,7 +152,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._pusher_wake.clear()                         # the same for the second setup write; the assertions below are about the resume check's paths
         pfloor = km._retry_pause_ts()
         path = self._transcript("stale.jsonl", pfloor - 60)
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "path": path}]
         km._api_error = lambda p: None
         km._auto_resume_retry(int(time.time()), {})
         self.assertTrue(km._retry_paused_on())
@@ -175,7 +177,7 @@ class RetryPauseAutoResume(unittest.TestCase):
                 sess[1]["path"]: {"spendLimit": False, "t": 1005},       # not a cap
                 sess[2]["path"]: {"spendLimit": True, "t": 0},           # no readable time: not proof of staleness
                 sess[3]["path"]: {"spendLimit": True, "t": 1001}}        # the evidence's own second: new
-        km._alive_sessions = lambda now, tmux: sess
+        km._alive_sessions = lambda now, live: sess
         km._api_error = lambda p: errs.get(p)
         self.assertEqual(km._spend_capped_session(0, {})["sid"], "s0", "no lift on record: the first capped session")
         # `after` is the lifting output's own stamp, whole seconds like the record's
@@ -195,7 +197,7 @@ class RetryPauseAutoResume(unittest.TestCase):
         with open(path, "w") as f:
             f.write(_out_line(floor + 5))                      # a login-billed session's answer after the pause
         live = {"s1": {"state": "idle", "auth": "login", "backend": "sdk"}}
-        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "name": "web", "path": path}]
+        km._alive_sessions = lambda now, live: [{"sid": "s1", "name": "web", "path": path}]
         km._api_error = lambda p: None
         saved_backend, saved_usage = km.Sessions.__dict__["backend_for"], km._usage_limits
         km.Sessions.backend_for = staticmethod(lambda sid: object())
@@ -288,7 +290,7 @@ class _PauseFixture(unittest.TestCase):
         self._was_set = km._pusher_wake.is_set()
         km._pusher_wake.clear()
         self.roster = []
-        km._alive_sessions = lambda now, tmux: list(self.roster)
+        km._alive_sessions = lambda now, live: list(self.roster)
 
     def tearDown(self):
         (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage_limits,
@@ -647,6 +649,46 @@ class SpendPauseStandDown(_SpendWorld):
         self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
         self.assertEqual(self._file()["liftedAt"], lifted)
 
+    def test_a_lift_whose_read_of_the_pause_file_faults_writes_nothing_and_lifts_the_cycle_the_read_works(self):
+        # The writer is a read-modify-write: it reads the file to carry liftedAt and to see that it is closing a
+        # SPEND pause. A fault on that one read (the readers a moment earlier saw the file: the transient EMFILE of
+        # a kernel holding many sockets and subprocesses) used to fold to an empty file and write {"paused": false}
+        # with no liftedAt; the next cycle's engage read the capped session's standing record as unruled and put
+        # the pause back, and held it ON until the streamer served again, the flap the memory exists to stop.
+        tests = self._tests_session()
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        before = (self.dir / "retry-paused.json").read_bytes()
+        seq0 = self.sent[-1][1]["seq"]
+        km._pusher_wake.clear()                                # the engage's own wake, not the refused lift's
+        dirty0 = km._views_dirty[0]
+        self._append(tests, _out_line(floor + 1), floor + 1)
+        real_lift = km._lift_retry_pause
+
+        def lift_under_fault(*a, **k):                      # the real lift, with the pause file unreadable for its span
+            with _pause_file_unreadable(errno.EMFILE, "too many open files"):
+                return real_lift(*a, **k)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), patch.object(km, "_lift_retry_pause", lift_under_fault):
+            self.assertEqual(self._cycle(int(self.now) + 1, self.live), "paused", "no lift: the file stands")
+        self.assertEqual((self.dir / "retry-paused.json").read_bytes(), before, "byte for byte: nothing was written")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file could not be read ([Errno %d] too many open "
+                                              "files); nothing changed" % errno.EMFILE), 1, err.getvalue())
+        self.assertNotIn("auto-cleared", err.getvalue(), "a lift that did not happen is not announced")
+        self.assertEqual(self.sent[-1][1]["seq"], seq0, "no press waits on a cycle's refusal: the seq stands")
+        self.assertEqual(self._states(), ["paused"], "and nothing a client sees changed: no frame")
+        self.assertFalse(km._pusher_wake.is_set(), "no wake: the next pass is the backstop's, not back-to-back")
+        self.assertEqual(km._views_dirty[0], dirty0, "and no dirty mark: the feed and timeline caches stand")
+        self.clock.floor = floor + 2                           # the cycles after the fault run later than the output
+        with contextlib.redirect_stderr(err):
+            states = [self._cycle(int(self.now) + 2 + i, self.live) for i in range(3)]
+        self.assertEqual(states, ["degraded"] * 3, "the lift lands the cycle the read works, once, and no re-engage")
+        self.assertEqual(self._file()["liftedAt"], int(floor + 1), "the evidence's own time")
+        self.assertEqual((err.getvalue().count("auto-engaged"), err.getvalue().count("auto-cleared")), (0, 1),
+                         "from the fault on: one lift once the read works, and no re-engage")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file reads again; this write lands"), 1,
+                         "the clean read that ends the fault episode says so, once")
+
     def test_a_limit_lift_rules_on_no_spend_record(self):
         # the login window is at 100% first; 'web' hits its cap during that pause; the report clears. The limit
         # lift's evidence is the report, which says nothing about the cap, so the cap engages its own pause.
@@ -702,6 +744,92 @@ class SpendPauseStandDown(_SpendWorld):
         km._set_retry_paused(False)
         self.assertEqual(self._file(), {"paused": False})
         self.assertEqual(km._retry_pause_lifted_at(), 0.0)
+
+
+def _pause_file_unreadable(code, text):
+    """Path.read_text raising OSError(code) for the pause file alone and delegating every other read (the plain
+    wrapper idiom: an autospec'd wrap does not call through on 3.10): a file that EXISTS and holds the memory,
+    and cannot be read this instant."""
+    real = Path.read_text
+
+    def faulting(p, *a, **k):
+        if p.name == "retry-paused.json":
+            raise OSError(code, text)
+        return real(p, *a, **k)
+    return patch.object(Path, "read_text", faulting)
+
+
+class PauseFileReadFault(_PauseFixture):
+    """The writer is a read-modify-write over the file that holds the spend lift's memory (liftedAt). A file
+    that exists but cannot be read is a transient fault on contents that stand, so the writer refuses: nothing
+    written, False to the caller, one stderr line per fault episode, and nothing published (no seq, no dirty
+    mark, no wake: the engage and lift retry every pass while their evidence stands, so a refusal that published
+    was a view rebuild and a frame to every shell per pass for the span of the fault). It folded the fault to
+    an empty file before, and wrote; the first cut of the refusal published each one."""
+
+    def _file(self):
+        return json.loads((self.dir / "retry-paused.json").read_text())
+
+    def test_an_unreadable_pause_file_refuses_the_write_and_publishes_nothing(self):
+        km._set_retry_paused(True, reason="spend", bills="key")
+        t = km._retry_pause_ts()
+        before = (self.dir / "retry-paused.json").read_bytes()
+        seq0 = km._api_health_frame(10, {})["seq"]
+        km._pusher_wake.clear()
+        dirty0 = km._views_dirty[0]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), _pause_file_unreadable(errno.EIO, "input/output error"):
+            resume = km._set_retry_paused(False)                 # the user's Resume over an unreadable file
+            engage = km._set_retry_paused(True, reason="limit")  # and the limit engage over it
+        self.assertEqual((self.dir / "retry-paused.json").read_bytes(), before, "byte for byte: nothing was written")
+        self.assertEqual((resume, engage), (False, False), "and the writer says so to its callers")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file could not be read ([Errno %d] input/output "
+                                              "error); nothing changed" % errno.EIO), 1,
+                         "one fault episode, one line: the second refusal under the same fault is quiet\n" + err.getvalue())
+        self.assertEqual(km._api_health_frame(10, {})["seq"], seq0, "a refusal the writer met is no event a client sees")
+        self.assertFalse(km._pusher_wake.is_set(), "no wake")
+        self.assertEqual(km._views_dirty[0], dirty0, "no dirty mark")
+        with contextlib.redirect_stderr(err):
+            self.assertIs(km._set_retry_paused(False), True, "the read works again: the write lands, with the memory")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file reads again; this write lands"), 1, err.getvalue())
+        d = self._file()
+        self.assertEqual((d["paused"], d["supersedes"]), (False, t), "the un-pause still knew it closed a spend pause")
+        self.assertGreater(d["liftedAt"], 0)
+        (self.dir / "retry-paused.json").unlink()
+        with contextlib.redirect_stderr(err):
+            self.assertIs(km._set_retry_paused(True), True, "a MISSING file is the first write, not a fault")
+        self.assertEqual(set(self._file()), {"paused", "t"})
+        self.assertEqual(err.getvalue().count("reads again"), 1, "no episode was on: the missing file's write says nothing")
+
+    def test_an_engage_refused_pass_after_pass_neither_wakes_nor_dirties_nor_repeats_its_line(self):
+        # The fixture's usage window is at 100% and the pause file (a live spend pause) cannot be read for three
+        # passes. The engage's guard folds the fault to unpaused, so every pass attempts the engage and the writer
+        # refuses it. The first cut of the refusal stamped the views dirty and woke the pusher on each: a full feed
+        # and timeline rebuild and an apiHealth frame to every shell per pass, back to back, for as long as the fault
+        # lasted, and a stderr line per pass. Now a refused pass changes nothing a client sees and the backstop paces
+        # it; the fold before the refusal rewrote the live pause as a limit pause each pass instead.
+        km._set_retry_paused(True, reason="spend", bills="key")
+        t = km._retry_pause_ts()
+        before = (self.dir / "retry-paused.json").read_bytes()
+        seq0 = km._api_health_frame(10, {})["seq"]
+        km._pusher_wake.clear()
+        dirty0 = km._views_dirty[0]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), _pause_file_unreadable(errno.EACCES, "permission denied"):
+            for _ in range(3):
+                self.assertFalse(km._retry_paused_on(), "the guard folds the fault to unpaused: the engage is attempted")
+                km._auto_pause_on_limit()
+        self.assertEqual((self.dir / "retry-paused.json").read_bytes(), before, "byte for byte: nothing was written")
+        self.assertFalse(km._pusher_wake.is_set(), "no wake: the next pass is the backstop's")
+        self.assertEqual(km._views_dirty[0], dirty0, "no dirty mark: the feed and timeline caches stand")
+        self.assertEqual(km._api_health_frame(10, {})["seq"], seq0, "no seq: no frame to any shell")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file could not be read ([Errno %d] permission "
+                                              "denied); nothing changed" % errno.EACCES), 1, err.getvalue())
+        self.assertNotIn("auto-engaged", err.getvalue(), "an engage that did not happen is not announced")
+        with contextlib.redirect_stderr(err):
+            self.assertIs(km._set_retry_paused(False), True, "the read works: the user's Resume lands, closing the spend pause")
+        self.assertEqual(err.getvalue().count("retry-pause: the pause file reads again; this write lands"), 1, err.getvalue())
+        self.assertEqual(self._file()["supersedes"], t, "with the memory the fault never erased")
 
 
 class PauseWriteSeq(_PauseFixture):

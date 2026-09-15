@@ -66,14 +66,14 @@ class LandingShell(unittest.TestCase):
         self.assertIn("data-act=net data-keycmd=net.open aria-label='Remote kernels'", html)
         self.assertIn("<rect x='1' y='3' width='9' height='4' rx='1' fill='currentColor'/>", html)   # the used-bar fill
         self.assertNotIn(">Gear</button>", html)
-        self.assertIn("{romp:'openSettings'}", km._LANDING_MOBILE_JS)   # same path as the desktop gear
+        self.assertIn("window.__rompOpenSettings&&window.__rompOpenSettings();", km._LANDING_MOBILE_JS)   # same path as the desktop gear: the settings iframe
         self.assertIn("__rompOpenNet", km._LANDING_MOBILE_JS)           # opens the shell's remotes panel
         self.assertIn("window.__rompOpenNet=open", km._LANDING_REMOTES_JS)
         self.assertIn("__rompUsagePanel", km._LANDING_MOBILE_JS)        # the tooltip's bars as a modal
         self.assertIn("window.__rompUsagePanel=function", km._LANDING_USAGE_JS)
         self.assertIn("#ru-tip.ru-modal", html)                         # centered placement for the panel
         # the lifted-fullscreen settings iframe must override the mobile display:none
-        self.assertIn("body.settings-open #f-feed{display:block;position:fixed", html)
+        self.assertIn("body.settings-open #f-settings{display:block;position:fixed", html)
 
     def test_mobile_restart_button_reuses_the_rail_refresh_kernel_restart(self):
         # the user 2026-07-22: there was no restart-kernel affordance on mobile (the rail's own ↻ is hidden
@@ -148,8 +148,8 @@ class LandingShell(unittest.TestCase):
         # the desktop shell is the flex pane row (chat | fleet | feed | timeline)
         self.assertIn(".col{display:flex", html)
         self.assertIn("src=/chat", html)
-        self.assertIn("src=/feed", html)
-        self.assertIn("src=/timeline", html)
+        self.assertIn("data-src=/feed", html)   # optional panes load from data-src (the Panes setting)
+        self.assertIn("data-src=/timeline", html)
 
     def test_the_shell_leaves_a_hair_of_slack_down_the_right_edge(self):
         # The panes tiled flush to the window, so whatever sat hard right inside one — a feed card's
@@ -199,7 +199,9 @@ class LandingShell(unittest.TestCase):
         # carries id=f-timeline inside #tl-pane, and the old stale-id splitter bug must not regress.
         html = km._landing()
         self.assertIn("id=f-timeline", html)                      # the iframe carries this id
-        self.assertIn("<div class=pane id=tl-pane><iframe id=f-timeline src=/timeline></iframe></div>", html)
+        # data-src, not src (the user 2026-09-10): the band is an optional pane, loaded by the pane controller
+        # only where this browser's gear shows it (tests/test_pane_state_broadcast.py OptionalPanes)
+        self.assertIn("<div class=pane id=tl-pane><iframe id=f-timeline data-src=/timeline></iframe></div>", html)
         self.assertNotIn("getElementById('t')", km._LANDING_JS)   # the stale id is gone
 
     def test_mobile_switcher_is_isolated_in_its_own_script(self):
@@ -217,7 +219,8 @@ class LandingShell(unittest.TestCase):
         # +1 2026-09-08: the reload core (T265, _reload_core) ahead of the build-staleness banner script, which
         # registers as its refused fallback — its own script so a banner throw cannot take the reload with it
         # +1: the bottom bar's API health cell (_LANDING_APIH_JS), after the usage script whose backdrop it shares
-        self.assertEqual(html.count("<script>"), 20)
+        # +1 2026-09-08: the chat split columns (_LANDING_SPLIT_JS), after the pane controller it leans on
+        self.assertEqual(html.count("<script>"), 21)
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()
@@ -376,12 +379,24 @@ class ChatSessionPicker(unittest.TestCase):
         self.assertIn("if(!wd){wd=document.createElement('span');wd.className='workdot';", js)   # in-place form: one dot node, created once, classes toggled (2026-08-19)  # gold dot when working
         # awaitingBg is read off the desktop tab's own green dot (no tab-working class on an awaiting tab)
         self.assertIn("awaitbg:!!t.querySelector('.tab-dot.await')", js)
+        # the ASK RING (2026-09-13; a widget with a switch since 2026-09-14): the desktop tab's ring-waiting-on-you class
+        # (something of the session's is waiting on you) is scraped beside the dots, and the picker paints it on the row (a
+        # yellow bar at the left edge) and the current chip (its border goes dashed yellow), off the same status token the
+        # desktop ring wears — so the phone's list says which sessions need you without a tap through each, and a ring
+        # switched off in the settings (no class on the tab) leaves the phone plain too
+        self.assertIn("ask:t.classList.contains('ring-waiting-on-you'),", js)
+        self.assertNotIn("'tab-ask'", js)
+        self.assertIn("row.classList.toggle('ask',!!s.ask);", js)
+        self.assertIn("cur.classList.toggle('ask',!!(act&&act.ask));", js)
         self.assertIn("wd.classList.toggle('await',!s.working&&!!s.awaitbg);", js)  # green dot when awaiting (in-place toggle form, 2026-08-19)
         self.assertNotIn(".mrow .dot{", css)              # the old identity/grey dot is gone
         self.assertNotIn("dot.style.background=s.bg", js)  # ...and nothing paints identity onto a dot
         # the dots are the SAME status colors desktop uses (styles.css --st-working-bg gold, --st-awaitbg-bg green)
         self.assertIn(".mrow .workdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}", css)
         self.assertIn(".mrow .workdot.await{background:var(--st-awaitbg-bg,#54B204)}", css)
+        self.assertIn(".mrow.ask{border-left:3px solid var(--st-ask-bg,#f5d33f);padding-left:9px}", css)   # the ask ring's mark on a row (2026-09-13)
+        self.assertIn("#mcur.ask{border-color:var(--st-ask-bg,#f5d33f);border-style:dashed}", css)
+        self.assertLess(css.index("#mcur.colored{"), css.index("#mcur.ask{"), "the ring's border wins over the identity colour: declared after")
         self.assertNotIn("'• ')+s.name", js)              # the '• ' text-bullet prefix on rows is gone
         # the current-session header uses the same gold/green status dot, not the text bullet either
         self.assertIn("#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}", css)

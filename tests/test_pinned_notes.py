@@ -755,12 +755,12 @@ class BuildSessionSeam(unittest.TestCase):
         names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
         self.saved = (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-                      km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
+                      km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD)
         jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE = names, proj, td / "goals", td
         km.NAMES = names
         km._GLOBAL_CLAUDE_MD = td / "no-global.md"
         km._read_task_store = lambda fsid, fold=None: []
-        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+        km._live_map = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None}}
         jd.GOALDIR.mkdir(parents=True)
         km._parse_cache.clear()
@@ -777,7 +777,7 @@ class BuildSessionSeam(unittest.TestCase):
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
-         km._read_task_store, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
+         km._read_task_store, km._live_map, km._GLOBAL_CLAUDE_MD) = self.saved
         km._parse_cache.clear()
         km._pinned_notes_cache.clear()
         self.td.cleanup()

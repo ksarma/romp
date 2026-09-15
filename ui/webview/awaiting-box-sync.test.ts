@@ -49,9 +49,14 @@ test("a status-only frame re-renders the awaiting box when its fields change —
   assert.match(body, /const before = awaitKey\(s\.status\);/);
   assert.match(body, /if \(msg\.id === activeId\) \{\s*\n\s*updateStatusline\(\);/, "the chip repaint stays");
   assert.match(body, /if \(awaitKey\(s\.status\) !== before\) awaitChanged\(msg\.id\);/);
-  // …and the kernel's delta carries the full status the box reads from (the literal may go on — the
-  // user-todos seam rides the same delta after "status" — so the pin ends at the key, not the brace)
-  assert.match(KERNEL, /tail = \{"type": "chatTail", "id": sid, "from": change_from,\s*\n\s*"events": evs\[change_from:\], "total": total, "status": m\.get\("status"\)[,}]/);
+  // …and the kernel's delta carries the full status the box reads from, with the per-session view flags beside it
+  // (2026-09-11: a bell flipped elsewhere reaches a caught-up client on the flip). The literal goes on (this fork's
+  // user-todos seam rides the same delta after the flags, pinned below), so the pin ends at the last flag's key, not
+  // the brace
+  assert.match(KERNEL, /tail = \{"type": "chatTail", "id": sid, "from": change_from,\s*\n\s*"events": evs\[change_from:\], "total": total, "status": m\.get\("status"\),\n(\s*#[^\n]*\n)*\s*"notify": m\.get\("notify"\), "hideFromFeed": m\.get\("hideFromFeed"\), "postalServiceOff": m\.get\("postalServiceOff"\)[,}]/,
+    "…and the per-session view flags beside it (2026-09-11), so a bell flipped elsewhere reaches a caught-up client on the flip");
+  assert.match(KERNEL, /"postalServiceOff": m\.get\("postalServiceOff"\),\n(\s*#[^\n]*\n)*\s*"userTodos": m\.get\("userTodos"\) or \[\],/,
+    "the fork's userTodos seam rides every delta after the flags (the tab glyph's read)");
 });
 
 test("the await key covers every field the box renders from, and nothing that ticks per second", () => {
@@ -77,11 +82,14 @@ test("the chip and the box gist take the kind word from ONE count (T225 rider)",
   // gist and the feed pill from the kernel's kind + count + the awaited ROWS — "agent" for one, "3
   // agents" for several, the bare number when the kinds are mixed. kindWord stays underneath for a
   // payload with no rows (an older kernel), so the count still decides the number there.
-  assert.match(RENDER, /import \{ awaitWord, awaitBreakdown, groupRows, rowIds, waitsNote, GROUP_TITLE, workingFor, type AwaitRow \} from "\.\/spin-caption";/);   // + the nested-wait helpers (2026-09-10)
+  assert.match(RENDER, /import \{ awaitWord, awaitBreakdown, groupRows, rowIds, waitsNote, listBreakdown, keptWord, GROUP_TITLE, ROW_KINDS, workingFor, type AwaitRow \} from "\.\/spin-caption";/);   // + the nested-wait helpers (2026-09-10), the kept rows' words and the kind order (T394)
   assert.match(RENDER, /awaitingCount\?: number \| null;/, "the Status shape carries the kernel's count");
   assert.match(RENDER, /awaitingItems\?: AwaitRow\[\];/, "…and the rows (slice 2)");
-  assert.match(RENDER, /const chipWord = awaitWord\(s\.status\.awaitingKind, s\.status\.awaitingCount, chipItems\);/);
-  assert.match(RENDER, /chip\.textContent = CHIP_LABEL\.awaitingBg \+ \(chipWord \? " " \+ chipWord : ""\);/);
+  // the bar's chip is built by status-chip.ts since T322b: ONE awaitWord call words it for the bar and the tag overview's rows
+  assert.match(RENDER, /const chip = statusChip\(chipWords\(s\.status\), "button"\) as HTMLButtonElement;/);
+  const CHIP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "status-chip.ts"), "utf8");
+  assert.match(CHIP, /const word = awaitWord\(st\.awaitingKind, st\.awaitingCount, items\);/);
+  assert.match(CHIP, /return \{ state, text: head \+ \(word \? " " \+ word : ""\), peer: null \};/);
   assert.match(RENDER, /const word = awaitWord\(s\.status\.awaitingKind, s\.status\.awaitingCount, items\);/);   // `s` is narrowed by the one renderer's gate since 2026-09-06 (no `s!`)
   assert.match(RENDER, /lab\.textContent = "Awaiting" \+ \(word \? " " \+ word : ""\) \+ " · " \+ why\.replace/);
   // the feed pill and the spin caption derive their word the same way

@@ -37,6 +37,7 @@ is stripped; the staged helper is a path that is read and never run.
 """
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
@@ -70,6 +71,86 @@ HELPER_OFF = ["--settings", '{"apiKeyHelper": ""}']   # the login-billed call's 
 def _op_names():
     """Every 1Password CLI name the judge boundary strips: the fixed names plus one under the prefix."""
     return tuple(jd._cred.OP_ENV_NAMES) + (jd._cred.OP_ENV_PREFIX + "acct",)
+
+
+class TheJudgesFollowTheMachineDefault(unittest.TestCase):
+    """T380 review: _judge_auth resolved an unpicked session as key-when-helper-else-login while the launch honours the
+    machine's explicit default; the judges read the same seed (sdk-defaults.json) so they bill the session's account."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        jd._rebind_state(Path(self.tmp))
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        self.fsid = "11111111-2222-3333-4444-555555555555"
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "name": "web"}))   # no pick of its own
+        self._key = jd._key_available
+        self._fn = jd._DEFAULT_AUTH_FN
+        jd._DEFAULT_AUTH_FN = None
+        self._lfn = getattr(jd, "_DEFAULT_LOGIN_FN", None)   # getattr: the red run at the base predates the name
+        jd._DEFAULT_LOGIN_FN = None
+
+    def tearDown(self):
+        jd._key_available = self._key
+        jd._DEFAULT_AUTH_FN = self._fn
+        jd._DEFAULT_LOGIN_FN = self._lfn
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_the_judges_ask_the_one_resolver_the_kernel_wires_so_an_unbillable_default_moves_them_with_the_launch(self):
+        """Round-3 review: a seed re-read here kept billing the login after the machine could no longer bill it (the login
+        logged out, a managed helper appearing) while the launch, the status and the flyout had moved to the key; and an
+        explicit key default with unreadable Claude Code settings made the picker keep the key while the judge said login.
+        The judges now ask SdkBackend.default_auth over the reg, the resolver that applies the availability check."""
+        calls = []
+        # the resolver's verdicts, as the backend would give them for these regs: a logged-out login default → key
+        jd._DEFAULT_AUTH_FN = lambda reg: (calls.append(dict(reg)), "key")[1]
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the resolver's word, not a seed re-read")
+        self.assertEqual(calls[-1].get("sid"), self.fsid, "asked over the session's own reg")
+        # the fourth shape: an explicit key default with unreadable settings: the resolver keeps the key (cannot tell is
+        # never a fall), while the standalone helper probe would have said no key
+        jd._key_available = lambda: False
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the resolver decides even when the judge's own helper probe says no")
+        self.assertEqual(jd._judge_auth(""), "key", "a call with no session asks the resolver over an empty reg")
+        self.assertEqual(calls[-1], {}, "…the empty reg")
+        # a session's own pick: the resolver returns it (default_auth reads the reg first); the judge trusts the resolver
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "auth": "login"}))
+        jd._DEFAULT_AUTH_FN = lambda reg: reg.get("auth") or "key"
+        self.assertEqual(jd._judge_auth(self.fsid), "login")
+        # a resolver that fails or answers junk never raises inside a judge call: the standalone rule decides
+        jd._DEFAULT_AUTH_FN = lambda reg: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "the reg's own pick, standalone")
+        jd._DEFAULT_AUTH_FN = lambda reg: "credit-card"
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid}))
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "junk from the resolver: the helper rule")
+
+    def test_an_unpicked_session_following_a_stored_login_default_bills_its_judges_to_that_login(self):
+        """The user 2026-09-14: a stored login set as the machine's default. The resolver says the side (login); the second
+        wired function, default_login, says WHICH; the judge carries "login:<id>" so _judge_cmd names that login's helper.
+        An empty or junk id, or no second function, reads as the machine's own login; a failing one never raises."""
+        jd._DEFAULT_AUTH_FN = lambda reg: "login"
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "no second function wired (an older kernel): the machine's own login")
+        jd._DEFAULT_LOGIN_FN = lambda reg: "0123456789ab"
+        self.assertEqual(jd._judge_auth(self.fsid), "login:0123456789ab")
+        self.assertEqual(jd._judge_auth(""), "login:0123456789ab", "a call with no session follows the default too")
+        jd._DEFAULT_LOGIN_FN = lambda reg: ""
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "the machine's own login")
+        jd._DEFAULT_LOGIN_FN = lambda reg: "not-an-id"
+        self.assertEqual(jd._judge_auth(self.fsid), "login", "junk reads as the machine's own login")
+        jd._DEFAULT_AUTH_FN = lambda reg: "key"
+        jd._DEFAULT_LOGIN_FN = lambda reg: "0123456789ab"
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "the id is read beside a login side only")
+        jd._DEFAULT_AUTH_FN = lambda reg: "login"
+        jd._DEFAULT_LOGIN_FN = lambda reg: (_ for _ in ()).throw(RuntimeError("boom"))
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "a failing second function: the standalone rule, never a raise")
+
+    def test_standalone_the_registry_pick_and_the_helper_rule_stand_in(self):
+        jd._key_available = lambda: True
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "no wiring, no pick: the helper rule")
+        jd._key_available = lambda: False
+        self.assertEqual(jd._judge_auth(self.fsid), "login")
+        (jd.SDKDIR / (self.fsid + ".json")).write_text(json.dumps({"sid": self.fsid, "auth": "key"}))
+        self.assertEqual(jd._judge_auth(self.fsid), "key", "a session's own pick")
 
 
 class _JudgeAuthBase(unittest.TestCase):
@@ -284,7 +365,7 @@ class JudgeArgvBilling(_JudgeAuthBase):
         self.assertNotIn("--settings", jd._judge_cmd("sonnet", "SYS", None), "the default: no auth argument")
 
     def test_a_fast_login_billed_call_rides_one_overlay_with_both_keys(self):
-        # `--settings` takes ONE value. With Fast judging on (STATE/judge-fast "on"), an Opus login-billed call
+        # `--settings` takes ONE value. With the triage tier's Fast mode on (STATE/judge-fast "on"), an Opus login-billed call
         # carries the fastMode opt-in and the helper suppression in one JSON overlay; a login-billed call on a
         # model that cannot run fast keeps HELPER_OFF byte for byte; a key-billed or unpicked Opus call carries
         # the opt-in alone, and the helper key never appears in it.
@@ -510,7 +591,7 @@ class JudgeRunBilling(_JudgeAuthBase):
         self.assertEqual(seen["cmd"][i:i + 2], HELPER_OFF)
 
     def test_a_fast_login_pick_on_opus_launches_with_one_overlay_and_logs_the_readback(self):
-        # end to end through _judge_run: Fast judging on, a login pick, an Opus model. The child gets ONE
+        # end to end through _judge_run: the triage tier's Fast mode on, a login pick, an Opus model. The child gets ONE
         # --settings overlay carrying both keys, the login tokens, no key; the usage row keeps the envelope's
         # fast_mode_state, the CLI's own word on whether fast engaged.
         jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
@@ -768,14 +849,14 @@ class KernelWiringAndFloorPins(unittest.TestCase):
 
     def test_build_feed_floors_a_latched_session_yielding_to_the_live_floors(self):
         import inspect
-        src = inspect.getsource(self.km.build_feed)
+        src = inspect.getsource(self.km.build_feed) + inspect.getsource(self.km._feed_session_entry)   # T368: the loop body
         self.assertIn("_jauth_map = jd._auth_down_map()", src)
         self.assertIn("jerr and api_top is None and perm_top is None", src)
         self.assertIn('column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top', src)
 
     def test_the_floored_card_carries_the_judgeAuth_story(self):
         import inspect
-        src = inspect.getsource(self.km.build_feed)
+        src = inspect.getsource(self.km._feed_session_entry)   # T368: build_feed's per-session loop body
         self.assertIn('"state": "judgeAuth"', src)
         # the key-mode copy points at the one key path left (2026-09-08); the login copy is unchanged
         self.assertIn("the API key its judges bill is being refused. Fix the key behind Claude Code's apiKeyHelper "

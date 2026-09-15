@@ -181,20 +181,20 @@ class HardRuleAndRoutingPins(unittest.TestCase):
     """build_feed's presentation, pinned by source (the build_feed test pattern)."""
 
     def test_stalled_plus_idle_files_under_blocked(self):
-        src = inspect.getsource(km.build_feed)
+        src = inspect.getsource(km._feed_session_entry)
         # the user's hard rule (2026-08-13), superseding the 2026-07-23 Working-only stance
         self.assertIn('_stall_block = bool(_stall_rec and not who_working and not sess_awaiting_why)', src)
         self.assertIn('or nid == perm_top or _stall_block', src)
         self.assertIn('"blocked": _stall_block}', src)
 
     def test_in_flight_holds_route_to_the_swirl(self):
-        src = inspect.getsource(km.build_feed)
+        src = inspect.getsource(km._feed_session_entry)
         self.assertIn('_stall_rec.get("why") in jd.WHY_IN_FLIGHT', src)
         self.assertIn('bool((sess_judging or _stall_inflight) and column == "working")', src)
 
     def test_the_sweep_runs_every_tick_independent_of_the_toggle(self):
-        src = inspect.getsource(km._pusher_cycle_jobs)
-        self.assertIn("_deferral_sweep_tick(now)", src)
+        src = inspect.getsource(km._jobs_pass)                          # the jobs thread's list (the housekeeping split, 2026-09-13)
+        self.assertIn("_job_stage('deferralSweep', lambda: _deferral_sweep_tick(now))", src)   # a tick job, its own stage (T398)
         sweep_pos = src.index("_deferral_sweep_tick")
         nudge_pos = src.index("_auto_nudge_tick")
         self.assertLess(sweep_pos, nudge_pos, "retirement runs before the walk that would re-fire")

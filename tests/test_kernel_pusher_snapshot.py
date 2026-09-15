@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The pusher cycle takes ONE liveness snapshot (the 2026-08-10 CPU fix).
 
-Every _tmux_sessions() read forks `tmux list-sessions` and sweeps the whole SDK reg registry.
+Every _live_map() read asks both backends for their rows and sweeps the whole SDK reg registry.
 The pusher's cycle used to take NINE of them — one inside _push plus one per tick job — at its
 0.5s cadence, which profiling attributed as the kernel's single hottest thread (~50-90% of one
 core sustained, three quarters of total process CPU). The jobs all take the map as a parameter
@@ -46,7 +46,8 @@ class _CycleFixture(unittest.TestCase):
         td = Path(self.td.name)
         self.saved = (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
                       km.NAMES, km.Sessions.live, km._sdk,
-                      km._auto_nudge_tick, km._clear_done_working_notes)
+                      km._auto_nudge_tick, km._clear_done_working_notes,
+                      km._turn_notify_tick, km._api_health_frame, km._api_health_push, km._lift_spent_awaiting)
         names = td / "names"; names.mkdir()
         proj = td / "projects"; proj.mkdir()
         jd.NAMES, jd.PROJECTS = names, proj
@@ -70,14 +71,15 @@ class _CycleFixture(unittest.TestCase):
             (pdir / (sid + ".jsonl")).write_text(json.dumps(rec) + "\n")
             (names / sid).write_text("%s\t%s\t#abcdef\n" % (name, str(cdir)))
         meta = {"state": "waiting", "since": NOW - 5, "model": "", "effort": "", "context": None,
-                "compactPct": None, "color": None, "mode": "", "backend": "tmux"}
+                "compactPct": None, "color": None, "mode": "", "backend": "sdk"}
         self.row = {SID: dict(meta), SID2: dict(meta)}
         self.saved_clients = list(km._clients)
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
          km.NAMES, km.Sessions.live, km._sdk,
-         km._auto_nudge_tick, km._clear_done_working_notes) = self.saved
+         km._auto_nudge_tick, km._clear_done_working_notes,
+         km._turn_notify_tick, km._api_health_frame, km._api_health_push, km._lift_spent_awaiting) = self.saved
         with km._clients_lock:
             km._clients[:] = self.saved_clients
         # every scope slot, so a failing test cannot leak a cycle's memo into the next on this thread
@@ -93,16 +95,18 @@ class OneSnapshotPerCycle(_CycleFixture):
     """One liveness snapshot per cycle, handed to every job (the module docstring's fix)."""
 
     def test_one_cycle_reads_liveness_once_however_deep_the_call(self):
-        # count REAL liveness reads (Sessions.live — the tmux fork + reg sweep), not the delegator:
-        # inside the cycle's scope every _tmux_sessions() call, at any depth of the build stack,
+        # count REAL liveness reads (Sessions.live — the backends' rows + reg sweep), not the delegator:
+        # inside the cycle's scope every _live_map() call, at any depth of the build stack,
         # must be served the cycle's one snapshot instead of taking a fresh read
         reads = []
         row = self.row
         km.Sessions.live = lambda: (reads.append(1), dict(row))[1]
         got = {}
-        # bracket the job list: the FIRST and the LAST tick job must both receive the cycle's one map
-        km._auto_nudge_tick = lambda now, tmux: got.setdefault("first", tmux)
-        km._clear_done_working_notes = lambda now, tmux: got.setdefault("last", tmux)
+        # bracket the pusher's job list: the FIRST and the LAST job after the push that take the map must both receive the
+        # cycle's one map (the housekeeping jobs run on the jobs thread since 2026-09-13: see the twin below)
+        km._turn_notify_tick = lambda now, live_map: got.setdefault("first", live_map)
+        km._api_health_frame = lambda now, live_map: got.setdefault("last", live_map)
+        km._api_health_push = lambda frame: None
         sent = []
         with km._clients_lock:   # a connected chat client, so the _push leg builds for real
             km._clients[:] = [{"app": "chat", "alive": True, "wid": "", "qbytes": 0,
@@ -116,12 +120,28 @@ class OneSnapshotPerCycle(_CycleFixture):
         self.assertIsNone(km._live_scope.snapshot, "the scope ends with the cycle")
         # OUTSIDE a cycle the delegator reads fresh — a WS handler must never see a stale snapshot
         n = len(reads)
-        km._tmux_sessions()
+        km._live_map()
         self.assertEqual(len(reads), n + 1)
+
+    def test_one_jobs_pass_reads_liveness_once_and_hands_it_to_every_job(self):
+        """The jobs thread's twin (the housekeeping split, 2026-09-13): its pass takes ONE snapshot of its own, the first and
+        the last housekeeping job receive that one map, and the scope ends with the pass."""
+        reads = []
+        row = self.row
+        km.Sessions.live = lambda: (reads.append(1), dict(row))[1]
+        got = {}
+        km._lift_spent_awaiting = lambda now, live_map: got.setdefault("first", live_map)
+        km._clear_done_working_notes = lambda now, live_map: got.setdefault("last", live_map)
+        km._jobs_cycle()
+        self.assertEqual(len(reads), 1, "one liveness read per jobs pass")
+        self.assertIn(SID, got.get("first") or {}, "the jobs got the pass's snapshot")
+        self.assertIs(got.get("first"), got.get("last"))
+        self.assertIsNone(km._live_scope.snapshot, "the scope ends with the pass")
+        self.assertIsNone(km._live_scope.sessions)
 
     def test_build_session_reuses_the_callers_snapshot(self):
         # build_session used to take a FRESH liveness read per session build (the bgTasks line) — on
-        # the pusher's hottest path that was a tmux fork + reg sweep per tab per push
+        # the pusher's hottest path that was a liveness read + reg sweep per tab per push
         reads = []
         row = self.row
         km.Sessions.live = lambda: (reads.append(1), dict(row))[1]
@@ -137,7 +157,8 @@ class OneDiscoverPerCycle(_CycleFixture):
     through _sessions, not counted globally: direct jd.discover callers exist (the wide walk, postal
     enrichment, analytics) and a global count is fixture-fragile."""
 
-    def _cycle(self, client):
+    def _cycle(self, client, cycle=None):
+        cycle = cycle or km._pusher_cycle                 # or km._jobs_cycle: the housekeeping's pass (the split, 2026-09-13)
         depth, inside, outside, keys = [0], [], [], set()
         orig_sessions, orig_fp = km._sessions, jd._discover_fingerprint
 
@@ -158,7 +179,7 @@ class OneDiscoverPerCycle(_CycleFixture):
             km._clients[:] = [client] if client else []
         s0 = dict(km._sessions_scope_stats)
         try:
-            km._pusher_cycle()
+            cycle()
         finally:
             km._sessions, jd._discover_fingerprint = orig_sessions, orig_fp
         s1 = km._sessions_scope_stats
@@ -169,8 +190,17 @@ class OneDiscoverPerCycle(_CycleFixture):
         self.assertEqual(d["miss"], len(keys), "one _sessions sweep per (window, forks) key")
         self.assertIn((jd.WINDOW, True), keys)
         self.assertEqual(fps, d["miss"], "…and one discover fingerprint per sweep")
-        self.assertGreaterEqual(d["hit"], 5, "the tick jobs and the _path_of misses were served from the memo")
+        self.assertGreaterEqual(d["hit"], 1, "the pusher's own jobs and the _path_of misses were served from the memo")
         self.assertIsNone(km._live_scope.sessions, "the memo ends with the cycle")
+
+    def test_one_sweep_per_key_per_jobs_pass(self):
+        # the housekeeping jobs' twin (the split, 2026-09-13): the pass opens its own memo, one sweep per key, the jobs served
+        fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)
+        self.assertEqual(d["miss"], len(keys), "one _sessions sweep per (window, forks) key")
+        self.assertIn((jd.WINDOW, True), keys)
+        self.assertEqual(fps, d["miss"])
+        self.assertGreaterEqual(d["hit"], 5, "the tick jobs and the _path_of misses were served from the memo")
+        self.assertIsNone(km._live_scope.sessions, "the memo ends with the pass")
 
     def test_one_sweep_per_key_per_cycle_with_a_chat_client(self):
         sent = []
@@ -182,7 +212,7 @@ class OneDiscoverPerCycle(_CycleFixture):
         self.assertIsNone(km._live_scope.sessions)
 
     def test_outside_a_cycle_every_read_is_fresh(self):
-        # the _tmux_sessions half of the idiom: a WS handler must never see a stale cycle's rows
+        # the _live_map half of the idiom: a WS handler must never see a stale cycle's rows
         km._live_scope.sessions = None
         fps = []
         orig = jd._discover_fingerprint
@@ -218,7 +248,7 @@ class OneDiscoverPerCycle(_CycleFixture):
         for path in self.paths.values():
             os.utime(path, (old, old))
         self.row = {}
-        fps, keys, d = self._cycle(None)
+        fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)   # the tick jobs' pass (the housekeeping split, 2026-09-13)
         self.assertEqual(d["miss"], len(keys), "one sweep per key, the empty result memoized")
         self.assertEqual(fps, d["miss"])
         self.assertGreaterEqual(d["hit"], 5, "the tick jobs were served the empty list from the memo")
@@ -247,7 +277,7 @@ class OneDiscoverPerCycle(_CycleFixture):
         km.Sessions.live = lambda: dict(self.row)
         try:
             now = int(time.time())
-            m = km.build_session(SID, now, tmux=self.row, path_override=self.paths[SID2])
+            m = km.build_session(SID, now, live_map=self.row, path_override=self.paths[SID2])
             self.assertIsNotNone(m)
             row = next(r for r in km._sessions(now) if r["sid"] == SID)
             self.assertEqual(row["path"], self.paths[SID], "the override stayed with that build")
@@ -283,9 +313,9 @@ class OneDiscoverPerCycle(_CycleFixture):
             return orig(now, window, forks)
         jd.discover = discover
         got = {}
-        km._clear_done_working_notes = lambda now, tmux: got.setdefault("alive", km._alive_sessions(now, tmux))
+        km._clear_done_working_notes = lambda now, live_map: got.setdefault("alive", km._alive_sessions(now, live_map))
         try:
-            fps, keys, d = self._cycle(None)
+            fps, keys, d = self._cycle(None, cycle=km._jobs_cycle)   # the _alive_sessions callers are the housekeeping jobs
         finally:
             jd.discover = orig
         self.assertEqual(sorted(r["sid"] for r in got["alive"]), sorted([SID, SID2]),
@@ -297,12 +327,14 @@ class OneDiscoverPerCycle(_CycleFixture):
 
 
 class TickReadsTheRowsPath(_CycleFixture):
-    """_interrupt_block_tick hands _compacting_now the row's own path and live meta. Beyond the saved
-    _path_of sweep, this is a behaviour change for a LIVE session idle longer than 48h: _path_of searched
-    only the 48h set and answered None, so the gate read an empty parse, and an optimistic compact click
-    could not be disproved by the session's own compact_boundary for the 180 s cap — the tick skipped the
-    row that long. With the row's path the gate reads the cached parse, and the boundary (the event)
-    retires the click."""
+    """_interrupt_block_tick hands _compacting_now the row's own path and live meta. When the hoist landed it
+    was also a behaviour change for a LIVE session idle longer than 48h: _path_of searched only the 48h set
+    and answered None, so the gate read an empty parse, and an optimistic compact click could not be
+    disproved by the session's own compact_boundary for the 180 s cap — the tick skipped the row that long.
+    With the row's path the gate reads the cached parse, and the boundary (the event) retires the click.
+    Since _session_row (the single-session resolver behind the fork/comment/rewind doors, 2026-09-14) the
+    default _path_of read resolves that idle session through discover's wide walk too, so the two reads
+    agree and the hoist is what it was always for: the saved per-row discover sweep."""
 
     def _boundary_transcript(self, offset=0):
         """SID2's transcript with a compact_boundary at now + offset (its mtime set idle longer than the caption
@@ -329,8 +361,10 @@ class TickReadsTheRowsPath(_CycleFixture):
         path, t = self._boundary_transcript()
         km.Sessions.live = lambda: dict(self.row)
         km._compact_clicked[SID2] = t - 10               # the kernel sent /compact just before the boundary
-        self.assertTrue(km._compacting_now(SID2), "without the row's path the 48h search finds no transcript: "
-                                                 "the click stands unproven for the whole cap (the old read)")
+        self.assertFalse(km._compacting_now(SID2), "the default read resolves the idle session's own transcript "
+                                                  "(_path_of via _session_row's wide walk), so the boundary retires "
+                                                  "the click here too; before _session_row the 48h search found no "
+                                                  "transcript and the click stood unproven for the whole cap")
         km._compact_clicked[SID2] = t - 10
         self.assertFalse(km._compacting_now(SID2, tm=self.row[SID2], path=path),
                          "with the row's path the cached parse's boundary retires the click")

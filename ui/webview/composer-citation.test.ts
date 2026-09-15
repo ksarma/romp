@@ -59,9 +59,9 @@ test("sending with a GOAL citation routes as an askFollowUp (reopen) and consume
   // owner for the live send and the staged release; deliver hands the typed message to flushStaged, which
   // routes every post of the release through it with sid (the active session) as the sid
   assert.match(RENDER, /const cites = composerCitations\.get\(activeId\);/);
-  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);   // + the echo's thumbnail paths (2026-08-25)
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid \}\); registerOptimistic\(sid, text, imgPaths, qid\); \}/);
-  assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, qid \}\); registerOptimistic\(sid, text, imgPaths, qid\); \}/);
+  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\), paths: attached \}\);/);   // + the echo's thumbnail paths (2026-08-25)
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid, \.\.\.att \}\); registerOptimistic\(sid, text, imgPaths, qid, paths\); \}/);
+  assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, qid, \.\.\.att \}\); registerOptimistic\(sid, text, imgPaths, qid, paths\); \}/);
   assert.match(RENDER, /if \(cites\) \{ composerCitations\.delete\(activeId\); renderComposerChips\(activeId\); \}/);
 });
 
@@ -73,10 +73,10 @@ test("a citation follow-up carries its SID, so a reply to a REMOTE card reaches 
   // sid from the itemId, owns no such session, and hands it to tmux by uuid — dropped in silence. The card
   // still flashed to Working (the kernel's cardPredict fires before any of that) and snapped back on the
   // ok:false ack, so the only visible trace was a bounce.
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid \}\); registerOptimistic\(sid, text, imgPaths, qid\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid, \.\.\.att \}\); registerOptimistic\(sid, text, imgPaths, qid, paths\); \}/);
   assert.match(RENDER, /const sid = activeId;   \/\/ the session this send \(and any confirm below\) was armed for/);   // deliver's sid IS the active session
   assert.match(RENDER, /if \(activeId !== sid\) return;   \/\/ a confirm outlived a tab switch/);   // deliver refuses a confirm that outlived a tab switch (fork-only guard)
-  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\) \}\);/);
+  assert.match(RENDER, /flushStaged\(sid, \{ text, cites, imgPaths: attached\.filter\(\(p\) => previewKind\(p\) === "img"\), paths: attached \}\);/);
   // every OTHER card-addressed op already routes this way — the citation follow-up was the lone omission
   assert.match(FEED, /type: "askClear", itemId: it\.itemId, sid: it\.sid/);
   assert.match(FEED, /type: "askFollowUp", itemId: tgt \? tgt\.itemId : fbId, title: tgt \? tgt\.title : fbTitle, text: txt, sid: fbSid/);
@@ -208,17 +208,17 @@ test("closing a session clears its composer reply context — chip, draft, and e
 });
 
 test("quote chips send a plain message wrapped by quoteReplyBody — never askFollowUp (no goal to reopen)", () => {
-  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid \}\); registerOptimistic\(sid, text, imgPaths, qid\); \}/);
+  assert.match(RENDER, /if \(goalCite\?\.itemId\) \{ vscodeApi\.postMessage\(\{ type: "askFollowUp", itemId: goalCite\.itemId, text, sid, qid, \.\.\.att \}\); registerOptimistic\(sid, text, imgPaths, qid, paths\); \}/);
   // the quote branch echoes the COMPOSED body — byte-identical to what lands, so the reconcile's
   // includes() match is exact (the user 2026-08-23, whose quoted sends painted nothing until the
   // kernel round-tripped while plain sends painted instantly)
-  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body, qid \}\); registerOptimistic\(sid, body, imgPaths, qid\); \}/);
+  assert.match(RENDER, /else if \(quoteCites\.length\) \{ const body = quoteReplyBody\(quoteCites, text\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text: body, qid, \.\.\.att \}\); registerOptimistic\(sid, body, imgPaths, qid, paths\); \}/);
   // the wrap: one section per stacked chip (lead-in + the highlighted text as a markdown quote block), in
   // strip order, then the typed message — a single chip composes byte-identically to the pre-stack form
   // a context-only body (staged with an empty box) carries no dangling blank tail. The function lives in
   // staged-messages.ts now (the staged release composes from it too) and its test executes it.
   assert.match(STAGED, /return quoted && text \? quoted \+ "\\n\\n" \+ text : quoted \|\| text;/);
-  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedPosts \} from "\.\/staged-messages";/);
+  assert.match(RENDER, /import \{ StagedStack, quoteReplyBody, stagedPosts, type StagedMsg \} from "\.\/staged-messages";/);
   assert.doesNotMatch(RENDER, /^function quoteReplyBody\(/m, "one definition, in the module");
   // the chip's audit preview shows the SAME composed body — the whole outgoing message, every stacked
   // quote, whichever chip was clicked — client-side (no /followup-preview fetch)

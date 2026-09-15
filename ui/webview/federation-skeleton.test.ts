@@ -18,7 +18,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { FederationManager, prefixInbound, routeOutbound } from "./federation";
+import { FederationManager, prefixInbound, routeOutbound, BOOKKEEPING } from "./federation";
 
 const U = "11111111-2222-3333-4444-555555555555";
 const V = "99999999-8888-7777-6666-555555555555";
@@ -225,6 +225,38 @@ test("the manager's outbound puts needFull(+why) on the owning kernel's wire —
     fm.outbound({ type: "needFull", id: "gpu1:" + U, why: "skeleton-delta" });
     assert.deepEqual(ws.sent, [{ type: "needFull", id: U, why: "skeleton-delta" }], "the remote kernel sees its own bare id and the same `why`");
     fm.conns.get("gpu1").closed = true;
+  });
+});
+
+// ── the page's chat protocol reaches every remote kernel (T323 stage 4b, round 2 item 16) ──────────────
+test("the page's ready (proto 2) goes to every OPEN remote socket at once, and to a later socket on its open, after the flush", () => {
+  withManager((fm, _e, localSent) => {
+    const a = attach(fm, "gpu1");
+    fm.outbound({ type: "ready", proto: 2 });
+    assert.deepEqual(localSent.filter((m: any) => m.type === "ready"), [{ type: "ready", proto: 2 }], "the local kernel gets the page's own ready");
+    assert.deepEqual(a.sent, [{ type: "ready", proto: 2 }], "an already-open remote socket is told the protocol now");
+    fm.openRemote("gpu2", true);
+    const b = FakeWS.made[FakeWS.made.length - 1];
+    assert.deepEqual(b.sent, [], "nothing rides a socket that has not opened");
+    fm.outbound({ type: "setting", key: "k", value: 1, host: "gpu2" });   // parked for the socket: the flush sends it first
+    b.open();
+    const kinds = b.sent.map((m: any) => m.type);
+    assert.equal(kinds[kinds.length - 1], "ready", "the ready is the last frame of the open: after whatever the flush sent");
+    assert.deepEqual(b.sent[b.sent.length - 1], { type: "ready", proto: 2 });
+    assert.equal(b.sent.filter((m: any) => m.type === "ready").length, 1, "once per open");
+    fm.conns.get("gpu1").closed = true; fm.conns.get("gpu2").closed = true;
+  });
+});
+
+test("an index page's ready (no proto) is told to every remote socket as proto 1: a kernel that serves no chat frame before the handshake would otherwise serve that socket nothing (the follow-up after PR 1584, low 2)", () => {
+  withManager((fm) => {
+    const a = attach(fm, "gpu1");
+    fm.outbound({ type: "ready" });
+    assert.deepEqual(a.sent, [{ type: "ready", proto: 1 }], "the index wire is declared to the open remote socket");
+    fm.openRemote("gpu2", true);
+    const b = FakeWS.made[FakeWS.made.length - 1]; b.open();
+    assert.deepEqual(b.sent.filter((m: any) => m.type === "ready"), [{ type: "ready", proto: 1 }], "…and to a later socket on its open");
+    fm.conns.get("gpu1").closed = true; fm.conns.get("gpu2").closed = true;
   });
 });
 

@@ -69,6 +69,9 @@ def _fixture(state: Path):
         {"t": t1 + 3, "pid": 101, "kind": "reconcile.scope-stopped", "unit": "romp-session-11111111-7-1.scope", "sid8": "11111111"},
         {"t": t1 + 3, "pid": 101, "kind": "reconcile.boot", "sessions": 5, "resumed": 2, "restored": 0, "notified": 0,
          "reaped": 1, "scopesStopped": 1, "toStart": 2, "durationS": 0.2},
+        {"t": t1 + 4, "pid": 101, "kind": "host.attached", "sid": SID, "name": "web", "boot": True, "hostPid": 20, "cliPid": 21, "replayFrom": 3},
+        {"t": t1 + 4, "pid": 101, "kind": "host.attached", "sid": SID2, "name": "api", "boot": True, "hostPid": 22, "cliPid": 23},
+        {"t": t2 + 100, "pid": 102, "kind": "host.attached", "sid": SID, "name": "web", "boot": False, "hostPid": 20, "cliPid": 21},
         {"t": t2 + 5, "pid": 102, "kind": "reconcile.boot", "sessions": 5, "resumed": 1, "reaped": 0, "scopesStopped": 0},
         {"t": t2 + 900, "pid": 102, "kind": "crash.heal", "sid": SID2, "name": "api", "attempt": 1},
         {"t": t2 + 960, "pid": 102, "kind": "crash.loop", "sid": SID2, "name": "api", "attempt": 2},
@@ -83,6 +86,10 @@ def _fixture(state: Path):
         {"t": t1 + 100, "sid": SID2, "name": "api", "fedT": t1 + 90, "firstOutT": t1 + 91.0, "resultT": t1 + 100.0,
          "durationMs": 10000, "apiMs": 8000, "usd": 0.1, "opener": "human", "resumeNotice": False, "fedTexts": 1},
         {"t": t2 + 50, "sid": SID2, "name": "api", "fedT": 0, "resultT": t2 + 50.0, "opener": "", "resumeNotice": False},
+        # a turn the CLI opened itself at 02:01, written by a kernel before the 2026-09-10 writer fix: nothing fed
+        # (fedTexts 0), and the stamps still in memory were the 01:00 turn's (its fedT and firstOutT)
+        {"t": t2 + 60, "sid": SID, "name": "web", "fedT": t1 + 3, "firstOutT": t1 + 5.5, "resultT": t2 + 60.0,
+         "opener": "injected", "resumeNotice": False, "fedTexts": 0},
     ])
     _write(state, "states/%s.jsonl" % SID, [
         {"t": int(t1 - 100), "state": "working"}, {"t": int(t1 - 70), "state": "waiting"},
@@ -130,17 +137,33 @@ class Parsers(unittest.TestCase):
     def test_events_turns_and_state_log(self):
         ev, _ = rm._read_jsonl(self.state / "session-events.jsonl")
         events = rm.parse_events(ev)
-        self.assertEqual(len(events), 10, "the stamp-less row is dropped")
+        self.assertEqual(len(events), 13, "the stamp-less row is dropped (the three host.attached rows count)")
         tu, _ = rm._read_jsonl(self.state / "turns.jsonl")
         turns = rm.parse_turns(tu)
         self.assertEqual(turns[0]["feedToResultS"], 37.0)
         self.assertEqual(turns[0]["feedToFirstOutS"], 2.5)
         self.assertNotIn("feedToResultS", turns[2], "fedT 0 (no feed stamp) → no interval, never a bogus one")
+        # the self-opened turn (fedTexts 0) carries the previous fed turn's stamps: an hour of feed-to-result and
+        # a duplicated first-output interval if read; it counts as a turn and measures nothing
+        self.assertEqual(turns[3]["fedTexts"], 0)
+        self.assertNotIn("feedToResultS", turns[3], "nothing fed: the stamps are another turn's, never an interval")
+        self.assertNotIn("feedToFirstOutS", turns[3])
         lines = (self.state / "states" / (SID + ".jsonl")).read_text().splitlines()
         sl, cuts = rm.state_log_turns(lines)
         self.assertEqual([x["feedToResultS"] for x in sl], [30.0, 37.0],
                          "working→waiting pairs; an interrupt's by-marked settle and an idle close are not turns")
         self.assertEqual(cuts, {"restart": 1, "crash": 1})
+        self.assertEqual(rm.spend_by_day(json.loads((self.state / "spend.json").read_text())), {"2026-09-10": 12.5, "2026-09-12": 3.0})
+
+    def test_parse_turns_gates_on_a_zero_count_alone(self):
+        """The fedTexts gate keys on the count 0 and nothing else: a row without the key is read by its stamps
+        (a writer that never wrote the key), and a bool is not a count. Direct rows, so the fixture's turn
+        count and buckets stay as they are."""
+        stamped = {"t": 100, "sid": SID, "fedT": 10, "firstOutT": 12.0, "resultT": 15.0}
+        rows = [dict(stamped), dict(stamped, fedTexts=0), dict(stamped, fedTexts=False), dict(stamped, fedTexts=1)]
+        got = [(r.get("feedToResultS"), r.get("feedToFirstOutS")) for r in rm.parse_turns(rows)]
+        self.assertEqual(got, [(5.0, 2.0), (None, None), (5.0, 2.0), (5.0, 2.0)],
+                         "no key: read by its stamps; the count 0: unmeasured; a bool: not a count; a count: measured")
 
     def test_state_log_pair_breaks_at_a_machine_cut(self):
         """Review find (2026-09-10): a cut turn's `working` row was closed by the RESUMED turn's `waiting`, so
@@ -151,7 +174,6 @@ class Parsers(unittest.TestCase):
         sl, cuts = rm.state_log_turns(lines)
         self.assertEqual([(x["fedT"], x["feedToResultS"]) for x in sl], [(1400, 10.0)])
         self.assertEqual(cuts, {"restart": 1})
-        self.assertEqual(rm.spend_by_day(json.loads((self.state / "spend.json").read_text())), {"2026-09-10": 12.5, "2026-09-12": 3.0})
 
 
 class BootJoin(unittest.TestCase):
@@ -231,8 +253,11 @@ class Document(unittest.TestCase):
         self.assertEqual((b["orphansReaped"], b["scopesStopped"], b["duplicateClis"], b["crashHeals"], b["crashLoops"],
                           b["drainLeftClosing"], b["leaseProblems"]), (1, 1, 1, 1, 1, 1, 1))
         self.assertEqual((b["drainUnjoinedCount"], b["drainReapedCount"]), (1, 1))
+        self.assertEqual((b["attachedAtBoot"], b["attachedLater"]), (2, 1),
+                         "host.attached rows (T315): the sessions a restart kept running under their hosts, and the later attaches")
+        self.assertEqual(doc["events"]["byKind"]["host.attached"], 3)
         self.assertEqual(b["redo"], {"turns": 1, "usd": 0.5, "tokens": 3700})
-        self.assertEqual(b["turns"], 3)
+        self.assertEqual(b["turns"], 4, "the self-opened turn counts as a turn; only its latency is unmeasured")
         self.assertEqual((b["latency"]["feedToResultS"]["n"], b["latency"]["feedToResultS"]["max"]), (2, 37.0))
         self.assertEqual(b["latency"]["feedToFirstOutS"]["p50"], 1.0)
         self.assertEqual(b["latency"]["apiS"]["max"], 30.0)
@@ -269,6 +294,7 @@ class Document(unittest.TestCase):
         self.assertIn("dates in UTC time", text)
         self.assertIn("quiet windows 2 · wait n=2 p50 297 s p90 900 s max 900 s · backstop fired 1", text)
         self.assertIn("orphans reaped 1 · scopes stopped 1 · duplicate CLIs 1 · crash heals 1 · crash loops 1 · drain left closing 1", text)
+        self.assertIn("hosts attached: at boot 2 · later 1", text)
         self.assertIn("continuation notices 3 · redo turns 1 · redo cost $0.50 of $15.50 in the window · redo tokens 3,700", text)
         self.assertIn("feed to result n=2 p50 10.0 s p90 37.0 s", text)
         self.assertIn("machine cuts crash 1, restart 1", text)
@@ -368,7 +394,7 @@ class LiveHelpers(unittest.TestCase):
                  "  102   101   250  0.0 sleep 3",
                  "  200     1  2000  2.0 /x/claude --output-format stream-json --resume=%s --input-format stream-json" % SID,
                  "  300     1   900  0.0 /x/claude --output-format stream-json --resume %s --input-format stream-json" % SID2,
-                 "  400     1   100  0.0 claude --resume %s" % SID,
+                 "  400     1   100  0.0 claude --resume %s" % SID,   # a terminal CLI: no stream-json mark, never romp's
                  "garbage"]
         procs = rm.parse_ps(lines)
         self.assertEqual(len(procs), 6)
@@ -376,7 +402,7 @@ class LiveHelpers(unittest.TestCase):
         trees = sorted(rm.ps_session_trees(procs, regs), key=lambda t: t["cliPid"])
         self.assertEqual([(t["name"], t["cliPid"], t["procs"], t["memBytes"], t["cpuPct"]) for t in trees],
                          [("web", 100, 3, 1750 * 1024, 1.5), ("web", 200, 1, 2000 * 1024, 2.0), ("api", 300, 1, 900 * 1024, 0.0)])
-        self.assertEqual(rm.duplicate_clis(procs, [SID, SID2]), {SID: [100, 200]}, "the tmux CLI (no mark) never counts")
+        self.assertEqual(rm.duplicate_clis(procs, [SID, SID2]), {SID: [100, 200]}, "a terminal CLI (no stream-json mark: someone's own claude, never romp's) never counts")
 
     def test_kernel_live_unreachable_is_said(self):
         state = Path(tempfile.mkdtemp())

@@ -129,6 +129,7 @@ function frame(id, readyState) {
 var PANE = frame("f-chat"), FRAMES = [PANE];
 var document = {
   hidden: false, activeElement: null,
+  body: el("body"),                                    // the shell's Escape chain reads body.classList ('settings-open', the gear's page, T400)
   addEventListener: function (t, f, cap) { (LISTENERS[t] = LISTENERS[t] || []).push({ f: f, cap: capFlag(cap) }); },
   getElementById: function (id) { return { "rupd": BOX, "rupd-go": GO, "rupd-armed": LBL, "rupd-confirm": CF,
                                            "rupd-cancel": CX, "rupd-dismiss": DM }[id] || null; },

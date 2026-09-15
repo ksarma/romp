@@ -652,7 +652,9 @@ class ThreadRegMemo(_State):
         self.assertEqual(km._thread_reg(SID), {})
         self.assertEqual(km._thread_reg_report()["entries"], 0)
 
-    def test_a_parse_or_read_failure_after_a_good_stat_is_not_memoized(self):
+    def test_a_parse_or_read_failure_after_a_good_stat_is_memoized_and_served(self):
+        # the outcome is memoized under the stat (upstream's _thread_reg_read, the 2026-09-15 pull-in; the rulings' item
+        # 6): one derivation fails, counted once, and the second read serves the unreadable outcome without a re-parse
         self.reg_path().parent.mkdir(parents=True, exist_ok=True)
         self.reg_path().write_text("{ not a reg")
         err = io.StringIO()
@@ -660,7 +662,7 @@ class ThreadRegMemo(_State):
             self.assertEqual(km._thread_reg(SID), {})
             self.assertEqual(km._thread_reg(SID), {})
         st = km._thread_reg_report()
-        self.assertEqual((st["entries"], st["fail"]), (0, 2))
+        self.assertEqual((st["entries"], st["fail"]), (1, 1), "the unreadable outcome is one memoized entry, its derivation one fail")
         # the line says the record did not read (round 11 of the unknown-name PR: it claimed a successful stat for
         # every failed read, false for a failed non-ENOENT stat), once per episode
         self.assertEqual(err.getvalue().count("thread-reg: %s.json did not read (" % SID), 1, "one stderr line per failure episode")

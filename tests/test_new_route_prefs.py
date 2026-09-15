@@ -10,7 +10,6 @@ import json
 import os
 import tempfile
 import threading
-import time
 import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -48,17 +47,17 @@ class NewRoutePrefs(unittest.TestCase):
 
     def setUp(self):
         self.calls = []
-        self._saved = (km._live_names, km._tmux_sessions, km._set_model_or_park,
+        self._saved = (km._live_names, km._live_map, km._set_model_or_park,
                        km._set_effort_or_park, km.Sessions.backend_for,
                        km._sdk_ready, km._create_sdk_session, km._push_soon)
-        km._tmux_sessions = lambda: []
+        km._live_map = lambda: []
         km._set_model_or_park = lambda be, sid, v: self.calls.append(("model", sid, v))
         km._set_effort_or_park = lambda be, sid, v: self.calls.append(("effort", sid, v))
         km.Sessions.backend_for = staticmethod(lambda sid: object())
         km._push_soon = lambda: None
 
     def tearDown(self):
-        (km._live_names, km._tmux_sessions, km._set_model_or_park,
+        (km._live_names, km._live_map, km._set_model_or_park,
          km._set_effort_or_park, km.Sessions.backend_for,
          km._sdk_ready, km._create_sdk_session, km._push_soon) = self._saved
 
@@ -118,9 +117,8 @@ class NewRouteEnv(unittest.TestCase):
     (a bad name refuses the WHOLE request with a 400 — fail-loudly, never a silent skip), born into
     the SDK spawn so the eager connect already carries it, re-asserted through the park-aware
     set_env on the idempotent existing:true open, and echoed back like model/effort. SDK-only: the
-    payload rides the per-sid flag-settings file, which a tmux session's CLI never reads and a Codex
-    session (on the shared app-server) has no counterpart for — asked of a live tmux or Codex session
-    or of the tmux backend, /new says so with that session's own reason. Synthetic values only
+    payload rides the per-sid flag-settings file, which the Codex backend never reads — asked of a
+    Codex session or the Codex arm, /new says so instead of pretending. Synthetic values only
     (FEATURE_FLAG=1 shapes, never anything credential-shaped — gitleaks reads this repo too)."""
 
     class _SdkBe:
@@ -143,11 +141,10 @@ class NewRouteEnv(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.created = []
-        self.spawns = []
-        self._saved = (km._live_names, km._tmux_sessions, km._set_env_or_park,
+        self._saved = (km._live_names, km._live_map, km._set_env_or_park,
                        km.Sessions.backend_for, km._sdk_ready, km._create_sdk_session,
-                       km._push_soon, km._spawn_session, km._codex)
-        km._tmux_sessions = lambda: []
+                       km._push_soon, km._codex)
+        km._live_map = lambda: []
         km._live_names = lambda *_: {}
         km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
         km.Sessions.backend_for = staticmethod(lambda sid: self._SdkBe())
@@ -156,12 +153,11 @@ class NewRouteEnv(unittest.TestCase):
                                   (self.created.append((nm, auth, env)),
                                    (SID2, km._apply_new_session_prefs(SID2, prefs or {})))[1])
         km._push_soon = lambda: None
-        km._spawn_session = lambda nm, cwd=None: self.spawns.append(nm)
 
     def tearDown(self):
-        (km._live_names, km._tmux_sessions, km._set_env_or_park,
+        (km._live_names, km._live_map, km._set_env_or_park,
          km.Sessions.backend_for, km._sdk_ready, km._create_sdk_session,
-         km._push_soon, km._spawn_session, km._codex) = self._saved
+         km._push_soon, km._codex) = self._saved
 
     def _post(self, body):
         req = urllib.request.Request("http://127.0.0.1:%d/new" % self.port,
@@ -267,21 +263,10 @@ class NewRouteEnv(unittest.TestCase):
                          "spawn's own `if env:` makes the empty declaration naturally vacuous")
         self.assertEqual(body.get("env"), {})
 
-    def test_an_existing_tmux_session_refuses_loudly(self):
-        km._live_names = lambda *_: {"opt": SID}
-        km.Sessions.backend_for = staticmethod(lambda sid: object())   # no set_env — the tmux shape
-        code, body = self._post({"name": "opt", "dir": self.dir, "env": {"FEATURE_FLAG": "1"}})
-        self.assertEqual(code, 200)
-        self.assertFalse(body["ok"], "a session that can't take the env must say so, not drop it")
-        self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
-        self.assertIn("tmux", body["error"], "the tmux session's own reason")
-        self.assertNotIn("Codex", body["error"])
-        self.assertEqual(self.calls, [])
-
     def test_an_existing_codex_session_refuses_with_the_codex_reason(self):
-        # a live Codex session has no set_env either, and the refusal used to hand it the tmux
-        # sentence ("runs on tmux, whose CLI reads the tmux server's environment"), false of it. The
-        # backend object IS the Codex singleton (_codex()), which is how the kernel tells the two apart
+        # a live Codex session has no set_env, and the refusal names it as a Codex one (until the tmux
+        # backend's removal 2026-09-11 the arm told a Codex session from a tmux one and handed each its
+        # own reason; one backend without set_env is left, so the sentence is the Codex one)
         km._live_names = lambda *_: {"opt": SID}
         fake_codex = object()                                          # no set_env — the Codex shape
         km.Sessions.backend_for = staticmethod(lambda sid: fake_codex)
@@ -291,18 +276,20 @@ class NewRouteEnv(unittest.TestCase):
         self.assertFalse(body["ok"], "a Codex session can't take the env either — say so, don't drop it")
         self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
         self.assertIn("Codex", body["error"], "the session is named as a Codex one")
-        self.assertIn("shared app-server", body["error"], "the create arm's sentence, not the tmux one")
+        self.assertIn("takes no per-session environment", body["error"], "the existing-session arm's sentence")
         self.assertNotIn("tmux", body["error"])
         self.assertEqual(self.calls, [], "nothing re-asserted on a refusal")
 
-    def test_the_tmux_backend_refuses_env_outright(self):
+    def test_an_unknown_backend_is_a_400_naming_both_backends(self):
+        # two backends since the tmux backend's removal (2026-09-11): any other value is refused up front,
+        # by name, and nothing is created — the env is not silently dropped on a spawn that never happens
         code, body = self._post({"name": "term1", "dir": self.dir,
-                                 "backend": "tmux", "env": {"FEATURE_FLAG": "1"}})
-        self.assertEqual(code, 200)
-        self.assertFalse(body["ok"], "no tmux spawn, no env silently dropped")
-        self.assertIn("needs a Claude Code session", body["error"])   # the backend's name since T288
-        time.sleep(0.2)                       # the tmux spawn is threaded — give a regression a beat
-        self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
+                                 "backend": "shell", "env": {"FEATURE_FLAG": "1"}})
+        self.assertEqual(code, 400)
+        self.assertFalse(body["ok"], "an unknown backend is a refusal, not a default")
+        self.assertIn("sdk", body["error"])
+        self.assertIn("codex", body["error"])
+        self.assertEqual(self.created, [], "the refusal comes BEFORE any spawn")
 
 
 class NewRouteTags(unittest.TestCase):
@@ -312,7 +299,7 @@ class NewRouteTags(unittest.TestCase):
     stub mirrors that seam through the real _tag_new_session). Validated up front like env — an
     unknown parent or a malformed list is a 400 and nothing is created. The idempotent existing:true
     open never INHERITS (no creation event) but re-asserts an explicit --in like model/effort/env; a
-    thread's name tags nothing and says so; the tmux backend refuses. The `tags` echo is the child's
+    thread's name tags nothing and says so; an unknown backend is a 400. The `tags` echo is the child's
     names after everything, so the CLI is loud when a kernel drops the ask. A Codex spawn takes the
     same parent/tags through the same seam (the tag store keys on the registry sid, not the
     backend): before that, the Codex arm applied nothing and echoed nothing, so a plain `romp new`
@@ -334,21 +321,19 @@ class NewRouteTags(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.created = []
         self.created_codex = []
-        self.spawns = []
-        self._saved = (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
-                       km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
+        self._saved = (km._live_names, km._live_map, km.Sessions.backend_for, km._sdk_ready,
+                       km._create_sdk_session, km._push_soon, km._mark_views_dirty,
                        km.jd.STATE, km._codex_ready, km._create_codex_session, km._default_backend)
         km.jd.STATE = __import__("pathlib").Path(self.td.name)
         km._flags_cache.clear()
         (km.jd.STATE / "names").mkdir(parents=True, exist_ok=True)
         (km.jd.STATE / "names" / SID).write_text("web\t/tmp\t#123456\twhite\n")
-        km._tmux_sessions = lambda: []
+        km._live_map = lambda: []
         km._live_names = lambda *_: {}
         km.Sessions.backend_for = staticmethod(lambda sid: object())
         km._sdk_ready = lambda: True
         km._mark_views_dirty = lambda: None
         km._push_soon = lambda: None
-        km._spawn_session = lambda nm, cwd=None: self.spawns.append(nm)
 
         def create(nm, cwd, auth="", prefs=None, client=None, env=None, parent="", tags=()):
             # the real seam: tags land INSIDE the create, before its push — mirrored here
@@ -367,8 +352,8 @@ class NewRouteTags(unittest.TestCase):
         km._create_codex_session = create_codex
 
     def tearDown(self):
-        (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
-         km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
+        (km._live_names, km._live_map, km.Sessions.backend_for, km._sdk_ready,
+         km._create_sdk_session, km._push_soon, km._mark_views_dirty,
          km.jd.STATE, km._codex_ready, km._create_codex_session, km._default_backend) = self._saved
         km._flags_cache.clear()
         self.td.cleanup()
@@ -462,15 +447,18 @@ class NewRouteTags(unittest.TestCase):
         self.assertEqual(body.get("tags"), [])
         self.assertIn("two tags are named", body.get("tagError") or "", "…so it is named, never swallowed")
 
-    def test_the_tmux_backend_refuses_tags_and_parent_outright(self):
-        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "tags": ["pool"]})
-        self.assertEqual(code, 200)
-        self.assertFalse(body["ok"], "no tmux spawn with the tags silently dropped")
-        self.assertIn("Claude Code or Codex", body["error"])
-        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "parent": SID})
+    def test_an_unknown_backend_is_refused_before_anything_is_created(self):
+        # two backends since the tmux backend's removal (2026-09-11): any other value is a 400 that names
+        # both, and neither arm runs — the tags and the parent are not silently dropped
+        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "shell", "tags": ["pool"]})
+        self.assertEqual(code, 400)
+        self.assertFalse(body["ok"], "no spawn with the tags silently dropped")
+        self.assertIn("sdk", body["error"])
+        self.assertIn("codex", body["error"])
+        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "shell", "parent": SID})
+        self.assertEqual(code, 400)
         self.assertFalse(body["ok"])
-        time.sleep(0.2)
-        self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
+        self.assertEqual((self.created, self.created_codex), ([], []), "the refusal comes BEFORE either arm")
 
     def test_a_normalized_in_name_echoes_positionally_as_applied_not_as_dropped(self):
         # the store trims and clamps names (_edit_tag, _VIEWS_MAX_NAME); the CLI compared its raw
@@ -550,7 +538,7 @@ class NewRouteTags(unittest.TestCase):
 
     def test_a_codex_spawn_refuses_env_loudly(self):
         # the Codex backend has no set_env: a Codex thread runs on the shared app-server. The arm
-        # used to swallow the env silently; it refuses like the tmux arm now
+        # used to swallow the env silently; it refuses up front now
         code, body = self._post({"name": "api", "dir": self.dir, "backend": "codex", "env": {"X": "1"}})
         self.assertEqual(code, 200)
         self.assertFalse(body["ok"], "no Codex spawn with the env silently dropped")

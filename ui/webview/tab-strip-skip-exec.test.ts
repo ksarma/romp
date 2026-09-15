@@ -12,8 +12,8 @@ import { inspect } from "node:util";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { planStrip, parseTabGroups, headWords } from "./tab-groups";
-import { tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
+import { planStrip, parseTabGroups, headWords, revealedTabs } from "./tab-groups";
+import { tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle } from "./tab-state";
 import { newSkeletonState, renderKind } from "./skeleton-tabs";
 import type { TagUnion } from "./session-views";
 import { hideEdges, sameNodes, staysEnumerable } from "../test-dom-shim";
@@ -69,10 +69,12 @@ type Hooks = {
   groupsRaw: string | null;   // the stored tab-groups blob the plan reads (localStorage's, in the page)
   phone: boolean;             // the phone layout: the plan is the flat strip there
   heads: HeadCall[];          // every group header the paint minted, in order
-  planStrip: typeof planStrip; parseTabGroups: typeof parseTabGroups; headWords: typeof headWords;
-  tabStateClass: typeof tabStateClass; tabDotClass: typeof tabDotClass; tabDotTitle: typeof tabDotTitle; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
+  planStrip: typeof planStrip; parseTabGroups: typeof parseTabGroups; headWords: typeof headWords; revealedTabs: typeof revealedTabs;
+  tabStateClass: typeof tabStateClass; tabRingId: typeof tabRingId; RING_ORDER: typeof RING_ORDER; tabDotClass: typeof tabDotClass; tabDotTitle: typeof tabDotTitle; sectionPip: typeof sectionPip; sectionPipMembers: typeof sectionPipMembers; sectionPipTitle: typeof sectionPipTitle;
   newSkeletonState: typeof newSkeletonState; renderKind: typeof renderKind;   // the skeleton strip (2026-09-07): empty here, so every listed id is a loaded tab or a placeholder
   skeletons: number;          // skeleton tabs minted (none expected: the set stays empty in these worlds)
+  timers: Array<() => void>;  // the deferred checks renderTabs schedules (setTimeout 0), fired by the test when it chooses
+  activated: string[];        // every setActive the fired checks made (T357 later lows: the hidden tab's restore)
 };
 type Api = {
   renderTabs: () => void; sig: () => string; folded: () => Set<string>;
@@ -87,32 +89,51 @@ function lift(): (hooks: Hooks) => Api {
   // the chip, the drag listeners and the context gauge live in helpers above renderTabs, shared with the
   // skeleton tab (2026-09-07): lifted for real, so the paint wears the state class and a dragstart resets the signature
   const h0 = RENDER.indexOf("function applyTabStatus("), h1 = RENDER.indexOf("// SKELETON tab (2026-09-07)", h0);
-  const g0 = RENDER.indexOf("function appendTabCtxGauge(", h1), g1 = RENDER.indexOf("// A loading PLACEHOLDER tab", g0);
-  assert.ok(h0 > 0 && h1 > h0 && g0 > h1 && g1 > g0, "anchors not found — applyTabStatus / wireTabDrag / appendTabCtxGauge or the skeleton-tab / placeholder comments moved; re-anchor");
+  const g0 = RENDER.indexOf("function appendTabAfterWidgets(", h1), g1 = RENDER.indexOf("// A loading PLACEHOLDER tab", g0);
+  assert.ok(h0 > 0 && h1 > h0 && g0 > h1 && g1 > g0, "anchors not found — applyTabStatus / wireTabDrag / appendTabAfterWidgets or the skeleton-tab / placeholder comments moved; re-anchor");
   const js = requireCjs("esbuild").transformSync(RENDER.slice(h0, h1) + RENDER.slice(g0, g1) + RENDER.slice(a, b), { loader: "ts" }).code;
   const prelude = `
     let renameActive = false, renderPendingAfterRename = false, tabPointerHeld = false, renderPendingWhilePressed = false;
     let tabStripSig = "", activeId = null, peekId = null, allHiddenBlanked = false, draggedId = null, draggedEl = null, tabDragCommitted = false;
     let order = [], closingTabs = new Set(), tabMeta = new Map(), sessions = new Map(), views = new Map();
+    let vanishedId = null, vanishedWhy = null;   // the unfocused pane's memory of what vanished and why (T357)
     let collapsedTabIds = new Set(), draggedGroup = null, provisionalId = null, provisionalTags = [];
-    let settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora" };
+    // stripGroupRows OFF: this fork's default (W1, the user 2026-09-08: the groups flow inline), so the break site is never
+    // reached whatever FakeEl reports; tabWidgets is upstream's T379 registry input (every widget on, no options)
+    let settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora", tabWidgets: { on: {}, order: [], opts: {} } };
     // the strip's other readers on this fork, inert: the hover tip's owner (tabTipOwner, null: no tip up) and the feed's
     // per-session ledgers (empty: no needs-you verdict); the section view's readers (lastStripItems, snapView) and its
     // painter and focus probe are declared below with upstream's prelude, the dragged copy (draggedEl) with the drag state above
     let tabTipOwner = null;
     const ledgers = new Map();
     const H = HOOKS;
+    // the tab-title widgets (T379): a faithful stand-in for the registry's composition over the real tab-state rules, so the
+    // dot slot and the gauge land as the strip paints them; the hot-key store is empty here
+    const composeTabWidgets = (tab, slot, sid, status, prefs) => {
+      if (slot === "before") { const cls = H.tabDotClass(status.state); if (cls) { const d = el("span", cls); const t = H.tabDotTitle(status.state); if (t) d.title = t; tab.appendChild(d); } }
+      else if (slot === "after") { const st = status.state; if (status.ctx && settings.tabCtx !== "never" && st !== "compacting" && st !== "closed") { const pct = parseInt(status.ctx, 10) || 0; if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(el("span", "tab-ctx")); } }
+    };
+    const tabHotkey = () => "";
+    const window = { __rompShowStrip: false }; const openSettingsOn = () => {};   // the tab-widgets gear mounts only where a gear can be reached (VS Code's strip or the shell); neither here
     const el = (tag, cls) => new H.FakeEl(tag, cls);
     const document = { activeElement: null,
       getElementById: (id) => id === "tabs" ? H.bar : id === "mtag-slot" ? H.mslot : null,
       createTextNode: (t) => { const n = new H.FakeEl("#text"); n.textContent = t; return n; } };
     const auditTabOrder = () => {}; const onlyTag = () => H.only; const matchesOnly = (name, only) => name.includes(only);
     const tabInView = (id) => id === peekId || !H.hidden.has(id);
-    const setActive = () => {}; const setTimeout = () => 0;
+    // the chat split's partition (2026-09-11), inert: no shell here, so the sets are null and every id is held
+    let colSets = null; const readColSets = () => null; const heldHere = () => true; const noteColumnEmptiness = () => {}; const noteOrphanState = () => {}; const staleActiveFallback = () => {};
+    const isProvisionalId = (id) => typeof id === "string" && id.startsWith("new-");   // the draggable flag's third clause (a create in flight is not draggable, 2026-09-11): provisional.ts's shape
+    // the one visibility predicate renderTabs builds visibleIds from (T357 later lows): the view, then the #only= filter
+    const stripShows = (id, only) => tabInView(id) && (!only || matchesOnly(sessions.get(id)?.name ?? tabMeta.get(id)?.name ?? "", only));
+    const stripLists = (id) => !closingTabs.has(id) && (order.includes(id) || tabMeta.has(id));   // the strip's one membership rule (T357 fix)
+    const setActive = (id) => { H.activated.push(id); }; const setTimeout = (f) => { H.timers.push(f); return 0; };   // the deferred checks, held for the test to fire
+    const unfocusHiddenByView = () => {};
     // the section-at-a-glance view's readers on the strip, inert: the plan the view reads (lastStripItems), the
     // section the pane shows (snapView, null: no view open, so stripAftermath's follow does nothing), and the
     // view's own painter and focus probe (never reached while snapView is null)
     let lastStripItems = [], snapView = null;
+    const revealedTabs = H.revealedTabs; let lastShownTabIds = null; const schedulePrebuild = () => { H.prebuilds = (H.prebuilds || 0) + 1; };   // the reveal detector renderTabs runs (PR 1671 round four): the pure half, the paint memory, a counted schedule
     const renderSnapshot = () => false; const snapshotHoldsFocus = () => false; const showActive = () => {};
     const titleWithKey = () => H.keyHint; const surfaceLens = () => H.lens; const effViews = () => null; const viewTagUnion = () => H.unions;
     const hostIsDown = (id) => H.down.has(id); const hostDownNote = (id) => H.notes[id] ?? "";
@@ -125,6 +146,11 @@ function lift(): (hooks: Hooks) => Api {
     const tabGroups = () => readTabGroups(H.unions); const writeTabGroups = () => {};
     const phoneLayout = () => H.phone;
     const tabStateClass = H.tabStateClass, tabDotClass = H.tabDotClass, tabDotTitle = H.tabDotTitle, sectionPip = H.sectionPip, sectionPipMembers = H.sectionPipMembers, sectionPipTitle = H.sectionPipTitle;   // tabDotClass: the state-dot slot every tab carries (the tab-strip fix, 2026-09-08); tabDotTitle: what the slot says on hover
+    // the RINGS (widgets since 2026-09-14): a faithful stand-in for tab-widgets.ts composeTabRing over the real tab-state rule — every
+    // ring class off, then the first switched-on ring whose test holds (settings.tabWidgets.on, every ring on by default) — and the
+    // switch predicate the folded header's pip reads
+    const ringSwitch = (prefs) => (id) => !(prefs && prefs.on && prefs.on[id] === false);
+    const composeTabRing = (tab, sid, status, prefs) => { for (const id of H.RING_ORDER) tab.classList.remove(id); const r = H.tabRingId(status, ringSwitch(prefs)); if (r) tab.classList.add(r); return r; };
     // calls the resolved body makes, stubbed inert: the @-mention roster refresh ahead of the strip's guards (upstream's
     // hook, composer-mention-pane.test.ts), and the fork's: the tab's emoji (none in these worlds), the row break between
     // groups (only under stripGroupRows, off here), the tip re-hover after a rebuild; the section view's pass is stubbed above
@@ -136,13 +162,15 @@ function lift(): (hooks: Hooks) => Api {
       H.heads.push({ name: sec.name, color: sec.color, ids: sec.ids.slice(), folded, active, hidden: hidden.slice() });
       return h;
     }
-    const onTabKey = () => {}; const dragImageBlank = () => el("div"); const hideTabTip = () => {}; const snapshotDragGeometry = () => {};
+    const onTabKey = () => {}; const dragImageBlank = () => el("div"); const hideTabTip = () => {}; const syncComposerPh = () => {}; const hideFilePreview = () => {}; const snapshotDragGeometry = () => {}; const inRompShell = () => false;   // inRompShell: postTabDrag (lifted with wireTabDrag, the chat split 2026-09-11) tells no shell here; syncComposerPh: the rebuild re-syncs the composer's name overlay (T335), inert here
     const flipTabs = (f) => f(); const applyCompactSweep = () => {};
     const hostNameNodes = (name) => [document.createTextNode(name)]; const fadedColor = (h) => h;
     const tabCtxGauge = () => el("span", "tab-ctx"); const pickTone = (a, b) => b ?? a;
     const fedMissing = false;   // the page has its federation manager (render.ts fedMissing, 2026-09-10): tabs drag as before
     const showTabTip = (tab, s) => { H.tips.push(s); }; const toggleLedgerCollapsed = () => {}; const showTabMenu = () => {}; const openPicker = () => {};
     const tagMenuButton = () => el("span", "tag-btn"); const openTagMenu = () => {}; const postLens = () => {}; const vscodeApi = null;
+    const GEAR_GLYPH = "\u26ed"; const openRowsMenu = () => {};   // the strip's gear (T379) and its menu (T405): built, its press outside this harness   // the tab lock (T395): the strip builds the button; its press is outside this slice
+    const TAG_BTN_BORDER_CSS = "var(--card-border, rgba(255,255,255,0.10))";   // the tag button's themed border the lock borrows (T395)
     const syncTagFilter = () => { H.tagSyncs++; }; const paintTabRowLines = () => { H.rowPaints++; }; const ensureTabRowObserver = () => {};
     const focusActiveTab = () => {}; const syncNoSessionsPlaceholder = (v, t) => { H.aftermaths.push([v, t]); };
   `;
@@ -153,6 +181,7 @@ function lift(): (hooks: Hooks) => Api {
         else if (k === "sessions") sessions = p[k]; else if (k === "tabMeta") tabMeta = p[k]; else if (k === "settings") settings = p[k];
         else if (k === "views") views = p[k]; else if (k === "renameActive") renameActive = p[k]; else if (k === "tabPointerHeld") tabPointerHeld = p[k];
         else if (k === "provisionalId") provisionalId = p[k]; else if (k === "provisionalTags") provisionalTags = p[k];
+        else if (k === "vanishedId") vanishedId = p[k]; else if (k === "vanishedWhy") vanishedWhy = p[k];
         else throw new Error("unknown knob " + k); } },
       pending: () => ({ renderPendingAfterRename, renderPendingWhilePressed }) };
   `;
@@ -172,12 +201,12 @@ function world(): { H: Hooks; api: Api; sessions: Map<string, any>; tabMeta: Map
   const H: Hooks = { FakeEl, bar: new FakeEl("div"), mslot: null, only: "", hidden: new Set(), down: new Set(), notes: {},
                      keyHint: "Open a session (K)", lens: { all: true }, unions: [], tips: [], aftermaths: [], rowPaints: 0, tagSyncs: 0, placeholders: 0,
                      groupsRaw: null, phone: false, heads: [],
-                     planStrip, parseTabGroups, headWords, tabStateClass, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle,
-                     newSkeletonState, renderKind, skeletons: 0 };
+                     planStrip, parseTabGroups, headWords, revealedTabs, tabStateClass, tabRingId, RING_ORDER, tabDotClass, tabDotTitle, sectionPip, sectionPipMembers, sectionPipTitle,
+                     newSkeletonState, renderKind, skeletons: 0, timers: [], activated: [] };
   const api = lift()(H);
   const sessions = new Map<string, any>([["a", session("web", "ready")], ["b", session("api", "working")]]);
   const tabMeta = new Map<string, any>([["p", { name: "tests", color: { bg: "#112233", fg: "#ffffff" } }]]);
-  const settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora" };
+  const settings = { tabCtx: "over50", stripGroupRows: false, theme: "classic", colormap: "aurora", tabWidgets: { on: {}, order: [], opts: {} } };   // W1: the fork's groups flow inline; T379's widget registry input
   api.set({ order: ["a", "b", "p"], sessions, tabMeta, settings, activeId: "a" });
   return { H, api, sessions, tabMeta, settings };
 }
@@ -311,6 +340,65 @@ test("the paint wears the shared state → class rule (tab-state.ts), and the si
   assert.ok(tab2.has("tab-retrying") && !tab2.has("tab-blocked"), "a transient API error auto-retries: amber");
 });
 
+test("the RINGS ride beside the state class as one class at a time — a working tab wears the yellow with its dot — the yellow's flip alone repaints once, and a switch off takes the ring away (2026-09-13, widgets since 2026-09-14)", () => {
+  const { H, api, sessions, settings } = world();
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 1);
+  // the feed files a card of the WORKING session under needs-you: the tab keeps its working class and gains the ring
+  sessions.get("b").status = { state: "working", needsYou: true };
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 2, "the verdict alone is a repaint: the signature reads needsYou");
+  const b = H.bar.tabs().find((t) => t.dataset.id === "b")!;
+  assert.ok(b.has("tab-working") && b.has("ring-waiting-on-you"), "gold dot AND yellow ring: the ring does not replace the state");
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 2, "unchanged: no rebuild");
+  // the yellow ring switched off in the settings: one repaint (settings.tabWidgets is in the signature), the class gone, the state kept
+  api.set({ settings: { ...settings, tabWidgets: { on: { "ring-waiting-on-you": false }, order: [], opts: {} } } });
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 3, "the switch alone is a repaint");
+  const bOff = H.bar.tabs().find((t) => t.dataset.id === "b")!;
+  assert.ok(bOff.has("tab-working") && !bOff.has("ring-waiting-on-you"), "switched off: the dot stays, the ring goes");
+  api.set({ settings });
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 4);
+  assert.ok(H.bar.tabs().find((t) => t.dataset.id === "b")!.has("ring-waiting-on-you"), "…and back on");
+  // the card leaves the column (answered, cleared): the ring goes, the working class stays
+  sessions.get("b").status = { state: "working", needsYou: false };
+  api.renderTabs();
+  assert.equal(H.bar.wipes, 5);
+  const b2 = H.bar.tabs().find((t) => t.dataset.id === "b")!;
+  assert.ok(b2.has("tab-working") && !b2.has("ring-waiting-on-you"));
+  // an idle session that asked: the ring alone (the common case the state rule never sees)
+  sessions.get("a").status = { state: "ready", needsYou: true };
+  api.renderTabs();
+  const a = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.ok(a.has("ring-waiting-on-you") && !a.has("tab-working") && !a.has("tab-awaiting"));
+  // a live prompt on the same session: the red ring alone — never two rings
+  sessions.get("a").status = { state: "needsInput", needsYou: true };
+  api.renderTabs();
+  const a2 = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.ok(a2.has("tab-awaiting") && a2.has("ring-needs-you") && !a2.has("ring-waiting-on-you"), "red outranks yellow: one ring class");
+  // the red ring switched off: the same tab wears the yellow (a card of its IS waiting on you), the state class untouched
+  api.set({ settings: { ...settings, tabWidgets: { on: { "ring-needs-you": false }, order: [], opts: {} } } });
+  api.renderTabs();
+  const a3 = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.ok(a3.has("tab-awaiting") && a3.has("ring-waiting-on-you") && !a3.has("ring-needs-you"), "the next ring whose test holds");
+  // …and with no card, a plain awaiting tab: the state's hover title and dot slot, no ring
+  sessions.get("a").status = { state: "needsInput" };
+  api.renderTabs();
+  const a4 = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.ok(a4.has("tab-awaiting") && !a4.className.includes("ring-"), "no ring at all");
+  api.set({ settings });
+  // an API retry: the amber ring; a card on it: the yellow outranks the amber
+  sessions.get("a").status = { state: "retrying" };
+  api.renderTabs();
+  assert.ok(H.bar.tabs().find((t) => t.dataset.id === "a")!.has("ring-retrying"));
+  sessions.get("a").status = { state: "retrying", needsYou: true };
+  api.renderTabs();
+  const a5 = H.bar.tabs().find((t) => t.dataset.id === "a")!;
+  assert.ok(a5.has("tab-retrying") && a5.has("ring-waiting-on-you") && !a5.has("ring-retrying"), "yellow over amber");
+});
+
 test("the dot slot explains its state on hover: a visible dot carries the feed's phrase for that state, the hidden slot says nothing", () => {
   // the phrases are the feed's (feed.ts DOT_TIP), read from its source so the two surfaces cannot drift apart
   const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
@@ -419,6 +507,39 @@ test("the all-hidden blank lands on the skip path when the active view appears b
   api.renderTabs();
   assert.equal(H.bar.wipes, 2);
   assert.equal(av.el.style.display, "", "restored once anything is visible");
+});
+
+test("executed: the hidden tab's restore fires only for a tab still on the strip (T357 later lows, the review's low)", () => {
+  // the pane unfocused with web hidden by the filter (vanishedWhy "hidden"); the filter lifts and renderTabs schedules
+  // the restore. BEFORE it fires, web is torn down while not active: dismissSession writes vanished* for the active tab
+  // alone, so the reason still reads "hidden" while web has left `order`. The timer must not hand focus to a tab nobody
+  // can see: the fire-time check reads the strip's membership, not only the predicate
+  const { H, api, sessions } = world();
+  api.set({ activeId: null, vanishedId: "a", vanishedWhy: "hidden" });
+  api.renderTabs();
+  assert.equal(H.timers.length, 1, "the restore is scheduled once");
+  api.set({ order: ["b", "p"] }); sessions.delete("a");
+  H.timers[0]();
+  assert.deepEqual(H.activated, [], "…and does not fire for a tab that left the strip meanwhile");
+  // the same schedule with the tab still listed restores it
+  const w2 = world();
+  w2.api.set({ activeId: null, vanishedId: "a", vanishedWhy: "hidden" });
+  w2.api.renderTabs();
+  assert.equal(w2.H.timers.length, 1);
+  w2.H.timers[0]();
+  assert.deepEqual(w2.H.activated, ["a"], "the tab still on the strip takes focus back");
+});
+
+test("executed: the restore's fire-time membership is the paint's own rule: a tab listed only as a placeholder paints, so it restores (T357 fix)", () => {
+  // the schedule reads visibleIds (order AND the tabMeta placeholders); the fire-time check read `order` alone, so a
+  // tab present only as a placeholder painted while its restore declined (the review's low). One rule at both ends.
+  const { H, api, tabMeta } = world();
+  tabMeta.set("a", { name: "web", color: { bg: "#112233", fg: "#ffffff" } });
+  api.set({ order: ["b", "p"], activeId: null, vanishedId: "a", vanishedWhy: "hidden" });
+  api.renderTabs();
+  assert.equal(H.timers.length, 1, "the placeholder-only tab is visible, so the restore is scheduled");
+  H.timers[0]();
+  assert.deepEqual(H.activated, ["a"], "…and fires: it paints, so it restores");
 });
 
 // ── the stand-in's nodes inspect as their own projection (ui/test-dom-shim.ts) ────────────────────

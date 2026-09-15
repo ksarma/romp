@@ -11,6 +11,7 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const MIN_W = 60, MAX_W = 172800;                  // 1 min … 48 h window (NICE has 60 → 1-min ticks render)
 const MAX_OFFSET = 72 * 3600;                      // pan slider: right edge from now (0) back to −72 h (linear)
 // Compact metrics: rows collapse to the minimum height a bar+dots+label need.
+const LOCKED_TEXT = 'the tabs are locked: unlock them in the settings (Chat, Tab strip) to move sessions';   // the tab lock (T395; the switch moved to the settings, T415)
 const LANE_GAP = 26, BAR_H = 8, CORNER = 6, MSG_DROP = 10, DOT_R = 6, CLEAR = DOT_R + 4, COINCIDE = 45;
 // Demo/recording VIEW filter (the user 2026-07-14): the dashboard loaded at `#only=<tag>` scopes every
 // pane to sessions whose name starts with <tag>. The timeline reads the SHELL's URL (window.top) so one
@@ -410,19 +411,34 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-ser
 const menuStyleFor = (p) => 'padding:4px;background:' + p.menuBg + ';border:1px solid ' + p.hairline + ';'
   + 'border-radius:6px;box-shadow:0 4px 12px ' + p.menuShadow + ';font:12px/1.4 ' + FONT + ';'
   + 'color:' + p.menuFg + ';user-select:none;';
-const menuCheckStyleFor = (p) => 'position:absolute;right:6px;top:50%;transform:translateY(-50%);'
-  + 'background:' + p.accentSolid + ';color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;'
-  + 'font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;';
-let MENU_STYLE = null, MENU_CHECK_STYLE = null;   // set by applyPal() below (dark by default)
+// THE TWO-STATE MARK, one drawing with the shared menu's checkMark (ui/webview/tag-menu.ts): the same declaration set, the palette's
+// values standing for its tokens (accentSolid for --check-bg, modelFg for --text-muted); ui/timeline-tag-chips.test.ts renders both
+// and compares them, so a change on either side reds the other
+const MENU_MARK_BOX = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);width:13px;height:13px;border-radius:50%;box-sizing:border-box;'
+  + 'display:inline-flex;align-items:center;justify-content:center;line-height:1;font-size:9px;font-weight:900;';
+const menuCheckStyleFor = (p) => MENU_MARK_BOX + 'background:' + p.accentSolid + ';color:#fff;';
+// the checkbox row's OFF mark (T413, the user 2026-09-14): an empty ring where the ✓ sits when on, so a tag row's box reads in both
+// states, in the palette's muted text (round two: the hairline read at 1.5 to 1 against the menu ground, under the 3 to 1 floor;
+// the muted text clears it in both themes); the shared menu (ui/webview/tag-menu.ts checkMark) draws the same from its tokens
+const menuRingStyleFor = (p) => MENU_MARK_BOX + 'border:1px solid ' + p.modelFg + ';background:transparent;';
+let MENU_STYLE = null, MENU_CHECK_STYLE = null, MENU_RING_STYLE = null;   // set by applyPal() below (dark by default)
 // THE TAG CHIP in the views menu (T283b, the user 2026-09-09: menus wear one vocabulary): the shared tag-lens
 // menu renders each tag as the tag chip itself acting as a toggle (ui/webview/tag-menu.ts tagChip + T283's
 // loop); this pane inlines the RESOLVED twin, since it may live in a foreign document that loads no module.
-// TAG_CHIP_STYLE is tagChip's pill byte for byte up to the colour (a drift test compares); the fade is the
+// TAG_CHIP_STYLE is tagChip's pill byte for byte up to the colour (a drift test compares), and the tail after the
+// colour carries tagChip's weight 400 and normal tracking (T321: a tag is never bold, on any surface); the fade is the
 // shared TAG_CHIP_OFF_OPACITY, and the class names the state for a host that does load the sheets.
 const TAG_CHIP_STYLE = 'display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;font-size:0.82em;border:1px solid ';
 const TAG_CHIP_OFF_OPACITY = '0.45';
 const TAG_CHIP_OFF_CLASS = 'tag-chip-off';
-const TAG_CHIP_ROW_STYLE = 'padding:3px 8px;border-radius:4px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;';
+// the same pill's numbers for a chip drawn in SVG (T399: the pane's tag group heads mirror tagChip, never a filled pill and
+// never a second set of literals): parsed from TAG_CHIP_STYLE, so a change to the shared chip moves the SVG twin too
+const TAG_CHIP_GEOM = (() => {
+  const num = (re, d) => { const m = re.exec(TAG_CHIP_STYLE); return m ? parseFloat(m[1]) : d; };
+  const pad = /padding:(\d+)px (\d+)px/.exec(TAG_CHIP_STYLE);
+  return { padY: pad ? +pad[1] : 2, padX: pad ? +pad[2] : 7, radius: num(/border-radius:(\d+)px/, 9), fontEm: num(/font-size:([\d.]+)em/, 0.82), border: num(/border:(\d+)px/, 1) };
+})();
+const TAG_CHIP_ROW_STYLE = 'padding:3px 22px 3px 8px;border-radius:4px;cursor:pointer;white-space:nowrap;display:flex;align-items:center;position:relative;outline:none;';   // T413: room at the right for the checkbox mark
 // Judging band: a compact second timeline UNDER the session lanes, on the SAME axis — one row per
 // summarizer judge (docs/judges.md). Each mark is FILLED with the colour of the SESSION it acted on and
 // OUTLINED in the judge's OWN colour (so a bar reads as "judge X on session Y"). Fed by
@@ -452,6 +468,83 @@ const JUDGE_KIND = { segment: 'caption', turn: 'turn caption', index: 'archived'
   distill: 'key takeaway', brief: 'decision brief' };
 
 function el(t, a) { const n = document.createElementNS(SVGNS, t); for (const k in a) n.setAttribute(k, a[k]); return n; }
+
+// GROUP BY TAG (T399, the user 2026-09-12: the Sessions pane sections its lanes by tag the way the chat tab strip does,
+// ui/webview/tab-groups.ts): one section per tag in the user's tag order (viewTagUnion), a session under EVERY tag it
+// carries (a lane in each section), the sessions in no tag trailing unlabeled behind a divider, as on the strip. ONE blob
+// for both surfaces, the strip's own romp:tabgroups (this file is served raw and loads no module, so the shape is mirrored
+// here and a drift test compares): the FOLDS (collapsed / expanded, archived folded by default, the pins carried through)
+// are one truth, so a section folded here is folded on the strip; the SWITCH is the pane's own field in it (`timeline`,
+// present only while on, so the pane is exactly as it was until the user turns it on). Per browser, like the strip's.
+const TABGROUPS_KEY = 'romp:tabgroups';
+const TABGROUPS_EVENT = 'romp-tabgroups';
+const TABGROUPS_DEFAULT_COLLAPSED = ['archived'];   // tab-groups.ts DEFAULT_COLLAPSED (that tag exists to put sessions away)
+function tabGroupsState() {
+  let o = {}; try { o = JSON.parse(localStorage.getItem(TABGROUPS_KEY) || '{}') || {}; } catch (e) { o = {}; }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) o = {};
+  const strs = (xs) => (Array.isArray(xs) ? xs.filter((x) => typeof x === 'string') : []);
+  return { raw: o, on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), timeline: o.timeline === true };
+}
+function writeTabGroupsBlob(blob) {
+  try { localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob)); } catch (e) { /* quota / private mode: the preference does not outlive the page */ }
+  try { window.dispatchEvent(new CustomEvent(TABGROUPS_EVENT)); } catch (e) { /* no window */ }
+}
+function tlGroupByTag() { return tabGroupsState().timeline; }
+// the switch: a read-modify-write of the strip's blob, every other field carried (the strip's own writer does the same for
+// this one, tab-groups.ts writeTabGroups); off DROPS the field, so the blob is as before T399
+function setTlGroupByTag(on) {
+  const blob = Object.assign({}, tabGroupsState().raw);
+  if (on) blob.timeline = true; else delete blob.timeline;
+  writeTabGroupsBlob(blob);
+}
+function sectionFolded(st, name) {
+  if (st.collapsed.indexOf(name) >= 0) return true;
+  if (st.expanded.indexOf(name) >= 0) return false;
+  return TABGROUPS_DEFAULT_COLLAPSED.indexOf(name) >= 0;
+}
+// the fold, in the strip's shape (tab-groups.ts setSectionCollapsed): a name is listed only where it differs from the
+// default set; the pins and every other field ride through untouched
+function toggleSectionFold(name) {
+  const st = tabGroupsState(), folded = !sectionFolded(st, name);
+  const collapsed = st.collapsed.filter((n) => n !== name), expanded = st.expanded.filter((n) => n !== name);
+  const dflt = TABGROUPS_DEFAULT_COLLAPSED.indexOf(name) >= 0;
+  if (folded) { if (!dflt) collapsed.push(name); } else if (dflt) expanded.push(name);
+  writeTabGroupsBlob(Object.assign({}, st.raw, { on: st.on, collapsed, expanded, pinned: Array.isArray(st.raw.pinned) ? st.raw.pinned : [] }));
+  return folded;
+}
+function tagSections(vis, unions) {
+  const out = [], seen = new Set();
+  for (const u of unions) {
+    const lanes = vis.filter((s) => u.members.indexOf(s.id) >= 0);
+    if (!lanes.length) continue;
+    lanes.forEach((s) => seen.add(s.id));
+    out.push({ name: u.name, color: u.color || '', lanes });
+  }
+  return { sections: out, trail: vis.filter((s) => !seen.has(s.id)) };
+}
+// THE ROW MODEL: what draw() lays out, one entry per LANE_GAP row, top to bottom. Off: the visible lanes in their order,
+// nothing else (the pane exactly as before T399, row for row). On: each section's head (`folded` keeps the head alone),
+// its lanes, then the untagged trail behind a divider row when a section preceded it. Pure, so the rule executes in tests.
+// the rows that wear the selection band (T399, the round-two low: every copy wore it, so the row cursor was invisible between
+// two copies): grouped with copies, the cursor's row when it is one of this session's lanes, else the first lane; one lane,
+// or ungrouped, that lane; folded away, none
+function selBandRows(rows, sid, selRow, grouped) {
+  const mine = []; rows.forEach((r, i) => { if (r.kind === 'lane' && r.s.id === sid) mine.push(i); });
+  if (!grouped || mine.length <= 1) return mine;
+  return (selRow != null && mine.indexOf(selRow) >= 0) ? [selRow] : [mine[0]];
+}
+function tlRows(vis, unions, st, grouped) {
+  const rows = [];
+  if (!grouped) { for (const s of vis) rows.push({ kind: 'lane', s }); return rows; }
+  const sec = tagSections(vis, unions);
+  for (const g of sec.sections) {
+    const folded = sectionFolded(st, g.name);
+    rows.push({ kind: 'head', name: g.name, color: g.color, count: g.lanes.length, folded });
+    if (!folded) for (const s of g.lanes) rows.push({ kind: 'lane', s });
+  }
+  if (sec.trail.length) { if (sec.sections.length) rows.push({ kind: 'trail' }); for (const s of sec.trail) rows.push({ kind: 'lane', s }); }
+  return rows;
+}
 function esc(s) { return (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 // Strip romp's own HTML-comment markers (<!-- romp-injected/-system/-auto/-goal-id … -->) from a prompt before
 // it's shown. They're classification metadata — invisible in the chat's MARKDOWN render, but the timeline
@@ -792,7 +885,7 @@ function badgeFor(s) {
   let m = null;
   if (s.state === 'working') {
     // Live Task-subagent count (SDK only) rides the WORKING badge —
-    // so "what's actually running" is glanceable, the transparency the tmux backend never had. Blank when none.
+    // so "what's actually running" is glanceable. Blank when none.
     const n = (s.subagents && s.subagents.length) || 0;
     m = { label: n ? 'Working · ' + n + (n === 1 ? ' subagent' : ' subagents') : 'Working', kind: 'working' };
   }
@@ -839,7 +932,7 @@ function ctxInfo(s) {
 }
 
 // Model + effort, e.g. "Opus 4.8 xhigh" — the SAME string the Claude status bar shows.
-// statusline.sh publishes @claude-model/@claude-effort to tmux; the data layer reads them onto the
+// the kernel publishes model and effort per lane from the session's own row; the data layer reads them onto the
 // session. Rendered as muted secondary text between the name and the state chip. '' when unknown
 // (historical/dead lanes never reported it, and some models carry no effort level).
 // ---- theme palette (the opt-in LIGHT theme, 2026-08-28) ----------------------------------------
@@ -944,7 +1037,7 @@ function applyPal() {
   MODEL_FG = p.modelFg; ACCENT = p.accent; META_HOVER_FG = p.metaHoverFg;
   MENU_FG = p.menuFg; HAIRLINE = p.hairline; OUTLINE_FG = p.outline;
   HOVER_BG = p.hoverBg; SEL_BG = p.selBg; INPUT_BG = p.inputBg; INPUT_FG = p.inputFg;
-  MENU_STYLE = menuStyleFor(p); MENU_CHECK_STYLE = menuCheckStyleFor(p);
+  MENU_STYLE = menuStyleFor(p); MENU_CHECK_STYLE = menuCheckStyleFor(p); MENU_RING_STYLE = menuRingStyleFor(p);
 }
 applyPal();
 function modelLabel(s) {
@@ -971,7 +1064,7 @@ function fastOn(s) {
 
 // The model + effort labels are little drop-down pickers (mirror of the chat statusline's): on a
 // LIVE lane, clicking the model or effort word opens a menu whose pick injects the matching /model or
-// /effort slash command into that session's pane (see _sendCommand → tmux, like _compactSession). The
+// /effort setting to that session through the kernel (_sendCommand, like _compactSession). The
 // label refreshes on the next poll when the TUI republishes @claude-model/@claude-effort; _metaPending
 // dims the word in the gap. Values mirror the extension's allowlist (extension.ts META_VALUES) verbatim.
 // (META_HOVER_FG — brighten the word + reveal its caret on hover — is a palette binding, declared
@@ -1100,6 +1193,11 @@ const EFFORT_CHOICES = [];
 // whose aliases the codex backend refuses. Empty until the codex backend has run (docs/codex.md).
 const CODEX_MODEL_CHOICES = [];
 const CODEX_EFFORT_CHOICES = [];
+// The lane's effort menu lists the ladder TOP-DOWN (the user 2026-09-14): highest first, lowest last, as the
+// chat's statusline menu does (render.ts effortDisplayOrder, its twin). The kernel serves `efforts` low→high
+// because its rank ramp and the gear's settings selects read that order, and neither moves; each row carries
+// its own colour and isCurrentMeta matches by value, so only the order changes.
+function effortDisplayOrder(efforts) { return efforts.slice().reverse(); }
 // Loaded once at page load and RE-LOADED on the kernel's {type:"models"} frame (TimelinePanel.refreshModels,
 // the frame's arm in both boots): the pick memory moved — a version pinned, a family un-pinned by Latest, a
 // refused pin dropped, from any surface or dashboard — or the catalog grew, and a family's `default` is
@@ -1116,9 +1214,9 @@ function loadModelChoices() {
     if (typeof fetch !== 'undefined') return fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
       if (typeof d.rev === 'number') { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
       if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
-      if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
+      if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of effortDisplayOrder(d.efforts)) EFFORT_CHOICES.push(e); }
       if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; for (const m of d.codex.models) CODEX_MODEL_CHOICES.push(m); }
-      if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; for (const e of d.codex.efforts) CODEX_EFFORT_CHOICES.push(e); }
+      if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; for (const e of effortDisplayOrder(d.codex.efforts)) CODEX_EFFORT_CHOICES.push(e); }
     }).catch(() => {});
   } catch (e) {}
   return Promise.resolve();
@@ -1229,6 +1327,7 @@ class TimelinePanel {
     this._laneRefusal = null;    // {sid, flag, text}: the kernel's refusal of the last lane-gear toggle, shown in the gear until dismissed or retried
     this._laneMenuBuild = null;  // the last-opened lane gear's rebuild-in-place, so a refusal arriving while it is open repaints it (like _viewsDialogBuild; every use is gated on _laneMenu being open)
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
+    this._dismissedRows = new Map(); // sid -> [row, index] a Clear took out of the frame, so a Clear the kernel refuses puts it straight back (settingRefused, gesture 'lane')
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
     this._rejectedViews = null;  // the last blob the seq gate turned away since it last adopted one — what the caps frame adopts (setCaps)
     this._announcedViewsSeq = null; // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (_takeViews); cleared by the next adoption that changes the held blob (viewsAnnouncedAfter)
@@ -1381,7 +1480,7 @@ class TimelinePanel {
           + '.romp-tl-cbtn:hover{border-color:var(--accent,#9cd2ff);color:var(--accent,#9cd2ff);background:rgba(156,210,255,0.12)}'
           + '.romp-tl-cbtn.on{color:var(--accent,#9cd2ff);border-color:var(--accent,#9cd2ff);background:rgba(156,210,255,0.12);opacity:1}'
           + '.romp-tl-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;'
-          + 'font-size:0.82em;border:1px solid;background:transparent;white-space:nowrap}'
+          + 'font-size:0.82em;border:1px solid;background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal}'
           + '.romp-tl-chipx{cursor:pointer;opacity:0.75;color:#9aa0a6;font-size:0.9em}'
           + '.romp-tl-ctail{color:#9aa0a6;opacity:0.7;font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}'
           // LIGHT theme re-skin, scoped so the sheet is theme-flip-safe without re-injection: muted ink,
@@ -1558,6 +1657,8 @@ class TimelinePanel {
     // in another same-origin iframe. React to that via the storage event so they apply live (no reload):
     // re-read collapseGaps, then repaint (draw() reads debug fresh).
     try {
+      // T399: a fold or the group-by-tag switch toggled in another window (the strip's own key) repaints the lanes
+      window.addEventListener('storage', (e) => { if (e && e.key === TABGROUPS_KEY) this.draw(); });
       window.addEventListener('storage', (e) => {
         if (!e || e.key !== 'romp:settings') return;
         try { const s2 = JSON.parse(e.newValue || localStorage.getItem('romp:settings') || '{}');
@@ -1567,7 +1668,7 @@ class TimelinePanel {
     } catch (e) {}
 
     // model/effort drop-down pickers: the open menu element + per-lane optimistic "pending" cues
-    // ('sid:kind' → {was, until}) that dim a word until the tmux var actually flips (or 20s elapses).
+    // ('sid:kind' → {was, until}) that dim a word until the session republishes the value (or 20s elapses).
     // _laneMenu = the per-lane GEAR drop-down (feed/postal/notify toggles — the user 2026-07-28).
     this._metaMenu = null; this._metaPending = {}; this._laneMenu = null;
     this._onDocClick = () => { this._closeMetaMenu(); this._closeLaneMenu(); this._closeViewsMenu(); };
@@ -1770,12 +1871,21 @@ class TimelinePanel {
     else if (e.key === 'Enter') { e.preventDefault(); this.composeSelected(); }    // Enter → cursor into the prompt box
   }
   moveSelection(dir) {
-    const vis = this._vis || [];
-    if (!vis.length) return;
-    let idx = vis.findIndex((s) => s.id === this.selectedSid);
-    if (idx < 0) idx = dir > 0 ? -1 : vis.length;            // first press lands on the first/last lane
-    idx = Math.max(0, Math.min(vis.length - 1, idx + dir));
-    this.selectedSid = vis[idx].id;
+    // the ROWS the pane shows (T399, the fold verifier's second medium: the walk stepped the ungrouped visible list, a lane
+    // folded away included, and auto-opened it): grouped, the visible lanes in section order, a session under two tags
+    // twice, the heads and the divider skipped; ungrouped, the visible lanes as before. The position is a ROW, so a copy
+    // stepped onto is left by the next press instead of snapping back to the session's first lane.
+    // `walk`: the drawn lanes with their ROW indices (_selRow is a row, the same index the click and the band use)
+    const walk = [];
+    if (this._grouped && this._rows) this._rows.forEach((r, i) => { if (r.kind === 'lane') walk.push({ s: r.s, i }); });
+    else (this._vis || []).forEach((s, i) => walk.push({ s, i }));
+    if (!walk.length) return;
+    let pos = (this._selRow != null) ? walk.findIndex((w) => w.i === this._selRow && w.s.id === this.selectedSid) : -1;
+    if (pos < 0) pos = walk.findIndex((w) => w.s.id === this.selectedSid);
+    if (pos < 0) pos = dir > 0 ? -1 : walk.length;           // first press lands on the first/last lane the pane shows
+    pos = Math.max(0, Math.min(walk.length - 1, pos + dir));
+    this._selRow = walk[pos].i;
+    this.selectedSid = walk[pos].s.id;
     this.draw();
     // debounce the auto-open so holding/rapid arrows settle on the lane you land on (not every one
     // in between) — preview-only, focus stays on the timeline.
@@ -1789,15 +1899,36 @@ class TimelinePanel {
     const t = turns.length ? turns[turns.length - 1] : null;
     return s.id;   // T278b: a bar carries no tid on the wire; the lane key is the session it belongs to
   }
+  // the selected session as a DRAWN lane (T399): grouped, a session folded away is none, so no open or compose reaches it
+  _selectedLane() {
+    if (this._grouped && this._rows) { const r = this._rows.find((r) => r.kind === 'lane' && r.s.id === this.selectedSid); return r ? r.s : null; }
+    return (this._vis || []).find((x) => x.id === this.selectedSid) || null;
+  }
+  // a reveal or focus aimed at a session whose lanes are all folded away (T399, the ruling of 2026-09-13): the user asked for
+  // THAT session, so the section carrying its first lane unfolds, written to the shared fold state so the strip follows, and
+  // the pan and pulse then land on the lane as for a visible one. Returns the section's name, null when nothing was folded
+  _unfoldFor(sid) {
+    if (!sid || !this._grouped || (this._rowOf && sid in this._rowOf)) return null;
+    // only a session the pane WOULD draw (the visible set: the lens and the active filter kept it) but folded away; one the
+    // lens removed has no lane to reach, and unfolding its section would spring the strip's group open for nothing
+    if (!(this._vis || []).some((s) => s.id === sid)) return null;
+    const st = tabGroupsState();
+    for (const u of viewTagUnion(this._curViews())) {
+      if (u.members.indexOf(sid) < 0 || !sectionFolded(st, u.name)) continue;
+      toggleSectionFold(u.name);
+      return u.name;
+    }
+    return null;
+  }
   openSelected(preserveFocus) {
-    const s = (this._vis || []).find((x) => x.id === this.selectedSid);
+    const s = this._selectedLane();
     if (!s) return;
     this.openChat(this._laneTid(s), null, preserveFocus);   // switch → bottom (latest), no specific anchor
   }
   // Enter on the selected lane → open its tab (at bottom) and drop the cursor into the chat's message
   // box so you can type a message to that session. (Needs the chat composer enabled — vs_chat.)
   composeSelected() {
-    const s = (this._vis || []).find((x) => x.id === this.selectedSid);
+    const s = this._selectedLane();
     if (!s) return;
     this.openChat(this._laneTid(s), null, false, true);
   }
@@ -2324,7 +2455,7 @@ class TimelinePanel {
   }
 
   update(data) {
-    if (!data || data.unavailable || !data.sessions) { this.data = data; this._barsLazy = null; this.drawMessage(data && data.unavailable ? 'Timeline needs a desktop Obsidian with tmux.' : 'No romp activity.'); this._signalReady(); return; }
+    if (!data || data.unavailable || !data.sessions) { this.data = data; this._barsLazy = null; this.drawMessage('No romp activity.'); this._signalReady(); return; }
     const _only = _rompOnlyTag();   // demo/recording view filter: keep only matching-name lanes (the user 2026-07-14)
     if (_only) data = Object.assign({}, data, { sessions: data.sessions.filter((s) => _rompMatchesOnly(s.name, _only)) });
     // The kernel ships the timeline as TWO messages (the user 2026-06-25): {type:"data"} carries the LANES
@@ -2520,7 +2651,16 @@ class TimelinePanel {
   }
 
   // set the single selection highlight + redraw only on a real change.
-  _select(sid) { if (sid && this.selectedSid !== sid) { this.selectedSid = sid; this.draw(); } }
+  // `row`: the drawn row the click landed on (T399, the round-two medium: without it the arrow walk resumed from the session's
+  // FIRST copy, one row above the copy just clicked): the cursor for the walk and the band. A click on a copy of the already
+  // selected session moves the row all the same; a selection carrying no row (the chat's active tab) lets the walk find one
+  _select(sid, row) {
+    if (!sid) return;
+    const r = (row != null && row >= 0) ? row : null;
+    if (this.selectedSid === sid && this._selRow === r) return;
+    this.selectedSid = sid; this._selRow = r;
+    this.draw();
+  }
 
   // Reverse hover: a glyph hover tells the host to light the matching feed card + glow the chat turns
   // in [t0,t1] (the host has the receivers; web kernel only — no-op in Obsidian). sid null → clear.
@@ -2551,7 +2691,16 @@ class TimelinePanel {
   }
   // One mousedown on a lane; the first real movement decides via dragAxis: horizontal → PAN the plot,
   // vertical → REORDER the lane. A plain click (no movement) falls through to the row's select handler.
+  // THE TAB LOCK (T395 round one): the chat strip's padlock holds this pane's drags too, since the lanes and the tabs share
+  // one order (and the pills one tagOrder). The setting is the strip's own store key, read at each gesture (this file is
+  // served raw, so no import: the storage key, and the storage event above for the repaint, are its road); a drag never
+  // starts while locked, a persist refuses one that began before another window locked, and the lanes say why on hover.
+  _tabsLocked() {
+    try { const s = JSON.parse(localStorage.getItem('romp:settings') || '{}'); return !!(s && s.tabsLocked === true); }
+    catch (e) { return false; }
+  }
   _beginDrag(sid, e) {
+    if (this._tabsLocked()) return;                            // the tab lock holds the lanes (a plain click still selects)
     if (e.button !== 0 || !this._geom) return;                 // left button, need geometry
     const order = (this._vis || []).map((s) => s.id);
     const fromIdx = order.indexOf(sid);
@@ -2559,6 +2708,7 @@ class TimelinePanel {
     this._suppressClick = false;
     this._drag = {
       sid, fromIdx, order, toIdx: fromIdx, moved: false, mode: null,
+      noReorder: tlGroupByTag(),                                 // T399: grouped lanes follow the tag order; a vertical drag is a click
       startX: e.clientX, startY: e.clientY,                    // client coords → axis decision
       panOff: this.offSec(), panWin: this.winSec(),           // pan baseline (constant scale from gesture start)
     };
@@ -2573,6 +2723,7 @@ class TimelinePanel {
     if (d.mode == null) {
       d.mode = dragAxis(ev.clientX - d.startX, ev.clientY - d.startY);
       if (d.mode == null) return;                              // below threshold → still a potential click
+      if (d.mode === 'row' && d.noReorder) { this._drag = null; return; }   // grouped: no reorder; the release is a plain click
       d.moved = true; this.wrap.classList.add('tl-grabbing');   // closed-fist cursor over the whole plot (pan OR reorder)
       if (d.mode === 'row') this.selectedSid = d.sid;
     }
@@ -2666,6 +2817,11 @@ class TimelinePanel {
   // reordering themselves" bug the order-audit log finally pinned (the user 2026-07-02). _kernelHost's
   // Electron-or-nothing guard is that rule.
   _persistOrder(order, prev, sid, from) {
+    if (this._tabsLocked()) {                                  // locked since the drag began (another window's press): nothing is written, the lanes go back
+      if (Array.isArray(prev)) this._applyOrderToData(prev);
+      this.settingRefused({ gesture: 'order', sid: sid || '', from: from || '', text: LOCKED_TEXT });
+      return;
+    }
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineWriteOrder === 'function') {
         window.__rompTimelineWriteOrder(order); return;
@@ -2841,6 +2997,10 @@ class TimelinePanel {
     this._panToTime(t);                                          // pan so the target sits ~mid-window if off-screen
     if (sid) this.selectedSid = sid;
     this.draw();                                     // redraw with the new pan + selection (refreshes _geom/_vis)
+    // T399: a session folded away is unfolded AFTER the pan and its draw, against the visible set that draw computed (the
+    // round-four medium: decided before the pan, an out-of-window target under the active filter was absent and stayed
+    // folded); a session the lens or the filter still excludes keeps refusing. An opened section needs one more draw
+    if (sid && this._unfoldFor(sid) != null) this.draw();
     this._pulseFocus(sid, t, onWork ? byId : null);  // reply event → flash the BAR; prompt → ring on the dot
     // Land the chat half too. A reply event opens its READABLE reply line (replyUuid = last assistant
     // line with text, NOT the first which is usually a thinking block → workUuid/uuid fallbacks); a typed
@@ -2871,6 +3031,7 @@ class TimelinePanel {
     this._panToTime(tt);
     if (lane) this.selectedSid = lane;
     this.draw();                                    // refreshes _geom/_vis, which _pulseFocus reads
+    if (lane && this._unfoldFor(lane) != null) this.draw();   // T399: unfolded after the pan, against the panned draw's visible set
     const onWork = !!(tb && tb.src && tb.src !== 'typed' && tb.src !== 'queued');
     this._pulseFocus(lane, tt, onWork ? tb : null);
   }
@@ -2880,7 +3041,16 @@ class TimelinePanel {
   // on the work, not on a prompt/message glyph. (A poll redraw may clear it early — that's fine.)
   _pulseFocus(sid, t, workTurn) {
     const g = this._geom; if (!g) return;
-    const i = (this._vis || []).findIndex((s) => s.id === sid);
+    // the ROW of the session's first lane (T399: under group-by-tag heads take rows and a session under two tags has two
+    // lanes; the connectors and dots land on the first, and so does the pulse), the visible index when nothing is grouped
+    const rowOf = this._rowOf || {};
+    // grouped, a session with no lane row is folded away under its section's head: it pulses NOWHERE (the fold verifier's
+    // first medium: the fallback to the ungrouped visible index drew the ring on another row); ungrouped, the visible index.
+    // With copies, the cursor's row when it is one of this session's lanes (the copy the user clicked wears the band), else
+    // the first lane
+    const rows = this._rows || [], cur = this._selRow;
+    const onCursor = cur != null && rows[cur] && rows[cur].kind === 'lane' && rows[cur].s.id === sid;
+    const i = onCursor ? cur : (sid in rowOf) ? rowOf[sid] : (this._grouped ? -1 : (this._vis || []).findIndex((s) => s.id === sid));
     if (i < 0) return;
     const y = g.top + i * LANE_GAP + LANE_GAP * 0.5;
     // The outline goes INTO the live plot group when the last build left one (_tickPlot): the tick translates
@@ -3054,8 +3224,8 @@ class TimelinePanel {
   }
 
   // Click the context battery → send `/compact` to that session's terminal. VS Code: hand the session
-  // name to the extension host (no Node in the webview); Obsidian: shell tmux directly. Types the slash
-  // command literally then submits it. (Targets the tmux session by name, like romp-postal-service's inject.)
+  // name to the extension host (no Node in the webview); Obsidian: POST /compact to the kernel over HTTP
+  // (_kernelPost, the same door `romp compact` uses). The kernel owns the transport to the session.
   // (Removed _smilBegin: the working-badge breathe no longer uses an in-SVG SMIL <animate> — a phase resync
   // couldn't fix the CADENCE, so even phase-correct it stuttered/truncated at the irregular redraw rate. It's
   // now a persistent CSS-animated overlay div (see _positionWorkLabel), like the compacting sweep — the user
@@ -3168,46 +3338,40 @@ class TimelinePanel {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineCompact === 'function') {
         window.__rompTimelineCompact(name); return;
       }
-      const cp = require('child_process'), tmux = this._tmuxPath();
-      cp.execFile(tmux, ['send-keys', '-t', name, '-l', '/compact'], (err) => {
-        if (!err) cp.execFile(tmux, ['send-keys', '-t', name, 'Enter']);
-      });
-    } catch (e) { /* no host hook + no Node → can't send */ }
+      // bare Obsidian (no host hook): the kernel's compact route, which parks mid-turn like the click in the chat
+      // does; _kernelPost never rejects and names the refusal, which the lane says (settingRefused) while the
+      // optimistic compacting cue is dropped (review find: a refusal to the console alone is a silent degrade)
+      this._kernelPost('/compact', { name }).then((r) => { if (r && r.ok === false) this._commandRefused(name, '', r); });
+    } catch (e) { /* no host hook + no Electron → can't send */ }
   }
-  // Inject a slash command into a session's pane (the model/effort pickers). VS Code surface: hand it
-  // to the host hook if present; Obsidian: shell tmux. We BRACKETED-PASTE the command (set-buffer +
-  // paste-buffer -p) rather than send-keys -l, then submit with a delayed Enter — mirroring the
-  // the extension's sendToSession. A literal type would feed "/model …" to Claude Code's slash-command
-  // AUTOCOMPLETE char-by-char and an immediate Enter would race the TUI; a bracketed paste lands the
-  // whole string atomically (no autocomplete), and the 250ms gap lets the paste arrive before Enter.
+  // Send a slash command to a session (the model/effort pickers). VS Code surface: hand it to the host hook
+  // if present (the shell socket's sendCommand op, which carries the op flags); Obsidian: POST /send to the
+  // kernel over HTTP (_kernelPost), the same door `romp send` uses: a typed /model, /effort or /fast takes
+  // the kernel's setters there too, and anything else parks like a composer send. The kernel owns the
+  // transport to the session, so the model switch's confirmation is the kernel's to handle.
   //
-  // confirm=true → send a SECOND Enter after the submit. /model doesn't switch on submit: it opens a
-  // "Switch model?" picker (cursor pre-seated on "Yes, switch …") that fires no hook and waits — so the
-  // one Enter only OPENS the dialog and the model never changes. The extra Enter accepts the default
-  // "Yes". /effort and /compact apply directly (no cache-invalidation confirmation), so they don't pass
-  // it. The extra Enter is harmless even if a build skips the dialog (an empty composer submit is a no-op).
+  // `confirm` is kept in the signature for the callers (the model pick passes it); the kernel needs no
+  // second keystroke. `extra` is op flags for the kernel bridge (the Latest row's `{ floating: true }`);
+  // the HTTP route carries the bare command, so a Latest pick through it applies the alias without forgetting
+  // the family's pin (the shell socket path does both).
   _sendCommand(name, cmd, confirm, extra) {
     if (!name || !cmd) return;
     try {
-      // `extra` is op flags for the kernel bridge (the Latest row's `{ floating: true }`); the direct
-      // tmux paste below has no kernel to carry them to, so it sends the bare command
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSendCommand === 'function') {
         window.__rompTimelineSendCommand(name, cmd, extra || undefined); return;
       }
-      const cp = require('child_process'), tmux = this._tmuxPath();
-      const env = Object.assign({}, process.env, { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8' });
-      const run = (args, cb) => cp.execFile(tmux, args, { timeout: 4000, encoding: 'utf8', env }, (err, out) => { if (cb) cb(err, out); });
-      const enter = () => run(['send-keys', '-t', name, 'Enter']);
-      const BUF = 'romp-timeline';
-      const submit = () => { enter(); if (confirm) setTimeout(enter, 600); };   // 2nd Enter → accept "Switch model? Yes"
-      const paste = () => run(['set-buffer', '-b', BUF, cmd], () =>
-        run(['paste-buffer', '-b', BUF, '-d', '-p', '-t', name], () => setTimeout(submit, 250)));
-      // exit copy-mode first if the pane is scrolled, so the paste + Enter actually land
-      run(['display-message', '-p', '-t', name, '#{pane_in_mode}'], (err, out) => {
-        if (!err && String(out || '').trim() === '1') run(['send-keys', '-t', name, '-X', 'cancel'], paste);
-        else paste();
-      });
-    } catch (e) { /* no host hook + no Node → can't send */ }
+      const kind = (/^\/(model|effort|fast)\b/.exec(cmd) || [])[1] || '';   // the pick's optimistic dim to drop on a refusal
+      this._kernelPost('/send', { name, text: cmd }).then((r) => { if (r && r.ok === false) this._commandRefused(name, kind, r); });
+    } catch (e) { /* no host hook + no Electron → can't send */ }
+  }
+  // A refused /compact or slash send through the HTTP route: the kernel's words reach the lane (its gear, the same
+  // dismissible row a refused toggle gets; the shell's bell when a shell hosts the panel), and the optimistic cue
+  // (the compacting bar, the dimmed model/effort word) is dropped, never left to promise a change the kernel refused.
+  _commandRefused(name, kind, r) {
+    const s = ((this.data && this.data.sessions) || []).find((x) => x.name === name);
+    const sid = s ? s.id : '';
+    const text = r && r.refusal ? r.error : "couldn't send that — " + ((r && r.error) || 'no answer');
+    this.settingRefused({ gesture: 'command', sid, flag: kind || '', text });
   }
 
   _closeMetaMenu() { if (this._metaMenu) { if (this._metaMenu._sub) this._metaMenu._sub.remove(); this._metaMenu.remove(); this._metaMenu = null; } }
@@ -3543,11 +3707,30 @@ class TimelinePanel {
       this._laneRefusal = { sid, flag, text };
       if (this._laneMenu && this._laneMenu._sid === sid && this._laneMenuBuild) this._laneMenuBuild();
     }
+    if (m && m.gesture === 'command' && sid) {
+      // a refused /compact or slash send (the HTTP route): drop the optimistic cue the click stamped
+      if (flag) delete this._metaPending[sid + ':' + flag]; else delete this._compactClicked[sid];
+    }
+    if (m && m.gesture === 'lane' && sid) {
+      // the kernel could not record this Clear: release the sticky removal and put the row back in the slot
+      // the click took it from, so the lane is visible again on THIS event (see _holdDismissed)
+      this._dismissed.delete(sid);
+      const rows = this._dismissedRows || new Map(), held = rows.get(sid);
+      rows.delete(sid);
+      if (held && this.data && Array.isArray(this.data.sessions) && !this.data.sessions.some((x) => x.id === sid)) {
+        this.data.sessions.splice(Math.min(Math.max(held[1], 0), this.data.sessions.length), 0, held[0]);
+      }
+    }
     let shell = false;
     try {
       shell = !!(typeof window !== 'undefined' && window.parent && window.parent !== window);
       if (shell) window.parent.postMessage({ romp: 'notify', kind: 'refused', text, sid }, '*');
     } catch (e) { /* no parent frame (Obsidian, headless) */ }
+    if (!shell && m && m.gesture === 'command' && sid) {
+      // no shell bell (the Obsidian panel): the lane's gear shows the kernel's words, the row a refused toggle gets
+      this._laneRefusal = { sid, flag: '', text };
+      if (this._laneMenu && this._laneMenu._sid === sid && this._laneMenuBuild) this._laneMenuBuild();
+    }
     if (!shell && m && m.gesture === 'order' && sid) {
       if (m.from === 'dialog') {
         // a row dragged INSIDE the tags dialog: the dialog's own row carries it, and only the dialog's —
@@ -3661,7 +3844,7 @@ class TimelinePanel {
       const ch = box.createSpan();
       ch.setAttribute('style', 'display:inline-flex;align-items:center;gap:5px;'
         + 'padding:2px 7px;border-radius:9px;font-size:0.82em;cursor:pointer;white-space:nowrap;'
-        + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;');
+        + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;font-weight:400;letter-spacing:normal;');   // the one tag chip (T321)
       ch.addEventListener('mouseenter', () => { ch.style.background = HOVER_BG; });
       ch.addEventListener('mouseleave', () => { ch.style.background = 'transparent'; });
       ch.createSpan({ text: g.name });
@@ -3704,8 +3887,8 @@ class TimelinePanel {
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
       const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
-      opt.setAttribute('style', 'padding:1px 8px;border-radius:9px;font-size:0.82em;cursor:pointer;'
-        + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;');
+      opt.setAttribute('style', 'display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;font-size:0.82em;cursor:pointer;white-space:nowrap;'
+        + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;font-weight:400;letter-spacing:normal;');   // the one tag chip (T321): the join option is the tag
       opt.addEventListener('mouseenter', () => { opt.style.background = HOVER_BG; });
       opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
       opt.addEventListener('click', () => {
@@ -4144,6 +4327,10 @@ class TimelinePanel {
       // the follow-up click would bubble to the document's menu-closer and shut the menu the same
       // instant it opened (the click-and-hold bug, 2026-08-24). Swallow it here.
       b.addEventListener('click', (e) => e.stopPropagation());
+      // the keyboard's open (the strip tidy, round two): the press opens on the pointer and swallows its click, so Enter on the focused
+      // button did nothing and the menu's keys were unreachable; Enter, Space and ArrowDown open it with the focus on the first row
+      // (the shared button's route, ui/webview/tag-menu.ts tagMenuButton)
+      b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); open(b); } });
       bar.appendChild(b);
       return b;
     };
@@ -4198,7 +4385,7 @@ class TimelinePanel {
     if (more) tail(tailStr, 'live sessions outside this view \u2014 click to switch views, or un-hide via Sessions & tags\u2026');
   }
 
-  _closeViewsMenu() { if (this._viewsMenu) { this._viewsMenu.remove(); this._viewsMenu = null; } }
+  _closeViewsMenu() { const m = this._viewsMenu; this._viewsMenu = null; if (m) m.remove(); }   // cleared BEFORE the removal: removing a menu with a focused row fires focusout, whose closer must find nothing left to close
   _closeViewsDialog() {
     if (!this._viewsDialog) return;
     this._closeTagColorPop();   // the colour popover is the dialog's; it never outlives it
@@ -4345,39 +4532,91 @@ class TimelinePanel {
     if (reopen) return;
     const menu = document.body.createDiv();
     menu.setAttribute('style', 'position:fixed;z-index:1001;min-width:200px;' + MENU_STYLE);
+    menu.setAttribute('role', 'menu');
     menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu.addEventListener('click', (e) => e.stopPropagation());
+    // THE KEYS (T413 round two, mirroring the shared menu's house rows grammar): Escape closes the menu and hands the focus back to
+    // the button; ArrowDown and ArrowUp walk the rows (the focused row is the key's target), Home and End jump, neither end wraps
+    // Tab out of the menu closes it, the one-tab-stop pattern's other half; a focus moving between rows keeps it, and a focus leaving the
+    // window (relatedTarget null, the document no longer focused) keeps it too (the shared menu's rule)
+    let rebuilding = false;   // a toggle's repaint removes the focused row, and Chromium fires focusout for it: the closer stands down meanwhile
+    menu.addEventListener('focusout', (e) => {
+      if (rebuilding) return;
+      const to = e.relatedTarget;
+      if (to && menu.contains(to)) return;
+      const doc = menu.ownerDocument || document;
+      if (!to && typeof doc.hasFocus === 'function' && !doc.hasFocus()) return;
+      if (this._viewsMenu === menu) this._closeViewsMenu();
+    });
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); this._closeViewsMenu(); try { anchorEl.focus(); } catch (err) { /* a detached anchor: nothing to hand it to */ } return; }
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+      const rows = menuRowsOf(menu);
+      if (!rows.length) return;
+      e.preventDefault(); e.stopPropagation();
+      let at = rows.indexOf(e.target);
+      if (at < 0) at = rows.indexOf((menu.ownerDocument || document).activeElement);
+      const to = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : e.key === 'ArrowDown' ? Math.min(rows.length - 1, at + 1) : Math.max(0, at - 1);
+      rows[to].focus();
+    });
+    // the menu's rows: its children that carry a role (the separators and the notices carry none)
+    const menuRowsOf = (m) => Array.prototype.filter.call(m.children, (c) => !!c.getAttribute('role'));
+    // a row that takes the focus and the keys: the hover wash while focused, Enter and Space pressing it as a click would; ONE TAB STOP
+    // (the ARIA menu pattern, the strip tidy): every row starts at tabindex -1 and the focused row alone holds 0, roving with the focus,
+    // so Tab leaves the menu and the arrows walk it (the shared menu's rule, ui/webview/tag-menu.ts focusableRow)
+    const focusable = (row) => {
+      row.tabIndex = -1;
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); row.click(); } });
+      row.addEventListener('focus', () => { row.style.background = HOVER_BG; menuRowsOf(menu).forEach((x) => { x.tabIndex = x === row ? 0 : -1; }); });
+      row.addEventListener('blur', () => { row.style.background = 'transparent'; });
+    };
     // a plain row (All, (no tags), Configure tags…): the label, the ✓ when current. The tags are not rows any
     // more but CHIPS (tagRow below, T283b), so the colour dot the tag rows wore is gone, as in the shared menu
     const item = (label, opts) => {
       const row = menu.createDiv();
-      row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;'
+      row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;outline:none;'
         + (opts && opts.dim ? 'opacity:0.85;' : ''));
+      row.setAttribute('role', opts && opts.checkbox ? 'menuitemcheckbox' : 'menuitem');
+      if (opts && opts.checkbox) row.setAttribute('aria-checked', opts.current ? 'true' : 'false');
       row.appendChild(document.createTextNode(label));
-      if (opts && opts.current) {
+      if (opts && opts.checkbox) {   // the two-state mark (the ✓ when on, the ring when off), as the tag rows carry it; decoration
+        const mark = row.createSpan({ text: opts.current ? '\u2713' : '' });
+        mark.setAttribute('data-check', opts.current ? 'true' : 'false');
+        mark.setAttribute('aria-hidden', 'true');
+        mark.setAttribute('style', opts.current ? MENU_CHECK_STYLE : MENU_RING_STYLE);
+      } else if (opts && opts.current) {
         const c = row.createSpan({ text: '✓' });
+        c.setAttribute('aria-hidden', 'true');
         c.setAttribute('style', MENU_CHECK_STYLE);
       }
       row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      focusable(row);
       return row;
     };
     // one tag per line, the chip at the left: the chip IS the toggle (aria-pressed), full colour when selected,
     // faded when not, its colour kept — the pill tagChip builds for every other surface, resolved here (T283b).
     // The uncoloured fallback is the palette's muted text, the theme token's resolved value (MODEL_FG).
+    // T413 (the user 2026-09-14): the ROW is the control, the house switch (role menuitemcheckbox, aria-checked) with a two-state
+    // mark at its right (the ✓ when selected, an empty ring when not); the chip beside it stays lit or faded, decorative
     const tagRow = (name, color, on) => {
       const row = menu.createDiv();
       row.setAttribute('style', TAG_CHIP_ROW_STYLE);
+      row.setAttribute('role', 'menuitemcheckbox');
+      row.setAttribute('aria-checked', on ? 'true' : 'false');
+      row.setAttribute('title', on ? 'selected: click to drop it from the filter' : 'click to add it to the filter');
       const col = color || MODEL_FG;
       const chip = row.createSpan({ text: name });
-      chip.setAttribute('style', TAG_CHIP_STYLE + col + ';color:' + col + ';background:transparent;white-space:nowrap;'
+      chip.setAttribute('style', TAG_CHIP_STYLE + col + ';color:' + col + ';background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;'
         + (on ? '' : 'opacity:' + TAG_CHIP_OFF_OPACITY + ';'));
       if (!on) chip.classList.add(TAG_CHIP_OFF_CLASS);
-      chip.setAttribute('role', 'button');
-      chip.setAttribute('aria-pressed', on ? 'true' : 'false');
-      chip.setAttribute('title', on ? 'selected \u2014 click to drop it from the filter' : 'click to add it to the filter');
+      const mark = row.createSpan({ text: on ? '\u2713' : '' });
+      mark.setAttribute('data-check', on ? 'true' : 'false');
+      mark.setAttribute('aria-hidden', 'true');   // decoration: the row's name is its label and its state is aria-checked
+      mark.setAttribute('style', on ? MENU_CHECK_STYLE : MENU_RING_STYLE);
       row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
+      focusable(row);
       return row;
     };
     const sep = () => {
@@ -4397,6 +4636,8 @@ class TimelinePanel {
       // TypeError and every tag-button press died before the menu appeared (the 2026-08-25
       // unclickable corner button; timeline-tagbtn-click.test.ts executes this path under a
       // three-helper host so an Obsidian-only call can never land again).
+      const focusAt = Array.prototype.indexOf.call(menu.children, (menu.ownerDocument || document).activeElement);   // the focused row's place, kept across the repaint a toggle causes
+      rebuilding = true;
       while (menu.firstChild) menu.removeChild(menu.firstChild);
       const v = this._curViews();
       const lens = timelineLens(v);
@@ -4410,6 +4651,10 @@ class TimelinePanel {
       for (const g of viewTagUnion(v))
         tagRow(g.name, g.color, !lensAll(lens) && (lens.tags || []).indexOf(g.name) >= 0)
           .addEventListener('click', () => apply(lensToggle(lens, { tag: g.name }), false));
+      sep();
+      // GROUP BY TAG (T399): the pane's sections, the chat's "Group tabs by tag" in this menu's ✓-row vocabulary; the menu
+      // stays open across the toggle (a settings panel, the gear's rule). Per browser, in the strip's own blob.
+      item('Group by tag', { current: tlGroupByTag(), checkbox: true }).addEventListener('click', () => { setTlGroupByTag(!tlGroupByTag()); this.draw(); build(); });   // a switch: the checkbox row with its state (the strip tidy)
       sep();
       item('Configure tags…', { dim: true }).addEventListener('click', () => {
         this._closeViewsMenu();
@@ -4437,6 +4682,10 @@ class TimelinePanel {
         nr.setAttribute('style', noticeStyle);
         nr.createSpan({ text: '⚠ this filter is not saved — ' + this._localLens.reason });
       }
+      const back = menu.children[focusAt];   // the same place after the repaint: the rows rebuild in one order
+      if (back && back.getAttribute('role')) back.focus();
+      else { const first = menuRowsOf(menu)[0]; if (first) first.tabIndex = 0; }   // no focus in the menu: the first row is the one tab stop
+      rebuilding = false;
     };
     build();
     menu._build = build;   // viewsAck / setCaps / _kernelViewsAnswer repaint the open menu with a refusal or the not-saved note
@@ -4444,6 +4693,11 @@ class TimelinePanel {
     h.doc.body.appendChild(menu);
     menu.style.left = Math.max(6, Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - 220)) + 'px';
     menu.style.top = Math.round(menuTop(h.rect, menu.offsetHeight || 0, h.win.innerHeight || 9999)) + 'px';
+    // the focus moves to the first row on a KEYBOARD open only, when the button held it; a pointer open leaves the focus where it was
+    // (the strip tidy, the shared menu's rule); either way the first row is the one tab stop
+    // the ANCHOR's document, not the menu's: a menu lifted into the shell (_menuHost) lives in the host document while the button stays in
+    // the pane's, and only the button's own document can hold its focus
+    if ((anchorEl.ownerDocument || document).activeElement === anchorEl && menu.children[0] && menu.children[0].focus) menu.children[0].focus();
     this._viewsMenu = menu;
   }
 
@@ -4682,8 +4936,10 @@ class TimelinePanel {
           const pillCell = tgrid.createDiv();
           pillCell._tname = tg.name;
           if (!tg.pending && (this._tagEditorFor !== unionKey(tg) || !editable)) {
-            pillCell.style.cursor = 'grab';
+            pillCell.style.cursor = this._tabsLocked() ? 'default' : 'grab';
+            if (this._tabsLocked()) pillCell.title = LOCKED_TEXT;
             pillCell.addEventListener('pointerdown', (e) => {
+              if (this._tabsLocked()) return;   // the tab lock (T395) holds the pill order too
               e.preventDefault();
               const cells = Array.from(tgrid.children).filter((c) => c._tname);
               const fromIdx = cells.indexOf(pillCell);
@@ -4747,7 +5003,7 @@ class TimelinePanel {
                 // the union display order, remote-homed names included; the kernel orders the
                 // stored tags array by it (lensBlob's own re-sort matters on the Electron path,
                 // where the posted blob is the file)
-                this._setLens({ tagOrder: names }, { tagOrder: true });
+                if (!this._tabsLocked()) this._setLens({ tagOrder: names }, { tagOrder: true });   // locked mid-drag: no write
                 build();
               };
               pillCell.addEventListener('pointermove', onMove);
@@ -4790,8 +5046,9 @@ class TimelinePanel {
             }, 0);
           } else {
             const pill = pillCell.createSpan({ text: tg.name });
-            pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
-              + 'border-radius:10px;border:1px solid ' + tc + ';color:' + tc + ';background:transparent;font-weight:650;'
+            // the one tag chip (T321): the shared pill's bytes at the ROW's size (the inherit case: a row that sizes its chip
+            // drops the chip's own 0.82em, as the strip's group row does), so the table's row height is the row's own
+            pill.setAttribute('style', TAG_CHIP_STYLE.replace('font-size:0.82em;', '') + tc + ';color:' + tc + ';background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;'
               + (gid && tg.ids.indexOf(gid) >= 0 ? 'outline:1px solid ' + OUTLINE_FG + ';outline-offset:2px;' : ''));
             // tag federation v2: a queued edit for an unreachable home is VISIBLE, never
             // gone-but-not-gone — the kernel stamps the cached remote entry with `pending`
@@ -5008,11 +5265,13 @@ class TimelinePanel {
             const pill = (text, selected, color, apply) => {
               const c2 = color || MODEL_FG;
               const s2 = cell.createSpan({ text });
-              s2.setAttribute('style', 'cursor:pointer;padding:1px 8px;border-radius:9px;font-size:0.82em;'
-                + 'border:1px solid ' + c2 + ';color:' + c2 + ';'
-                + (selected ? 'background:' + SEL_BG + ';opacity:1;font-weight:650;' : 'background:transparent;opacity:0.6;'));
+              // the one tag chip (T321): selected = the full chip, unselected = the faded chip (the shared off fade and class),
+              // never a fill or a weight; the pointer is the only addition, this pill being a toggle
+              s2.setAttribute('style', TAG_CHIP_STYLE + c2 + ';color:' + c2 + ';background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;cursor:pointer;'
+                + (selected ? '' : 'opacity:' + TAG_CHIP_OFF_OPACITY + ';'));
+              if (!selected) s2.classList.add(TAG_CHIP_OFF_CLASS);
               s2.addEventListener('mouseenter', () => { s2.style.opacity = '1'; });
-              s2.addEventListener('mouseleave', () => { if (!selected) s2.style.opacity = '0.6'; });
+              s2.addEventListener('mouseleave', () => { if (!selected) s2.style.opacity = TAG_CHIP_OFF_OPACITY; });
               s2.addEventListener('click', apply);
               return s2;
             };
@@ -5116,10 +5375,12 @@ class TimelinePanel {
           // cue moves WITHOUT rebuilding mid-drag (the redraw-eats-pointer rule); the rebuild —
           // and the persist — happen on the drop.
           const nameCell = grid.createDiv();
-          nameCell.setAttribute('style', 'white-space:nowrap;cursor:grab;');
+          nameCell.setAttribute('style', 'white-space:nowrap;cursor:' + (this._tabsLocked() ? 'default' : 'grab') + ';');
+          if (this._tabsLocked()) nameCell.title = LOCKED_TEXT;   // the tab lock (T395)
           nameCell._sid = s.id;
           nameCell.addEventListener('pointerdown', (e) => {
             e.preventDefault();
+            if (this._tabsLocked()) return;   // the tab lock (T395) holds the dialog's rows too
             const cells = Array.from(grid.children).filter((c) => c._sid);
             const fromIdx = cells.indexOf(nameCell);
             if (fromIdx < 0) return;
@@ -5358,9 +5619,23 @@ class TimelinePanel {
     const byId = new Map(this.data.sessions.map((s) => [s.id, s]));
     for (const id of Array.from(this._dismissed)) {
       const s = byId.get(id);
-      if (!s || s.live) this._dismissed.delete(id);   // kernel caught up, or the sid revived → stop holding it
+      if (!s || s.live) { this._dismissed.delete(id); if (this._dismissedRows) this._dismissedRows.delete(id); }   // kernel caught up, or the sid revived → stop holding it
     }
     if (this._dismissed.size) this.data.sessions = this.data.sessions.filter((s) => !this._dismissed.has(s.id));
+  }
+
+  // The Clear pill's state step: drop the lane from the current frame so it vanishes at once, hold its sid in
+  // _dismissed so a stale or federation-merged push can't put it back before the kernel confirms
+  // (_reconcileDismissed), and keep the row and its slot so a Clear the kernel REFUSES (settingRefused with
+  // gesture 'lane') puts it straight back on that event: an unchanged lanes frame dedups on the kernel side
+  // for up to a minute, so waiting for the next push would leave the refused lane hidden that long.
+  _holdDismissed(s) {
+    if (!this._dismissedRows) this._dismissedRows = new Map();   // a panel built without the constructor (the node harnesses)
+    this._dismissed.add(s.id);
+    if (this.data && Array.isArray(this.data.sessions)) {
+      this._dismissedRows.set(s.id, [s, this.data.sessions.findIndex((x) => x.id === s.id)]);
+      this.data.sessions = this.data.sessions.filter((x) => x.id !== s.id);
+    }
   }
 
   // Persist a per-session flag. Web dashboard: the host WS hook (→ kernel setSessionFlag → rebuild
@@ -5417,8 +5692,8 @@ class TimelinePanel {
     // Electron (Obsidian) only: a bare-node run (the test runner) and a browser page (which has its host
     // hooks) have no kernel to post to from here — the guard the file writers wore (the user 2026-07-02)
     if (typeof process === 'undefined' || !process.versions || !process.versions.electron) return null;
-    // the requires sit INSIDE a try, like every Node require in this file (_tmuxPath, the shell-outs, the
-    // writers this replaced): this file is also bundled for the BROWSER (esbuild, platform browser, the
+    // the requires sit INSIDE a try, like every Node require in this file (the http posts, the writers this
+    // replaced): this file is also bundled for the BROWSER (esbuild, platform browser, the
     // webview's timeline-main.ts inlines it), and esbuild leaves an unresolvable require alone only when
     // a try/catch wraps it — a bare one fails the build (PR #1078's first CI run). The guard above keeps
     // the page from ever evaluating them.
@@ -5573,12 +5848,7 @@ class TimelinePanel {
     } catch (e) {}
   }
 
-  _tmuxPath() {
-    if (this._tmux) return this._tmux;
-    this._tmux = 'tmux';
-    try { const fs = require('fs'); for (const p of ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux', '/bin/tmux']) if (fs.existsSync(p)) { this._tmux = p; break; } } catch (e) {}
-    return this._tmux;
-  }
+
 
   // Items that aren't themselves a conversational line (awaiting/compaction spans, message
   // connectors) borrow the deep-link anchor of the session's nearest work period to `t`.
@@ -5754,7 +6024,15 @@ class TimelinePanel {
       vis = vis.slice().sort((a, b) => ((oidx.has(a.id) ? oidx.get(a.id) : Infinity) - (oidx.has(b.id) ? oidx.get(b.id) : Infinity)));
     }
     this._vis = vis;   // visible lanes in order → keyboard ↑/↓ selection
-    const vidx = {}; vis.forEach((s, i) => { vidx[s.id] = i; });
+    // the ROWS (T399): lanes, or under group-by-tag the sections' heads and their lanes (a folded section keeps its
+    // head alone), the untagged trail last behind a divider; a session under two tags has a lane in each section, and
+    // vidx names its FIRST lane (connectors and dots land there)
+    const grouped = tlGroupByTag();
+    const rows = tlRows(vis, grouped ? viewTagUnion(this._curViews()) : [], tabGroupsState(), grouped);
+    const laneRows = []; rows.forEach((r, i) => { if (r.kind === 'lane') laneRows.push({ s: r.s, i }); });
+    const vidx = Object.create(null); laneRows.forEach(({ s, i }) => { if (!(s.id in vidx)) vidx[s.id] = i; });
+    this._rows = rows; this._rowOf = vidx; this._grouped = grouped;   // the focus pulse and the drag read the row model
+    const selBand = new Set(selBandRows(rows, this.selectedSid, this._selRow, grouped));   // the band's rows (one, with copies)
     // (The half-row gap at host boundaries — a 2026-07-02 cue for remote lanes — was REMOVED (the user
     // 2026-08-08): hosts no longer interleave in one shared order, so the lanes list out uniformly and
     // the quiet "host:" name prefix alone marks a remote session.)
@@ -5791,6 +6069,7 @@ class TimelinePanel {
     const effortGap = maxEffortPiece > 0 ? META_GAP : 0;
     const maxModel = Math.ceil(maxModelPiece) + effortGap + Math.ceil(maxEffortPiece);   // whole meta column width
     const maxChip = Math.max(0, ...visB.map((b) => (b ? this.badgeWidth(b.label) + 12 : 0)));
+    const visIdx = new Map(vis.map((s, k) => [s.id, k]));   // the per-session columns (visB, visC) by session: a lane loop's i is a ROW index under group-by-tag (T399)
     const maxCtx = (visC.some((c) => c) || vis.some((s) => compactingNow(s))) ? BAT_W : 0;   // ctx column = battery bar
     // gear column: a per-session settings gear between the name and the model, on LIVE lanes (the user
     // 2026-06-19). Reserve its width only when there IS a live lane, so an all-historical view keeps the
@@ -5831,8 +6110,8 @@ class TimelinePanel {
     // the merge's events, never a timer here. Not lanes: never in vis/vidx, no hit targets, no drag.
     const pend = Array.isArray(data.pendingHosts) ? data.pendingHosts.filter((h) => typeof h === 'string') : [];
     const pendDead = Array.isArray(data.pendingDead) ? data.pendingDead : [];
-    const pendBase = Math.max(1, vis.length);   // the first placeholder row sits under the last lane (or the empty-window line)
-    const plotW = W - M.left - M.right, H = M.top + (Math.max(1, vis.length) + pend.length) * LANE_GAP + bandH + M.bottom;
+    const pendBase = Math.max(1, rows.length);   // the first placeholder row sits under the last lane (or the empty-window line)
+    const plotW = W - M.left - M.right, H = M.top + (Math.max(1, rows.length) + pend.length) * LANE_GAP + bandH + M.bottom;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('height', H); svg.setAttribute('width', W);
     // x is LINEAR in compressed time → smooth pan (only zoom rescales). Identity compress = plain linear.
     const x = (t) => M.left + (compress(t) - cT0) / winSec * plotW;
@@ -5914,7 +6193,36 @@ class TimelinePanel {
       t.textContent = (pendDead.indexOf(h) >= 0 ? 'reconnecting to ' : 'loading sessions from ') + h + '\u2026';
       svg.appendChild(t);
     });
-    vis.forEach((s, i) => {
+    // GROUP BY TAG (T399): the section heads, drawn as the chat strip draws its tag group head (render.ts makeGroupHead,
+    // styles.css .tab-group-head): the tag's chip in its colour first, then the caret, then the count, one tag per row, the
+    // whole row the fold's click target; the untagged trail sits behind a thin divider, unlabeled, as on the strip
+    rows.forEach((r, i) => {
+      if (r.kind === 'trail') { svg.appendChild(el('line', { class: 'tl-trail-sep', x1: PADL, y1: laneY(i), x2: W - M.right, y2: laneY(i), stroke: MODEL_FG, 'stroke-opacity': 0.35, 'stroke-width': 1, 'pointer-events': 'none' })); return; }
+      if (r.kind !== 'head') return;
+      // THE tag chip, as tag-menu.ts tagChip draws it everywhere (T321; the user 2026-09-13 on this mockup: no filled
+      // pill): a 1px border and the text in the tag's own colour on a transparent ground, weight 400, the pill's padding and
+      // radius, at the host's size (the strip's head passes inheritSize; here the host is the lane font, so the chip's own
+      // 0.82em of it). Every number comes from TAG_CHIP_GEOM, the parse of the shared pill's bytes.
+      const y = laneY(i), G = TAG_CHIP_GEOM, fs = Math.round(12 * G.fontEm * 100) / 100;
+      this._mc.font = '400 ' + fs + 'px ' + this._fontFace();   // measured at the drawn weight and size (the fold's low 1: a 650 measurement left the name off centre)
+      const tw = this._mc.measureText(r.name).width, chipH = Math.round(fs * 1.2) + 2 * G.padY, w = Math.ceil(tw) + 2 * G.padX;
+      const g = el('g', { class: 'tl-group-head' + (r.folded ? ' collapsed' : ''), 'data-group': r.name, 'data-folded': r.folded ? '1' : '0', role: 'button', 'aria-expanded': r.folded ? 'false' : 'true' });
+      const hit = el('rect', { x: 0, y: y - LANE_GAP / 2, width: W, height: LANE_GAP, fill: 'transparent' });
+      hit.style.cursor = 'pointer';
+      const title = el('title'); title.textContent = (r.folded ? 'show the ' : 'fold the ') + r.count + (r.count === 1 ? ' session' : ' sessions') + ' tagged ' + r.name; hit.appendChild(title);
+      hit.addEventListener('click', () => { toggleSectionFold(r.name); this.draw(); });
+      g.appendChild(hit);
+      g.appendChild(el('rect', { x: PADL + 0.5, y: y - chipH / 2 + 0.5, width: w, height: chipH, rx: Math.min(G.radius, chipH / 2), fill: 'transparent',
+                                stroke: r.color, 'stroke-width': G.border, 'pointer-events': 'none' }));
+      const nm = el('text', { x: PADL + 0.5 + G.padX, y: y + fs * 0.36, 'font-size': fs, 'font-weight': 400, 'letter-spacing': 'normal', fill: r.color, 'pointer-events': 'none' });
+      nm.textContent = r.name; g.appendChild(nm);
+      const caret = el('text', { x: PADL + w + 10, y: y + 4, 'font-size': fs, fill: MODEL_FG, 'text-anchor': 'middle', 'pointer-events': 'none' });
+      caret.textContent = r.folded ? '\u25B8' : '\u25BE'; g.appendChild(caret);
+      const cnt = el('text', { x: PADL + w + 18, y: y + 4, 'font-size': fs, fill: MODEL_FG, 'fill-opacity': 0.75, 'pointer-events': 'none' });
+      cnt.textContent = String(r.count); g.appendChild(cnt);
+      svg.appendChild(g);
+    });
+    laneRows.forEach(({ s, i }) => {
       const y = laneY(i);
       // perceptual idle fade: faded lanes blend their colors toward bgRGB to a uniform low luminance.
       const F = (hex) => s.faded ? fadeHex(hex, bgRGB) : hex;
@@ -5922,7 +6230,7 @@ class TimelinePanel {
       // ONE highlight: a soft filled block (light gray, NO border) on the SELECTED lane. Selection is
       // set by clicking a lane/item, by ↑/↓, and by the chat's active tab — all the same highlight.
       // Drawn first → bars/dots sit on top.
-      if (this.selectedSid === s.id) {
+      if (this.selectedSid === s.id && selBand.has(i)) {
         svg.appendChild(el('rect', { x: 2, y: y - LANE_GAP / 2 + 1, width: W - 4, height: LANE_GAP - 2, rx: 4,
           fill: PAL().laneSelFill, 'fill-opacity': 0.1 }));
       }
@@ -5930,11 +6238,12 @@ class TimelinePanel {
       // it at the bottom (latest) — same as a bar, just no anchor. Non-interactive lane elements below
       // are pointer-events:none so their area falls through here; bars/dots keep their handlers on top.
       const rowHit = el('rect', { x: 0, y: y - LANE_GAP / 2, width: W, height: LANE_GAP, fill: 'transparent' });
-      rowHit.style.cursor = 'grab';   // grab = drag to PAN (horizontal) or REORDER (vertical); a plain click still selects/opens
+      rowHit.style.cursor = this._tabsLocked() ? 'default' : 'grab';   // grab = drag to PAN (horizontal) or REORDER (vertical); a plain click still selects/opens; the tab lock (T395) takes the grab away
+      if (this._tabsLocked()) { const lt = el('title', {}); lt.textContent = LOCKED_TEXT; rowHit.appendChild(lt); }
       rowHit.addEventListener('mousedown', (e) => this._beginDrag(s.id, e));   // drag starts on EMPTY row space only (bars/dots keep their click → jump-to-chat)
       rowHit.addEventListener('click', () => {
         if (this._suppressClick) { this._suppressClick = false; return; }   // just finished a drag → not a select
-        this._select(s.id); this.openChat(this._laneTid(s), null, true);
+        this._select(s.id, i); this.openChat(this._laneTid(s), null, true);
       });
       // ever-so-slight hover tint on the row (much fainter than the selected block) + un-fade a faded
       // lane's colors to full while hovered, so an idle row is readable when you point at it.
@@ -5969,7 +6278,7 @@ class TimelinePanel {
         // period's start as the by-time fallback. This was a bare lane-open with NO anchor, so every
         // work-bar click visibly did nothing while prompt-dot clicks worked (the user, 2026-06-12).
         // The prompt dot keeps the prompt-line uuid.
-        hit.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, workAnchorOf(t), false, false, t.start); });
+        hit.addEventListener('click', () => { this._select(s.id, i); this.openChat(s.id, workAnchorOf(t), false, false, t.start); });
         plot.appendChild(hit);
         if (liveEdge) riders.push({ el: bar, attr: 'width', base: bwRaw, min: 2 }, { el: hit, attr: 'width', base: bwRaw, min: 2 });   // the un-clamped extent with the 2 px floor: a just-opened bar grows as a full draw would draw it
       });
@@ -5992,7 +6301,7 @@ class TimelinePanel {
             .map((d) => '<div class="b" style="opacity:.85">' + esc(d) + '</div>').join('');
           const tip = '<div class="r"><span class="chip" style="background:' + s.color + '"></span><span class="who" style="color:' + s.color + '">' + esc(s.name)
             + '</span><span class="t">' + clock(anchor) + '– awaiting…</span></div>' + rows;
-          const wh = el('rect', { x: lx1, y: y - 7, width: lx2 - lx1, height: 14, fill: 'transparent' }); wh.style.cursor = 'grab';
+          const wh = el('rect', { x: lx1, y: y - 7, width: lx2 - lx1, height: 14, fill: 'transparent' }); wh.style.cursor = this._tabsLocked() ? 'default' : 'grab';
           wh.addEventListener('mouseenter', (e) => { ln.setAttribute('stroke-width', String(BAR_H + 2)); ln.setAttribute('opacity', '0.6'); this.showTip(tip, e); });
           wh.addEventListener('mousemove', (e) => this.moveTip(e));
           wh.addEventListener('mouseleave', () => { ln.setAttribute('stroke-width', String(BAR_H)); ln.setAttribute('opacity', '0.4'); this.hideTip(); });
@@ -6000,7 +6309,7 @@ class TimelinePanel {
           wh.addEventListener('mousedown', (e) => this._beginDrag(s.id, e));
           wh.addEventListener('click', () => {
             if (this._suppressClick) { this._suppressClick = false; return; }
-            this._select(s.id); this.openChat(this._laneTid(s), null, true);
+            this._select(s.id, i); this.openChat(this._laneTid(s), null, true);
           });
           plot.appendChild(wh);
           if (edgeLive) riders.push({ el: ln, attr: 'x2', base: lx2 }, { el: wh, attr: 'width', base: lx2 - lx1 });
@@ -6051,7 +6360,7 @@ class TimelinePanel {
         sh.addEventListener('mouseenter', (e) => { grow(eh); this.showTip(shtml(), e); });
         sh.addEventListener('mousemove', (e) => this.moveTip(e));
         sh.addEventListener('mouseleave', () => { grow(BAR_H); this.hideTip(); });
-        sh.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
+        sh.addEventListener('click', () => { this._select(s.id, i); this.openChat(this._laneTid(s), null, true); });
         plot.appendChild(sh);
         if (open && edgeLive) riders.push({ el: back, attr: 'width', base: bx1 - bx0, min: 2 }, { el: stripe, attr: 'width', base: x(sb) - x(sa), min: 2 }, { el: sh, attr: 'width', base: bx1 - bx0, min: 2 });
       }
@@ -6078,7 +6387,7 @@ class TimelinePanel {
         ch.addEventListener('mouseenter', (e) => { cgrow(eh); this.showTip(chtml(), e); });
         ch.addEventListener('mousemove', (e) => this.moveTip(e));
         ch.addEventListener('mouseleave', () => { cgrow(BAR_H); this.hideTip(); });
-        ch.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
+        ch.addEventListener('click', () => { this._select(s.id, i); this.openChat(this._laneTid(s), null, true); });
         plot.appendChild(ch);
         if (open && edgeLive) riders.push({ el: cback, attr: 'width', base: cwRaw, min: 2 }, { el: chx, attr: 'width', base: cwRaw, min: 2 }, { el: ch, attr: 'width', base: cwRaw, min: 2 });
       }
@@ -6102,7 +6411,7 @@ class TimelinePanel {
         ch.addEventListener('mouseenter', (e) => { cgrow(eh); this.showTip(chtml(), e); });
         ch.addEventListener('mousemove', (e) => this.moveTip(e));
         ch.addEventListener('mouseleave', () => { cgrow(BAR_H); this.hideTip(); });
-        ch.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
+        ch.addEventListener('click', () => { this._select(s.id, i); this.openChat(this._laneTid(s), null, true); });
         plot.appendChild(ch);
       }
       // A /CLEAR SEAM — an episode boundary: the conversation ended here and a blank one began. Drawn
@@ -6166,7 +6475,7 @@ class TimelinePanel {
       nhit.addEventListener('mousedown', (e) => this._beginDrag(s.id, e));   // still drag-to-reorder / pan
       nhit.addEventListener('click', () => {
         if (this._suppressClick) { this._suppressClick = false; return; }   // just finished a drag → not a jump
-        this._select(s.id); this.openChat(this._laneTid(s), null, false);   // focus=true → jump into the chat
+        this._select(s.id, i); this.openChat(this._laneTid(s), null, false);   // focus=true → jump into the chat
       });
       // keep the row's hover treatment (faint tint + un-fade) while pointing at the name
       nhit.addEventListener('mouseenter', () => { rowHit.setAttribute('fill', '#ffffff'); rowHit.setAttribute('fill-opacity', '0.035'); for (const f of fadedEls) f.el.setAttribute('fill', f.full); });
@@ -6258,8 +6567,7 @@ class TimelinePanel {
           // a stale or federation-merged push can't put it back before the kernel confirms (_reconcileDismissed).
           // The kernel persists the dismissal (2026-08-14), so restarts and reconnects keep it cleared;
           // only the session coming back live resurfaces the lane.
-          this._dismissed.add(s.id);
-          if (this.data && this.data.sessions) this.data.sessions = this.data.sessions.filter((x) => x.id !== s.id);
+          this._holdDismissed(s);
           this._dismissLane(s.id); this.draw();
         });
         svg.appendChild(chit);
@@ -6342,7 +6650,7 @@ class TimelinePanel {
           }
         }
       }
-      const bdg = visB[i];
+      const bdg = visB[visIdx.get(s.id)];
       if (bdg) {
         const h = 14, padX = 6, w = Math.ceil(this.badgeWidth(bdg.label)) + padX * 2, by = y - h / 2;
         const chipBg = el('rect', { x: chipColX, y: by, width: w, height: h, rx: h / 2, fill: F(bdg.bg), 'pointer-events': 'none' }); svg.appendChild(chipBg);
@@ -6363,7 +6671,7 @@ class TimelinePanel {
       }
       // context-window battery bar (matches the chat view): faint box + level-colored fill (width ∝ pct)
       // + "N%" inside. While COMPACTING it instead shows a rainbow scan-bar (no %), the live cue.
-      const cinfo = visC[i], isComp = compactingNow(s);
+      const cinfo = visC[visIdx.get(s.id)], isComp = compactingNow(s);
       if (cinfo || isComp) {
         const byTop = y - BAT_H / 2;
         svg.appendChild(el('rect', { x: ctxColX, y: byTop, width: BAT_W, height: BAT_H, rx: 3, fill: PAL().batFill, stroke: PAL().batStroke, 'stroke-width': 1, 'pointer-events': 'none' }));
@@ -6442,7 +6750,7 @@ class TimelinePanel {
       bhit.addEventListener('mouseenter', bEnter);
       bhit.addEventListener('mousemove', (e) => this.moveTip(e));
       bhit.addEventListener('mouseleave', () => { bbar.setAttribute('opacity', '0.85'); this.hideTip(); });
-      bhit.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, br.cut ? 'branch:' + br.cut : '', false, false, br.t); });
+      bhit.addEventListener('click', () => { this._select(s.id, vidx[s.id]); this.openChat(s.id, br.cut ? 'branch:' + br.cut : '', false, false, br.t); });
       nearEdge(plot.appendChild(bhit), bx);
     });
 
@@ -6453,7 +6761,7 @@ class TimelinePanel {
     const sendXT = (mm) => mm.fromThreadT || mm.sent;
     const landXT = (mm) => mm.toThreadT || execAt(mm);
     data.messages.forEach((mm) => { if (inWin(landXT(mm)) && vidx[mm.toId] != null) obstacles.push({ x: x(landXT(mm)), lane: vidx[mm.toId] }); });
-    vis.forEach((s, i) => turnsOf(s.id).forEach((t) => { if (inWin(startAt(t))) obstacles.push({ x: x(startAt(t)), lane: i }); }));
+    laneRows.forEach(({ s, i }) => turnsOf(s.id).forEach((t) => { if (inWin(startAt(t))) obstacles.push({ x: x(startAt(t)), lane: i }); }));   // every lane row, a copy too (T399)
 
     // one connector per directed FLOW (A→B): a single line spanning the flow's first
     // send → last delivery, whose THICKNESS grows linearly with the message count
@@ -6493,7 +6801,7 @@ class TimelinePanel {
     // user 2026-08-24). A nameless row falls back to the raw id: information, not an empty span
     // (the CLI's unmappable-member precedent).
     const msgHtml = (mm) => () => { const col = colorOf(mm.fromId); return '<div class="r"><span class="chip" style="background:' + col + '"></span><span class="who" style="color:' + col + '">' + esc(mm.from || mm.fromId) + '</span><span class="ar">→</span><span class="who" style="color:' + colorOf(mm.toId) + '">' + esc(mm.to || mm.toId) + '</span>' + (mm.pending ? ' <span class="k">pending</span>' : '') + '<span class="t">' + clock(mm.sent) + (mm.pending ? ' → …' : ' → ' + clock(mm.exec)) + '</span></div>' + this.body(esc(mm.summary || mm.text || '')); };
-    const msgNav = (mm) => () => { const an = this.nearestTurnAnchor(mm.toId, execAt(mm)); this._select(mm.toId); this.openChat(mm.toId, mm.id || (an && (an.promptId || an.replyUuid)), false, false, execAt(mm)); };   // land on the message's OWN postal card BY ID — the chat matches mm.id to the card's data-mid (the user 2026-06-20); nearest-turn uuid / time only as fallback
+    const msgNav = (mm) => () => { const an = this.nearestTurnAnchor(mm.toId, execAt(mm)); if (this._unfoldFor(mm.toId) != null) this.draw(); this._select(mm.toId, this._rowOf[mm.toId]); this.openChat(mm.toId, mm.id || (an && (an.promptId || an.replyUuid)), false, false, execAt(mm)); };   // land on the message's OWN postal card BY ID — the chat matches mm.id to the card's data-mid (the user 2026-06-20); nearest-turn uuid / time only as fallback
     // OVERLAP HOVER (the user 2026-08-24): message marks stack — several exchanges on one pair, a
     // stub riding another's track — and the topmost hit swallowed the hover, so the modal named ONE
     // message where the cursor covered several. Resolve every message element under the point
@@ -6647,7 +6955,8 @@ class TimelinePanel {
       const lineAttr = { d, fill: 'none', stroke: col, 'stroke-width': MSG_W0, opacity: arrived ? 0.5 : 0.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
       if (!arrived) lineAttr['stroke-dasharray'] = '1 4';
       if (mm.pending && !mm.toThreadT) liveRiders = true;   // a pending message lands AT the live edge (execAt): not a translate
-      plot.appendChild(el('path', lineAttr));
+      const lineEl = el('path', lineAttr); lineEl.setAttribute('data-tl-from', String(mm.fromId || '')); lineEl.setAttribute('data-tl-to', String(mm.toId || ''));   // the ends, for the served pins (T399)
+      plot.appendChild(lineEl);
       // A connector in the focused journey (DAG card hover) or the hovered subtree's delegation messages
       // lights EXACTLY like its native hover: the own-color highlight overlay at full strength — no white
       // casing (the user 2026-07-17). msgLit remembers the drawn state so a local mouseleave restores it.
@@ -6723,7 +7032,7 @@ class TimelinePanel {
     data.messages.forEach((mm) => { if (!mm.pending && vidx[mm.toId] != null) { let a = execByTo.get(mm.toId); if (!a) { a = []; execByTo.set(mm.toId, a); } a.push(execAt(mm)); } });
     execByTo.forEach((a) => a.sort((p, q) => p - q));
     const execNear = (sid, t) => sortedHasWithin(execByTo.get(sid), t, 1);
-    vis.forEach((s, i) => {
+    laneRows.forEach(({ s, i }) => {
       const y = laneY(i);
       turnsOf(s.id).forEach((t) => {
         if (t.cont) return;                  // a post-sleep continuation piece of one segment: its prompt dot belongs to the FIRST piece, not here
@@ -6747,7 +7056,7 @@ class TimelinePanel {
           : isRomp
           ? () => '<div class="r"><img src="' + mediaUrl('romp-swirl-glyph.svg') + '" width="13" height="13" style="vertical-align:-2px;margin-right:5px;border-radius:2px"><span class="who" style="color:#fff">romp</span><span class="t">' + clock(startAt(t)) + '</span></div>' + this.body(this.req(t))
           : () => '<div class="r"><span class="chip" style="background:' + s.color + '"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="t">' + clock(startAt(t)) + '</span></div>' + this.body(this.req(t));
-        dot(dx, y, isRomp ? '#000' : s.color, tip, () => { this._select(s.id); this.openChat(s.id, t.promptId, false, false, startAt(t), 'user'); }, null, dotLit(t, dagOrHover));   // romp message → a black dot (the swirl reads on it); prompt-intent → time fallback restricted to user turns
+        dot(dx, y, isRomp ? '#000' : s.color, tip, () => { this._select(s.id, i); this.openChat(s.id, t.promptId, false, false, startAt(t), 'user'); }, null, dotLit(t, dagOrHover));   // romp message → a black dot (the swirl reads on it); prompt-intent → time fallback restricted to user turns
         if (isRomp) {                                    // the romp favicon swirl INSIDE the black dot; pointer-events:none → the dot keeps its hover/click
           const sz = DOT_R * 1.9;
           nearEdge(plot.appendChild(el('image', { x: dx - sz / 2, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' })), dx);
@@ -6760,7 +7069,7 @@ class TimelinePanel {
     // SESSION's own color with the same white border and footprint as a message dot (the user
     // 2026-08-15 — the shape alone says "comment"), dimmed once resolved. Click → the chat at that
     // message, where the yellow highlight opens the thread.
-    vis.forEach((s, i) => {
+    laneRows.forEach(({ s, i }) => {
       const y = laneY(i);
       (s.comments || []).forEach((c) => {
         if (!c.t || !inWin(c.t)) return;
@@ -6776,7 +7085,7 @@ class TimelinePanel {
         sq.addEventListener('mouseenter', qEnter);
         sq.addEventListener('mousemove', (e) => this.moveTip(e));
         sq.addEventListener('mouseleave', () => { qGrow(0); this.hideTip(); });
-        sq.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, c.uuid, false, false, c.t); });
+        sq.addEventListener('click', () => { this._select(s.id, i); this.openChat(s.id, c.uuid, false, false, c.t); });
         nearEdge(plot.appendChild(sq), cx);
       });
     });
@@ -6785,7 +7094,7 @@ class TimelinePanel {
     // by the SESSION it acted on; adjacent same-session marks merge into a stretch of attention. A mark
     // within ~8s of the live edge is "running now" (white-outlined). (docs/judges.md; data.judging.)
     if (jShow) {
-      const jb0 = M.top + (vis.length + pend.length) * LANE_GAP + JB_TOPGAP;     // top of the first judge row, under the lanes (+ the pending-host rows)
+      const jb0 = M.top + (rows.length + pend.length) * LANE_GAP + JB_TOPGAP;   // under every ROW (heads and the divider too, T399)     // top of the first judge row, under the lanes (+ the pending-host rows)
       const jY = (i) => jb0 + i * JROW + JROW * 0.5;
       const nameOf = (sid) => { const s = data.sessions.find((z) => z.id === sid); return s ? s.name : sid; };
       const sepY = jb0 - JB_TOPGAP * 0.5;
@@ -6909,6 +7218,7 @@ class TimelinePanel {
     const hit = el('rect', { x: -2, y: -1, width: 19, height: 15, fill: 'transparent' });   // hit pad (whole glyph clickable)
     g.appendChild(hit);
     const st = { fill: 'none', stroke: color, 'stroke-width': 1.4, 'stroke-linecap': 'round', 'pointer-events': 'none' };
+    // the one padlock drawing (T395; the chat strip's copy in ui/webview/icons.ts left with T415, when the tab lock became a switch in the settings card)
     g.appendChild(el('rect', Object.assign({ x: 3, y: 6.2, width: 8, height: 5.6, rx: 1.2 }, st)));
     g.appendChild(el('path', Object.assign({ d: on ? 'M4.8 6.2 V4.4 a2.2 2.2 0 0 1 4.4 0 V6.2'           // seated shackle (locked)
                                                   : 'M9.4 6.2 V5.3 A2.4 2.4 0 0 1 13.6 3.7' }, st)));   // swung-out shackle (unlocked)
@@ -7008,4 +7318,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, expandBar, expandBars, expandJudging, expandBarsMemo, expandJudgingMemo, sameWire, _expandCounts, BAR_WIRE, JUDGING_WIRE, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, lensSummary, timelineLens, loadModelChoices, MODEL_CHOICES };
+module.exports = { TimelinePanel, tlRows, selBandRows, tagSections, tabGroupsState, sectionFolded, toggleSectionFold, tlGroupByTag, setTlGroupByTag, TAG_CHIP_GEOM, TAG_CHIP_STYLE, TABGROUPS_KEY, TABGROUPS_DEFAULT_COLLAPSED, expandBar, expandBars, expandJudging, expandBarsMemo, expandJudgingMemo, sameWire, _expandCounts, BAR_WIRE, JUDGING_WIRE, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, lensSummary, timelineLens, loadModelChoices, MODEL_CHOICES, EFFORT_CHOICES, CODEX_EFFORT_CHOICES };

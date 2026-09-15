@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { threadsByAnchor, threadBusy, threadStuck, replyOwed, agentCount, findExact, findAnchorRange, sliceRanges, prunePending,
+import { threadsByAnchor, threadBusy, threadStuck, replyOwed, agentCount, findExact, findAnchorRange, sliceRanges, prunePending, markSkipsParent,
          newCommentCreate, commentCreateFrame, type CommentThread, type CommentCreate } from "./comments";
 import { compactDisplay } from "./compact";
 
@@ -99,14 +99,18 @@ test("an unread thread wears ONE outline box around its whole passage and a shou
   // the user 2026-08-23: the 45% unread tint alone was too subtle — a thread that replied while the
   // box was closed needs a visible element. That element was a yellow corner dot on the run's last
   // segment until 2026-09-08 (then the tab strip's dashed needs-you ring on the mark), and since
-  // 2026-09-10 it is ONE solid outline in the notch's yellow around the WHOLE highlighted area: the
-  // ring was an outline on the inline mark and painted once per line fragment, a dashed box per line.
-  // The box is a positioned child of the turn that render.ts measures from the marks (its pins live in
-  // comment-outline.test.ts). The rail tick still grows and double-rings. Both clear with the unread
-  // flag on open.
+  // 2026-09-10 it is ONE outline around the WHOLE highlighted area: the ring was an outline on the
+  // inline mark and painted once per line fragment, a dashed box per line. Since 2026-09-12 the box is
+  // dashed in the needs-you red again (the user wanted the tab strip's idiom back; matching the notch
+  // had made it solid yellow), and a passage of one or two rows wears the per-fragment ring instead —
+  // the painter's call, by row count. The box is a positioned child of the turn that render.ts measures
+  // from the marks (its pins live in comment-outline.test.ts). The rail tick still grows and
+  // double-rings, its halo in the same red. All clear with the unread flag on open.
   assert.doesNotMatch(CSS, /mark\.cmt-hl\.unread\.hl-last::after/, "the corner dot is gone");
-  assert.doesNotMatch(CSS, /mark\.cmt-hl\.unread \{ outline/, "no outline on the mark itself: it would paint per line fragment");
-  assert.match(CSS, /\.cmt-outline \{ position: absolute; pointer-events: none;[^}]*outline: 1\.5px solid var\(--cmt-hl-outline\);/s, "one box, the notch's ink");
+  assert.doesNotMatch(CSS, /mark\.cmt-hl\.unread \{ outline/, "no outline on the mark by unread alone: it would paint per line fragment");
+  assert.match(CSS, /\.cmt-outline \{ position: absolute; pointer-events: none;[^}]*outline: 1\.5px dashed var\(--st-awaiting-bg\);/s, "one box, the needs-you ring");
+  assert.match(CSS, /mark\.cmt-hl\.unread\.cmt-ring \{ outline: 1\.5px dashed var\(--st-awaiting-bg\); outline-offset: 1px; \}/, "the one- or two-row ring, the same stroke");
+  assert.match(CSS, /\.cmt-tick\.unread \{[^}]*0 0 0 3px var\(--st-awaiting-bg\); \}/s, "the tick's halo agrees by colour");
   assert.match(UI, /function paintCommentOutlines\(sid: string\): void \{/);
   assert.doesNotMatch(CSS, /mark\.cmt-hl \{[^}]*position: relative;/s, "nothing left for the mark to anchor");
   assert.match(CSS, /\.cmt-tick\.unread \{ width: 10px; height: 6px; right: 0; opacity: 1;/);
@@ -174,7 +178,7 @@ test("marks, badges AND every popover button ride the stable document.body deleg
 });
 
 test("highlights re-apply after every render path", () => {
-  assert.match(UI, /m\.type === "session" \|\| m\.type === "chatTail" \|\| m\.type === "chatHead" \|\| m\.type === "chatEpisode"\)\)\s*\n\s*applyCommentMarks\(String\(m\.id\)\)/);
+  assert.match(UI, /m\.type === "session" \|\| m\.type === "chatTail" \|\| m\.type === "chatHead" \|\| m\.type === "chatWindow" \|\| m\.type === "chatTurns" \|\| m\.type === "chatEpisode"\)\)\s*\n\s*applyCommentMarks\(String\(m\.id\)\)/);   // chatTurns: a gap's page (T386 stage 2), where chatMore was   // chatWindow / chatMore: the proto-2 pages rebuild DOM too (T323 stage 4b)
   assert.match(UI, /applyCommentMarks\(activeId\);\s+\/\/ the re-window rebuilt turns/,
                "the scroll re-window path re-anchors too");
   // the syncView wrapper covers renders that run OFF the message handlers (tab switch, prebuild)
@@ -373,7 +377,7 @@ test("the create dialog names the thread right there: prefilled <session>-commen
   assert.match(UI, /const prefill = defaultCommentName\(sess0\?\.name, sid, \(commentThreads\.get\(sid\) \|\| \[\]\)\.length\);\s*\n\s*nameBox\.dataset\.prefill = prefill;\s*\n\s*nameBox\.value = commentDrafts\.get\(nk\) \|\| prefill;/);
   // the name lives IN the header ("New comment: <name>"), the button says Comment, and the picks ride along
   assert.match(UI, /"New comment:"/);
-  assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, closeBtn\);/);
+  assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, maxBtn, closeBtn\);/);   // the maximize button rides between (2026-09-10, comment-pop-size.test.ts)
   assert.match(UI, /send\.setAttribute\("aria-label", create \? "Comment" : "Send"\);/);   // the ➤ carries the word
   assert.match(UI, /const held = newCommentCreate\(create, text, nm\);\s*\n\s*vscodeApi\.postMessage\(commentCreateFrame\(held\)\);/);   // the anchor's picks ride the held create
   // the comment's own model/effort selectors reuse the statusline's /models-fed choices + menu skin
@@ -389,7 +393,7 @@ test("the create dialog names the thread right there: prefilled <session>-commen
 test("the landing pulse fires once per navigation, not once per history-fetch round", () => {
   assert.match(UI, /let flashedAnchor: string \| null = null;/);
   assert.match(UI, /if \(flashKey == null \|\| flashKey !== flashedAnchor\)/);
-  assert.match(UI, /landOn\(target, uuid\);/);
+  assert.match(UI, /landOn\(target, uuid, quoteEl \?\? firstTextAtomBelow\(target\), quote\);/);   // the one landing write, aligned on the words when the frame quotes them (T386)
   assert.match(UI, /if \(anchor\) flashedAnchor = null;/);
 });
 
@@ -439,7 +443,7 @@ test("while the thread is WRITING the passage holds the await-green tint and NOT
 test("the popover renders the thread with the CHAT's own renderer from the branch point", () => {
   assert.match(UI, /renderingSid = th\.tid;/);
   assert.match(UI, /const node = renderEvent\(ev, prev, turnWorkedSecs\(evs, it\.index, thWorking\)\);\s*\n\s*list\.appendChild\(node\);/);   // + the chat's worked footers (the parity bundle, 2026-08-26)
-  assert.match(KERNEL, /def _thread_events\(tsid, cut_uuid, now, tmux\):/);
+  assert.match(KERNEL, /def _thread_events\(tsid, cut_uuid, now, live_map\):/);
   assert.match(KERNEL, /evs = evs\[at \+ 1:\]/, "sliced to AFTER the branch point — the head system card never rides");
   // the thread's own statusline posts the chat's own ops through the SHARED menu, keyed to the
   // thread sid (toggleMetaMenu's opSid — 2026-08-25 parity: one builder, sid-scoped)
@@ -491,6 +495,12 @@ test("the thread's identity rail runs continuous — no holes at the list's flex
   assert.match(CSS, /\.cmt-msgs \{ flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; \}/,
     "the 6px gap the -6px below must stay paired with");
   assert.match(CSS, /\.cmt-msgs \.turn \+ \.turn::before \{ top: -6px; \}/);
+  // the day divider between two turns (T339): the flex gap sits on both sides of it and `.turn + .turn` does not fire
+  // after it, so its own segment spans margin plus gap each side; derived from the gap and the divider's margins
+  const gap = Number(CSS.match(/^\.cmt-msgs \{[^}]*gap: (\d+)px;/m)![1]);
+  const margins = CSS.match(/^\.day-divider \{[^}]*margin: (\d+)px 0 (\d+)px;/m)!;
+  assert.match(CSS, new RegExp("^\\.cmt-msgs \\.day-divider::before \\{ top: -" + (gap + Number(margins[1])) + "px; bottom: -" + (gap + Number(margins[2])) + "px; \\}", "m"),
+    "the popover's divider segment covers the gap above and below");
 });
 
 test("the quoted passage is CONTEXT on the thread's opening message — never an item above the branch divider", () => {
@@ -622,7 +632,7 @@ test("executable, real thinking fixture: the unit stream drops thinking and fold
 test("everything that re-renders the chat's units refills the open popover live", () => {
   assert.match(UI, /function refillOpenCommentPop\(\): void \{/);
   assert.match(UI, /refillOpenCommentPop\(\);   \/\/ the popover renders the same units — its copy of this run must flip too/);
-  assert.match(UI, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\); rerenderAll\(\); refillOpenCommentPop\(\); \}\);/);
+  assert.match(UI, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\); updateStatusline\(\); rerenderAll\(\); refillOpenCommentPop\(\); \}\);/);
 });
 
 // ── T106 (the user 2026-08-26, found by the romp-lab loop's first full pass): three seam fixes ────
@@ -665,14 +675,14 @@ test("the pending echo prunes against EVENTS too — a landed user turn never do
 
 test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, the sid stamp", () => {
   // day dividers open new days in the popover exactly as in the chat (same helper, same idiom)
-  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);   // the T145 relay-note insert sits between
+  assert.match(UI, /const anchor = itemAnchor\(it, \(i\) => eventEpoch\(evs\[i\]\)\);\s*\n\s*const dayOpen = eventEpoch\(evs\[anchor\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, walk\);/);   // the T145 relay-note insert sits between; the unit timed by its anchor member, the divider decided against the walk's mark (T339)
   // the popover's list is stamped with the THREAD sid, and in-turn controls resolve their owner
   // from the DOM at click time — queued ✕ and the api-error card act on the thread, never the tab
   assert.match(UI, /list\.dataset\.session = th\.tid;/);
   assert.match(UI, /function owningSidOf\(el0: HTMLElement \| null\): string \| null \{/);
   assert.match(UI, /const sidQ = owningSidOf\(el\) \|\| activeId;/);   // resolved once — the optimistic arm reuses it
   assert.match(UI, /\{ type: "cancelQueued", id: sidQ, md: qmd \}/);
-  assert.match(UI, /\{ type: "dismissDialog", id: owningSidOf\(b\) \}/);   // the delegate's handler (2026-09-08), still owner-scoped
+  assert.match(UI, /const own = owningSidOf\(b\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "apiRetry", id: own, manual: true \}\);/);   // the api-error card's delegate handler (2026-09-08), still owner-scoped
 });
 
 test("the thread's running turn offers the chat's stop affordance, owner-scoped to the THREAD (T138)", () => {
@@ -839,4 +849,18 @@ test("a promoted thread's popup is the quote, one line, and Open the session in 
                "one line saying where the talk went");
   // and the quote never flexes in this state, whatever size the box is (the .sized rule hands it the free room otherwise)
   assert.match(CSS, /\.cmt-pop\.sized\[data-status="promoted"\] \.cmt-quote \{ flex: 0 0 auto; min-height: 0; \}/);
+});
+
+// ── the mark never lands between a table's cells (T349, the user 2026-09-11) ──────────────────────
+// The whitespace text between <td>s and <tr>s sits directly under the table's structural elements; an inline <mark>
+// placed there gets its own anonymous cell and the columns shift. The DOM pass asks this before wrapping each slice.
+test("markSkipsParent: a table's structural parents are skipped, every text-bearing parent is wrapped", () => {
+  for (const tag of ["TABLE", "THEAD", "TBODY", "TFOOT", "TR"]) assert.equal(markSkipsParent(tag), true, tag);
+  for (const tag of ["TD", "TH", "P", "LI", "CODE", "STRONG", "EM", "SPAN", "DIV", "CAPTION", "A"]) assert.equal(markSkipsParent(tag), false, tag);
+  assert.equal(markSkipsParent(null), false); assert.equal(markSkipsParent(undefined), false); assert.equal(markSkipsParent(""), false);
+  // a selection across a row: the cells' own text nodes are wrapped, the separators between them are not
+  const nodes = [{ text: "Charlie", parent: "TD" }, { text: "\n", parent: "TR" }, { text: "12", parent: "TD" }, { text: "\n", parent: "TR" }, { text: "done", parent: "TD" }];
+  const r = findExact(nodes.map((n) => n.text).join(""), "Charlie 12 done")!;
+  const wrapped = sliceRanges(nodes.map((n) => n.text.length), r.start, r.end).filter((sl) => !markSkipsParent(nodes[sl.idx].parent)).map((sl) => nodes[sl.idx].text);
+  assert.deepEqual(wrapped, ["Charlie", "12", "done"], "one mark per cell, none in the row itself");
 });

@@ -15,6 +15,7 @@ const STYLES = W("styles.css");
 const FEEDCSS = W("feed.css");
 const FEED = W("feed.ts");
 const RENDER = W("render.ts");
+const MODULE = W("status-controls.ts");   // the status line's controls moved here from render.ts (T415 part two)
 const FLEET = W("fleet.ts");
 const FLEETCSS = W("fleet-pane.css");
 
@@ -76,9 +77,11 @@ test("upgraded spots wire through setTip — the native title= on them is gone",
   assert.doesNotMatch(FEED, /a\._jauthBadge\.title =/);
   assert.doesNotMatch(FEED, /a\._retryBadge\.title =/);
   // statusline meta badges, the stop button (two lines: label + explanation), composer attach/send
-  // the badge takes its words from metaTip since 2026-09-09 (syncMetaControls swaps in badgeHeldTip while a pick is
-  // held for the session's live work); the wiring is still setTip, and the words still live in render.ts
-  assert.match(RENDER, /setTip\(btn, metaTip\(kind\)\);/);
+  // the badges build in status-controls.ts (T415 part two), which sets the standing tip once at build; this fork's
+  // post-pass (render.ts applyHeldMarks) re-sets it on every sync from metaTip, the same four strings, and swaps in
+  // badgeHeldTip while a pick is held for the session's live work (2026-09-09); the wiring is setTip at both sites
+  assert.match(MODULE, /setTip\(btn, kind === "model" \? "change model \(sends \/model\)"/);
+  assert.match(RENDER, /setTip\(b, held && st\.pickHeld \? badgeHeldTip\(kind, st\.pickHeld\) : metaTip\(kind\)\);/);
   assert.match(RENDER, /function metaTip\(kind: MetaKind\): string \{\s*\n\s*return kind === "model" \? "change model \(sends \/model\)"/);
   assert.match(RENDER, /setTip\(btn, stuck\s*\n\s*\? "Stop retrying\\ninterrupt this thread/);
   assert.match(RENDER, /setTip\(attach, "Attach a file"\)/);

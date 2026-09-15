@@ -15,7 +15,7 @@ const CSS_PATH = path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"
 // the markup render.ts builds, reduced to the nodes the dense rules touch. The chip's inline style is tagChip's
 // (tag-menu.ts, inheritSize), the tag button's is tagMenuButton's, the arrow is agentOpenButton's svg.
 const ARROW = '<span class="tool-open-agent bg-open-agent" role="button"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M7 3.5H4a1 1 0 0 0-1 1V12a1 1 0 0 0 1 1h7.5a1 1 0 0 0 1-1V9"/></svg></span>';
-const CHIP = '<span class="tab-group-chip" style="display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;border:1px solid var(--dim);color:var(--dim);background:transparent;white-space:nowrap;">web</span>';
+const CHIP = '<span class="tab-group-chip" style="display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;border:1px solid var(--dim);color:var(--dim);background:transparent;white-space:nowrap;font-weight:400;letter-spacing:normal;">web</span>';
 const TAGBTN = '<button type="button" style="background:transparent;border:1px solid #3c3c3c;border-radius:6px;padding:4px 6px;cursor:pointer;color:#9aa0a6;display:inline-flex;align-items:center;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 7.5 L7.5 2.5 H14 V9 L8.5 14 Z" stroke="currentColor" stroke-width="1.4"/></svg></button>';
 const tab = (id: string, label: string, cls = "") =>
   `<div class="tab${cls}" id="${id}"><span class="tab-label">${label}</span><span class="tab-close">×</span></div>`;
@@ -31,7 +31,7 @@ const html = `<body style="margin:0;width:900px">
   <div class="tab-group-sep" id="sep"></div>
   ${tab("t3", "tests")}
   <div class="tab tab-add" id="add">+</div>
-  <span class="tab-tagbox" id="tagbox">${TAGBTN}<span class="tab-tagchips" style="display:inline-flex;gap:5px;align-items:center;margin-left:2px;"></span></span>
+  <span class="tab-strip-end" id="stripend"><span class="tab-tagbox" id="tagbox">${TAGBTN}<span class="tab-tagchips" style="display:inline-flex;gap:5px;align-items:center;margin-left:2px;"></span></span><button type="button" class="tab-widgets-gear" id="gear">\u26ED</button></span>
 </div></div>
 <div id="bg-tasks">
   <div class="bg-fold-head open" id="bar"><span class="bg-caret">▾</span><span class="bg-dot"></span><span class="bg-fold-label">In the background · 5 agents · 1 command</span></div>
@@ -47,7 +47,7 @@ const html = `<body style="margin:0;width:900px">
 </body>`;
 
 type Snap = {
-  tab: number; tabPrefixed: number; head: number; add: number; tagbox: number; sepW: number; sepLine: number;
+  tab: number; tabPrefixed: number; head: number; add: number; tagbox: number; stripEnd: number; gear: number; sepW: number; sepLine: number;
   hostPrefixFs: number; closeFs: number; countFs: number;
   panel: number; bar: number; list: number; listMax: string;
   rowArrow: number; rowFlat: number; arrow: number;
@@ -78,7 +78,7 @@ const out = await page.evaluate(() => {
     const status = {};
     for (const id of ["running", "armed", "completed", "failed", "timer"]) status[id] = cs(q("#" + id + " .bg-status"), "display");
     return {
-      tab: h(q("#t1")), tabPrefixed: h(q("#t2")), head: h(q("#gh")), add: h(q("#add")), tagbox: h(q("#tagbox")),
+      tab: h(q("#t1")), tabPrefixed: h(q("#t2")), head: h(q("#gh")), add: h(q("#add")), tagbox: h(q("#tagbox")), stripEnd: h(q("#stripend")), gear: h(q("#gear")),
       sepW: sep.getBoundingClientRect().width, sepLine: h(sep) - parseFloat(cs(sep, "paddingTop")) - parseFloat(cs(sep, "paddingBottom")),
       hostPrefixFs: fs(q("#hp")), closeFs: fs(q("#t1 .tab-close")), countFs: fs(q("#gh .tab-group-count")),
       panel: h(q("#bg-tasks")), bar: h(q("#bar")), list: h(q("#list")), listMax: cs(q("#list"), "maxHeight"),
@@ -137,6 +137,12 @@ test("a tab is about 25px tall under the setting (32px by default); the + tab an
   near(on.tab, 25, "the dense tab"); near(on.tabPrefixed, 25, "a federated tab");
   near(on.add, 25, "the + tab (its 18px line + 2 x 3px + 1px border)");
   near(on.tagbox, 25, "the tag control's floor is the + tab's height, so its row stands no taller than the tabs' rows");
+  // the gear (T405 round two, the medium): its button stood 26px in the 25px row, and #tabs stretched every dense tab to 26;
+  // T412: the tags button and the gear share one right-end wrapper, and the gear is a bare 19px glyph with 3px above and below
+  near(on.stripEnd, on.tab, "the right-end wrapper stands no taller than the tabs' rows", 0.6);
+  assert.ok(on.gear <= on.tab + 0.01, "the gear button stands inside the dense row: " + on.gear.toFixed(2) + "px in a " + on.tab.toFixed(2) + "px row");
+  near(on.gear, 25, "the dense gear button: the 19px glyph, 3px padding above and below, no border", 0.6);
+  assert.ok(off.gear <= off.tab + 0.01, "default: the gear button stands inside the row too: " + off.gear.toFixed(2) + " in " + off.tab.toFixed(2));
 });
 
 test("a group header stretches to its row's tabs, so it is the tab's height in both states", { skip }, () => {

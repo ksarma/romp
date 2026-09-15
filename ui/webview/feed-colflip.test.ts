@@ -36,11 +36,11 @@ test("kernel: the dirty floor keys on build START, so a mid-build mutation still
   assert.ok(!/_views_dirty\[0\] > e\[2\]/.test(KERNEL), "no dirty check keys on build finish");
   // the start stamp is taken BEFORE the build runs, in both caches
   const feedBody = KERNEL.slice(KERNEL.indexOf("def _cached_feed"), KERNEL.indexOf("def _cached_timeline"));
-  assert.ok(feedBody.indexOf("started = time.time()") < feedBody.indexOf("build_feed(now, tmux)"),
+  assert.ok(feedBody.indexOf("started = time.time()") < feedBody.indexOf("build_feed(now, live_map)"),
     "feed: start stamped before the build reads anything");
   assert.match(feedBody, /_built_feed\[:\] = \[sig, feed, time\.time\(\), started\]/);
   const tlBody = KERNEL.slice(KERNEL.indexOf("def _cached_timeline"), KERNEL.indexOf("def _run_tier"));
-  assert.ok(tlBody.indexOf("started = time.time()") < tlBody.indexOf("build_timeline(now, tmux)"),
+  assert.ok(tlBody.indexOf("started = time.time()") < tlBody.indexOf("build_timeline(now, live_map)"),
     "timeline: start stamped before the build reads anything");
   assert.match(tlBody, /_built_timeline\[:\] = \[sig, tl, time\.time\(\), started\]/);
   // the rebuild rate limit still keys on the finish, so back-to-back starts don't shrink its window
@@ -69,6 +69,6 @@ test("feed: every prediction drop names WHY, so a bounce's trigger is in the tra
   }
   // a fresh payload marks itself as the next render's input, before reconcile can re-tag
   const payload = FEED.slice(FEED.indexOf('lastFeedEvent = "payload"'));
-  assert.ok(payload.indexOf("reconcileFollowMove(incomingAsks, lastPayloadBuildId, perHostBuildIds)") > 0,
+  assert.ok(payload.indexOf("reconcileFollowMove(incomingAsks, lastPayloadBuildId, perHostBuildIds, !!cardsUnknown)") > 0,
     "payload tag set before reconcile runs");
 });

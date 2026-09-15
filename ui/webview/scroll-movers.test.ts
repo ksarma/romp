@@ -38,8 +38,10 @@ test("render.ts: every mover of #content is a writeScroll — scrollBy and scrol
   // the movers, each under its name
   assert.match(RENDER, /scrollContentBy\(c, e\.deltaY \* k, "wheel-scale"\);/, "the wheel over a scrollbar notch");
   assert.match(RENDER, /scrollContentBy\(content, e\.key === "ArrowDown" \? NAV_SCROLL_STEP : -NAV_SCROLL_STEP, "key-nav"\);/, "the arrow keys");
-  assert.match(RENDER, /scrollElInto\(content0, el0, "center", "land-on"\);/, "the sentence land");
-  assert.match(RENDER, /const land = \(writer: string\) => \{ const c = document\.getElementById\("content"\); if \(c\) scrollElInto\(c, target, "start", writer\); \};\s*\n\s*const realign = \(\) => land\("land-realign"\);\s*\n\s*land\("land-on"\);/, "the deep-link land and its re-alignments");
+  // the sentence land is the deep-link land's own (T386): the quoted span, or the turn's text atom, is what the one write aligns on
+  assert.match(RENDER, /landOn\(target, uuid, quoteEl \?\? firstTextAtomBelow\(target\), quote\);/, "the sentence land");
+  assert.doesNotMatch(RENDER, /scrollElInto\(content0, el0, "center", "land-on"\);/, "no second write from the highlight");
+  assert.match(RENDER, /const land = \(writer: string\) => \{ const c = document\.getElementById\("content"\); if \(c\) scrollElInto\(c, at, "start", writer\); \};\s*\n\s*land\("land-on"\);/, "the deep-link land; its re-alignments are the settle rule's (landing-settle.ts)");
   // a message's own `#` link (the click delegate): inside the transcript the move is a writeScroll; a target that stands
   // outside #content (a comment popover's reply, found through userContentTarget's document fallback) scrolls its own
   // container the browser's way, and the #content arm is taken first
@@ -57,6 +59,6 @@ test("render.ts: every mover of #content is a writeScroll — scrollBy and scrol
 test("render.ts: a spacer re-size of the active view files a spacer row; the cap comes from localStorage", () => {
   assert.match(RENDER, /if \(\(topAfter !== topBefore \|\| botAfter !== botBefore\) && activeId && views\.get\(activeId\) === v\) \{\s*\n\s*const content = document\.getElementById\("content"\);\s*\n\s*scrollDiagRow\("spacer", spacerRow\(activeId, topBefore, topAfter, botBefore, botAfter,/);
   assert.match(RENDER, /const scrollDiagCap = readScrollDiagCap\(\(k\) => \{ try \{ return localStorage\.getItem\(k\); \} catch \{ return null; \} \}\);\s*\n\s*const scrollDiag = new ScrollDiagBudget\(scrollDiagCap\);/);
-  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange", data: any\): void \{/);
+  assert.match(RENDER, /function scrollDiagRow\(kind: "scrollwrite" \| "scrollgesture" \| "tailchange" \| "spacer" \| "tailmut" \| "unitchange" \| "regionask" \| "landmiss", data: any\): void \{/);
   assert.match(RENDER, /data: \{ sid: activeId \|\| "", perMinute: scrollDiagCap \} \}/, "the capped row says which cap");
 });

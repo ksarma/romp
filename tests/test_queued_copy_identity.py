@@ -19,9 +19,6 @@ queue:
   until it reaches the backend, where send() mints one. The kernel takes a client's id only in its own echo form
   and only when the session does not already hold it (a queued copy, a live echo, a parked op); otherwise it mints
   as before. A cancel that names the id removes exactly that copy (tests/test_queued_copy_press_id.py).
-  tmux — the CLI's queue-operation records carry timestamps but no ids: each copy carries its enqueue stamp and NO
-  id (an id only the ledger copy wore would make the chat reject the tmux echo as another send's); nothing pairs the
-  landed record (the kernel does not see the CLI take it), so the chat reads this route by text.
 
 SYNTHETIC fixtures only: a private synthetic sid, the notes-api demo world, hostname-free.
 """
@@ -51,6 +48,18 @@ T0 = 1_800_000_000
 
 def iso(t):
     return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def at_clock(now):
+    """The shift that puts RUNNING just BEFORE the clock and a splice or landing written at T0+85 half a
+    minute after it: a message is fed INTO a turn already running, so the turn's records (through T0+50)
+    precede the feed made during the test, and the record that lands the fed text follows it by a margin a
+    slow machine cannot eat (the CLI's enqueue stamp is never earlier than the feed; a landing stamped before
+    the echo would leave it unpaired). Until 2026-09-11 these tests wrote the turn AT the clock (shift
+    now-T0), which stamped its opener 39 s after the feed — a shape no session produces, and one the SDK
+    echo settle (sdk_backend.settle_echoes) rightly reads as the feed having been overtaken by a later human
+    turn."""
+    return (now - T0) - 52
 
 
 class _World:
@@ -83,7 +92,7 @@ class _World:
         names = root / "names"; names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(self.cwd))
         self.saved = (km.jd.NAMES, km.jd.PROJECTS, km.jd.CAPDIR, km.jd.ARCHDIR, km.jd.GOALDIR, km.jd.STATE,
-                      km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
+                      km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD)
         km.jd.NAMES, km.jd.PROJECTS = names, proj
         km.jd.CAPDIR, km.jd.ARCHDIR, km.jd.GOALDIR = root / "captions", root / "archive", root / "goals"
         km.jd.STATE = root
@@ -92,7 +101,7 @@ class _World:
         self.now = int(time.time())
         self.tm = {SID: {"state": "working", "since": self.now - 100, "model": "", "effort": "",
                          "context": None, "compactPct": None, "color": None}}
-        km._tmux_sessions = lambda: self.tm
+        km._live_map = lambda: self.tm
         km._chat_fold.clear(); km._parse_cache.clear()
         km._PATH_LINK_CACHE.clear(); km._SPACE_PATH_CACHE.clear()
         km._postal_index_memo[0] = None
@@ -105,7 +114,7 @@ class _World:
     def close(self):
         self._park.set()
         (km.jd.NAMES, km.jd.PROJECTS, km.jd.CAPDIR, km.jd.ARCHDIR, km.jd.GOALDIR, km.jd.STATE,
-         km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
+         km.NAMES, km._live_map, km._GLOBAL_CLAUDE_MD) = self.saved
         km._sdk = self.saved_sdk
         km._chat_fold.clear(); km._parse_cache.clear()
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
@@ -114,8 +123,9 @@ class _World:
 
     def write(self, recs, shift=None):
         # discovery keys on the real clock: shift the fixture to "just now"; a landing that must pair with a
-        # feed made during the test is written AT the clock (shift=now-T0), since the CLI's enqueue stamp is
-        # never earlier than the feed that handed it the text
+        # feed made during the test is written just after the clock and the running turn just before it
+        # (shift=at_clock(now)), since the CLI's enqueue stamp is never earlier than the feed that handed it
+        # the text, and the turn the text is fed into was running before the feed
         shift = (self.now - 600) - T0 if shift is None else shift
         out = []
         for r in recs:
@@ -253,7 +263,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         km._pending_ops.pop(SID, None)
 
     def test_the_queued_group_and_the_landed_atom_share_the_copys_id(self):
-        live = self.w.now - T0            # this test's records sit at the clock: the landing follows the feed in time
+        live = at_clock(self.w.now)       # the turn precedes the feed, the landing follows it (at_clock)
         self.w.write(RUNNING, shift=live)
         fed_text = "and also update the docstring"
         self.assertTrue(self.w.be.send(SID, fed_text))
@@ -267,7 +277,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         # the CLI takes the first copy at the boundary: the feed pops it, the splice record lands it
         with self.w.s._lock:
             self.w.s._pop_for_feed_locked()
-        recs = RUNNING + [attline(T0 + 55, fed_text, "att1", "tr1"), aline(T0 + 75, "Updated.", "a3", "att1", tools=("Bash",), stop="tool_use")]
+        recs = RUNNING + [attline(T0 + 85, fed_text, "att1", "tr1"), aline(T0 + 105, "Updated.", "a3", "att1", tools=("Bash",), stop="tool_use")]
         self.w.write(recs, shift=live)
         m = self.w.build()
         landed = [e for e in m["events"] if e.get("kind") == "user" and e.get("md") == fed_text]
@@ -278,7 +288,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         self.assertEqual([t.get("qid") for t in q[0]["texts"]], [qid_later], "the queue now holds the other copy only")
 
     def test_an_intermediate_build_between_the_feed_and_the_landing_keeps_the_pairing(self):
-        live = self.w.now - T0
+        live = at_clock(self.w.now)
         self.w.write(RUNNING, shift=live)
         fed_text = "and also update the docstring"
         self.w.be.send(SID, fed_text)
@@ -288,7 +298,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         mid = self.w.build()                    # the echo is the visible copy now: a build here must not pair it
         echoes = [e for e in mid["events"] if e.get("kind") == "user" and str(e.get("uuid", "")).startswith("echo:")]
         self.assertEqual([e.get("qid") for e in echoes], [None] * len(echoes), "an echo event carries no landing id (its uuid IS the copy's id)")
-        self.w.write(RUNNING + [attline(T0 + 55, fed_text, "att1", "tr1"), aline(T0 + 75, "Updated.", "a3", "att1", tools=("Bash",), stop="tool_use")], shift=live)
+        self.w.write(RUNNING + [attline(T0 + 85, fed_text, "att1", "tr1"), aline(T0 + 105, "Updated.", "a3", "att1", tools=("Bash",), stop="tool_use")], shift=live)
         m = self.w.build()
         landed = [e for e in m["events"] if e.get("kind") == "user" and e.get("md") == fed_text and not str(e.get("uuid", "")).startswith("echo:")]
         self.assertEqual([e.get("qid") for e in landed], [qid])
@@ -299,7 +309,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         # as "/deploy staging now" with one space. The chat's own pending bubble retires by id once it has
         # latched the copy's, so the landed event must carry it although the texts differ in whitespace;
         # and the kernel's echo, the other visible copy, retires on the same record (2026-09-10).
-        live = self.w.now - T0
+        live = at_clock(self.w.now)
         self.w.write(RUNNING, shift=live)
         typed = "/deploy \n\nstaging now"
         self.assertTrue(self.w.be.send(SID, typed))
@@ -308,10 +318,10 @@ class TheChatCarriesTheIds(unittest.TestCase):
             self.w.s._pop_for_feed_locked()
         wrap = ("<command-message>deploy</command-message>\n<command-name>/deploy</command-name>\n"
                 "<command-args>staging now</command-args>\n<skill-format>true</skill-format>")
-        recs = RUNNING + [dict(uline(T0 + 55, wrap, "c1", "tr1"), isMeta=True, promptId="p1"),
-                          dict(uline(T0 + 55, "Base directory for this skill: /tmp/notes-api/.claude/skills/deploy\n\nDeploy the service.",
+        recs = RUNNING + [dict(uline(T0 + 85, wrap, "c1", "tr1"), isMeta=True, promptId="p1"),
+                          dict(uline(T0 + 85, "Base directory for this skill: /tmp/notes-api/.claude/skills/deploy\n\nDeploy the service.",
                                      "c2", "c1"), isMeta=True, promptId="p1"),
-                          aline(T0 + 75, "Deploying staging now.", "a3", "c2")]
+                          aline(T0 + 105, "Deploying staging now.", "a3", "c2")]
         self.w.write(recs, shift=live)
         m = self.w.build()
         landed = [e for e in m["events"] if e.get("kind") == "user" and e.get("md") == "/deploy staging now"
@@ -322,7 +332,7 @@ class TheChatCarriesTheIds(unittest.TestCase):
         self.assertNotIn(SID, self.w.be._live, "…and left the live store")
 
     def test_a_two_block_record_carries_both_copies_ids(self):
-        live = self.w.now - T0
+        live = at_clock(self.w.now)
         self.w.write(RUNNING, shift=live)
         self.w.be.send(SID, "first of two"); self.w.be.send(SID, "second of two")
         [q1, q2] = [m["qid"] for m in self.w.be.pending_queued_meta(SID)]
@@ -353,8 +363,8 @@ class TheChatCarriesTheIds(unittest.TestCase):
         self.assertEqual([(x["md"], x.get("qid")) for x in q[0]["texts"]], [("A", None), ("B", None)])
 
     def test_a_stamp_without_an_id_rides_the_queued_copy_too(self):
-        # the tmux route's copies carry an enqueue stamp and no id (TheTmuxQueueCarriesStamps): the group ships the
-        # stamp on its own — it rode only beside an id (third review)
+        # a copy without an id (an older mirror's restore, one the backend queued itself) still carries its enqueue
+        # stamp: the group ships the stamp on its own — it rode only beside an id (third review)
         self.w.write(RUNNING)
         self.w.s.enqueue("stamped only")
         self.w.be.pending_queued_meta = lambda sid: [{"md": "stamped only", "qid": None, "qts": 1_700_000_000_000}]
@@ -481,25 +491,6 @@ class TheSdkQueueTakesTheClientsId(unittest.TestCase):
         self.assertEqual(km._client_qid(msg, SID, self.w.be), fresh, "the same id is taken once both reads answer")
 
 
-class TheTmuxQueueCarriesStamps(unittest.TestCase):
-    def test_each_copy_carries_its_enqueue_stamp_and_no_id_since_nothing_on_this_route_could_share_one(self):
-        td = tempfile.TemporaryDirectory()
-        p = Path(td.name) / "t.jsonl"
-        recs = [{"type": "queue-operation", "operation": "enqueue", "content": "one", "timestamp": iso(T0 + 5)},
-                {"type": "queue-operation", "operation": "enqueue", "content": "two", "timestamp": iso(T0 + 9)},
-                {"type": "queue-operation", "operation": "dequeue", "timestamp": iso(T0 + 12)}]
-        p.write_text("".join(json.dumps(r) + "\n" for r in recs))
-        km._queued_parse_cache.clear()
-        self.assertEqual(km._pending_queued(str(p)), ["two"])
-        meta = km._pending_queued_meta(str(p))
-        self.assertEqual([m["md"] for m in meta], ["two"])
-        self.assertEqual(meta[0]["qts"], (T0 + 9) * 1000)
-        # no id: the tmux echo is minted before the CLI writes its enqueue record and the landing carries nothing,
-        # so an id only the ledger copy wore would make the chat reject the echo as another send's (review)
-        self.assertIsNone(meta[0]["qid"])
-        td.cleanup()
-
-
 class IdentitySurvivesTheKernelsDeath(unittest.TestCase):
     """A kernel restart used to re-mint everything (second review): the queue mirror carried texts only, so the
     restored copies were id-less; the echo mirror carried no uuid, so the reseeded echo wore a new one; and a fed
@@ -510,7 +501,7 @@ class IdentitySurvivesTheKernelsDeath(unittest.TestCase):
 
     def setUp(self):
         self.w = _World()
-        self.w.write(RUNNING, shift=self.w.now - T0)   # at the clock: a landing must follow the feed in time
+        self.w.write(RUNNING, shift=at_clock(self.w.now))   # the turn before the feed, the landing after it (at_clock)
         self._parks = []
 
     def tearDown(self):
@@ -542,7 +533,7 @@ class IdentitySurvivesTheKernelsDeath(unittest.TestCase):
                          "the reseeded echo keeps its uuid, which IS the id")
         with s2._lock:
             s2._pop_for_feed_locked()
-        self.w.write(RUNNING + [uline(T0 + 55, "rename it", "u3", "tr1")], shift=self.w.now - T0)
+        self.w.write(RUNNING + [uline(T0 + 85, "rename it", "u3", "tr1")], shift=at_clock(self.w.now))
         m = self.w.build()
         landed = [e for e in m["events"] if e.get("kind") == "user" and e.get("uuid") == "u3"]
         self.assertEqual([e.get("qid") for e in landed], [qid], "the landing pairs with the same id in the new life")

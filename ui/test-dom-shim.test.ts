@@ -483,10 +483,11 @@ const ALLOWLIST_MAX = 0;
 // lowers it.
 const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edge-named key is no DOM edge, edge-initialising lines the detector reads]
   ["webview/card-subgoals.test.ts", "a goal fixture's children array holds ids (strings): a data tree the card renders, not a DOM", 1],
+  ["webview/composer-placeholder.test.ts", "phParts's placeholder record names the far host's prefix under a `host` key (a string or null): the composer's words, not a DOM edge (upstream's T355 test)", 7],
   ["webview/feed-viewer-focus-browser.test.ts", "a feed frame's card carries its goal tree, whose one node has an empty children array: the card model the feed renders, not a DOM", 1],
   ["webview/tab-snapshot-view.test.ts", "a list model's children are plain rows of an id and a text with no edge back, so a dump is the rows", 1],
 ];
-const NON_DOM_EDGES_MAX = 3;
+const NON_DOM_EDGES_MAX = 4;
 const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
 // SWITCHED: the seventeen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the sixteen
 // near-copies (fifteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and

@@ -3,8 +3,8 @@ WHOLE strip as placeholders up front (no one-by-one pop-in). Every strip sender 
 the connect push a `ready` triggers; _push_session_now; _confirm_close_now) hands a `tabs` list of {id, name,
 color} alongside the sid `order` to _send_tab_order, the one frame builder's caller. The `ready` handler
 sends no strip of its own, whichever app's renderer posted it.
-On the fork each sender hands the builder the liveness map its own _tab_list_tmux collapse guard affirmed for
-the cycle (never a raw _tmux_sessions() read), and the frame carries the `live` sids that map affirms (T258: the
+Each sender hands the builder the cycle's liveness map (_live_map(); the fork's per-sender collapse guard left
+with the tmux backend 2026-09-11), and the frame carries the `live` sids that map affirms (T258: the
 pane keeps a live sid the order omits).
 
 """
@@ -35,10 +35,8 @@ class TabsFirst(unittest.TestCase):
                       "the periodic push builds a name+color+emoji list per tab")
         # 2026-09-07: the frame itself moved into _tab_order_frame — the ONE builder (T258: it carries the
         # affirmed-live sids; and a reconnecting client's skeleton list) — so the pusher hands its order + meta
-        # + liveness to _send_tab_order, which builds the frame per client. The liveness it hands over is the
-        # frame's `live` set (T258), fed from the collapse guard's map the whole chat block trusts this cycle
-        # (chat_tmux): on a carried cycle it lists the carried sids as live, consistent with `order`
-        self.assertIn('_send_tab_order(c, tab_order, tab_meta, chat_tmux)', src,
+        # + liveness to _send_tab_order, which builds the frame per client
+        self.assertIn('_send_tab_order(c, tab_order, tab_meta, live_map)', src,
                       "and ships it as the tabs field alongside the sid order, through the one strip builder")
         self.assertIn('fr = {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
                       '          **_views_payload(), "live": sorted({str(x) for x in live})}',
@@ -64,34 +62,23 @@ class TabsFirst(unittest.TestCase):
         text = open(KPATH).read()
         self.assertEqual(text.count('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, live, c))'), 1)
         self.assertEqual(text.count("_tab_order_frame(tab_order, tab_meta, live, c)"), 1, "the builder's one caller: _send_tab_order")
-        # ...the three call sites each naming the liveness map its sender trusted: the pusher's guarded map for
-        # the cycle (chat_tmux), the off-cycle push's guarded read (tmux), the close confirmation's guarded read
-        # (guarded); never a raw _tmux_sessions(). The prefix count includes the def line, hence the 4
-        self.assertEqual(text.count("def _send_tab_order(c, tab_order, tab_meta, live):"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, "), 4, "the def line and the three call sites")
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, chat_tmux)"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, tmux)"), 1)
-        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, guarded)"), 1)
+        self.assertEqual(text.count("_send_tab_order(c, tab_order, tab_meta, live_map)"), 3)
         self.assertEqual(text.count("_send_tab_order(client, _o, _tabs, _tm)"), 0,
                          "the WS 'ready' handler sends no strip of its own (2026-09-03; kept under #1017 by the 2026-09-09 "
-                         "ruling): the guarded push is the only tabOrder source, so upstream's connect-time hand-off has no home here")
+                         "ruling): the pusher's push is the only tabOrder source, so upstream's connect-time hand-off has no home here")
         self.assertEqual(text.count('{"type": "tabOrder"'), 1, "the literal lives in _tab_order_frame alone")
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, ", inspect.getsource(km._push_session_now))
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, tmux)", inspect.getsource(km._push_session_now),
-                      "the off-cycle push hands the builder its own guarded read")
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, ", inspect.getsource(km._confirm_close_now))
-        self.assertIn("_send_tab_order(c, tab_order, tab_meta, guarded)", inspect.getsource(km._confirm_close_now),
-                      "the close confirmation hands the builder its own guarded read")
+        self.assertIn("_send_tab_order(c, tab_order, tab_meta, live_map)", inspect.getsource(km._push_session_now))
+        self.assertIn("_send_tab_order(c, tab_order, tab_meta, live_map)", inspect.getsource(km._confirm_close_now))
 
     def _ready(self, app):
         """One `ready` from a renderer of `app`, the connect push stubbed as a marker: the types of the frames
         the handler put on the socket, in order, and the client's dedup slots afterwards. The slots read the
         same frames a second way: a strip sent through _send_client records its ("taborder",) key there."""
         # the liveness reads a strip built at ready would make: pinned, so should such a strip return, these
-        # tests fail the same way with or without tmux on this machine
-        saved = (km._tmux_sessions, km._alive_sessions, km._send_feed_now)
-        km._tmux_sessions = lambda: {}
-        km._alive_sessions = lambda now, tmux: []
+        # tests fail the same way whatever this machine runs
+        saved = (km._live_map, km._alive_sessions, km._send_feed_now)
+        km._live_map = lambda: {}
+        km._alive_sessions = lambda now, live_map: []
         # the fork's connect-time feed serve (T3) is stubbed too: about 90 modules load the kernel under the shared
         # romp_kernel module object, so a sibling's cached feed frame could let it send a `feed` frame and skip
         # the stubbed connect push, and the marker below would not appear (an ordering red in the 2026-09-15 sweep)
@@ -103,7 +90,7 @@ class TabsFirst(unittest.TestCase):
             client = {"app": app, "wid": "w1", "alive": True, "send": lambda s: sent.append(json.loads(s))}
             km.Handler._dispatch_ws(h, {"type": "ready"}, client)
         finally:
-            km._tmux_sessions, km._alive_sessions, km._send_feed_now = saved
+            km._live_map, km._alive_sessions, km._send_feed_now = saved
         return [m["type"] for m in sent], client.get("sent", {})
 
     def test_connect_ready_handler_sends_no_tab_order_of_its_own(self):
@@ -119,7 +106,7 @@ class TabsFirst(unittest.TestCase):
     def test_connect_ready_handler_source_carries_no_strip_spelling(self):
         # The source-pin twin of the executed test above (the fork's pin, kept under its own name): none of the
         # spellings the ready arm's own strip ever had is in the kernel, and the arm's body between its test and
-        # the parked-reveal step resets the tails and runs the guarded push, with no hand-off to the strip builder
+        # the parked-reveal step resets the tails and runs the connect push, with no hand-off to the strip builder
         # and no resolve of its own (the pusher's _resolve_reconnect fills a redial's skeleton set; the fork removed
         # the arm's strip on 2026-09-03 and keeps it out under READY_GATE_CAP: tests/test_chat_skeleton_reconnect_gate.py)
         text = open(KPATH).read()
@@ -136,7 +123,7 @@ class TabsFirst(unittest.TestCase):
         self.assertNotIn("_send_tab_order(", handler, "...and no hand-off to the strip builder")
         self.assertNotIn("_resolve_reconnect(", handler, "...nor a resolve: the pusher's strip resolves a redial's set")
         self.assertIn("_client_reset_chat_base(client)", handler, "the arm forgets the tails this renderer is believed to hold")
-        self.assertIn("self._push_one(client)", handler, "the guarded push still runs on `ready`")
+        self.assertIn("self._push_one(client)", handler, "the connect push still runs on `ready`")
 
     def test_a_feed_clients_ready_yields_no_tab_order_frame(self):
         # The strip the ready arm used to send went to every app's socket, not only a chat's. The feed page has

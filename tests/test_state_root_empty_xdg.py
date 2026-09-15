@@ -8,8 +8,9 @@ kernel/judge.py used `os.environ.get("XDG_STATE_HOME", default)`, which keeps an
 the state root the RELATIVE path `romp` (wherever the process happened to be). A `XDG_STATE_HOME=` line
 in service.env then had romp-serve find the SDK venv under ~/.local/state/romp and run its interpreter
 while the kernel looked for it under ./romp and reported the SDK as not installed (review 2026-09-06).
-postal/postal_service.py and cli/idle_dots.py carried the same .get default, so the postal bus's mail and
-the idle-dots pidfile would have moved with the cwd the same way; all four readers now use `or`.
+postal/postal_service.py carried the same .get default, so the postal bus's mail would have moved with the
+cwd the same way; all three readers now use `or` (cli/idle_dots.py, a fourth reader, left with the tmux backend
+2026-09-11).
 
 Pinned in a child process, because every one of these modules resolves STATE at import time. The
 empty-value case and the honored-value case are pinned upstream since #1211 in
@@ -43,11 +44,10 @@ from romp_load import load_source
 em = load_source("romp_event_model_xdg", os.path.join(root, "kernel", "event_model.py"))
 jd = load_source("romp_judge_xdg", os.path.join(root, "kernel", "judge.py"))
 ps = load_source("romp_postal_xdg", os.path.join(root, "postal", "postal_service.py"))
-idl = load_source("romp_idle_dots_xdg", os.path.join(root, "cli", "idle_dots.py"))
 print(json.dumps({"event_model": str(em.STATE), "judge": str(jd.STATE),
-                  "postal": str(ps.STATE.parent), "idle_dots": str(idl.STATE)}))
+                  "postal": str(ps.STATE.parent)}))
 """
-READERS = ("event_model", "judge", "postal", "idle_dots")
+READERS = ("event_model", "judge", "postal")
 
 
 def _roots(env_over):

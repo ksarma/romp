@@ -888,7 +888,7 @@ class Capability(_Wire):
                         "after a reconnect, which must stay the resync frame itself")
         self.assertNotIn("tabOrder", types, "no strip from the handler itself: the connect push is the one source")
         caps = next(m for m in self.sent if m["type"] == "caps")
-        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit"], "viewsSeq": None},
+        self.assertEqual(caps, {"type": "caps", "caps": ["tagEdit", "chatProto2"], "viewsSeq": None},
                          "no store exists yet: the stubbed push carried no seq and the store has none; viewsSeq is null, "
                          "the key always present")
         # a RE-SENT ready (the shim, on a reconnected socket) gets the caps again — the event a page
@@ -1006,12 +1006,12 @@ class Capability(_Wire):
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
-        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
+        saved = (km.NAMES, km._live_map, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
         try:
             km.NAMES = names
-            km._tmux_sessions = lambda: {}
+            km._live_map = lambda: {}
             km._mark_views_dirty = lambda: None
-            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
+            km._chat_tab_sessions = lambda now, live: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
                                                          "anchor": SID1}]
             km._cached_feed = lambda *a, **k: None
             self.client["app"] = "chat"
@@ -1024,7 +1024,7 @@ class Capability(_Wire):
             types = [m["type"] for m in self.sent]
             self.assertLess(types.index("tabOrder"), types.index("caps"))
         finally:
-            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
+            (km.NAMES, km._live_map, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
 
     def test_the_inline_boot_routes_caps_and_unknown_op_to_the_panel(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -1052,11 +1052,11 @@ class ReadyStripSource(_Wire):
         self.client["app"] = "chat"                  # _push sends the strip to chat clients only
         self.seed()                                  # a stamped store: every frame's views blob carries a seq
         # the liveness reads a strip built at ready would make: pinned, so should such a strip return, these
-        # tests fail the same way with or without tmux on this machine
-        saved = (km._tmux_sessions, km._alive_sessions)
-        km._tmux_sessions = lambda: {self.LIVE: {}}
-        km._alive_sessions = lambda now, tmux: [{"sid": self.LIVE, "name": "web", "path": "/nonexistent/live.jsonl"}]
-        self.addCleanup(lambda: setattr(km, "_tmux_sessions", saved[0]))
+        # tests fail the same way whatever is live on this machine
+        saved = (km._live_map, km._alive_sessions)
+        km._live_map = lambda: {self.LIVE: {}}
+        km._alive_sessions = lambda now, live: [{"sid": self.LIVE, "name": "web", "path": "/nonexistent/live.jsonl"}]
+        self.addCleanup(lambda: setattr(km, "_live_map", saved[0]))
         self.addCleanup(lambda: setattr(km, "_alive_sessions", saved[1]))
 
     def _connect_push(self, order):
@@ -2528,19 +2528,19 @@ class BlobLessConnectPushCaps(_Wire):
         names = _P(tmp) / "names"
         names.mkdir()
         (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
-        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
+        saved = (km.NAMES, km._live_map, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed)
         try:
             km.NAMES = names
-            km._tmux_sessions = lambda: {}
+            km._live_map = lambda: {}
             km._mark_views_dirty = lambda: None
-            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
+            km._chat_tab_sessions = lambda now, live: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
                                                          "anchor": SID1}]
             km._cached_feed = lambda *a, **k: None
             self.client["app"] = "chat"
             self.client["sent"] = {}
             km._push([self.client])
         finally:
-            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
+            (km.NAMES, km._live_map, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed) = saved
         tab = [m for m in self.sent if m["type"] == "tabOrder"]
         self.assertEqual(len(tab), 1)
         self.assertEqual(tab[0]["views"]["seq"], s0)
@@ -2579,52 +2579,6 @@ class BlobLessConnectPushCaps(_Wire):
         caps = self._ready()
         self.assertEqual(caps["viewsSeq"], s_page - 1000)
         self.assertEqual(self.notices, [])
-
-    def test_a_sentinel_connect_push_sends_no_views_blob_and_the_caps_frame_names_the_stores_seq(self):
-        """The fork's liveness-collapse guard (_tab_list_tmux, kept beside upstream's text): on a sentinel cycle
-        (_tab_list_tmux returned None, a boot-time tmux collapse with nothing trustworthy to carry) a chat page's
-        connect push sends NO tabOrder frame (an omitted tab is a teardown), so the push serves no views blob and
-        the caps frame names the store's current seq, the seq the next push serves; once the guard recovers the
-        pusher's next tabOrder carries the store's blob under that very seq and no second caps frame is needed."""
-        import tempfile as _tf
-        from pathlib import Path as _P
-        s0 = self.seed()["seq"]
-        tmp = _tf.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp, True)
-        names = _P(tmp) / "names"
-        names.mkdir()
-        (names / SID1).write_text("web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
-        saved = (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed, km._tab_list_tmux)
-        try:
-            km.NAMES = names
-            km._tmux_sessions = lambda: {}
-            km._mark_views_dirty = lambda: None
-            km._chat_tab_sessions = lambda now, tmux: [{"sid": SID1, "name": "web", "path": os.path.join(tmp, "none.jsonl"),
-                                                         "anchor": SID1}]
-            km._cached_feed = lambda *a, **k: None
-            km._tab_list_tmux = lambda tmux: None                      # the sentinel: nothing trustworthy this cycle
-            self.client["app"] = "chat"
-            self.client["sent"] = {}
-            n = len(self.sent)                                         # the seed's own ack sits before this
-            with contextlib.redirect_stderr(io.StringIO()):
-                caps = self._ready()
-            self.assertEqual([m["type"] for m in self.sent[n:] if m["type"] == "tabOrder"], [],
-                             "a sentinel cycle sends no tabOrder frame (an omitted tab is a teardown)")
-            self.assertEqual([m for m in self.sent[n:] if km._views_seq_of(m) is not None], [],
-                             "and no other frame of the connect push carried a views blob")
-            self.assertEqual(caps["viewsSeq"], s0, "the store's current seq: the one the next push serves")
-            # the guard recovers: the pusher's next tabOrder carries the store's blob under that very seq,
-            # which the client's gate adopts because the caps frame named it
-            km._tab_list_tmux = lambda tmux: tmux
-            with contextlib.redirect_stderr(io.StringIO()):
-                km._push([self.client])
-            tab = [m for m in self.sent if m["type"] == "tabOrder"]
-            self.assertEqual(len(tab), 1)
-            self.assertEqual(tab[0]["views"]["seq"], s0)
-            self.assertEqual([m["type"] for m in self.sent if m["type"] == "caps"], ["caps"], "no second caps frame: none is needed")
-        finally:
-            (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed, km._tab_list_tmux) = saved
-
 
 class WebBootWiring(_Wire):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes

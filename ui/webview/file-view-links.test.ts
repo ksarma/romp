@@ -837,7 +837,10 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   const opener = RENDER.slice(openerAt, RENDER.indexOf("}, true);", openerAt));
   assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(a as HTMLElement\)\.draggable && selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*let href = linkHref\(a\);/,
     "the chat's opener: the panel's mark first, then, for a non-draggable anchor only, the selection open inside it (the click that ends a drag-select: cancelled, never opened; a chat anchor is draggable and a selection left around it by a triple-click is not a drag on it, round 4), then the href (a `let`: a scheme-less one is replaced by the address the browser would follow, md-sanitize-chat-schemeless-browser.test.ts)");
+  // two import lines from path-links.ts: the walk and the openers, then the target reader the hosts share with the options
+  // type the chat's fenced walk (FENCE_WALK, 2026-09-12) and the todo surfaces' walkOpts are typed by
   assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);
+  assert.match(RENDER, /import \{ linkTarget, type PathLinkOptions \} from "\.\/path-links";/);
   assert.match(VIEW, /import \{ selectionOpenIn \} from "\.\/path-links";/);
   assert.doesNotMatch(d, /getSelection|isCollapsed/, "no second spelling of the selection test in the delegate");
   assert.match(VIEW, /const linkOf = \(t: Element \| null\): HTMLElement \| null => \{\n\s*const x = t && typeof t\.closest === "function" \? t\.closest\('\[data-act="openpath"\], a\.' \+ URL_LINK_CLASS \+ ", a\." \+ FRAG_LINK_CLASS\) as HTMLElement \| null : null;\n\s*return x && body\.contains\(x\) \? x : null;/);
@@ -914,8 +917,9 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
 });
 
 test("source: the shared walk's options, the line units and the anchor marker live in path-links.ts, defaults unchanged for the chat; the module writes attributes, never markup", () => {
-  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/);   // targetSuffix: a todo surface's section arm (Slice 6 of plans/markdown-viewer.md; path-links.test.ts); the viewer's pass keeps lineSuffix
-  assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);
+  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*preVerified\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number; inPre: boolean \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*targetSuffix\?: boolean;\n\s*unit\?: string;\n\}/,
+    "preVerified and the ctx's inPre for the chat's fenced blocks (2026-09-12; the viewer passes neither); targetSuffix: a todo surface's section arm (Slice 6 of plans/markdown-viewer.md; path-links.test.ts); the viewer's pass keeps lineSuffix");
+  assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);   // the session the links carry (data-sid) is the caller's second argument
   assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/, "a link, and an inline SVG (an element put inside SVG text does not render)");
   assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat still skips fenced blocks");
   assert.match(LINKS, /const walker = document\.createTreeWalker\(root, NodeFilter\.SHOW_ELEMENT \| NodeFilter\.SHOW_TEXT\);/, "the walk sees elements, to cut a unit at a <br>");
@@ -940,12 +944,12 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.ok(lb.indexOf("if (call) return") < lb.indexOf("lastIndexOf(\"\\n\", s - 1)"), "a call: return before the line is read back");
   assert.match(lb, /const isImport = word === "from" \? STATEMENT_HEAD_RE\.test\(head\) \|\| continuesImport\(lineOf\(text, lineStart, at\)\) : \/\^\\s\*\$\/\.test\(head\);/);
   assert.match(MOD, /const lineEnd = text\.indexOf\("\\n", at\);\n\s*return text\.slice\(lineStart, lineEnd < 0 \? text\.length : lineEnd\);/, "a from's line is read forward to its break, bounded by the line as the look-behind is");
-  assert.match(LINKS, /opts\.accept\(tok, \{ text, at: start \}\)/, "the walk hands the gate the token's line and offset, and nothing above them");
+  assert.match(LINKS, /opts\.accept\(tok, \{ text, at: start, inPre: span\.inPre \}\)/, "the walk hands the gate the token's line and offset, and whether it sat in a fenced block (2026-09-12), and nothing above them");
   assert.doesNotMatch(LINKS, /texts\.push|above\(/, "the walk keeps no unit's text past its own pass");
   assert.match(MOD, /const STATEMENT_HEAD_RE = \/\^\\s\*\(\?:import\|export\)\\b\/;/);
   assert.match(LINKS, /for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/, "no unit: every node its own unit, the chat's walk as it was");
   assert.match(LINKS, /const span = spanHolding\(u, start, start \+ tok\.length\);\n\s*if \(!span\) continue;/, "a token across a node's edge is left as it is");
-  assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start \}\)\) continue;/);
+  assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start, inPre: span\.inPre \}\)\) continue;/);
   assert.match(LINKS, /if \(isUri && lines\) \{ const tail = URI_LINE_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}/);   // `lines`: lineSuffix or targetSuffix (Slice 6)
   assert.match(LINKS, /export const LINE_SUFFIX_RE = \/\^\(\?::\(\\d\+\)\(\?::\\d\+\)\?\|#L\(\\d\+\)\(\?:-L\?\\d\+\)\?\)\(\?!\[\\w\/\]\)\/;/);
   assert.match(LINKS, /export function markPathLink\(a: HTMLElement, open: string, relative = false, sid\?: string \| null\): HTMLElement \{\n\s*const cls = a\.getAttribute\("class"\) \|\| "";\n\s*if \(!\(" " \+ cls \+ " "\)\.includes\(" file-uri-link "\)\) a\.setAttribute\("class", \(cls \? cls \+ " " : ""\) \+ "file-uri-link"\);\n\s*a\.setAttribute\("title", "Open " \+ open\);/, "attributes, so an SVG <a> is marked too");

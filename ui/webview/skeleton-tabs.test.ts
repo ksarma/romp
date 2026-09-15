@@ -3,7 +3,7 @@
 // it is pinned at the source in skeleton-tabs-wiring.test.ts. Synthetic ids only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { newSkeletonState, applyTabOrderSkeleton, onStatus, onFull, onDismiss, onSocketUp, nextPrefetch,
+import { newSkeletonState, applyTabOrderSkeleton, onStatus, holdStatus, onFull, onDismiss, onSocketUp, nextPrefetch,
          renderKind, type SkeletonState } from "./skeleton-tabs";
 
 const A = "11111111-2222-3333-4444-aaaaaaaaaaaa";
@@ -105,6 +105,24 @@ test("nextPrefetch: null when hidden, null while one is in flight, else the firs
   assert.equal(nextPrefetch(newSkeletonState(), A, none, false, all), null, "a fresh page has no set");
 });
 
+test("holdStatus: a status ahead of its strip is kept for the array that lists the id and dropped by one that does not", () => {
+  // The pane shim's FIFO delivers a newer tabOrder at the END of a burst, so a skeleton's status frames can land before
+  // the strip that names the set (a later chat column's open sends two strips, 2026-09-11). The status waits for the
+  // strip; an ask in its place loaded the whole board behind a column opened as a view of one session.
+  const st = newSkeletonState();
+  assert.equal(onStatus(st, C, { state: "working" }), "not-skeleton", "no set yet: the caller's fallthrough, which holds");
+  holdStatus(st, C, { state: "working" }); holdStatus(st, D, { state: "idle" });
+  assert.deepEqual(held(st), [], "a held status makes no skeleton");
+  assert.equal(renderKind(st, C, false), "placeholder", "…and draws nothing as one");
+  assert.equal(nextPrefetch(st, A, none, false, all), null, "…and the idle walk has nothing to fetch");
+  applyTabOrderSkeleton(st, [C], [A, C, D]);
+  assert.deepEqual(held(st), [C]);
+  assert.deepEqual(st.status.get(C), { state: "working" }, "the held status is the chip's the moment the strip lists the id");
+  assert.equal(st.status.has(D), false, "a status for an id the array does not list is dropped with the strip");
+  onFull(st, C);
+  assert.equal(st.status.has(C), false, "the full clears it as any skeleton's");
+});
+
 test("onDismiss: a tab that left the strip has nothing left to load", () => {
   const st = newSkeletonState();
   applyTabOrderSkeleton(st, [C], [A, C]);
@@ -132,4 +150,17 @@ test("an array never adopts an id the strip does not list: a session that ended 
   applyTabOrderSkeleton(st, ["B", "Z"], ["A", "B"]);
   assert.deepEqual(st.order, ["B"], "Z is not on the strip → not a skeleton either (the prefetch must never ask for it)");
   assert.equal(st.ids.has("Z"), false);
+});
+
+test("a dismissed tab leaves the loaded set, so its re-listing is a skeleton again and the pane asks for its frame (T357)", () => {
+  const st = newSkeletonState();
+  applyTabOrderSkeleton(st, ["A"], ["A", "B"]);
+  onFull(st, "A");                                    // its frame landed on this socket
+  assert.ok(st.loaded.has("A")); assert.ok(!st.ids.has("A"));
+  applyTabOrderSkeleton(st, ["A"], ["A", "B"]);       // re-listed as a skeleton while loaded: refused, the page has it
+  assert.ok(!st.ids.has("A"), "a loaded id is never re-skeletoned on the same socket");
+  onDismiss(st, "A");                                 // its tab left the strip (a host drop, an omission): the view went with it
+  assert.ok(!st.loaded.has("A"), "no longer loaded here");
+  applyTabOrderSkeleton(st, ["A"], ["A", "B"]);       // the host re-attached: the strip names it a skeleton again
+  assert.ok(st.ids.has("A"), "…and now it is one, so the pane asks for its frame");
 });

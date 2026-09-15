@@ -8,6 +8,8 @@ popover with the next step. The /send remote forward reports a dead far kernel i
 Synthetic fixtures only."""
 import json
 import os
+import time
+import inspect
 import unittest
 from unittest import mock
 from romp_load import load_source
@@ -209,6 +211,39 @@ class RecoveryCounter(unittest.TestCase):
         self.assertIn('r["_poll_miss"] = True', src, "a real silent poll leaves its mark")
         self.assertEqual(src.count('r["_demand_miss"] = True'), 2, "both the ssh row's and the checked-in peer's timeout preload")
 
+    def test_the_row_says_when_romp_is_dialing_the_host_right_now(self):
+        """The host-down notice's swirl spins on `dialing` (the user 2026-09-10, who wanted a spinner that means
+        romp is trying right now): true while an ssh dial is spawned and unconfirmed ("starting"; "connecting"
+        is a checked-in row's birth state) or while the pass's health requests to the host are in flight, false
+        while the row waits out its backoff. The in-flight mark is set around the requests, cleared however
+        they end, and never saved: it describes this pass, not the host."""
+        row = lambda **kw: dict({"host": "TESTHOST", "kernel_port": 1, "local_port": 1}, **kw)
+        self.assertTrue(km._row_dialing(row(status="starting")), "an ssh dial spawned, not yet confirmed")
+        self.assertTrue(km._row_dialing(row(status="connecting")), "a checked-in row before its first poll")
+        self.assertTrue(km._row_dialing(row(status="down", _dialing=True)), "the health request is in flight")
+        self.assertFalse(km._row_dialing(row(status="down")), "waiting out the backoff: still")
+        self.assertFalse(km._row_dialing(row(status="down", _dialing=False)))
+        self.assertFalse(km._row_dialing(row(status="up")), "an up row between passes: nothing in flight")
+        self.assertFalse(km._row_dialing(row(status="error")))
+        self.assertIn("_dialing", km._NOT_SAVED, "a per-pass mark, never written to the remotes file")
+        src = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
+        self.assertIn('"dialing": _row_dialing(r),', src, "_remote_public serves it on the /tunnels row")
+        sup = inspect.getsource(km._tunnel_supervisor)
+        self.assertIn("with _dialing_mark(r):", sup, "the pass's health requests run under the mark")
+        self.assertLess(sup.index("with _dialing_mark(r):"), sup.index('up = _port_open(r["local_port"])'), "…entered before the first round-trip")
+        # the mark's lifetime, behaviourally: on inside the block, off once it ends…
+        r = row(status="down")
+        with km._dialing_mark(r):
+            self.assertTrue(r["_dialing"], "on while the round-trips run")
+        self.assertFalse(r["_dialing"], "…and off once they returned")
+        # …and off when the block RAISES (the port check builds its socket outside its own try: fd exhaustion
+        # unwinds through here), so a row never reads dialing through its next backoff
+        with self.assertRaises(OSError):
+            with km._dialing_mark(r):
+                raise OSError("out of file descriptors")
+        self.assertFalse(r["_dialing"], "a raise clears the mark too")
+
+
 
 class ExpectedRestart(unittest.TestCase):
     """T238: a restart the DIALING side caused (its p2p update) must read as 'restarting after update',
@@ -338,6 +373,60 @@ class SourcePins(unittest.TestCase):
 
     def test_send_remote_forward_reports_a_dead_far_kernel(self):
         self.assertIn("isn't answering — message not delivered", self.src)
+
+
+class SupervisorPassWhileInTransition(unittest.TestCase):
+    """The laptop's dial ledger (2026-09-13): ssh up within a second, the row "up" 16 to 18 s later, a devbox restart a
+    16 s gap: the steady 15 s pass was the whole cost. A row in transition makes the next pass follow the probe round trip (a quarter-second gap), for at most 60 s."""
+
+    def setUp(self):
+        km._fast_since.clear()
+
+    def test_steady_rows_keep_the_steady_pass(self):
+        rows = [{"host": "TESTHOST", "status": "up"}, {"host": "TESTHOST2", "status": "down"}]
+        self.assertEqual(km._supervisor_wait_s(1000.0, rows), km.SUPERVISOR_PASS_S)
+
+    def test_a_transitional_row_makes_the_pass_fast_until_it_settles(self):
+        rows = [{"host": "TESTHOST", "status": "restarting"}]
+        self.assertEqual(km._supervisor_wait_s(1000.0, rows), km.SUPERVISOR_FAST_PASS_S)
+        self.assertEqual(km._supervisor_wait_s(1010.0, [{"host": "TESTHOST", "status": "starting"}]), km.SUPERVISOR_FAST_PASS_S)
+        self.assertEqual(km._supervisor_wait_s(1020.0, [{"host": "TESTHOST", "_dialing": True, "status": "up"}]), km.SUPERVISOR_FAST_PASS_S, "a dial in flight is a transition")
+        self.assertEqual(km._supervisor_wait_s(1030.0, [{"host": "TESTHOST", "status": "up"}]), km.SUPERVISOR_PASS_S, "settled: the steady pass")
+        self.assertEqual(km._fast_since, {}, "the transition record is dropped when the row settles")
+
+    def test_the_fast_pass_is_bounded_per_transition(self):
+        rows = [{"host": "TESTHOST", "status": "no-kernel"}]
+        self.assertEqual(km._supervisor_wait_s(1000.0, rows), km.SUPERVISOR_FAST_PASS_S)
+        self.assertEqual(km._supervisor_wait_s(1000.0 + km.SUPERVISOR_FAST_WINDOW_S + 1, rows), km.SUPERVISOR_PASS_S,
+                         "a host that never comes back is not polled every 2 s for good")
+        rows2 = [{"host": "TESTHOST", "status": "no-kernel"}, {"host": "TESTHOST2", "status": "starting"}]
+        self.assertEqual(km._supervisor_wait_s(1000.0 + km.SUPERVISOR_FAST_WINDOW_S + 2, rows2), km.SUPERVISOR_FAST_PASS_S, "a fresh transition on another row is fast")
+
+    def test_a_dialed_port_coming_up_wakes_the_supervisor_at_once(self):
+        import socket, subprocess, threading
+        km._tunnel_wake.clear()
+        srv = socket.socket(); srv.bind(("127.0.0.1", 0)); port = srv.getsockname()[1]
+        proc = subprocess.Popen(["sleep", "5"])
+        try:
+            th = threading.Thread(target=km._wake_when_port_up, args=(port, proc, 3.0), daemon=True); th.start()
+            time.sleep(0.25)
+            self.assertFalse(km._tunnel_wake.is_set(), "nothing listens yet: no wake")
+            srv.listen(1)                                        # ssh's local forward starts accepting
+            th.join(2.0)
+            self.assertTrue(km._tunnel_wake.is_set(), "the port accepting is the event: the supervisor is woken within a step")
+            self.assertFalse(th.is_alive())
+        finally:
+            proc.kill(); proc.wait(); srv.close(); km._tunnel_wake.clear()
+        dead = subprocess.Popen(["true"]); dead.wait()
+        self.assertFalse(km._wake_when_port_up(port, dead, 1.0), "a dead ssh ends the watch without a wake")
+        self.assertFalse(km._tunnel_wake.is_set())
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn("threading.Thread(target=_wake_when_port_up, args=(r.get(\"local_port\"), r[\"proc\"])", src, "every dial starts the watch")
+
+    def test_the_supervisor_loop_sleeps_by_the_rule(self):
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn("_tunnel_wake.wait(_supervisor_wait_s(time.time()))", src)
+        self.assertNotIn("_tunnel_wake.wait(15)", src)
 
 
 if __name__ == "__main__":
