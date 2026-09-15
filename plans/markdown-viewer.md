@@ -5530,17 +5530,21 @@ why, and the test that holds it:
    the wrap of a long src, is asserted by computed display, border and box width in the leg and not by eye; after
    `closeFileView` one of the Comments panel's three capture-phase `load` listeners stays on the detached body (the
    viewer's own is gone), harmless while the body is detached, so the node case asserts the count fell rather than
-   reached zero. Recorded since the review's round 6, not changed, the two-figure face of the authored span above: two
-   imgs an author puts in one `<span class="fc-imgwrap">` share that anchor, so one label after the span names the
-   last of them to fail (the second `error` finds the first's label there and rewrites it, the one-label rule reading
-   per anchor) and the `load` of either removes it while the other still fails, leaving that figure the browser's own
-   rendering alone, its alt text or the glyph; measured in headless Chromium at d617bcf67, two such imgs and a bare
-   failing control drew two labels for three failures, the span's naming the second figure, and healing either img of
-   the span removed it with the other still at natural width 0 and no label. The layer's own wrap holds one img, an
-   author must type the panel's private class around two figures to reach this, and main drew no label at all; the
-   fix, the anchor climbing a wrap that holds one img alone, or the label keyed to its img rather than found after the
-   anchor, is a follow-up reviewed afresh, since anchor-map.ts reads such a span as one IMG and a label inside it
-   moves where both text walks meet the label.
+   reached zero. Recorded since the review's round 6, not changed, two figures under one anchor: two imgs in one
+   `<picture>` an author types (the sanitizer keeps it, and the anchor climbs a `picture` as it climbs the layer's
+   class, without asking what either holds), or two imgs an author puts in one `<span class="fc-imgwrap">`, share that
+   anchor, so one label after it names the last of them to fail (the second `error` finds the first's label there and
+   rewrites it, the one-label rule reading per anchor) and the `load` of either removes it while the other still
+   fails, leaving that figure the browser's own rendering alone, its alt text or the glyph; measured in headless
+   Chromium at d617bcf67, two such imgs in one span and a bare failing control drew two labels for three failures, the
+   span's naming the second figure, and healing either img of the span removed it with the other still at natural
+   width 0 and no label, and the same two imgs in one `<picture>` at f2c422709 gave the same numbers. It waits as a
+   follow-up reviewed afresh because the edge draws a label (one for the pair, naming the last failure), so it is none
+   of the three cases that reopen the review after its round 6 (a wrong mapping, a comments regression in the Rendered
+   view, a failure case showing a blank or a bare glyph), the layer's own wrap holds one img and main drew no label
+   for such a figure at all, and the fix, the anchor climbing a `picture` or a wrap only when it holds one img alone,
+   or the label keyed to its img rather than found after the anchor, touches how anchor-map.ts reads such a span (one
+   IMG; a label inside it moves where both text walks meet the label).
 3. *Item 3, `error()` and the hooks.* The fetch chain's `.catch` fires the hooks AFTER its swap, the `imgFailed`
    order: `body.replaceChildren(why)`, `syncOutline()`, then `viewError = msg; fireRendered();`, then
    `rearmDiskBar(my)` as before (the re-arm reads the keyboard after the paint, Slice 6's rule; a hook does not move
@@ -5899,8 +5903,9 @@ why, and the test that holds it:
    root, since the prepend runs after the catch in both viewers; only a sanitizer or DOM-pass fault throws over ""
    (marked and DOMPurify accept the empty string, DOMPurify walking a `<!-->` stand-in for it, so a sanitizer fault
    reaches the render), and measured in headless Chromium at d617bcf67 with DOMPurify's node iterator made to throw,
-   the pane and the URL viewer showed the two lines in that order over zero rows, `mode()` raw, `error()` null,
-   `text()` "", Edit shown, one paint and no page error, the Raw click leaving this line alone over the rows and a
+   the pane and the URL viewer showed the two lines in that order over zero rows and no page error, and the pane, the
+   viewer with a seam and an Edit button, `mode()` raw, `error()` null, `text()` "", Edit shown and one paint (the
+   paint count is the seam's, so the URL viewer gives none), the Raw click leaving this line alone over the rows and a
    healed Rendered click this line over the empty box, the same order from a swap that threw; both sentences are true
    and nothing is blank, so the order stays as landed and an order rule waits for a fault that shows itself; item 1's
    "first child" reads with this one exception.
@@ -6587,34 +6592,36 @@ item 6's first and item 1's `RENDER_FELL` line second, since the prepend runs af
 sanitizer or DOM-pass fault throws over "" (marked and DOMPurify accept the empty string), both sentences are true and
 nothing is blank, so the order stays as landed and an order rule waits for a fault that shows itself; the measurements
 are at item 6, the exception is noted at item 1, and the site is named in `renderFellLine`'s and `RENDER_FELL`'s docs
-and both viewers' prepend comments. Recorded, not changed (low): two imgs an author puts in one `<span
-class="fc-imgwrap">` share one anchor, so one label after the span names the last of them to fail and the `load` of
-either removes it while the other still fails, leaving that figure the browser's own rendering alone; `figureAnchor`
-climbs the class without asking what the wrap holds, since the layer's own wrap holds one img, an author must type the
-panel's private class around two figures to reach this, and main drew no label for such a figure at all; the
-measurements are at item 2 with the follow-up (the anchor climbing a wrap that holds one img alone, or the label keyed
-to its img rather than found after the anchor), reviewed afresh since anchor-map.ts reads such a span as one IMG; the
-site is named in `figureAnchor`'s doc. Corrected at the site: round 5's comment at `bytesLate` pointed the re-arm at
-"the method above", which is `bytesLanded` (the method that ends the wait), not `awaitBytes` (two methods up, the one
-that runs `clearTimeout` then a fresh `setTimeout` on every status whose file mtime is not the view's); the comment
-names `awaitBytes`, a name rather than a position, which a later insertion cannot rot, so the slice's lines naming it
-in file-comments.ts are five at this head, every one a comment, and the round 3 paragraph's clause holds unchanged;
-the round 5 paragraph's count clause above is re-worded to read at its own commit (four such lines at d617bcf67, the
-comment pointing by place), where it had said the comment named no method; `awaitBytes` itself stays byte-identical to
-462ad3ccf. Closed as recorded, no words added: the deadline armed afresh by every status that lands while the wait is
-up, which round 5's re-check listed as not fixed, the state the rule for a pre-existing edge intends (recorded and
-routed, not fixed): its record, with the measurements, in the round 5 paragraph, its routing in the round 3 paragraph,
-`awaitBytes` byte-identical to 462ad3ccf and the round 5 record checked true of this head. The follow-ups routed by
-this slice's note and its review, on the books after this round: `awaitBytes` armed once per reload asked, or re-armed
-only on a new file mtime; the map's source table caching a lexer failure by text; the implied `</p>` of a block-level
-start tag in inline html (Slice 5's anchor-map follow-ups); the regions layer's wrap of a `<picture>`'s img; the
-Reveal scroll lock; the line N+1 clamp; the phantom Raw row; the double-BOM exact form; a seam member for a fetch the
-panel did not ask; the deadline row's tail over a later pane (the owner's wording); and the anchor over two figures in
-one authored wrap (this round). Left open from the earlier rounds: `trackedEdit.begin()` reading `seedOf(status)`
-without `textCurrent`, the `where:` line's length, and the ledger's `pr:` line once the PR exists; the ledger's
-`where:` line names this round's comments. Tests, by file, this round: none added, none changed; the typecheck clean
-after the comments, and the round's full runs (the full npm test, CI's tools step, the pytest modules) recorded in the
-build report outside the repo.
+and both viewers' prepend comments. Recorded, not changed (low): two imgs under one anchor, in one `<picture>` an
+author types or in one `<span class="fc-imgwrap">`, get one label after it naming the last of them to fail and the
+`load` of either removes it while the other still fails, leaving that figure the browser's own rendering alone;
+`figureAnchor` climbs a `picture` and the class without asking what either holds, since the layer's own wrap holds one
+img, so a `<picture>` the sanitizer keeps reaches this with no class (this paragraph and item 2 first said the panel's
+private class alone reached it; corrected after the round, with the `<picture>` scene measured at f2c422709 added to
+item 2), and main drew no label for such a figure at all; the measurements are at item 2 with the follow-up (the
+anchor climbing a `picture` or a wrap only when it holds one img alone, or the label keyed to its img rather than
+found after the anchor), reviewed afresh since anchor-map.ts reads such a span as one IMG; the site is named in
+`figureAnchor`'s doc, which names the span. Corrected at the site: round 5's comment at `bytesLate` pointed the re-arm
+at "the method above", which is `bytesLanded` (the method that ends the wait), not `awaitBytes` (two methods up, the
+one that runs `clearTimeout` then a fresh `setTimeout` on every status whose file mtime is not the view's); the
+comment names `awaitBytes`, a name rather than a position, which a later insertion cannot rot, so the slice's lines
+naming it in file-comments.ts are five at this head, every one a comment, and the round 3 paragraph's clause holds
+unchanged; the round 5 paragraph's count clause above is re-worded to read at its own commit (four such lines at
+d617bcf67, the comment pointing by place), where it had said the comment named no method; `awaitBytes` itself stays
+byte-identical to 462ad3ccf. Closed as recorded, no words added: the deadline armed afresh by every status that lands
+while the wait is up, which round 5's re-check listed as not fixed, the state the rule for a pre-existing edge intends
+(recorded and routed, not fixed): its record, with the measurements, in the round 5 paragraph, its routing in the
+round 3 paragraph, `awaitBytes` byte-identical to 462ad3ccf and the round 5 record checked true of this head. The
+follow-ups routed by this slice's note and its review, on the books after this round: `awaitBytes` armed once per
+reload asked, or re-armed only on a new file mtime; the map's source table caching a lexer failure by text; the
+implied `</p>` of a block-level start tag in inline html (Slice 5's anchor-map follow-ups); the regions layer's wrap
+of a `<picture>`'s img; the Reveal scroll lock; the line N+1 clamp; the phantom Raw row; the double-BOM exact form; a
+seam member for a fetch the panel did not ask; the deadline row's tail over a later pane (the owner's wording); and
+the anchor over two figures in one `<picture>` or one authored wrap (this round). Left open from the earlier rounds:
+`trackedEdit.begin()` reading `seedOf(status)` without `textCurrent`, the `where:` line's length, and the ledger's
+`pr:` line once the PR exists; the ledger's `where:` line names this round's comments. Tests, by file, this round:
+none added, none changed; the typecheck clean after the comments, and the round's full runs (the full npm test, CI's
+tools step, the pytest modules) recorded in the build report outside the repo.
 
 ### Slice 8: a cell and a code line are commentable from Rendered (ruling 2026-09-07, decision 7)
 
