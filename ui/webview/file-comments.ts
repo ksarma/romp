@@ -2768,7 +2768,7 @@ class Panel {
    *  answers every fetch, and the seam reports a failure through error(), bytesFailed). The loader yields to a row, and its
    *  Reload re-fetches the bytes and re-asks status (fcreload): the loader never traps the person (ui/CLAUDE.md). Two edges,
    *  pre-existing, recorded in the plan's Slice 7 note and routed, not changed here (the review's rounds 3 and 5): the timer
-   *  is armed afresh by every status that lands while the wait is up (the method above, on each status whose file mtime is
+   *  is armed afresh by every status that lands while the wait is up (awaitBytes, on each status whose file mtime is
    *  not the view's), so with the fetch stalled and the poll re-asking status every few seconds (a sidecar a session keeps
    *  writing) this row files 15 s after the LAST status, not the first; and its tail says the view shows the earlier text,
    *  which a pane standing under it does not (syncFailedRow leaves this row as it is, so a stall that ends in a failure pane

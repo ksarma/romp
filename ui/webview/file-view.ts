@@ -363,14 +363,17 @@ export const HIDDEN_SECTION = "That section is hidden in the rendered view; open
 export const OUTLINE_LABEL = "Outline";
 /** The line a failed render stands under (plans/markdown-viewer.md Slice 7, item 1): when marked, the sanitizer or a DOM pass
  *  of mdBlock throws, or the swap itself does, renderBody paints this sentence and the error's message in the `.fileview-err`
- *  dress as the body's first child, and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
+ *  dress as the body's first child (its second, under EMPTY_FILE's line, over an empty file whose render still threw:
+ *  renderFellLine), and the file's text as Raw rows under it (codeBlock), so a render that fell shows the text
  *  and says why, where the old catch wrote the source into the Rendered box as one unannounced paragraph. No hint row (the
  *  title bar names the path) and no Download (the text is showing). Without a terminal period so the guide can carry the words;
  *  the line's text is this constant, the message in parentheses, then the period (renderFellLine). */
 export const RENDER_FELL = "This file could not be shown as rendered Markdown, so its text is shown as written";
 /** The `.fileview-err` line for a render that fell (RENDER_FELL, above), naming what threw: the body's first child above the
- *  Raw rows in both viewers. Outside `code.hljs`, so the anchor map's rawIndex never reads it as a row, and outside
- *  `.fileview-md`, which that body does not hold. */
+ *  Raw rows in both viewers, with one exception, an empty file whose render still threw (a sanitizer or DOM-pass fault over
+ *  ""), where item 6's EMPTY_FILE line stands above this one, since its prepend runs after the catch; both sentences true,
+ *  the order recorded in the plan's Slice 7 note (item 6, the review's round 6) and not changed. Outside `code.hljs`, so the
+ *  anchor map's rawIndex never reads it as a row, and outside `.fileview-md`, which that body does not hold. */
 function renderFellLine(msg: string): HTMLElement {
   const why = el("div", "fileview-err");
   why.textContent = RENDER_FELL + " (" + msg + ").";
@@ -2384,7 +2387,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         body.replaceChildren(renderFellLine(fell), codeBlock(text, path, true));
         renderFell = fell;                    // recorded once the fallback stands (the header): a throw from the fallback leaves the previous paint and its record
       }
-      if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it
+      if (text === "") body.prepend(emptyFileLine());   // an empty file says so above its empty root (plans/markdown-viewer.md Slice 7, item 6): a sibling outside code.hljs and .fileview-md, so the map sees zero rows and the pairing no block; text stays "" and Edit shown; a landing that brings bytes repaints without it; over a render that fell it stands above the RENDER_FELL line and the rows, the stacked order item 6 records (the review's round 6)
       viewError = null;                       // the paint stands (the Rendered box, the rows, or the line over the rows a failed render fell back to, whose word is mode() "raw"): no pane shows (Slice 7, item 3). After the swap, as renderFell is recorded: a throw from the fallback's own swap propagates past this line and leaves the previous paint, a failure pane's included, with its record, so error() keeps answering the pane the body still shows (the review's round 3)
       folds.restore(); restoreHeldFolds();    // each fold as the person left it, then a record's folds held past a Raw first paint (pendingFolds), before the hooks measure and the seat reads the heights (a Raw paint has none)
       stampBodyWidth();                       // the fresh root's tables take the body's width (no report follows a render)
@@ -3690,7 +3693,7 @@ export function openUrlView(href: string): void {
       body.replaceChildren(renderFellLine(fell), codeBlock(text, parts.base, true));
       renderFell = fell;
     }
-    if (text === "") body.prepend(emptyFileLine());    // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""
+    if (text === "") body.prepend(emptyFileLine());    // an empty document says so above its empty root (Slice 7, item 6): a document read through capped-read.ts can be ""; above the RENDER_FELL line too when the render fell (the local viewer's comment)
     folds.restore();                                   // each fold as the person left it, before the seat reads the heights
     if (fmt.md === "rendered") stampBodyWidth();       // a fresh root's tables take the width last reported, before the seat and the landing measure (the local viewer's order)
     shownText = text;
@@ -4350,7 +4353,11 @@ const FIGERR_CLASS = "fv-figerr";
  *  leave with the panel's close; anchor-map.ts reads that span as the IMG, so the label's place in the block is the same), and
  *  a link holding the figure alone (`[![alt](src)](url)`, a README's linked badge or picture: inside the `<a>` the label wore
  *  the link's pointer and a click on it, to read it, followed the link; the review's round 1). A link with more in it (text
- *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. */
+ *  beside the figure, a second figure) keeps the label beside its img, as the browser's own alt text is. The class is climbed
+ *  without asking what the wrap holds, since the layer's wrap holds THE img: two imgs an author puts in one
+ *  `<span class="fc-imgwrap">` (the sanitizer keeps `class`) share the anchor, so one label after the span names the last of
+ *  them to fail and a `load` of either removes it while the other still fails; recorded in the plan's Slice 7 note (item 2,
+ *  the review's round 6) and routed, not changed here. */
 function figureAnchor(img: Element): Element {
   let a: Element = img;
   for (let p = a.parentElement; p && (p.localName === "picture" || p.classList.contains("fc-imgwrap") || linkAround(p, a)); p = a.parentElement) a = p;

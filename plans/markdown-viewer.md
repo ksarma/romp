@@ -5395,7 +5395,9 @@ why, and the test that holds it:
    file-view-place.test.ts, file-comments.test.ts and tests/test_guide_files_failures.py were re-aimed to the
    three-line catch. Also recorded: `setMdSanitizer` leaves the module-global `hooksInstalled` latch alone, so a
    stand-in installed after a first `sanitizeMd` call gets no hooks (every suite installs its stand-in at module load,
-   before any paint).
+   before any paint). Also recorded since the review's round 6: "the body's first child" above reads with one
+   exception, an empty file whose render still threw, where item 6's line stands above this one and the rows (its
+   record, with the measurements, at item 6).
 2. *Item 2, the figure label.* One capture-phase `error` listener on `.fileview-body` per open, installed once at the
    open beside the body's other listeners and dropped with the viewer (`armFigureLabels`; `ctx.onClose` in the local
    viewer, the close hooks in the URL viewer, which gets the same two), the `armReseat` idiom, since an img's `error`
@@ -5528,7 +5530,17 @@ why, and the test that holds it:
    the wrap of a long src, is asserted by computed display, border and box width in the leg and not by eye; after
    `closeFileView` one of the Comments panel's three capture-phase `load` listeners stays on the detached body (the
    viewer's own is gone), harmless while the body is detached, so the node case asserts the count fell rather than
-   reached zero.
+   reached zero. Recorded since the review's round 6, not changed, the two-figure face of the authored span above: two
+   imgs an author puts in one `<span class="fc-imgwrap">` share that anchor, so one label after the span names the
+   last of them to fail (the second `error` finds the first's label there and rewrites it, the one-label rule reading
+   per anchor) and the `load` of either removes it while the other still fails, leaving that figure the browser's own
+   rendering alone, its alt text or the glyph; measured in headless Chromium at d617bcf67, two such imgs and a bare
+   failing control drew two labels for three failures, the span's naming the second figure, and healing either img of
+   the span removed it with the other still at natural width 0 and no label. The layer's own wrap holds one img, an
+   author must type the panel's private class around two figures to reach this, and main drew no label at all; the
+   fix, the anchor climbing a wrap that holds one img alone, or the label keyed to its img rather than found after the
+   anchor, is a follow-up reviewed afresh, since anchor-map.ts reads such a span as one IMG and a label inside it
+   moves where both text walks meet the label.
 3. *Item 3, `error()` and the hooks.* The fetch chain's `.catch` fires the hooks AFTER its swap, the `imgFailed`
    order: `body.replaceChildren(why)`, `syncOutline()`, then `viewError = msg; fireRendered();`, then
    `rearmDiskBar(my)` as before (the re-arm reads the keyboard after the paint, Slice 6's rule; a hook does not move
@@ -5882,7 +5894,16 @@ why, and the test that holds it:
    raises no notice at all, the line above the rows' root being what says the file has no line n; a server answering
    200 with no body at all takes the URL viewer's existing no-body fail path, not this line; the Comments panel over
    an empty file is driven in the browser scene alone (no page error over the empty body) and the brief's optional
-   anchor-map control over zero rows is item 7's C4c case.
+   anchor-map control over zero rows is item 7's C4c case. Recorded since the review's round 6, not changed: a render
+   that throws over "" stacks two lines, this one first and item 1's `RENDER_FELL` line second, over the empty rows'
+   root, since the prepend runs after the catch in both viewers; only a sanitizer or DOM-pass fault throws over ""
+   (marked and DOMPurify accept the empty string, DOMPurify walking a `<!-->` stand-in for it, so a sanitizer fault
+   reaches the render), and measured in headless Chromium at d617bcf67 with DOMPurify's node iterator made to throw,
+   the pane and the URL viewer showed the two lines in that order over zero rows, `mode()` raw, `error()` null,
+   `text()` "", Edit shown, one paint and no page error, the Raw click leaving this line alone over the rows and a
+   healed Rendered click this line over the empty box, the same order from a swap that threw; both sentences are true
+   and nothing is blank, so the order stays as landed and an order rule waits for a fault that shows itself; item 1's
+   "first child" reads with this one exception.
 7. *Item 7, the CR rows.* One module-level regex in file-view.ts, `RAW_ROW_SPLIT = /\r\n|\r|\n/` (CRLF first, so it is
    one ending; then a lone CR; then LF), used by `wrapNumberedHtml` over the highlighted HTML and by `codeBlock`'s
    gutter count, the one trailing empty piece popped as before, so the two stay in step and no row's text carries a
@@ -6507,47 +6528,93 @@ measure 90 to 125 and the feed modal 86 to 120 (the build report's numbers, and 
 surfaces); the sentence names the surfaces, the paragraph re-filled at width with its line count kept, every later
 line number of this note unmoved. The round 3 paragraph counted the slice's lines naming `awaitBytes` as three, all
 comments, a count true at that round and one short since round 4's comment at `refresh(slot)`'s end; the clause now
-says every line the slice adds naming it is a comment, which holds at this head (four such lines; this round's comment
-at `bytesLate` describes the method without naming it). Closed as recorded, no words added: the regions layer's wrap
-of a `<picture>`'s img (raised a fourth time, from a fresh Chromium probe over this head and 462ad3ccf, the label
-leaving at the panel's open and returning at its close on both), its record in the round 2 paragraph,
-file-comments-regions.ts byte-identical to 462ad3ccf and the record checked true of it this round (`figureAnchor`
-climbing both wrappers, the label's `load` handler removing it, `tagNameOf` answering IMG); and the map's one source
-table keyed on the text alone, which round 4's re-check listed as not fixed, the state the rule for a pre-existing
-edge intends (recorded and routed, not fixed): its record in the round 4 paragraph, `sourceCache` and `sourceTable`
-byte-identical to 462ad3ccf and the slice's four hunks in anchor-map.ts nowhere near them, checked true of this head;
-the re-check's landing of paragraph 26 for the second Rendered click and the paragraph's 29 are two probes'
-measurements, both in the build report, and the paragraph keeps the probe it quotes. Pre-existing, identical on main,
-not a new defect (low; two titles from the checks for figures, hooks and the seam and for comments regressions, one
-mechanism, the round 3 paragraph's `awaitBytes` routing): since round 4 the bytes row's Reload over a standing pane
-reaches the re-arm that paragraph records. With its fetch stalled and the poll re-asking status each tick (a sidecar a
-session keeps writing), every status arms the 15 s deadline afresh, so the loader stands at the head of the cards with
-no row and no Reload for as long as statuses land under 15 s apart, the body's pane saying only the earlier failure,
-and the row files 15 s after the last status: measured in headless Chromium at this head, 13 statuses over 32 s with
-the loader up and no row throughout and the row 15.0 s after the writes stopped, the same over a healthy view whose
-file moved under the poll, and the same on 462ad3ccf; a quiet poll files the row at 15 s as item 3 says. Before round
-4 this path filed the failure row at the first status, the misleading words round 4 fixed, and never reached the
-re-arm. The follow-up stands as round 3 routed it (arm once per reload asked, or re-arm only on a new file mtime, with
-the mock-timer scene it names), not taken in the fifth of six rounds: one timer per wait against one per status is
-main's deadline semantics, reviewed afresh if changed. Pre-existing, recorded, not changed (low, the check for
-comments regressions): the late-failure variant of item 3's deadline-tail sibling. The row's Reload whose fetch stalls
-past 15 s and then fails leaves the deadline row's tail, "the view still shows the earlier text", over the new pane's
-words: paintAll's head needs the wait, which `bytesLate` ended, and `syncFailedRow` reads failure rows alone; measured
-in headless Chromium at this head, the 500 released after the deadline, the pane and `error()` reading the new words
-and the row unchanged 3 s later, where the same fetch failing at once or at 5 s re-words the row (the controls).
-9c4fceac5 re-worded the row off the new pane (its row was a failure row filed at the status, the round 4 bug), and
-462ad3ccf ends the same sequence with no row at all (its `refresh` finally dropped the "bytes" mark at the status's
-landing, so `bytesLate` filed nothing) while filing the same tail over a pane under a quiet poll: the tail is
-pre-existing, the path to it new since round 4. A tail read off `error()` at the tick or at the later pane's paint
-needs new wording (BYTES_FAILED_TAIL's "that failure" refers to parenthesised words the deadline row lacks): the
-owner's wording decision round 4 recorded, which stands. Both edges are named at the site since this round:
-`bytesLate`'s doc comment in file-comments.ts says the timer is armed afresh by every status that lands while the wait
-is up and that the row's tail is not re-read against a pane that lands after the deadline, pre-existing, recorded here
-and routed; no behaviour changed, no test added (nothing to fail before), and the ledger's `where:` line names the
-comment. Left open from the earlier rounds: `trackedEdit.begin()` reading `seedOf(status)` without `textCurrent`, the
-`where:` line's length, and a fetch the panel did not ask over a standing pane (item 3's first recorded edge). Tests,
-by file, this round: none added, none changed; the typecheck clean after the comment, and the round's full runs (the
-full npm test, CI's tools step, the pytest modules) recorded in the build report outside the repo.
+says every line the slice adds naming it is a comment, which holds at this head (four such lines at d617bcf67, this
+round's commit, whose comment at `bytesLate` pointed at the method by its place, "the method above", not its name).
+Closed as recorded, no words added: the regions layer's wrap of a `<picture>`'s img (raised a fourth time, from a
+fresh Chromium probe over this head and 462ad3ccf, the label leaving at the panel's open and returning at its close on
+both), its record in the round 2 paragraph, file-comments-regions.ts byte-identical to 462ad3ccf and the record
+checked true of it this round (`figureAnchor` climbing both wrappers, the label's `load` handler removing it,
+`tagNameOf` answering IMG); and the map's one source table keyed on the text alone, which round 4's re-check listed as
+not fixed, the state the rule for a pre-existing edge intends (recorded and routed, not fixed): its record in the
+round 4 paragraph, `sourceCache` and `sourceTable` byte-identical to 462ad3ccf and the slice's four hunks in
+anchor-map.ts nowhere near them, checked true of this head; the re-check's landing of paragraph 26 for the second
+Rendered click and the paragraph's 29 are two probes' measurements, both in the build report, and the paragraph keeps
+the probe it quotes. Pre-existing, identical on main, not a new defect (low; two titles from the checks for figures,
+hooks and the seam and for comments regressions, one mechanism, the round 3 paragraph's `awaitBytes` routing): since
+round 4 the bytes row's Reload over a standing pane reaches the re-arm that paragraph records. With its fetch stalled
+and the poll re-asking status each tick (a sidecar a session keeps writing), every status arms the 15 s deadline
+afresh, so the loader stands at the head of the cards with no row and no Reload for as long as statuses land under 15
+s apart, the body's pane saying only the earlier failure, and the row files 15 s after the last status: measured in
+headless Chromium at this head, 13 statuses over 32 s with the loader up and no row throughout and the row 15.0 s
+after the writes stopped, the same over a healthy view whose file moved under the poll, and the same on 462ad3ccf; a
+quiet poll files the row at 15 s as item 3 says. Before round 4 this path filed the failure row at the first status,
+the misleading words round 4 fixed, and never reached the re-arm. The follow-up stands as round 3 routed it (arm once
+per reload asked, or re-arm only on a new file mtime, with the mock-timer scene it names), not taken in the fifth of
+six rounds: one timer per wait against one per status is main's deadline semantics, reviewed afresh if changed.
+Pre-existing, recorded, not changed (low, the check for comments regressions): the late-failure variant of item 3's
+deadline-tail sibling. The row's Reload whose fetch stalls past 15 s and then fails leaves the deadline row's tail,
+"the view still shows the earlier text", over the new pane's words: paintAll's head needs the wait, which `bytesLate`
+ended, and `syncFailedRow` reads failure rows alone; measured in headless Chromium at this head, the 500 released
+after the deadline, the pane and `error()` reading the new words and the row unchanged 3 s later, where the same fetch
+failing at once or at 5 s re-words the row (the controls). 9c4fceac5 re-worded the row off the new pane (its row was a
+failure row filed at the status, the round 4 bug), and 462ad3ccf ends the same sequence with no row at all (its
+`refresh` finally dropped the "bytes" mark at the status's landing, so `bytesLate` filed nothing) while filing the
+same tail over a pane under a quiet poll: the tail is pre-existing, the path to it new since round 4. A tail read off
+`error()` at the tick or at the later pane's paint needs new wording (BYTES_FAILED_TAIL's "that failure" refers to
+parenthesised words the deadline row lacks): the owner's wording decision round 4 recorded, which stands. Both edges
+are named at the site since this round: `bytesLate`'s doc comment in file-comments.ts says the timer is armed afresh
+by every status that lands while the wait is up and that the row's tail is not re-read against a pane that lands after
+the deadline, pre-existing, recorded here and routed; no behaviour changed, no test added (nothing to fail before),
+and the ledger's `where:` line names the comment. Left open from the earlier rounds: `trackedEdit.begin()` reading
+`seedOf(status)` without `textCurrent`, the `where:` line's length, and a fetch the panel did not ask over a standing
+pane (item 3's first recorded edge). Tests, by file, this round: none added, none changed; the typecheck clean after
+the comment, and the round's full runs (the full npm test, CI's tools step, the pytest modules) recorded in the build
+report outside the repo.
+
+**Review round 6** (2026-09-15). The review of the branch at d617bcf67 over main 462ad3ccf, under the plan of rounds 1
+to 5 (the branch read by the round's checks and the finding round 5's re-check left open read again, every finding
+checked by one second reader for a low and by two for a medium or a high, the fixes made one hand per file, one
+consolidation commit, "Slice 7: review round 6 fixes") and the rule round 1 judged by, in the sixth round, the cap the
+review ran under: a regression, a wrong landing, a wrong mapping, a comments regression or a failure case showing a
+blank or a bare glyph is fixed with a test failing before over a `git archive` of d617bcf67, every other low is
+recorded in this note in one sentence (the scene, the mechanism, why it waits), and after this round only a wrong
+mapping, a comments regression in the Rendered view or a failure case showing a blank or a bare glyph reopens the
+review (the owner's rule). No behaviour changed this round and no test was added or changed (nothing to fail before):
+its findings are two edges recorded at items 1, 2 and 6 and named at their sites in file-view.ts, one correction to a
+code comment in file-comments.ts, one closure of a pre-existing edge already on the books, and one correction to this
+note. Recorded, not changed (low): an empty file whose render still threw shows two lines over the empty rows' root,
+item 6's first and item 1's `RENDER_FELL` line second, since the prepend runs after the catch in both viewers; only a
+sanitizer or DOM-pass fault throws over "" (marked and DOMPurify accept the empty string), both sentences are true and
+nothing is blank, so the order stays as landed and an order rule waits for a fault that shows itself; the measurements
+are at item 6, the exception is noted at item 1, and the site is named in `renderFellLine`'s and `RENDER_FELL`'s docs
+and both viewers' prepend comments. Recorded, not changed (low): two imgs an author puts in one `<span
+class="fc-imgwrap">` share one anchor, so one label after the span names the last of them to fail and the `load` of
+either removes it while the other still fails, leaving that figure the browser's own rendering alone; `figureAnchor`
+climbs the class without asking what the wrap holds, since the layer's own wrap holds one img, an author must type the
+panel's private class around two figures to reach this, and main drew no label for such a figure at all; the
+measurements are at item 2 with the follow-up (the anchor climbing a wrap that holds one img alone, or the label keyed
+to its img rather than found after the anchor), reviewed afresh since anchor-map.ts reads such a span as one IMG; the
+site is named in `figureAnchor`'s doc. Corrected at the site: round 5's comment at `bytesLate` pointed the re-arm at
+"the method above", which is `bytesLanded` (the method that ends the wait), not `awaitBytes` (two methods up, the one
+that runs `clearTimeout` then a fresh `setTimeout` on every status whose file mtime is not the view's); the comment
+names `awaitBytes`, a name rather than a position, which a later insertion cannot rot, so the slice's lines naming it
+in file-comments.ts are five at this head, every one a comment, and the round 3 paragraph's clause holds unchanged;
+the round 5 paragraph's count clause above is re-worded to read at its own commit (four such lines at d617bcf67, the
+comment pointing by place), where it had said the comment named no method; `awaitBytes` itself stays byte-identical to
+462ad3ccf. Closed as recorded, no words added: the deadline armed afresh by every status that lands while the wait is
+up, which round 5's re-check listed as not fixed, the state the rule for a pre-existing edge intends (recorded and
+routed, not fixed): its record, with the measurements, in the round 5 paragraph, its routing in the round 3 paragraph,
+`awaitBytes` byte-identical to 462ad3ccf and the round 5 record checked true of this head. The follow-ups routed by
+this slice's note and its review, on the books after this round: `awaitBytes` armed once per reload asked, or re-armed
+only on a new file mtime; the map's source table caching a lexer failure by text; the implied `</p>` of a block-level
+start tag in inline html (Slice 5's anchor-map follow-ups); the regions layer's wrap of a `<picture>`'s img; the
+Reveal scroll lock; the line N+1 clamp; the phantom Raw row; the double-BOM exact form; a seam member for a fetch the
+panel did not ask; the deadline row's tail over a later pane (the owner's wording); and the anchor over two figures in
+one authored wrap (this round). Left open from the earlier rounds: `trackedEdit.begin()` reading `seedOf(status)`
+without `textCurrent`, the `where:` line's length, and the ledger's `pr:` line once the PR exists; the ledger's
+`where:` line names this round's comments. Tests, by file, this round: none added, none changed; the typecheck clean
+after the comments, and the round's full runs (the full npm test, CI's tools step, the pytest modules) recorded in the
+build report outside the repo.
 
 ### Slice 8: a cell and a code line are commentable from Rendered (ruling 2026-09-07, decision 7)
 
