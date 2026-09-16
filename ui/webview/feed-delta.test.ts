@@ -224,7 +224,8 @@ test("federation stamps the arrival beside the frame on both wire paths, drops i
   assert.match(FED, /this\.perHostFeed\[host\] = m;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a full frame's arrival");
   assert.match(FED, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);[^\n]*\n\s*this\.emitMergedFeed\(\);/, "a delta's arrival");
   assert.match(FED, /delete this\.perHostFeed\[host\];\n\s*delete this\.perHostFeedAt\[host\];/, "a detach forgets both");
-  assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt\)/, "every emit carries the arrivals");
+  assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt, this\.hostsRead\)/,
+    "every emit carries the arrivals (fifth), then upstream's hostsRead (sixth: whether a /tunnels poll has answered yet, so a pane's absence-driven writers stand down until it has)");
   assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 2, "stamped on the two wire paths and nowhere else — never on an emit");
 });
 

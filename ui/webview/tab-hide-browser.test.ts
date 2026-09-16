@@ -76,6 +76,8 @@ import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords,
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
 import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK } from "./tab-state";
 import { tagChip } from "./tag-menu";   // the header wears the tag as its chip (upstream T251), the real builder, not a stub
+import { statusChip } from "./status-chip";   // the overview row's needs-you chip is the shared status chip since upstream T322b, the real builder
+import { ringSwitch, tabWidgetPrefs } from "./tab-widgets";   // the folded header's stand-in pip reads the rings' switches off settings.tabWidgets (upstream T379)
 import { viewTagUnion } from "./session-views";
 import { hostNameNodes } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
@@ -93,7 +95,7 @@ let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
 let draggedGroup: string | null = null;
 let sessionViews: any = null;
-const settings: any = { stripGroupRows: false };   // render.ts's settings object (settings.ts) at the fork's default: makeGroupHead's trail branch reads it (the user 2026-09-08: the strip flows inline unless the per-row setting is on)
+const settings: any = { stripGroupRows: false, tabWidgets: tabWidgetPrefs(undefined) };   // render.ts's settings object (settings.ts) at the fork's default: makeGroupHead's trail branch reads stripGroupRows (the user 2026-09-08: the strip flows inline unless the per-row setting is on) and its stand-in pip reads tabWidgets, here the store's default as settings.ts normalises it on load (upstream T379)
 const ctxMenuEl: any = null, metaMenuEl: any = null, citePreviewEl: any = null, openCommentKey: any = null;
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function effViews() { return sessionViews; }
@@ -991,14 +993,25 @@ function menuProbeSource(): string {
   const wb = RENDER.indexOf("\n", RENDER.indexOf('window.addEventListener("blur", () => dismissTabMenu());', wa)) + 1;
   assert.ok(wa > 0 && wb > wa, "the menu's window listeners moved; re-anchor this probe");
   const LISTENERS = RENDER.slice(wa, wb);
+  // THE FLYOUT'S PLACEMENT AND GESTURE, verbatim: upstream's T380 and T387 lifted the Tags flyout's side rule (placeFlyBeside) and its
+  // hover, click and leave-tolerance wiring (wireFlyout, with its HOVER_INTENT_MS) out of showTabMenu, which now calls both for the
+  // Tags row; the rounds below drive that gesture and measure that placement
+  const fa = RENDER.indexOf("// A flyout placed beside its row (the Billing flyout and its nested default submenu, T387;");
+  const fb = RENDER.indexOf("\n}\n", RENDER.indexOf("const HOVER_INTENT_MS = 120;\nfunction wireFlyout(", fa)) + 3;
+  assert.ok(fa > 0 && fb > fa, "placeFlyBeside, wireFlyout and its HOVER_INTENT_MS moved; re-anchor this probe");
+  const FLYOUT = RENDER.slice(fa, fb);
   return `
 import { readTabGroups, writeTabGroups, prunePinned, sectionRef, isPinned, setPinned, isHidden, setHidden, TABGROUPS_KEY } from "./tab-groups";
 import { viewTagUnion } from "./session-views";
 import { pressHold } from "./actions";
+import { keyHint } from "./keybindings";   // the Notify row's key hint (render.ts imports it from the same module)
+import { tabHotkey, miniChord } from "./tab-widgets";   // the Hot key row (T379): the tab's chord and its short spelling, the real readers
+import { tagChip } from "./tag-menu";   // the flyout's rows wear the tag chip (T321), the real builder, as the header probe above has it
 // THE STAND-IN PAGE: what showTabMenu reads, declared as render.ts declares it
 const sessions = new Map<string, any>([["api", { name: "api", status: { state: "working" } }], ["web", { name: "web", status: { state: "ready" } }]]);
 const tabMeta = new Map<string, any>();
 const paletteColors: string[] = [];
+const settings: any = { tabsLocked: false };   // the flyout's Move to rows read the tab lock (settings.ts); unlocked here, as a fresh store is
 const H: any = { views: null, hides: [] as any[], edits: [] as any[], dismissed: 0, renders: 0, flags: [] as any[] };
 let ctxMenuEl: HTMLElement | null = null, ctxMenuAt: any = null, tagsFlyNewInput: HTMLInputElement | null = null, pendingSessionViews: any = null;
 let tabMenuViewsHook: () => void = () => {};
@@ -1024,6 +1037,8 @@ function reachableHosts() { return new Set<string>(); }
 function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 function writeTabGroupsPruned(st: any) { const out = prunePinned(st, viewTagUnion(effViews()), knownTabIds(), reachableHosts()); H.hides.push(out.hidden); writeTabGroups(out); }
 function browseRouteNow() { return "pane"; } function openBrowse() {}
+function inRompShell() { return false; }   // the probe page is top-level, no shell around it (upstream T415: showTabMenu asks before it offers the Settings row)
+${FLYOUT}
 ${MENU}
 ${LISTENERS}
 // a scrolling box OUTSIDE the menu (round 8): the page's body never scrolls (styles.css), so the control that a scroll elsewhere still

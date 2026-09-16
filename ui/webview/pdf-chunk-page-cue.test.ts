@@ -35,6 +35,9 @@ const read = (f: string) => fs.readFileSync(path.join(UI, f), "utf8");
 const CHUNK = read("pdf-chunk.ts");
 const VIEW = read("file-view.ts");
 const CUE = ".fileview-pdf-page-load";
+// each sheet's SHARED swirl keyframe the loader's img rides (upstream's shared-loader re-ink: the forked fileview-spin is
+// gone from both sheets, loader-swirl.test.ts pins its absence); styles.css serves the Files pane and the chat, feed.css the feed
+const SPIN: Record<string, string> = { "styles.css": "rl-spin", "feed.css": "fask-swirl-spin" };
 
 // ── a fake DOM: what the chunk touches of an element, and nothing else ──────────────────────────
 
@@ -419,7 +422,8 @@ test("the cue is the viewer's own loader: the markup file-view.ts puts up for th
   for (const sheet of ["styles.css", "feed.css"]) {
     const css = read(sheet);
     assert.match(css, /^\.fileview-load \{ display: flex; align-items: center; justify-content: center;/m, sheet + ": the loader's rule");
-    assert.match(css, /^\.fileview-load img \{[^}]*animation: fileview-spin/m, sheet + ": the swirl spins");
+    assert.match(css, new RegExp("^\\.fileview-load img \\{[^}]*animation: " + SPIN[sheet] + " 7s linear infinite", "m"), sheet + ": the swirl spins on the sheet's shared keyframe (" + SPIN[sheet] + ")");
+    assert.match(css, new RegExp("^@keyframes " + SPIN[sheet] + " \\{", "m"), sheet + ": defines the shared keyframe its loader names");
     assert.match(css, /^\.fileview-dot \{[^}]*background: var\(--accent\);/m, sheet + ": accent dots");
     assert.match(css, /^\.fileview-pdf-page \{ background: #fff;/m, sheet + ": the white sheet the cue sits on");
   }
@@ -477,14 +481,16 @@ function heavyContent(n: number): string {
 }
 const HEAVY_RECTS = 150000;
 
-/** The viewer's own rules for the elements involved, from the sheet the viewer loads. */
+/** The viewer's own rules for the elements involved, from the sheet the viewer loads, plus the shared swirl keyframe its loader names. */
 function viewerRules(): string {
   const css = read("styles.css");
   const rules = css.match(/^\.fileview-(?:body|pdfhost|pdf|pdf-page|pdf-canvas|load|load img|dot|dot:nth-of-type\(\d\)) \{[^}]*\}/gm) || [];
   assert.equal(rules.length, 10, "styles.css has one rule for each of .fileview-body, -pdfhost, -pdf, -pdf-page, -pdf-canvas, -load, -load img, -dot, -dot:nth-of-type(2), (3)");
   const frames = css.match(/^@keyframes fileview-(?:spin|pulse) \{.*\}\s*\}$/gm) || [];
-  assert.equal(frames.length, 2, "the loader's two keyframes");
-  return rules.concat(frames).join("\n");
+  assert.equal(frames.length, 1, "the loader's one fileview keyframe (fileview-pulse): the swirl rides the sheet's shared rl-spin since upstream's re-ink");
+  const shared = css.match(/^@keyframes rl-spin \{.*\}\s*\}$/gm) || [];
+  assert.equal(shared.length, 1, "styles.css defines the shared swirl keyframe the loader's img names");
+  return rules.concat(frames, shared).join("\n");
 }
 
 async function buildChunk(): Promise<void> {
@@ -600,7 +606,7 @@ test("in Chromium: a heavy page entering the margin carries the loader over its 
       assert.equal(x.position, "absolute"); assert.equal(x.pointerEvents, "none");
       assert.equal(x.display, "flex", "the viewer's .fileview-load rule applies");
       assert.equal(x.kids, 5); assert.equal(x.swirl, "/media/romp-swirl-glyph.svg"); assert.equal(x.word, "romp"); assert.equal(x.dots, 3);
-      assert.equal(x.spin, "fileview-spin", "the swirl spins under the viewer's rule");
+      assert.equal(x.spin, SPIN["styles.css"], "the swirl spins under the viewer's rule, on this document's shared keyframe (rl-spin on the pane and the chat; the feed's is fask-swirl-spin)");
     }
     assert.equal(errors.length, 0, errors.join("\n"));
 

@@ -227,7 +227,7 @@ async function host(activeId: string | null = ACTIVE): Promise<Host> {
   const out = fn(
     el, notice, () => undefined, () => undefined, () => undefined, hint.utDetailHint, hint.applyUtHint, hint.utHintFor, hint.UT_HINT_CLASS,
     () => undefined, () => null, () => false, SID, new Set<string>(), linkifyPathTokens,
-    (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, sid: string | null) => linkifyPathTokens(node, sid),   // the detail's figure pass is not under test: its paths link the same way
+    (node: HTMLElement, _a: unknown, _b: unknown, _c: unknown, _d: unknown, _e: unknown, _f: unknown, sid: string | null) => linkifyPathTokens(node, sid),   // the detail's figure pass is not under test: its paths link the same way; sid is the eighth argument since upstream's pathPreview slots (T351, the 2026-09-15 pull-in)
     openPathLink, null, activeId,
     (p: string, sid: string | null) => opened.push([p, sid]),
     linkifyUrls, urlChip, linkTarget,

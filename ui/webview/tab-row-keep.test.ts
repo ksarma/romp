@@ -437,7 +437,7 @@ test("the observer watches the strip's WIDTH through a zero-height sentinel, not
   // the sheet: absolute, full width, zero height, in every theme
   assert.match(CSS, /#tabs \.tab-row-sentinel \{ position: absolute; top: 0; left: 0; right: 0; height: 0; pointer-events: none; \}/,
     "a zero-height child spanning #tabs: its width is the strip's, its height never changes");
-  assert.match(RENDER, /tabRowObserver = new ResizeObserver\(\(\) => paintTabRowLines\(bar\)\);\s*\n\s*tabRowObserver\.observe\(tabRowSentinel\);/, "the observer's target is the sentinel");
+  assert.match(RENDER, /tabRowObserver = new ResizeObserver\(\(\) => \{ stripFit\?\.\(\); paintTabRowLines\(bar\); \}\);[^\n]*\n\s*tabRowObserver\.observe\(tabRowSentinel\);/, "the observer's target is the sentinel (the chip fit runs first, T413: its verdict can change the rows the lines follow)");
   assert.doesNotMatch(RENDER, /tabRowObserver\.observe\(bar\)/, "never #tabs itself");
 });
 
@@ -531,8 +531,8 @@ test("a skeleton tab is a group's first tab for the keep pass (ruling S2, the 20
   // makeSkeletonTab builds div.tab.tab-skeleton[data-id] (render.ts) and renderTabs appends it where the loaded tab would
   // go, so the pass's first-member read (.tab with a data-id) is true for it; pinned at the source so the model here
   // cannot drift from the builder
-  const skA = RENDER.indexOf("function makeSkeletonTab("), skB = RENDER.indexOf("function appendTabCtxGauge(", skA);
-  assert.ok(skA > 0 && skB > skA, "anchors not found: makeSkeletonTab or appendTabCtxGauge moved; re-anchor");
+  const skA = RENDER.indexOf("function makeSkeletonTab("), skB = RENDER.indexOf("function appendTabAfterWidgets(", skA);
+  assert.ok(skA > 0 && skB > skA, "anchors not found: makeSkeletonTab or appendTabAfterWidgets moved; re-anchor");
   const sk = RENDER.slice(skA, skB);
   assert.match(sk, /el\("div", "tab tab-skeleton"/, "a skeleton wears .tab");
   assert.match(sk, /tab\.dataset\.id = id;/, "…with the id the pass reads");
@@ -588,8 +588,9 @@ test("event-keyed only: the pass rides the painter, which the rebuild, the width
   for (const [name, text] of [["the painter and the pass", painter], ["the observer and the fonts events", arming]] as const)
     assert.doesNotMatch(text, /setTimeout|setInterval|requestAnimationFrame|Date\.now|performance\.now/, name + ": exact events over time heuristics (repo rule)");
   assert.match(RENDER, /paintTabRowLines\(bar\);\s*\n\s*ensureTabRowObserver\(bar\);/, "the rebuild's call");
-  assert.match(arming, /tabRowObserver = new ResizeObserver\(\(\) => paintTabRowLines\(bar\)\);/, "the observer's call");
-  assert.match(arming, /fonts\.addEventListener\("loadingdone", \(\) => paintTabRowLines\(bar\)\);/, "the fonts' call");
+  // both callbacks run the strip's chip fit (stripFit, T413) before the painter: a resize or a swapped face re-widths the chips the fit measured
+  assert.match(arming, /tabRowObserver = new ResizeObserver\(\(\) => \{ stripFit\?\.\(\); paintTabRowLines\(bar\); \}\);/, "the observer's call");
+  assert.match(arming, /fonts\.addEventListener\("loadingdone", \(\) => \{ stripFit\?\.\(\); paintTabRowLines\(bar\); \}\);/, "the fonts' call");
   // EVERY caller, by shape: the code lines naming each function, comments filtered. A new caller shows up here and
   // must name the event it fires on; a setTimeout or requestAnimationFrame wrapper anywhere in render.ts fails this
   const sites = (name: string) => RENDER.split("\n").map((l) => l.replace(/\s*\/\/.*$/, "").trim()).filter((l) => l.includes(name + "(") && !/^\*/.test(l)).sort();
@@ -598,12 +599,12 @@ test("event-keyed only: the pass rides the painter, which the rebuild, the width
     "if (!(draggedEl && draggedEl.isConnected)) keepGroupsWithTabs(bar);",
   ], "the pass is called from the painter and nowhere else");
   assert.deepEqual(sites("paintTabRowLines"), [
-    'fonts.addEventListener("loadingdone", () => paintTabRowLines(bar));',
+    'fonts.addEventListener("loadingdone", () => { stripFit?.(); paintTabRowLines(bar); });',
     "function paintTabRowLines(bar: HTMLElement): void {",
-    'if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => paintTabRowLines(bar));',
+    'if (fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => { stripFit?.(); paintTabRowLines(bar); });',
     "paintTabRowLines(bar);",
     "paintTabRowLines(tabs);",
-    "tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));",
+    "tabRowObserver = new ResizeObserver(() => { stripFit?.(); paintTabRowLines(bar); });",
   ], "the painter is called from the rebuild, the width observer, the two fonts events and the drag's insert, and nowhere else");
   // the drag's caller sits inside the once-per-actual-insert guard, after the insert (the rows are read after the mutation)
   assert.match(RENDER, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\) \{\s*\n\s*flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);\s*\n\s*paintTabRowLines\(tabs\);/,

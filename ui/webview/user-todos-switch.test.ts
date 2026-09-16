@@ -1,8 +1,9 @@
 // The USER TODOS feature switch (the user 2026-09-03): "Waiting on you" is switchable, DEFAULT OFF,
 // per install. Source pins, like the other webview tests (no jsdom harness):
-//  - the GEAR row: a per-install kernel-side checkbox beside Thinking summaries, honest copy (what it
-//    turns on, off by default, per machine), stamped with its gesture time like every kernel setting
-//    this fork emits, filled from /version, named in the stale-gesture toast;
+//  - the GEAR row: a per-install kernel-side checkbox in its own "Waiting on you" section of the Chat
+//    tab, right after Thinking summaries (the other per-machine row; T404 re-cut the card), honest copy
+//    (what it turns on, off by default, per machine), stamped with its gesture time like every kernel
+//    setting this fork emits, filled from /version, named in the stale-gesture toast;
 //  - PER-INSTALL: deliberately NOT in federation's KERNEL_SETTING set, so it never queues for or
 //    reaches another machine's kernel (gear.test.ts's completeness pin covers the queued class);
 //  - the CLIENT needs no gate of its own: the kernel ships no rows while the switch is off — the
@@ -22,11 +23,13 @@ const KERNEL = read("kernel", "kernel.py");
 const BUS = read("postal", "postal_service.py");
 const HOOK = read("hooks", "romp-usertodo-context.sh");
 
-test("the gear has a User todos checkbox beside Thinking summaries, gesture-stamped, filled from /version", () => {
+test("the gear has a User todos checkbox in its own Waiting on you section right after Thinking summaries, gesture-stamped, filled from /version", () => {
   assert.ok(GEAR.includes("id=rs-usertodos"), "the checkbox exists in the gear markup");
   const at = GEAR.indexOf("id=rs-usertodos");
-  assert.ok(GEAR.indexOf("id=rs-thinksum") < at && at < GEAR.indexOf("id=rs-fileedit"),
-    "…in the same section as Thinking summaries, between it and File editing");
+  const sec = GEAR.indexOf("<div class='rs-sec' data-section=usertodos>Waiting on you</div>");
+  assert.ok(sec >= 0 && sec < at && at - sec < 200, "the row opens its own Waiting on you section (data-section is the strip's jump anchor)");
+  assert.ok(GEAR.indexOf("id=rs-thinksum") < sec && at < GEAR.indexOf("id=rs-wholechat"),
+    "…in the Chat tab after Thinking summaries, the other per-machine row, and before Chat history (T404 re-cut the card: File editing sits under General's Permissions now)");
   const row = GEAR.slice(at, at + 700);
   assert.match(row, /<b>User todos<\/b>/);
   assert.ok(!/fleet/i.test(row), "no 'fleet' in the copy (repo vocabulary rule)");
@@ -68,7 +71,10 @@ test("the kernel ships no rows while the switch is off — the client needs no l
   // every payload field a UI surface reads derives from it: the session field + split-card event,
   // the feed's sid-keyed map (marker + badge), the escalation floor's arming read
   assert.match(KERNEL, /_user_todos_open = _open_user_todos\(sid\)/);
-  assert.match(KERNEL, /_ut_open = _open_user_todos\(fsid\)/);
+  // the feed's read fills the per-session ctx where it is built, and upstream's T368 _feed_session_entry reads it back
+  // from the ctx (the 2026-09-15 upstream pull-in: the fork's one read became the fill and the ctx read)
+  assert.match(KERNEL, /\n\s+ut_open = _open_user_todos\(fsid\)/, "the ctx fill, the identifier unprefixed");
+  assert.match(KERNEL, /_ut_open = ctx\["ut_open"\]/, "the feed entry's read of the ctx");
   assert.match(KERNEL, /_todo_standdown = bool\(_open_user_todos\(sid\)\)/);
   // the switch file is its own file — the store keeps every row for the day it flips back on
   assert.match(KERNEL, /USER_TODOS_SWITCH_FILE = "user-todos-enabled\.json"/);

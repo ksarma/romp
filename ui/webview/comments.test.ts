@@ -247,19 +247,23 @@ test("promote latches the row before seeding; racing ops refuse through the CAS"
   assert.match(KERNEL, /def _revert\(msg\):/);
 });
 
-test("POST /end and the WS endSession op end a session through one routine, and that routine sweeps its comment threads", () => {
-  // The two doors used to carry twin inline _comment_kill_all sweeps; round 3 of the end-unknown-name
-  // change (2026-09-09) folded them, and the end-on-idle sweep's arm, into _end_and_record: the kill, the
-  // corroboration, the death record, _comment_kill_all and the closed frame. Each door is pinned to the
-  // routine by its own kill attribution, and the routine to the sweep inside its own body (the scan stops
-  // at the next top-level def), so none of the three doors that record a death can grow a second epilogue
-  // that drifts. cancelCreate's _end_pending_sid, the one intentional kill outside the routine, records no
-  // death by design and is not pinned here. The executed twin, both client doors calling the routine once
-  // with one sid and one backend, is tests/test_kernel_headless_ops.py.
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "endSession WS op", why=why\)/);
-  assert.match(KERNEL, /ended = _end_and_record\(sid, be, time\.time\(\), "\/kill route", why=why\)/);
-  assert.match(KERNEL, /ended = _end_and_record\(sid, Sessions\.backend_for\(sid\), now,\s*\n\s*"end-on-idle \(self-close/);
-  assert.match(KERNEL, /def _end_and_record\(sid, be, now, via, fresh=False, why=None\):(?:(?!\ndef )[\s\S])*?\n    _comment_kill_all\(sid, be\)/);
+test("the /kill route sweeps comment threads like the WS endSession op", () => {
+  assert.match(KERNEL, /_comment_kill_all\(sid, be\)\s+# its comment threads must not outlive it \(the WS endSession twin\)/);
+});
+
+test("the three doors that record a death sweep the session's comment threads: the WS endSession op, the /kill route and the end-on-idle sweep", () => {
+  // Each door is pinned by its own kill attribution to the epilogue that follows it: the kill, the death record,
+  // _comment_kill_all and the closed frame (the WS op then confirms the close at once). The fork's one routine for
+  // the three, _end_and_record, retired at the 2026-09-15 upstream pull-in with the tmux backend whose death
+  // corroboration it carried; the doors are upstream's inline arms again, so each is pinned whole and the sweep is
+  // counted, one call per door and no fourth. cancelCreate's _end_pending_sid, the one intentional kill outside
+  // these doors, records no death by design and is not pinned here. The executed twin (a client door ending one sid
+  // through its backend once) is tests/test_kernel_headless_ops.py.
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via endSession WS op\\n" % sid\)[^\n]*\n\s+be\.kill\(sid\); _record_death\(sid, int\(time\.time\(\)\), "kill"\)[^\n]*\n\s+_comment_kill_all\(sid, be\)[^\n]*\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)\n\s+_confirm_close_now\(sid\)/, "the WS endSession op");
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via \/kill route\\n" % sid\)[^\n]*\n\s+be\.kill\(sid\)\n\s+_record_death\(sid, int\(time\.time\(\)\), "kill"\)\n\s+_comment_kill_all\(sid, be\)[^\n]*\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)/, "the /kill route");
+  assert.match(KERNEL, /sys\.stderr\.write\("kill: %s via end-on-idle \(self-close%s\)\\n" % \(sid, ", a comment thread" if thread else ""\)\)\n\s+be = Sessions\.backend_for\(sid\)\n\s+be\.kill\(sid\)\n\s+_record_death\(sid, int\(now\), "kill"\)\n\s+_comment_kill_all\(sid, be\)\n\s+_send_to_app\("chat", \{"type": "closed", "id": sid\}\)/, "the end-on-idle sweep's arm");
+  assert.equal((KERNEL.match(/_comment_kill_all\(sid, be\)/g) || []).length, 3, "one sweep per door, no fourth");
+  assert.doesNotMatch(KERNEL, /_end_and_record/, "the fork's routine is gone with the backend it corroborated");
 });
 
 test("a thread that couldn't start says so — the error note renders in the thread", () => {

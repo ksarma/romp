@@ -204,7 +204,7 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.deepEqual(sectionTodoFlag(arch2.hidden.map((id) => sessions.get(id))), { count: 1, names: ["old1"] });
   // render.ts: both marks are built inside the stand-in block, pip before flag, both over `hidden`; the pip through
   // standInPip (the tab's rule with the feed's verdict folded in: tab-hide.test)
-  assert.match(FOLDED, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/);
+  assert.match(FOLDED, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\), ringSwitch\(settings\.tabWidgets\)\);/, "the pip reads the same widget switches as every unfolded tab's ring (T1 rings as widgets)");
   assert.ok(FOLDED.indexOf("standInPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
   assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("standInPip("), "both after the count — subordinate to the label");
   assert.equal(HEAD.split("standInPip(").length - 1, 1, "one pip derivation, inside the stand-in block: an open header with nothing hidden carries neither mark");

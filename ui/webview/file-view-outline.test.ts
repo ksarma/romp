@@ -448,7 +448,7 @@ async function open(p: string, text: string, t: TestContext, raw = false, at: At
   assert.ok(seam, "the probe action was mounted with the ctx");
   return { fv, ctx: seam!, wrap, card: wrap.querySelector(".fileview")!, body: wrap.querySelector(".fileview-body")!, acts: wrap.querySelector(".fileview-acts")! };
 }
-const button = (o: Open, label: string): El | undefined => o.acts.querySelectorAll("button").find((x) => x.textContent === label);
+const button = (o: Open, label: string): El | undefined => o.acts.querySelectorAll("button").find((x) => x.textContent === label || x.getAttribute("aria-label") === label);   // a word button by its text, a glyph (Edit, Download; T367) by its aria-label
 const outlineBtn = (o: Open): El => { const b = button(o, "Outline"); assert.ok(b, "the Outline button is in the actions row (before item 2 there was none)"); return b!; };
 const popover = (o: Open): El | null => o.card.querySelector(".fileview-outline");
 const rowsOf = (pop: El): El[] => pop.querySelectorAll(".fileview-outline-row");
@@ -679,9 +679,9 @@ test("file-view.ts and the two sheets: the button's label is the exported OUTLIN
   assert.match(VIEW, /export const OUTLINE_LABEL = "Outline";/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /outlineBtn\.type = "button"; outlineBtn\.textContent = OUTLINE_LABEL; outlineBtn\.title = "The file's headings";\n\s*outlineBtn\.setAttribute\("aria-haspopup", "menu"\); outlineBtn\.setAttribute\("aria-expanded", "false"\);/);
-  assert.match(openFn, /if \(isMd\) acts\.appendChild\(outlineBtn\);/, "a markdown file's button, like the toggles");
+  assert.match(openFn, /if \(isMd\) viewGroup\.appendChild\(outlineBtn\);/, "a markdown file's button, in the view group beside the Rendered|Raw pair (T367's grouping)");
   assert.match(openFn, /const headingsOf = \(\): HTMLElement\[\] => \{\n\s*const md = body\.querySelector\("\.fileview-md"\);\n(?:\s*\/\/[^\n]*\n)*\s*return md \? \(Array\.from\(md\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\]\)\.filter\(\(h\) => !underHidden\(h, md\)\) : \[\];/, "the one query, over the rendered box; a heading under a plain hidden wrapper has no row (review round 3)");
-  assert.match(openFn, /const syncOutline = \(\): void => \{ outlineBtn\.hidden = editing \|\| ctx\.mode\(\) !== "rendered" \|\| headingsOf\(\)\.length === 0; \};/);
+  assert.match(openFn, /const syncOutline = \(\): void => \{\n\s*outlineBtn\.hidden = editing \|\| ctx\.mode\(\) !== "rendered" \|\| headingsOf\(\)\.length === 0;\n\s*viewGroup\.hidden = !\(segBtns\.some\(\(\[, b\]\) => !b\.hidden\) \|\| !textSize\.trigger\.hidden \|\| !srcBtn\.hidden \|\| !outlineBtn\.hidden\);[^\n]*\n\s*\};/, "the button's rule, then the view group re-read on it (T367's all-hidden rule: the group follows the button it holds)");
   assert.match(openFn, /const openOutline = \(\): void => \{\n\s*const heads = headingsOf\(\);/, "the list is read when the popover opens");
   assert.match(openFn, /const pick = \(i: number\): void => \{\n\s*const id = rows\[i\] \? rows\[i\]\.dataset\.id : undefined;\n\s*closeOutline\(\);\n\s*if \(id\) scrollToFragment\(body, id\);\n\s*takeKeyboard\(\);\n\s*\};/, "close, land, keyboard");
   assert.match(openFn, /if \(e\.key === "Escape"\) \{ take\(\); closeOutlineKeeping\(false\); outlineBtn\.focus\(\{ preventScroll: true \}\); \}/, "Escape: the Tab branch's shape, the keyboard back on the button (the PR review's round 1)");

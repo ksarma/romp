@@ -47,8 +47,9 @@ test("the open list shows about six rows and scrolls beyond; the cap lifts while
   assert.match(CSS, /\.bg-list \{[^}]*overflow-y: auto;/, "the inner scroll is the list's own");
   assert.match(BOX, /max-height: min\(50vh, 340px\);/, "the box's own cap still bounds an open row's details");
   // a row's details wear .open on the .bg-task (bgRow), the class that lifts the cap (the bg-sub term is upstream's
-  // #1267: a task nested under an agent's own wait)
-  assert.match(RENDER, /const row = el\("div", "bg-task bg-" \+ \(t\.status \|\| "running"\) \+ \(t\.awaited \? " bg-awaited" : ""\) \+ \(t\.sub \? " bg-sub" : ""\) \+ \(tOpen && foldable \? " open" : ""\)\);/);
+  // #1267: a task nested under an agent's own wait; the bg-kind-<kind> and bg-kept terms are upstream's T394, one hue
+  // per kind and the kept row, taken at the 2026-09-15 pull-in, and the literal wraps onto a second line after them)
+  assert.match(RENDER, /const row = el\("div", "bg-task bg-" \+ \(t\.status \|\| "running"\) \+ \(t\.kind \? " bg-kind-" \+ t\.kind : ""\) \+ \(t\.kept \? " bg-kept" : ""\)\s+\+ \(t\.awaited \? " bg-awaited" : ""\) \+ \(t\.sub \? " bg-sub" : ""\) \+ \(tOpen && foldable \? " open" : ""\)\);/);
 });
 
 test("the fold is the user's: closed by default, opened only by a tap, never by the renderer (the user 2026-09-08)", () => {

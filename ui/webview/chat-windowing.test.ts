@@ -250,7 +250,7 @@ test("round nine fixes each carry a pin (T386 stage 2): an older fetch in flight
   assert.doesNotMatch(sca, /loadingOlder\.has\(activeId\) \|\| liveWindowAsk\(activeId\)/, "the unconditional refusal is gone");
   assert.match(RENDER, /if \(landedNow \|\| !anchorPendingOlder\) \{ pendingAnchor = null; pendingAnchorKeepY = null; \}/, "the reload restore's caller keeps its arm while an older fetch is pointed at the anchor");
   assert.match(RENDER, /^window\.addEventListener\("romp:wsdown", \(\) => onWireDown\(\)\);$/m, "the socket's down edge runs the one clear");
-  assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) \{ markPendingLost\("connection"\); onWireDown\(\); \} pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/, "…and so does the VS Code pane's pipe-down edge");
+  assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) \{ awaitingFull\.clear\(\); markPendingLost\("connection"\); onWireDown\(\); \} pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/, "…and so does the VS Code pane's pipe-down edge (this fork clears its awaited-full set there too, as the socket's down edge does)");
   assert.match(RENDER, /function onWireDown\(\): void \{[\s\S]*?gapLoading\.clear\(\); windowAsks\.clear\(\); loadingOlder\.clear\(\);[\s\S]*?hideLandingNotice\(\);[\s\S]*?pendingAnchor = null; anchorPendingOlder = false;/, "the clear: page asks, every ask record, the older-ask set, the glyphs, the notice, the arm");
 });
 
@@ -304,11 +304,11 @@ test("the skeleton prefetch never builds a tab the strip does not show (the user
   assert.equal((rt.match(/schedulePrebuild\(\)/g) || []).length, 1, "one arm inside renderTabs: the detector's");
   assert.match(RENDER, /^let lastShownTabIds: Set<string> \| null = null;$/m, "null until the first paint, which arms once");
   assert.equal(RENDER.includes("renderTabsAndPrefetch"), false, "the round-three helper is gone: no caller needs to know");
-  assert.match(RENDER, /^window\.addEventListener\(TABGROUPS_EVENT, \(\) => renderTabs\(\)\);$/m, "a section opened repaints bare (this window)");
-  assert.match(RENDER, /^window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) renderTabs\(\); \}\);$/m, "…and from a sibling document");
+  assert.match(RENDER, /^window\.addEventListener\(TABGROUPS_EVENT, \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\);$/m, "a section opened repaints bare (this window); this fork's notifier rides beside it (tab-groups.test.ts pins the pair)");
+  assert.match(RENDER, /^window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) \{ renderTabs\(\); viewsChanged\(\); \} \}\);$/m, "…and from a sibling document (this fork's notifier rides beside it)");
   assert.match(RENDER, /^window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === "romp-chat-cols"\) renderTabs\(\); \}\);$/m, "…and another column's holds");
   assert.match(RENDER, /^const onOnlyHashChange = \(\): void => renderTabs\(\);/m, "…and the #only= filter's change");
-  assert.match(RENDER, /^try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => renderTabs\(\)\); \} catch \{/m, "…and the phone/desktop flip");
+  assert.match(RENDER, /^try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => \{ renderTabs\(\); viewsChanged\(\); \}\); \} catch \{/m, "…and the phone/desktop flip (this fork's notifier rides beside it)");
   assert.match(RENDER, /captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs,/, "the kernel's tabOrder frame adopts the blob, then repaints through applyTabOrder…");
   const ato = RENDER.slice(RENDER.indexOf("\nfunction applyTabOrder("), RENDER.indexOf("\nfunction syncTabKeysWithStrip("));
   assert.match(ato, /\n  renderTabs\(\);\s*\n\s*syncTabKeysWithStrip\(\);\s*\n\}/, "…whose bare renderTabs() is the reveal's repaint for a peer's view or lens change");

@@ -210,7 +210,9 @@ test("the shell loads the merge module before its API-health script and the bund
 
 test("the 5xx magenta is a token in both theme blocks of both sheets (theme parity), and the popup paints through it", () => {
   const STYLES = read("ui", "webview", "styles.css"), FEED = read("ui", "webview", "feed.css"), KERNEL = read("kernel", "kernel.py");
-  const root = STYLES.slice(STYLES.indexOf(":root"), STYLES.indexOf("body.theme-light")), light = STYLES.slice(STYLES.indexOf("body.theme-light"));
+  // the two theme blocks by their RULE HEADS (a newline, then the selector and its brace), not the first bare mention: this
+  // fork's callout comment inside :root names body.theme-light in prose before the 5xx token, which would end the slice early
+  const root = STYLES.slice(STYLES.indexOf("\n:root {"), STYLES.indexOf("\nbody.theme-light {")), light = STYLES.slice(STYLES.indexOf("\nbody.theme-light {"));
   assert.match(root, /--st-5xx-bg: #c026d3; --st-5xx-fg: #ffffff;/);
   assert.match(light, /--st-5xx-bg: #A21CAF; --st-5xx-fg: #ffffff;/);
   assert.match(FEED, /--st-5xx-bg: #A21CAF; --st-5xx-fg: #ffffff;/, "mirrored where the feed mirrors the blocked red");

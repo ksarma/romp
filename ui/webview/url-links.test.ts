@@ -352,7 +352,9 @@ test("urlChip / urlChipLabel: a label that keeps the distinguishing part in view
 test("render.ts: the two todo linkers run linkifyUrls before the path walk; the chat installs no opener (its a[href] delegate opens every absolute-scheme anchor)", () => {
   assert.match(RENDER, /import \{ linkifyUrls, urlChip \} from "\.\/url-links";/);
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyPathTokens\(node, sid, undefined, \{ targetSuffix: true \}\);\n\}/);
-  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
+  // the detail walk rides linkifyFileUris's ten-argument union signature (upstream's pathPreview and pathPreviewWhy slots
+  // before sid since the 2026-09-15 pull-in): six placeholders, the todo's sid, the delegated flag, the walk options
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyUrls\(node\);\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, undefined, undefined, sid, true, \{ targetSuffix: true \}\);\n\}/);
   assert.doesNotMatch(RENDER, /installUrlLinkOpener|installPrLinkOpener/, "the chat's own a[href] delegate already opens every absolute-scheme anchor");
   // the branch these anchors take (render-todo-file-chip.test.ts CLICKS them through the lifted delegate; this pins the
   // path at source): an http(s) href names a scheme, so it skips the scheme-less branch and its protocol gate, and

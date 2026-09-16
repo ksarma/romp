@@ -115,8 +115,10 @@ test("kernel and page pins: the chat page carries the shim, the shim reads its p
   assert.match(KERNEL, /"iframe\{position:static;display:none;width:100%;height:100%;border:0\}"/, "...and hides the iframes themselves");
   assert.match(KERNEL, /"#f-chat\.m-on,#f-fleet\.m-on,#f-feed\.m-on,#f-waiting\.m-on,#f-files\.m-on\{display:block\}"/, "...except the one tab carrying m-on");
   // the loop skips a pane the page lacks (if(F[k]): the 2026-09-09 fold's ruling, so a trimmed page never throws
-  // mid-switch); the property is the same: every iframe present gets m-on toggled by the tab
-  assert.match(KERNEL, /function show\(p\)\{[^\n]*for\(var k in F\)if\(F\[k\]\)F\[k\]\.classList\.toggle\('m-on',k===p\);/, "the tab switch moves m-on across the iframes: what the phone leg drives");
+  // mid-switch); the property is the same: every iframe present gets m-on toggled by the tab. Since T317b (the
+  // 2026-09-15 pull-in) show(p) opens with the Files-control guard and the hidden-tab return, so the toggle sits two
+  // lines below the head: the pin spans them lazily, the toggle text itself unchanged
+  assert.match(KERNEL, /function show\(p\)\{[\s\S]*?for\(var k in F\)if\(F\[k\]\)F\[k\]\.classList\.toggle\('m-on',k===p\);/, "the tab switch moves m-on across the iframes: what the phone leg drives");
 });
 
 // ── the browser legs ──────────────────────────────────────────────────────────────────────────────

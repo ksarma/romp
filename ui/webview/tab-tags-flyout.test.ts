@@ -23,7 +23,7 @@ test("hover-intent opens the flyout: the feed's 120ms, click still instant, hove
   assert.match(WIRE, /openNow\(true\);/, "click opens instantly and may focus");
   assert.match(WIRE, /cancel\(\);\s*\n\s*const fly = menu\.querySelector\(sel\);\s*\n\s*if \(fly\) \{ fly\.remove\(\); return; \}/,
     "a click cancels any pending hover intent before acting; a second click folds the flyout");
-  assert.match(block, /if \(focusInput\) \(sub\.querySelector\("\.ctx-tag-input"\) as HTMLInputElement \| null\)\?\.focus\(\);/, "the click's focus is the Tags builder's own");
+  assert.match(block, /if \(focusInput\) \(sub\.querySelector\("\.ctx-tag-input"\) as HTMLInputElement \| null\)\?\.focus\(\{ preventScroll: true \}\);/, "the click's focus is the Tags builder's own, and it does not scroll the menu to the input");
   // Billing wears the same gesture (T380, the user 2026-09-12): hovering the row opens its flyout, no click needed
   assert.match(RENDER, /wireFlyout\(menu, item, "\.ctx-sub-billing", \(\) => openBillingFly\(\)\);/);
   assert.doesNotMatch(RENDER, /hoverOpenT|hoverCloseT|cancelHoverTimers|armHoverClose/, "the inline Tags copy of the gesture is gone: one definition");

@@ -67,10 +67,12 @@ test("the tab menu's Emoji… row sits with Rename, wears the current emoji as i
   assert.match(block, /else em\.appendChild\(ctxIcon\("smile", false\)\);/);
   assert.match(block, /ctx-item-sub/);
   assert.match(block, /dismissTabMenu\(\); showEmojiPrompt\(id\);/);
-  // after Move to folder…, before the color swatches: the aesthetic section, with Rename
-  const move = SRC.indexOf('l.textContent = "Move to folder…"');
+  // after Rename, before the color swatches: the aesthetic section. Move to folder… is no longer the lower bound: upstream
+  // re-sectioned the menu at the 2026-09-15 pull-in and that row sits in section 2 beside Tags (the user 2026-09-11),
+  // while this fork's Emoji row stays with Rename
+  const rename = SRC.indexOf('l.textContent = "Rename"');
   const colors = SRC.indexOf('const row = el("div", "ctx-colors");');
-  assert.ok(move > 0 && colors > 0 && move < i && i < colors);
+  assert.ok(rename > 0 && colors > 0 && rename < i && i < colors);
   // the glyph box sizes to its glyph up to the sibling SVG icons' 16px and CLIPS the rest horizontally: a
   // well-formed ZWJ chain the font does not join, or an RGI sequence the font predates, draws as three or four
   // glyphs, which over the fixed 14px box this was spilled into the row text on the right and the padding on

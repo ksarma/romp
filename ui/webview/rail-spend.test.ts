@@ -266,7 +266,12 @@ test("the cost view shows the CLI's own cost, adds a labelled estimate for the t
   assert.match(KERNEL, /"from": t0, "buckets": kind/);
   // …and the estimate itself dedupes split responses and reads subagent transcripts, nested ones too (2026-09-06)
   assert.match(KERNEL, /def _subagent_transcripts\(path\):/);
-  assert.match(KERNEL, /for root, dirs, files in os\.walk\(d\):/, "Workflow agents nest under subagents/workflows/");
+  // the tree is listed one directory at a time (upstream's memoised os.scandir listing replaced the fork's os.walk; its
+  // docstring says "as os.walk had it"), each subdirectory queued for a listing of its own, no symlink followed
+  const sub = KERNEL.slice(KERNEL.indexOf("def _subagent_transcripts(path):"), KERNEL.indexOf("\ndef ", KERNEL.indexOf("def _subagent_transcripts(path):") + 1));
+  assert.match(sub, /with os\.scandir\(d\) as it:/, "Workflow agents nest under subagents/workflows/: each directory's listing feeds the next");
+  assert.match(sub, /if e\.is_dir\(follow_symlinks=False\):\n\s+subdirs\.append\(e\.name\)/, "a subdirectory is queued for its own listing, a symlink never (the walk's rule survives the scandir)");
+  assert.match(sub, /stack\.extend\(os\.path\.join\(d, n\) for n in subdirs\)/, "...and the queued subdirectories are listed in turn");
   assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
   assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
 });
