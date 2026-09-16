@@ -43,6 +43,15 @@ const reboot = async () => {
   await installShim();
   await page.evaluate(() => { const c = document.getElementById("content"); c.scrollTop = c.scrollHeight; });
   await painted();
+  // The fresh socket's wire settles before the road. The pusher's cycle after this page's connect push sends the socket ONE status-only
+  // chatTail (an empty suffix anchored at the tail's last key); applying it rebuilds the window and restores the scroll anchor. On a
+  // pusher that cycles on its wakes that frame lands ~0.1 s after the connect push, inside the waits above; on one that holds a minimum
+  // interval between cycles it lands ~0.1 to ~1 s after, straddling this function's return. Landing after a road's deep link, its anchor
+  // restore moved the view off the landed row: the answered question's row (anchored on a tool_result uuid no event carries) gave way
+  // to its turn's first row under the viewport top (the anchor road, red on CI and on a box 2 runs of 3; measured 110 to 140 ms after
+  // the landing). DRIVER_HEAD's frame log records every chatTail with its source and a reload starts it empty, so the wait is on that
+  // event for this page life; the settled wire then dedups the same tail for a minute, longer than any road takes.
+  await page.waitForFunction(() => (window.__bootFrames || []).some((f) => f.type === "chatTail" && f.source === "socket"), null, { timeout: 15000 }).catch(() => {});
 };
 const trace = () => page.evaluate(() => ({ sent: window.__sent.slice(-14).map((m) => m.type + (m.what ? ":" + m.what + (m.data && m.data.writer ? ":" + m.data.writer : "") + (m.data && m.data.why ? ":" + m.data.why : "") : "") + (m.cancelled ? ":cancelled" : "")), recv: window.__recv.slice(-10), regions: (typeof window.__rompRegions === "function" ? window.__rompRegions() : null) }));
 const writes = (writer) => page.evaluate((w) => window.__sent.filter((m) => m.what === "scrollwrite" && m.data && m.data.writer === w).map((m) => [m.data.before, m.data.after]), writer);

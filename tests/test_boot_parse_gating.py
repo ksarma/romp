@@ -660,7 +660,7 @@ class PerfCountsColdParses(unittest.TestCase):
         d = tempfile.mkdtemp()
         r = _row(d, SID_WORK, old=False)
         before = jd.parse_misses()
-        jd._PARSE_CACHE.pop(SID_WORK, None)
+        jd.parse_cache_drop(SID_WORK)   # the store's own drop: a bare-sid pop on the (fsid, cut, leaf) OrderedDict subclass raises KeyError on 3.10 (tests/test_nudge_walk_gate.py setUp)
         now = int(time.time())
         jd.parsed_session(SID_WORK, [r["path"]], now)
         jd.parsed_session(SID_WORK, [r["path"]], now)
