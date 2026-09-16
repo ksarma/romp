@@ -1571,8 +1571,8 @@ it run every time:
   `romp down: the kernel on :<port> was not confirmed as the one this romp
   manages (<why>); not touching it. Check ROMP_KERNEL_PORT and the state dir`
   (a rejected token gets the rejected-token line instead) and exits 1. One
-  still answering six seconds after the signal gets the same release and
-  `down-failed` row, then
+  still answering once that poll's bound has run out gets the same release
+  and `down-failed` row, then
   `romp down: the kernel on :<port> (pid <pid>) is still running after being
   asked to stop`, which says to stop it by hand and run `romp down` again,
   and exits 1.
