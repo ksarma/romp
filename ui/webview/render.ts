@@ -6079,14 +6079,17 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport, live?: any) {
   // what we hold and re-pushes immediately). First-ever listings are exempt via the kernelListed gate —
   // that is the designed tabs-first boot, whose session frames are already on their way in this very push
   // cycle — so this must run BEFORE the add-only record below. Self-limiting via awaitingFull; the
-  // closingTabs/provisional/detached-host suppressions live inside requestFullSession.
+  // closingTabs/provisional suppressions live inside requestFullSession (the detached-host gate left with the
+  // detached client, 2026-09-15).
   for (const id of kernelOrder) {
     // A listed SKELETON holds no session entry by design (upstream's skeleton diet, 2026-09-15: it lives in
     // skeletonTabs.ids until its full lands on the click road), so it is not this arm's to ask for; the arm keeps
     // asking for a listed id this page knows nothing about at all.
-    if (kernelListed.has(id) && !sessions.has(id) && !skeletonTabs.ids.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
+    // Never on a RE-EMISSION (federation.ts emitMergedOrder, `reemit`: the stored strip re-served on a view-order write or a host attach): it is no kernel's fresh word, so neither this ask nor the record below reads it (the cold-boot lab, 2026-09-16; the record's comment has the order of events).
+    if (!(report && report.reemit) && kernelListed.has(id) && !sessions.has(id) && !skeletonTabs.ids.has(id)) requestFullSession(id, "nobase");   // listed, and this page holds no session entry for it: no base (the why is #1017's vocabulary)
   }
-  for (const id of kernelOrder) kernelListed.add(id);
+  // The record is the kernel's own word too. On a fresh page the re-emission runs BEFORE the fresh emission of the very push that filled the store (absorbHostReport's writeViewOrder dispatches romp-vieworder synchronously, then its emitMergedOrder(true) follows), so a record taken from it made that fresh strip read as a repeat listing of the active tab, whose full had not landed yet, and the page asked for it a second time under the diet.
+  if (!(report && report.reemit)) for (const id of kernelOrder) kernelListed.add(id);
   // T357: the tab the user was on is re-listed (a host re-attach, a relay redial) → focus goes back to it; the
   // skeleton branch of showActive asks for its frame. Another session's tab appearing does nothing here.
   const back = vanishedId || wantActive;   // …or the tab this page showed before a reload, awaited since boot
@@ -8562,9 +8565,6 @@ function showTabMenu(e: MouseEvent, id: string, copy?: string) {   // `copy`: th
     });
     refreshHideRow();
   }
-  // (The hide-session mechanism is fully RETIRED, the user 2026-08-24 — the tag system covers
-  // backgrounding; the kernel migrated existing hidden entries into the "archived" tag. revealIn
-  // survives for the picker's tagged-session jump.)
   // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
   // statusline badge). For EVERY SDK session (st.auth is set; the user 2026-09-08: the picker never
   // disappears — it once existed only when the machine offered both choices, so a one-auth box had
@@ -8763,7 +8763,7 @@ window.addEventListener("mousedown", (e) => { if (emojiPrompt && !emojiPrompt.ca
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPrompt) { e.stopPropagation(); e.preventDefault(); closeEmojiPrompt(); } }, true);
 // …but not the menu's own scroll: taller than the window it scrolls inside it (styles.css max-height, 2026-09-13), and a
 // dismissal on that scroll closed it under the pointer the moment a row below the fold was brought into view
-window.addEventListener("scroll", (e) => { if (ctxMenuEl && ctxMenuEl.contains(e.target as Node)) return; dismissTabMenu(); }, true);
+window.addEventListener("scroll", (e) => { if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return; dismissTabMenu(); }, true);
 window.addEventListener("blur", () => dismissTabMenu());
 
 // "Rename" (tab context menu): swap the tab's label for an inline input. Enter

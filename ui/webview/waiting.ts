@@ -198,9 +198,9 @@ function linkChip(link: string): HTMLElement {
 // back; an open Reply modal then takes the focus back into its box (showReply). The iframe check is against
 // the PARENT document's HTMLIFrameElement: an element of another document is never an instance of this
 // document's constructor, so a check against this one's would focus nothing. Plain JS in the body: no cast,
-// no annotation, because user-todo-links.test.ts, waiting-link-focus.test.ts and waiting-pane-browser.test.ts
-// execute it as it stands, handing it rows, window, todoLinkRoute and openFileView by name; the shell's toggle
-// is typed on Window below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
+// no annotation, because user-todo-links.test.ts and waiting-pane-browser.test.ts execute it as it stands,
+// handing it rows, window, todoLinkRoute and openFileView by name; the shell's toggle is typed on Window
+// below for that reason (palette-main.ts's chatPost reveals-then-focuses the same way).
 // The shell's pane set as it last told this pane, {romp:"panes", on:{key:bool}, avail:{files:bool}}, posted into every
 // pane iframe on its load and on every toggle (kernel.py _LANDING_COLLAPSE_JS): a cache of the shell's own event, never a
 // per-click guess (render.ts panesOn and panesAvail, the same two names and the same whole-set replace). No word yet

@@ -304,7 +304,10 @@ await outline.addInitScript(wrapDials);
 await outline.addInitScript(() => {
   window.__feeds = [];
   // the pane's merged frames (feed among them) reach its handlers by direct call through the federation manager, never as a window
-  // message event; the shim hands every local frame, deltas already applied, to window.__rompFed.inbound, so the recorder wraps that
+  // message event: the pane registers its handler through window.__rompFed.onFrame (frame-listener.ts), so the recorder wraps that
+  // and reads the whole frame the pane applies. Not inbound: this fork's Outline socket announces the feed pane's caps
+  // (FEED_DELTA_CAP; ledger 2026-09-05-outline-pane-feed-deltas), so past the first full frame the kernel streams feedDelta
+  // frames, which federation applies inside inbound and re-emits as a whole feed; on a wire of whole frames onFrame sees the same
   const record = (m) => { if (!m || m.type !== "feed" || !Array.isArray(m.ledgers)) return;
     window.__feeds.push({ t: Math.round(performance.now() - window.__t0), n: m.ledgers.length, prov: m.ledgers.filter((r) => r.provisional).map((r) => r.sid),
       rows: Object.fromEntries(m.ledgers.map((r) => [r.sid, { provisional: !!r.provisional, name: r.name, state: r.status ? r.status.state : null,
@@ -313,7 +316,7 @@ await outline.addInitScript(() => {
         anchors: r.ledger && Array.isArray(r.ledger.tree) ? r.ledger.tree.map((n) => [n.promptAnchor || null, n.workAnchor || null]) : null }])) }); };
   let fed = null;
   Object.defineProperty(window, "__rompFed", { configurable: true, get() { return fed; },
-    set(v) { fed = v; if (v && typeof v.inbound === "function" && !v.__labWrapped) { const inb = v.inbound; v.__labWrapped = true; v.inbound = (h, m) => { record(m); return inb(h, m); }; } } });
+    set(v) { fed = v; if (v && typeof v.onFrame === "function" && !v.__labWrapped) { const on = v.onFrame; v.__labWrapped = true; v.onFrame = (h) => on((ev) => { record(ev && ev.data); return h(ev); }); } } });
   window.addEventListener("message", (e) => { if (!fed) record(e.data); });   // a page without the manager: the window event
 });
 await outline.goto(cfg.fleet);

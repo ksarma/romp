@@ -1930,15 +1930,15 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     fi
     _who="${1:-}"
     # -h|--help is the verb's own (the up/down arms' convention), so it never reaches the kernel as a
-    # session name, and so is one of the verb's own flags in the session's slot (`romp end --now web`,
-    # `romp send --tag kick web hi`): usage on stderr and exit 2, as `romp compact --wait` answers its
-    # misplaced flags, instead of a POST for a session named --now. Every other dash-leading word is a
-    # session name and goes to the kernel, which is what compact allows too.
+    # session name, and so is one of end's own flags in the session's slot (`romp end --now web`): usage
+    # on stderr and exit 2, as `romp compact --wait` answers its misplaced flags, instead of a POST for a
+    # session named --now. send's `--tag` never reaches this slot: the pre-parse above takes the leading
+    # form as the label (2026-09-12), so `romp send --tag kick web hi` tags the send, and a bare
+    # `romp send --tag` is usage there. Every other dash-leading word is a session name and goes to the
+    # kernel, which is what compact allows too (`romp end --tag` names a session called --tag).
     case "$_who" in
         --now|--when-idle)
             if [[ "$_verb" == end ]]; then echo "$_usage" >&2; exit 2; fi ;;
-        --tag)
-            if [[ "$_verb" == send ]]; then echo "$_usage" >&2; exit 2; fi ;;
         -h|--help)
             echo "$_usage"
             case "$_verb" in

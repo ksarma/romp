@@ -48,9 +48,10 @@ export function heldRowValue(now: string, kind: string, h: PickHeld, picked?: st
 }
 
 // The Billing switch is HELD: picked, pending, and waiting for the session's live work rather than applying (the
-// fork's settings-pick hold, 2026-09-10). These three readings lived in billing-label.ts until the 2026-09-15 upstream
-// pull-in retired that module for upstream's inline Billing ladders (T346); the hold is fork-only, so its arm moved
-// here and leads both ladders in render.ts. Typed on the status fields the Billing surfaces read plus the hold's marker.
+// fork's settings-pick hold, 2026-09-10). These three readings lived in the fork's Billing label helper module until
+// the 2026-09-15 upstream pull-in retired it for upstream's inline Billing ladders (T346); the hold is fork-only, so
+// its arm moved here and leads both ladders in render.ts. Typed on the status fields the Billing surfaces read plus
+// the hold's marker.
 export interface BillingHeldFacts { auth?: string; authLive?: string; authPending?: boolean; authAcct?: string; authLabel?: string; pickHeld?: PickHeld | null }
 
 export function billingHeld(st: BillingHeldFacts): boolean {

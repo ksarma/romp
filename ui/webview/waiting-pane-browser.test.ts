@@ -45,8 +45,8 @@ const ROWS = [{ sid: SID, name: "api", color: { bg: "#123456", fg: "#ffffff" }, 
 
 // ── the source leg ────────────────────────────────────────────────────────────────────────────────
 // openTodoPath's body, executed with the names it reads handed in: the rows, the window, the route (todoLinkRoute, the
-// shell's word through file-route.ts) and the viewer's opener for the "here" arm (user-todo-links.test.ts and
-// waiting-link-focus.test.ts run the same body the same way)
+// shell's word through file-route.ts) and the viewer's opener for the "here" arm (user-todo-links.test.ts runs the
+// same body the same way)
 type Route = "pane" | "here";
 type Fn = (rows: unknown[], w: unknown, path: string, sid: string, todoId: string, at: unknown, route: () => Route, openHere: (...a: unknown[]) => void) => void;
 function openTodoPath(): Fn {

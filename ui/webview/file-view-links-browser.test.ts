@@ -9,7 +9,7 @@
 // paints its highlight and change marks INTO the links, and the browser decides which element a click on a mark lands
 // on; a confirm dialog is a real one. Two more pages run the chat's and the feed's own click handlers (their source,
 // transformed and installed over the same bundle) so the three documents' routing is exercised, not pinned. Skips
-// LOUDLY without a playwright browser (CI installs none), as waiting-link-focus.test.ts does. Synthetic values only:
+// LOUDLY without a playwright browser (CI installs none), as waiting-pane-browser.test.ts does. Synthetic values only:
 // the notes-api world under /tmp/TESTHOST, a placeholder session id, example.invalid addresses.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";

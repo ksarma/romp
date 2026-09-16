@@ -694,6 +694,7 @@ function liftShowTabMenuRaw(): (hooks: MenuHooks) => MenuApi {
     const dismissTabMenu = () => { H.dismissed++; ctxMenuEl?.remove(); ctxMenuEl = null; tagsFlyNewInput = null; tabMenuViewsHook = () => {}; };   // as render.ts's (pinned in the menu door test): the menu leaves the page, the input and the views hook are cleared (round 5: a stub that left the menu on the page let C4 read a re-dress the page had discarded)
     const closeEmojiPrompt = () => {};
     let emojiPrompt = null;   // the picker's listeners read it (never open here; round 9 lifts the menu's window listeners)
+    const Node = FakeEl;   // the scroll listener's instanceof check: a fake element is an element (round 9)
     const setSessionFlag = (id, k, v) => { H.flags.push([id, k, v]); };
     const setSessionColor = () => {}, startTabRename = () => {}, showMovePrompt = () => {}, showEmojiPrompt = () => {};
     const billingSubText = () => "";
@@ -935,7 +936,7 @@ test("pinned: the menu door in render.ts. The toggles' dress is one helper the H
   assert.doesNotMatch(MENU, /liveUnion\(sec\)/, "the pin row no longer resolves its union by the ref (a home guard that then wrote the live union's ref still wrote a pruned pin in the renamed-away-plus-same-name corner)");
   // round 8: THE MENU LEAVES WHEN THE PAGE MOVES UNDER IT AND NOT WHEN IT SCROLLS WITHIN ITSELF (THE MENU'S OWN SCROLL executes it over
   // the harness window since round 9; the browser leg drives it with a real wheel where a browser is installed)
-  assert.match(RENDER, /\nwindow\.addEventListener\("scroll", \(e\) => \{ if \(ctxMenuEl && ctxMenuEl\.contains\(e\.target as Node\)\) return; dismissTabMenu\(\); \}, true\);\n/, "a scroll whose target the menu contains is the menu's own and is left alone; every other scroll dismisses (upstream's line: the fork's round-9 instanceof guard is not in it)");
+  assert.match(RENDER, /\nwindow\.addEventListener\("scroll", \(e\) => \{ if \(ctxMenuEl && e\.target instanceof Node && ctxMenuEl\.contains\(e\.target\)\) return; dismissTabMenu\(\); \}, true\);\n/, "a scroll whose target the menu contains is the menu's own and is left alone; every other scroll dismisses");
   // round 3: THE MENU'S SEAT. One seat for the menu (the cursor's corner clamped inside the pane; the emoji picker's anchor follows),
   // re-run from the menu's own corner by the row's refresh, and the open flyout re-placed after it; the seat runs once the menu is on
   // the page (the lift's anchor)
@@ -2454,7 +2455,7 @@ test("executed: THE MENU'S OWN SCROLL LEAVES IT STANDING (menu review rounds 8 a
     const menu2 = api.open("api", "infra");
     const d1 = hooks.dismissed;
     win.fire("scroll", { target: {} });
-    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a scroll dispatched at the window itself; no browser scroll event carries one): the harness's contains answers false for it and the menu dismisses (upstream's line has no instanceof guard; the DOM's contains would throw there)");
+    assert.deepEqual([hooks.dismissed, menu2.isConnected], [d1 + 1, false], "a target that is no node at all (a scroll dispatched at the window itself; no browser scroll event carries one, and the DOM's contains would throw on it) takes the listener's instanceof guard and dismisses");
     const menu3 = api.open("api", "infra");
     const d2 = hooks.dismissed;
     win.fire("scroll", {});

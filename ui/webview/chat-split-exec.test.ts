@@ -354,6 +354,7 @@ function stripWorld(o: { col: string; sets: ColSets | null; wantActive?: string 
     const requestFullSession = () => {};   // this fork's no-base re-ask for a listed tab the page holds no session entry for (#1017's vocabulary): not this test's subject
     const peekId = null; const chatVisible = () => true;
     const tabMeta = new Map(), sessions = new Map(), pendingTabMeta = new Map(), closingTabs = new Map(), kernelListed = new Set(); const order = [];
+    const skeletonTabs = { ids: new Set() };   // upstream skeleton diet (2026-09-15): the lifted re-ask arm skips a listed skeleton; none in these worlds
     const CLOSE_ACK_MS = 15_000; let clock = 1_000_000; const Date = { now: () => clock };
     const vscodeApi = null;
     const dismissSession = (id, why) => { HOOKS.dismissed.push([id, why]); sessions.delete(id); const i = order.indexOf(id); if (i >= 0) order.splice(i, 1); };
