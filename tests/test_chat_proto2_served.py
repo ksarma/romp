@@ -6,7 +6,15 @@ flattening step: no pre-cut body is read at a first open); loadOlder by uuid wal
 the count appears, and the pages plus the tail equal what an index (proto-1) client on the same kernel assembles
 from today's frames; loadAround lands a deep anchor in one reply as a run by its span; loadTurns pages the gap to the
 window back to the live tail and re-attaches, so the next transcript append reaches it as a chatTail; every leaf
-byte is the tail, the guards and the pages asked for. Synthetic transcript (the stage 4a fixture); TESTHOST."""
+byte is the tail, the guards and the pages asked for. Synthetic transcript (the stage 4a fixture); TESTHOST.
+
+The restored-kernel case waits on the wire's own events where the fork's pusher cadence makes a read timing-bound (2026-09-16,
+the same family as the settle waits in tests/test_history_regions_browser.py and tests/test_landing_notice_browser.py): the
+pusher here holds PUSH_MIN_INTERVAL_S (1.0 s) between cycle starts (tests/test_pusher_cadence.py), so a proto-1 index client
+whose page walk fits inside one cycle gap can leave before any cycle read the floor while it was connected, and the proto-2 tab
+then never receives the floor-0 frame or the climb-back frame the case reads. The case waits for the floor-0 frame on the tab
+before the index client leaves; the kernel is right either way (an unchanged list is an empty tail), the lab's read was early.
+Red twice on CI at upstream's text, green on a box; the wait beside the read says how it was traced."""
 import json
 import os
 import sys
@@ -252,14 +260,30 @@ class Proto2Wire(A.RestartOverACheckpointedSession):
                 return [e["uuid"] for e in lst if e.get("kind") not in OVERLAYS]
             self.assertEqual(records(whole1), records(whole2) + ["u_after"],
                              "the proto-2 pages plus the tail are the index client's transcript, the cards aside")
+            # c4 holds the floor-0 list BEFORE the index client leaves. The floor-0 frame to the proto-2 clients is a full
+            # pusher cycle's (the connect push serves c3 alone and never advances the shared diff baseline), and the
+            # climb-back frame below is the base rule over it: the floored list against a floor-0 baseline changes at
+            # index 0, a full frame. On this fork the pusher runs a cycle every PUSH_MIN_INTERVAL_S (1.0 s), so an index
+            # client whose 32-page walk fits inside one cycle gap leaves before any cycle read the floor while it was
+            # connected; the rebuilt floored list then equals the floored baseline, c4 gets an empty-suffix chatTail and
+            # never a session frame (CI, 2026-09-16, twice; the local trace showed the frame landing 0.8 s after the
+            # close). The wait is on the event, the frame, never a sleep; c3 stays connected until it has landed.
+            f4z = None; seen = []
+            for fr in c4.frames(60):
+                seen.append((fr.get("type"), fr.get("floor")))
+                if fr.get("type") == "session" and fr.get("id") == WEB and not fr.get("floor"):
+                    f4z = fr; break
+            self.assertIsNotNone(f4z, "the index client's connect dropped the floor to 0 and c4 got that frame while it was connected; c4 saw %s" % (seen,))
+            self.assertEqual(f4z.get("proto"), 2)
             c3.close()
             # the index client left: the next build's floor climbs back and every proto-2 client gets a full tail frame
             # from it (a floor move is a full frame by design; round 3)
-            f4b = None                                     # (the floor-0 frame c3's connect caused may still be queued ahead of it)
+            f4b = None; seen = []                          # (another floor-0 cycle's frames may still be queued ahead of it)
             for fr in c4.frames(60):
+                seen.append((fr.get("type"), fr.get("floor")))
                 if fr.get("type") == "session" and fr.get("id") == WEB and (fr.get("floor") or 0) > 0:
                     f4b = fr; break
-            self.assertIsNotNone(f4b, "the floor climbed back after the index client left and c4 got the frame")
+            self.assertIsNotNone(f4b, "the floor climbed back after the index client left and c4 got the frame; c4 saw %s" % (seen,))
             self.assertEqual(f4b.get("proto"), 2)
             self.assertFalse(f4b.get("headKnown"), "…and the head is unknown again to the proto-2 client")
             perf = self._get(p2, "/perf")
