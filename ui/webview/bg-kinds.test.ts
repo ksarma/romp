@@ -100,9 +100,12 @@ test("the sheet: one hue per kind, status overriding for failed and completed, t
   assert.match(CSS, /\.bg-status \{[^}]*color: var\(--bgt\); \}/, "…over the plain hue, which an engine without relative colours keeps");
 });
 
-test("the accent-is-never-a-status-colour rule names its one exception, in the sheet and the UI rules (round one, low 5)", () => {
+test("the accent-is-never-a-status-colour rule names its exceptions: T394 in the sheet and the UI rules, T301 in the UI rules (round one, low 5)", () => {
+  // the sheet's comment counts its own exception, the command rows (T394): the second one, the rail's API-health dot
+  // (T301), is painted by the kernel's served CSS, not by this sheet, so only the UI rules name both
   assert.match(CSS, /ONE exception \(the user 2026-09-12, T394\): the background box's command rows wear it as their KIND hue/);
-  assert.match(UI_RULES, /ONE exception, the user's choice of 2026-09-12 \(T394\): the background box's COMMAND rows wear\nthe accent blue as their KIND hue/);
+  assert.match(UI_RULES, /Two exceptions\. The first, the user's choice of 2026-09-12 \(T394\): the background box's COMMAND rows wear\nthe accent blue as their KIND hue/);
+  assert.match(UI_RULES, /The second, the user's choice of 2026-09-10 \(T301\): the rail's API-health dot wears\nthe accent in its FINE state/);
 });
 
 test("the fixture mirrors the builder: every row wears its kind class", () => {

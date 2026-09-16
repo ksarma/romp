@@ -2493,9 +2493,15 @@ PYEOF
             # step 4): a kernel's exit budgets (the drain, the checkpoint and assembly writes;
             # EXIT_GRACE_S in kernel/kernel.py) are shares of the SIGTERM grace it was spawned under,
             # ROMP_SHUTDOWN_GRACE_MS less 0.5 s, so a manager-spawned kernel may use 7.5 s of an 8 s
-            # grace, and a bare one, with no manager to pass the value down, assumes 5 s; the bound
-            # sized from that grace, with its margin, covers a kernel that uses its whole budget. The
-            # poll used to be a fixed 24 x 0.25 s under a comment that called the drain about 2 s: a
+            # grace, and a bare one assumes 5 s only when the knob is absent from its environment: the
+            # kernel reads the raw value with float(), a third reader outside the digits-only contract
+            # step 4's two readers share (bin/romp-manager's shutdownGrace and this command's poll
+            # read), while the manager road hands it the digits the manager parsed. The readers never
+            # diverge where this bound counts: a bare kernel's SIGTERM handler holds the accept loop,
+            # so the poll breaks on its first iteration whatever the bound, and a kernel that outlived
+            # its manager drains under the grace the manager parsed (review round 3, 2026-09-16). The
+            # bound sized from that grace, with its margin, covers a kernel that uses its whole budget.
+            # The poll used to be a fixed 24 x 0.25 s under a comment that called the drain about 2 s: a
             # kernel already draining on its parent-death watchdog's thread (its manager gone; the
             # SIGTERM handler proper holds the accept loop, this road does not) kept answering
             # /healthz for its whole budget, past the 6 s the poll gave it, and the down reported a

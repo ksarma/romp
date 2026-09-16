@@ -101,9 +101,15 @@ function stubbornManager(managerPort, servePort, graceEnv) {
   });
   delete env.ROMP_SUPERVISED;
   delete env.ROMP_SERVE_TOKEN;   // the file above is the token; an inherited env value would outrank it
-  const mgr = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
-  // pids: every kernel the manager reported, reaped at cleanup; stateDir: the manager's state root, where
-  // its stop notes (restart-audit.jsonl) and a `romp down` marker live
+  // detached: the manager leads its own process group, and every stand-in it spawns joins it (spawnKernel
+  // inherits stdio and sets no detached flag), so the cleanup below can kill the whole group without
+  // knowing a single kernel pid. A stand-in holds the write end of this stderr pipe, and one that outlived
+  // its cleanup kept the runner waiting on the read end forever (a red in the /status case before the
+  // second readyKernel had registered the second stand-in; pull-in review round 3, 2026-09-16).
+  const mgr = spawn(process.execPath, [path.join(__dirname, '..', 'bin', 'romp-manager'), 'up'], { env, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
+  // pids: every kernel the manager reported, killed one by one at cleanup as a belt under the group kill;
+  // stateDir: the manager's state root, where its stop notes (restart-audit.jsonl) and a `romp down`
+  // marker live
   const h = { mgr, log: '', pids: new Set(), stateDir: path.join(dir, 'state') };
   mgr.stderr.on('data', (d) => { h.log += d; });
   h.exited = new Promise((resolve) => mgr.on('exit', (code, sig) => resolve({ code, sig })));
@@ -128,7 +134,11 @@ function stubbornManager(managerPort, servePort, graceEnv) {
     }
     assert.fail(`the manager never reported a kernel${not ? ` other than ${not}` : ''} with its SIGTERM handler installed: ${h.log}`);
   };
+  // Independent of registration: the group kill (pgid == mgr.pid, detached above) takes the manager and
+  // every stand-in it ever forked, registered by readyKernel or not, respawned or not, handler installed
+  // or not; SIGKILL cannot be swallowed. The pid loop is a belt for a stand-in that left the group.
   h.cleanup = () => {
+    try { process.kill(-mgr.pid, 'SIGKILL'); } catch (e) { /* the group is gone */ }
     try { mgr.kill('SIGKILL'); } catch (e) { /* gone */ }
     for (const p of h.pids) { try { process.kill(p, 'SIGKILL'); } catch (e) { /* gone */ } }
     fs.rmSync(dir, { recursive: true, force: true });
