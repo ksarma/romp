@@ -277,14 +277,22 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const actions = el("div", "confirm-actions");
   const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
   const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
-  // Escape while the viewer is up OVER THIS PANE (openTodoPath's "here" arm) is the viewer's: this capture listener stands
-  // aside, the viewer's own document-level handler closes it (file-view.ts onKey, bubble phase), and the modal stays with its
-  // text; the keyboard then comes back into the box a tick later, once the viewer's card is gone (its close leaves the focus
-  // on the body, behind this overlay). The next Escape closes the modal. With the file in the Files pane the key never
-  // reaches this document (the focus moved there, openTodoPath).
+  // Escape while the viewer OR the file browser is up OVER THIS PANE (openTodoPath's "here" arm; the viewer's directory link
+  // opens the listing in the viewer's place, and a pick in the listing the viewer over it) is that surface's: this capture
+  // listener stands aside, the topmost surface's own document-level handler closes it (file-view.ts onKey, file-browse.ts
+  // onKey, bubble phase), and the modal stays with its text; the keyboard then comes back into the box a tick later, once BOTH
+  // are gone (their close leaves the focus on the body, behind this overlay; with the listing still up under a closed viewer
+  // the box must not take the keys the listing reads). The next Escape closes the modal. With the file in the Files pane the
+  // key never reaches this document (the focus moved there, openTodoPath). The listing itself draws above this overlay in this
+  // document (styles.css, the Waiting pane's #waiting-list ~ #romp-filebrowse lift over .picker-overlay), so its rows take
+  // the click; before the lift and this guard the listing sat under the backdrop and Escape closed the modal, answer and all,
+  // with the listing still up (the 2026-09-15 pull-in's review, round 2, item 5).
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape") return;
-    if (document.getElementById("romp-fileview")) { setTimeout(() => { if (overlay.isConnected && !document.getElementById("romp-fileview")) input.focus(); }, 0); return; }
+    if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")) {
+      setTimeout(() => { if (overlay.isConnected && !document.getElementById("romp-fileview") && !document.getElementById("romp-filebrowse")) input.focus(); }, 0);
+      return;
+    }
     e.stopPropagation(); close();
   };
   // A link in the quoted detail moves focus to the Files pane (openTodoPath). When focus comes back —
@@ -655,8 +663,10 @@ setFileViewIdentity((id) => { const r = rows.find((x) => x.sid === id); return r
 // and the close tells the shell nothing (shellRestore false). This pane never asks the shell to lift a pane for its browser,
 // so its close owes no browseClosed; one from here would consume the flag the FEED's relay arms on the shell (kernel.py's
 // browseClosed arm, __rompFeedWasOff) and hide the feed under its own browser. Reached from the Reply modal's own link the
-// listing sits under the modal's backdrop (styles.css: .picker-overlay 1000 over #romp-filebrowse 890, the order the chat's
-// Reply modal shares); a row's links have no modal over them.
+// listing draws ABOVE the modal's backdrop in this document (styles.css: the chat sheet's #romp-filebrowse is 890 under
+// .picker-overlay's 1000, the order the chat's own Reply modal still has; the Waiting pane's #waiting-list ~ #romp-filebrowse
+// rule lifts the listing here to 1100 and its row menu to 1150, under the viewer's 1200), and the modal's Escape stands aside
+// for it (showReply onKey); a row's links have no modal over them (the review's round 2, item 5).
 initFileBrowse((m) => vscodeApi?.postMessage(m), { shellRestore: false });
 
 render();

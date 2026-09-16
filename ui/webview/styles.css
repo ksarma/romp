@@ -4661,6 +4661,20 @@ body.filebrowse-open { overflow: hidden; }
 .fb-more { padding: 6px 14px; color: var(--dim); font-size: 0.82em; }
 #fb-ctx { z-index: 950; }
 .fb-crumb-up { opacity: 0.65; }
+/* The WAITING pane (waiting.ts) hosts the browser under this same sheet, and there the listing can be reached from inside
+   the Reply modal: a link in the quoted ask opens the viewer over the pane, and the viewer's directory link opens the
+   listing in its place. The modal wears .picker-overlay (1000), so at 890 the listing painted UNDER the modal's backdrop:
+   its rows could not be clicked, and Escape closed the modal, answer and all, with the listing still up (the 2026-09-15
+   pull-in's review, round 2, item 5). In that document alone the listing draws above the modal (1100, still under the
+   viewer's 1200: the one-directional stack holds) and its row menu above the listing (1150); the modal's Escape stands
+   aside while the listing is up (waiting.ts showReply onKey). Scoped by the served page's own markup: kernel.py
+   _waiting_page puts #waiting-list directly under the body, and file-browse.ts appends the listing and its menu to the
+   body after it, so both are its later siblings, and no other document has a #waiting-list. Two ids beat the one-id base
+   rules above whatever the order, and those stay the byte mirror of feed.css's (filebrowse-chat-overlay.test.ts pins the
+   pair); the chat's own Reply modal keeps its order. waiting-pane-browser.test.ts pins the four numbers' order (1000 <
+   1100 < 1150 < 1200) and drives the flow in Firefox and Chromium. */
+#waiting-list ~ #romp-filebrowse { z-index: 1100; }
+#waiting-list ~ #fb-ctx { z-index: 1150; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
    and because they are a sibling element a selection of the code copies without dragging them along */
 .fileview-code { display: flex; align-items: flex-start; min-height: 100%; }

@@ -455,6 +455,11 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.equal(block.replace(/\/\*[\s\S]*?\*\//g, "").match(/#[0-9a-fA-F]{3,8}\b/g), null, "no raw color: the light theme needs no override");
   // the fold's needs chip wears the shared status chip's Blocked dress (T322b), on the fold's own node
   assert.match(SNAP, /el\("span", "chip chip-blocked snap-hidden-needs"\)/);
+  // ...and the sheet has NO rule for that class (a census, the status-chip test's idiom): the class is render.ts's hook alone
+  // (it mints the span and reads it back by querySelector), and the dead `.snap-hidden-needs { font-weight: 400; letter-spacing: 0 }`
+  // that once sat here went in round 1 of the pull-in review (the later .chip rule set both properties); comments stripped first,
+  // as the raw-color pin does, so this reads selectors and nothing else
+  assert.doesNotMatch(CSS.replace(/\/\*[\s\S]*?\*\//g, ""), /\.snap-hidden-needs/, "no rule for the fold chip's hook class: the shared status chip dresses the span alone");
 });
 
 test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks over its hidden members show the section in the pane and leave the fold alone; folded, the flag opens the group as before", () => {

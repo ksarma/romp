@@ -1,12 +1,13 @@
 // The file BROWSER (the user 2026-08-14): a breadcrumb bar over one directory's entries: click a directory
 // to descend, a file to open in the existing viewer, an ancestor crumb to walk up. It exists because the
 // viewer could only ever show a path someone else surfaced; this is the "just look around the repo" half.
-// Three documents host it, each through initFileBrowse with its own contract (BrowseHost): the FEED pane,
+// Four documents host it, each through initFileBrowse with its own contract (BrowseHost): the FEED pane,
 // the shell's relay target for a browse ask naming no pane and the one document whose close restores a
 // pane (the default contract); the FILES pane (files.ts), the listing as a column of its own while that
-// pane is on screen (no setting names a closed pane since T404); and the chat, where a folder's listing
-// opens over the transcript otherwise (render.ts openBrowse decides among them at the click, by the file
-// link's ladder in file-route.ts browseRoute).
+// pane is on screen (no setting names a closed pane since T404); the chat, where a folder's listing
+// opens over the transcript otherwise (render.ts openBrowse decides among those three at the click, by the
+// file link's ladder in file-route.ts browseRoute); and the WAITING pane (waiting.ts), where the viewer's
+// directory link opens the listing over the pane in place, its close silent (shellRestore false, no relay).
 //
 // It is the viewer's SIBLING overlay and sits BENEATH it (z-index), and the stack is kept
 // ONE-DIRECTIONAL: opening a file from a listing overlays the viewer on top with the listing intact
@@ -19,8 +20,8 @@
 // holds by construction. The close contract is ownership-aware — the viewer is a modal over this
 // document (2026-08-15) and never touches the pane, so the browser's own browseClosed is the ONLY
 // pane restore — the shell puts the feed pane back exactly once.
-// The FEED alone owes that notice (BrowseHost.shellRestore): the Files pane stays up, and the chat never
-// asks the shell to lift a pane for its browser, so their closes say nothing.
+// The FEED alone owes that notice (BrowseHost.shellRestore): the Files pane stays up, and neither the chat
+// nor the Waiting pane ever asks the shell to lift a pane for its browser, so their closes say nothing.
 //
 // The listing rides a WebSocket op (listDir → dirListing), NOT a new HTTP route: the sid field routes
 // it to the session-OWNING kernel over the existing federation splice, so browsing a remote session's
@@ -67,9 +68,10 @@ export type BrowseHost = {
    *  The Files pane routes a pick through its own open (files.ts openHere), so the file enters its Recent list. */
   openFile?: (path: string, sid: string | null) => void;
   /** Whether a close here tells the shell browseClosed. TRUE only for the FEED, the pane the shell lifts for a
-   *  relayed browse and puts back on that message. The Files pane stays up and the chat never asks for a lift,
-   *  so their closes say nothing: a browseClosed from either would consume a flag the feed's relay armed and
-   *  hide the feed under its own browser. */
+   *  relayed browse and puts back on that message. The Files pane stays up, and neither the chat nor the
+   *  Waiting pane (waiting.ts, the viewer's directory link opening the listing over the pane in place) ever
+   *  asks for a lift, so their closes say nothing: a browseClosed from any of them would consume a flag the
+   *  feed's relay armed and hide the feed under its own browser. */
   shellRestore?: boolean;
 };
 
@@ -452,8 +454,8 @@ function onListing(m: DirListing): void {
 }
 
 /** Bind the kernel poster and listen for the shell's relay + the kernel's listing replies.
- *  Called once per hosting document (the feed's, the Files pane's and the chat's boot, beside initFileView);
- *  `host` is that document's contract (BrowseHost), the feed's by default. */
+ *  Called once per hosting document (the feed's, the Files pane's, the chat's and the Waiting pane's boot, beside
+ *  initFileView); `host` is that document's contract (BrowseHost), the feed's by default. */
 export function initFileBrowse(poster: (m: Record<string, unknown>) => void, host: BrowseHost = {}): void {
   post = poster;
   shellRestore = host.shellRestore !== false;

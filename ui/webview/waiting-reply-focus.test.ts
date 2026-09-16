@@ -19,6 +19,13 @@
 // a real browser (Alt+Left after the Files pane took the click) is waiting-pane-browser.test.ts's Files-pane-open case, in
 // Firefox and Chromium. The suite discovers this file by its name and place (vscode-extension/esbuild.js testBuild reads
 // every *.test.ts under ui/webview). Synthetic only: no fixture text.
+//
+// A third leg (the 2026-09-15 pull-in's review, round 2, item 5) executes the modal's capture-phase Escape handler (onKey)
+// against stand-ins the same way: while the viewer OR the file browser's listing is up over the pane, Escape is that surface's
+// and the modal stands aside, parking one return of the keyboard into the box that runs only once BOTH ids are gone; with
+// neither up, Escape is the modal's. Before the round the guard read the viewer's id alone, so a listing reached through the
+// modal's own link (the viewer's directory link) had the modal's Escape close the modal, typed answer and all, with the
+// listing still up. The flow in a browser is waiting-pane-browser.test.ts's modal-link case.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -112,4 +119,102 @@ test("the overlay removed some other way (a second Reply replacing this one): th
   win.fire("focus");
   assert.equal(focused(), 1, "and nothing runs on the focus after that");
   assert.equal(doc.removed.length, 0, "close() never ran: the Escape handler is still the document's");
+});
+
+// ── the Escape stand-aside, executed ─────────────────────────────────────────────────────────────
+// showReply's onKey (the modal's capture-phase Escape), sliced WHOLE out of the source (the multi-line arrow, head to its
+// closing brace) and run against stand-ins: a document whose getElementById answers for the ids a case puts up (the viewer's
+// romp-fileview, the listing's romp-filebrowse; no DOM edge on it, so no hideEdges call, as Target above), the overlay and the
+// box as factory nodes (world()), a setTimeout that PARKS the tick for the case to run, and a close that counts. The rule: with
+// a surface up, no stopPropagation and no close, one return parked; at the tick the box takes the keyboard only when both ids
+// are gone and the modal is still in the document; with nothing up, Escape stops here and closes the modal.
+type Key = (e: { key: string; stopPropagation(): void }) => void;
+function onKeyOf(dom: unknown, overlay: unknown, input: unknown, timer: unknown, close: unknown): Key {
+  const head = "const onKey = (e: KeyboardEvent) => {";
+  const at = MODAL.indexOf(head);
+  assert.ok(at >= 0, "the onKey head not found in showReply: re-anchor");
+  const tail = "\n  };";
+  const end = MODAL.indexOf(tail, at);
+  assert.ok(end > at, "the onKey close not found in showReply: re-anchor");
+  const src = MODAL.slice(at, end + tail.length).replace(head, "const onKey = (e) => {");   // the one annotation, off for plain JS
+  return new Function("document", "overlay", "input", "setTimeout", "close", src + "\nreturn onKey;")(dom, overlay, input, timer, close) as Key;
+}
+// the document as the handler reads it: getElementById for the two overlay ids, up or not
+class Doc {
+  private up = new Map<string, unknown>();
+  show(id: string): void { this.up.set(id, makeNode("div")); }
+  hide(id: string): void { this.up.delete(id); }
+  getElementById(id: string): unknown { return this.up.get(id) ?? null; }
+}
+function escWorld() {
+  const { body, overlay, input, focused } = world();
+  const dom = new Doc();
+  const parked: Array<() => void> = [];
+  const timer = (fn: () => void, ms: number) => { assert.equal(ms, 0, "the return is a tick later, never a wait"); parked.push(fn); };
+  const tick = (): number => { const run = parked.splice(0); for (const fn of run) fn(); return run.length; };
+  let closed = 0;
+  const onKey = onKeyOf(dom, overlay, input, timer, () => { closed++; });
+  // one press: how many times the handler stopped the key (0: it stood aside or ignored the key; 1: the modal took it)
+  const press = (key = "Escape"): number => { let stopped = 0; onKey({ key, stopPropagation() { stopped++; } }); return stopped; };
+  return { body, overlay, input, focused, dom, parked, tick, closed: () => closed, press };
+}
+
+test("Escape with nothing over the pane is the modal's: the key stops here and the modal closes, no return parked; another key is nobody's", () => {
+  const w = escWorld();
+  assert.equal(w.press("Enter"), 0, "not Escape: nothing");
+  assert.equal(w.closed(), 0); assert.equal(w.parked.length, 0);
+  assert.equal(w.press(), 1, "stopPropagation: the key goes no further");
+  assert.equal(w.closed(), 1, "close()");
+  assert.equal(w.parked.length, 0, "no return of the keyboard parked");
+  assert.equal(w.focused(), 0, "the box was never focused: only the open's own focus would be (not armed here)");
+});
+
+test("Escape while the viewer is up stands aside and parks the return: the box takes the keyboard once the viewer is gone, not while it stays", () => {
+  const w = escWorld();
+  w.dom.show("romp-fileview");
+  assert.equal(w.press(), 0, "no stopPropagation: the viewer's own handler (file-view.ts onKey, bubble phase) gets the key");
+  assert.equal(w.closed(), 0, "the modal stays");
+  assert.equal(w.parked.length, 1, "one return parked, a tick later");
+  assert.equal(w.tick(), 1);
+  assert.equal(w.focused(), 0, "the viewer still up at the tick (its dirty-edit veto kept it): the box is left alone");
+  w.press(); w.dom.hide("romp-fileview"); w.tick();
+  assert.equal(w.focused(), 1, "the viewer gone at the tick: the keyboard comes back into the box");
+  assert.equal(w.closed(), 0, "and the modal is still up");
+});
+
+test("Escape while the LISTING is up stands aside the same way: the browser's own handler closes it, the answer stays, the box takes the keyboard once the listing is gone, and the next Escape is the modal's", () => {
+  const w = escWorld();
+  w.dom.show("romp-filebrowse");
+  assert.equal(w.press(), 0, "no stopPropagation: the browser's handler (file-browse.ts onKey, bubble phase) gets the key");
+  assert.equal(w.closed(), 0, "the modal stays with its text");
+  assert.equal(w.tick(), 1, "one return parked");
+  assert.equal(w.focused(), 0, "the listing still up at the tick (a row menu took the key): the box does not take the keys the listing reads");
+  w.press(); w.dom.hide("romp-filebrowse"); w.tick();
+  assert.equal(w.focused(), 1, "the listing gone: the keyboard comes back into the box");
+  assert.equal(w.closed(), 0);
+  assert.equal(w.press(), 1, "nothing up: the next Escape is the modal's");
+  assert.equal(w.closed(), 1);
+});
+
+test("the viewer over the listing (a pick from it): the viewer's Escape leaves the listing up, so the box waits for BOTH to go; a modal replaced before the tick takes nothing", () => {
+  const w = escWorld();
+  w.dom.show("romp-filebrowse"); w.dom.show("romp-fileview");
+  assert.equal(w.press(), 0, "stands aside for the topmost, the viewer");
+  assert.equal(w.closed(), 0);
+  w.dom.hide("romp-fileview");   // the viewer's own handler closed it; the listing is still up beneath
+  w.tick();
+  assert.equal(w.focused(), 0, "both ids are checked: the listing still up keeps the keyboard");
+  assert.equal(w.press(), 0, "the next Escape is the listing's");
+  w.dom.hide("romp-filebrowse"); w.tick();
+  assert.equal(w.focused(), 1, "both gone: the box");
+  assert.equal(w.closed(), 0, "the modal never closed through this");
+  // a second Reply replaced this modal before the tick (its overlay removed some other way, not close()): no focus into a box
+  // behind a modal that is gone
+  const v = escWorld();
+  v.dom.show("romp-filebrowse");
+  assert.equal(v.press(), 0);
+  v.dom.hide("romp-filebrowse"); v.body.removeChild(v.overlay);
+  assert.equal(v.overlay.isConnected, false);
+  v.tick();
+  assert.equal(v.focused(), 0, "overlay.isConnected false at the tick: nothing focused");
 });

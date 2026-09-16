@@ -107,8 +107,10 @@ A determinate progress bar is even better *when real progress is knowable*; defa
 the loader animation otherwise.
 
 ### Buttons must stay click-safe across re-renders, and always acknowledge
-The dashboard re-renders on every kernel push (a 0.5–3s backstop, plus an
-immediate push per SDK stream event and per hook `/tick`). A control whose action
+The dashboard re-renders on every kernel push (cycles at least 1.0 s apart
+under the pusher's minimum interval, except that a stream event or echo for
+the chat tab being watched pushes at once; a 0.5–3s backstop covers changes
+with no event). A control whose action
 is hung on a DOM node that a re-render rebuilds gets destroyed mid-click: a
 native `click` fires on the nearest common ancestor of the mousedown and mouseup
 targets, and a pressed node that a rebuild removed before the mouseup has none,
