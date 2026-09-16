@@ -14,7 +14,10 @@
 //    closes the viewer, the modal and its text stay", retires here by name, twin T317b plus T404
 //    (https://github.com/romp-on/romp/pull/1596); its browser assertions (the focus hand-off, Escape, the return trip into
 //    the box) live on in the Files-pane-open case, and the Reply modal's focus-return listener is pinned at source and
-//    executed in waiting-reply-focus.test.ts (the pull-in's fixer round 7w, R5).
+//    executed in waiting-reply-focus.test.ts (the pull-in's fixer round 7w, R5). The same file's executed case for openTodoPath's
+//    guards against a shell the pane cannot trust (a parent whose document throws, no f-files, an f-files that is no iframe, an
+//    iframe with no window yet) is restored below in the source leg (fixer round 7t, R5), with the exact calls per shape; its
+//    twin is user-todo-links.test.ts's document-less parent (the try/catch arm) plus that case, not T404 whole.
 // 2. A click whose pressed node a re-render replaced mid-press never fires (ui/CLAUDE.md, click safety):
 //    with a Dismiss armed on another row the document pointerdown listener disarmed and re-rendered
 //    synchronously, and a feed frame between mousedown and mouseup rebuilt the list — either dropped the
@@ -63,12 +66,19 @@ function openTodoPath(): Fn {
   return new Function("rows", "window", "path", "sid", "todoId", "at", "todoLinkRoute", "openFileView", body) as Fn;
 }
 class ShellIFrame { constructor(public contentWindow: { focus(): void } | null) {} }
-// the shell as the pane reads it: an iframe of the SHELL's realm, and the shell's pane toggle on its window
-function shell(calls: string[], withToggle: boolean) {
-  const files = new ShellIFrame({ focus: () => { calls.push("focus"); } });
+// the shell as the pane reads it: an iframe of the SHELL's realm (its own HTMLIFrameElement, reached through defaultView: the
+// check waiting.ts makes, since an element is never an instance of another document's constructor), and the shell's pane
+// toggle on its window. `hostile` bends the shell into a shape the pane must survive: `ff` replaces what getElementById answers
+// for f-files (null, a node that is no iframe, an iframe the shell has not loaded), `unreadable` makes the parent's document
+// getter throw, as a cross-origin parent's does
+type Hostile = { ff?: unknown; unreadable?: boolean };
+function shell(calls: string[], withToggle: boolean, hostile: Hostile = {}) {
+  const files = "ff" in hostile ? hostile.ff : new ShellIFrame({ focus: () => { calls.push("focus"); } });
   const view: Record<string, unknown> = { HTMLIFrameElement: ShellIFrame };
   if (withToggle) view.__rompPaneToggle = (k: string, to: unknown) => { calls.push("toggle " + k + " " + String(to)); };
-  return { parent: { postMessage: (m: any) => { calls.push("post " + m.romp + " " + m.pane); }, document: { getElementById: (id: string) => (id === "f-files" ? files : null), defaultView: view } } };
+  const post = (m: any) => { calls.push("post " + m.romp + " " + m.pane); };
+  if (hostile.unreadable) return { parent: { postMessage: post, get document(): never { throw new Error("SecurityError: Blocked a frame with origin"); } } };
+  return { parent: { postMessage: post, document: { getElementById: (id: string) => (id === "f-files" ? files : null), defaultView: view } } };
 }
 
 test("openTodoPath routes by the shell's word: the Files pane on screen takes the click (the toggle, then the focus); otherwise the viewer opens over this pane and nothing is posted", () => {
@@ -105,6 +115,32 @@ test("openTodoPath routes by the shell's word: the Files pane on screen takes th
   // the Reply modal's Escape stands aside while the viewer is up over this pane, and takes the keyboard back once it is gone
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
   assert.match(modal, /const onKey = \(e: KeyboardEvent\) => \{\n\s*if \(e\.key !== "Escape"\) return;\n\s*if \(document\.getElementById\("romp-fileview"\)\) \{ setTimeout\(\(\) => \{ if \(overlay\.isConnected && !document\.getElementById\("romp-fileview"\)\) input\.focus\(\); \}, 0\); return; \}\n\s*e\.stopPropagation\(\); close\(\);\n\s*\};/);
+});
+
+// openTodoPath's guards against a shell the pane cannot trust, restored at the pull-in's fixer round 7t (R5) from the deleted
+// waiting-link-focus.test.ts; this case's twin is user-todo-links.test.ts's document-less parent (the try/catch arm) plus this
+// one. The exact calls per shape, not "nothing throws": the instanceof gate stands BEFORE the toggle, so a shell the gate
+// refuses gets the relay and nothing else; a gate that was missing would toggle first and then throw into the catch, which a
+// no-throw check cannot see. The payload's fields ride the relay as user-todo-links.test.ts's executed case pins them
+test("a parent this pane cannot read, a shell with no Files iframe, an f-files that is no iframe: the relay goes and nothing else; an iframe with no window yet is brought forward and not focused", () => {
+  const route = () => "pane" as Route, openHere = () => undefined;
+  // the parent's document getter throws (a cross-origin parent): the catch, before the shell is read
+  const unreadable: string[] = [];
+  openTodoPath()(ROWS, shell(unreadable, true, { unreadable: true }), "docs/design.md", SID, "t1", null, route, openHere);
+  assert.deepEqual(unreadable, ["post viewFile pane"], "the relay, then the catch: no toggle, no focus");
+  // no f-files element: the gate refuses null before the toggle
+  const missing: string[] = [];
+  openTodoPath()(ROWS, shell(missing, true, { ff: null }), "docs/design.md", SID, "t1", null, route, openHere);
+  assert.deepEqual(missing, ["post viewFile pane"], "no element: nothing toggled, nothing focused");
+  // an f-files that is no iframe of the shell's realm: the gate refuses it, so its window is never reached
+  const notAFrame = { contentWindow: { focus: () => { throw new Error("must not be reached"); } } };
+  const other: string[] = [];
+  openTodoPath()(ROWS, shell(other, true, { ff: notAFrame }), "docs/design.md", SID, "t1", null, route, openHere);
+  assert.deepEqual(other, ["post viewFile pane"], "not an iframe: no toggle (a missing gate would toggle, then throw into the catch)");
+  // an iframe the shell has not loaded yet has no window: brought forward, nothing to focus, nothing thrown
+  const unloaded: string[] = [];
+  openTodoPath()(ROWS, shell(unloaded, true, { ff: new ShellIFrame(null) }), "docs/design.md", SID, "t1", null, route, openHere);
+  assert.deepEqual(unloaded, ["post viewFile pane", "toggle files true"], "the bring-forward, and no focus on a window that is not there");
 });
 
 test("re-renders are HELD while a pointer is pressed on the list and flushed a tick after the release", () => {

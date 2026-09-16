@@ -489,14 +489,17 @@ const NON_DOM_EDGES: Array<[string, string, number]> = [   // [file, why its edg
 ];
 const NON_DOM_EDGES_MAX = 4;
 const NON_DOM = NON_DOM_EDGES.map(([f]) => f);
-// SWITCHED: the seventeen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the sixteen
-// near-copies (fifteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and
-// ui/webview/tab-color-picker.test.ts) and the tags-scale test the shim grew from. They keep no makeNode of their own. The other ui/webview test files that fake a DOM are not listed
+// SWITCHED: the sixteen files whose own copies of the node factory the shared module REPLACED (2026-09-10): the fifteen
+// near-copies (fourteen ui/timeline-*.test.ts siblings, the fold's timeline-tag-chips among them, and
+// ui/webview/tab-color-picker.test.ts) and the tags-scale test the shim grew from. They keep no makeNode of their own. A
+// seventeenth, ui/timeline-live-tick.test.ts, left the list at the 2026-09-16 upstream pull-in: its shim-DOM tick cases
+// retired for their same-named twins in ui/timeline-transform-tick.test.ts and the file converged on upstream's, which
+// builds no fake and imports no shim. The other ui/webview test files that fake a DOM are not listed
 // here: each keeps its own node classes, window stand-ins or literals and hides their edges through hideEdges
 // (ui/webview/timeline-boot.test.ts takes nodeFactory outright); the call is the credential the ratchet reads, and each
 // file's projection test is the executed check on its edges.
 const SWITCHED = [
-  "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts", "timeline-live-tick.test.ts",
+  "timeline-hidden-hold.test.ts", "timeline-hidden-stub.test.ts", "timeline-kernel-post.test.ts",
   "timeline-nan-window.test.ts", "timeline-open-interval.test.ts", "timeline-pending-hosts.test.ts", "timeline-render.test.ts",
   "timeline-tag-chips.test.ts", "timeline-tagbtn-click.test.ts", "timeline-tagorder-drag.test.ts", "timeline-tags-scale.test.ts", "timeline-theme-light.test.ts",
   "timeline-transform-tick.test.ts", "timeline-views-ack.test.ts", "timeline-zoom-anchor.test.ts", "webview/tab-color-picker.test.ts",
