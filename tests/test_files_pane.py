@@ -242,7 +242,7 @@ class Shell(unittest.TestCase):
         _has(self, "grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)
         _has(self, "id==='waiting-pane'?'waiting':'files'", self.html)
         # the chat side of every gutter is the RIGHTMOST chat column (the split, 2026-09-08: lastChat() is 'chat-pane' with no split);
-        # gv-c's right side is the fork's Waiting pane, and gv-d, the Files pane's gutter, picks its left one from waiting / feed / fleet / the chat
+        # gv-c's right side is the fork's Waiting pane, and gv-d, the Files pane's gutter, picks its left one from waiting / feed / the sessions pane / the chat
         _has(self, "gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':"
                       "c.contains('po-fleet')?'fleet-pane':lastChat();},'waiting-pane');", self.html)
         _has(self, "gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':"
