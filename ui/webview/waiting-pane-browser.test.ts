@@ -265,9 +265,12 @@ test("the Waiting pane's stacking: .picker-overlay 1000 < the listing 1100 < its
   const modal = z(".picker-overlay {"), listing = z("#waiting-list ~ #romp-filebrowse {"), menu = z("#waiting-list ~ #fb-ctx {"), viewer = z("#romp-fileview {");
   assert.deepEqual([modal, listing, menu, viewer], [1000, 1100, 1150, 1200], "the four layers, bottom to top");
   assert.ok(modal < listing && listing < menu && menu < viewer, "the order the modal flow needs");
-  // the served page selects the two: #waiting-list is a direct child of the body, and the browser is appended to the body after it
-  assert.match(KERNEL, /<div id=waiting-head><\/div><div id=waiting-list><\/div>/, "the served Waiting page's markup");
-  assert.match(WAITING_HTML, /<body>\n<div id=waiting-head><\/div><div id=waiting-list><\/div>/, "the harness's page carries the same");
+  // the served page selects the two: #waiting-list is a direct child of the body, and the browser is appended to the body after it.
+  // The pins hold that adjacency: each spans from the head's close and the body's open tag through the two divs (the kernel's
+  // across its literal's line break), so a wrapper element between the body and #waiting-list fails them instead of passing unseen
+  assert.match(KERNEL, /<\/head><body>(?:"\s*")?<div id=waiting-head><\/div><div id=waiting-list><\/div>/,
+    "the served Waiting page's markup: #waiting-list a direct child of the body, nothing between");
+  assert.match(WAITING_HTML, /<\/head><body>\n<div id=waiting-head><\/div><div id=waiting-list><\/div>/, "the harness's page carries the same");
 });
 const FILES_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8></head><body class=fileview-pane>
 <div id=files-empty></div><script src=/dist/files.js></script></body></html>`;

@@ -790,6 +790,17 @@ test("the chips' host: prefix has one colour of its own for both chips, beside t
   }
 });
 
+test("the count row (.mention-more) wears the menu's sub-line dress, the slash key hint's size and opacity, and no hex colour", () => {
+  // The "N more, keep typing" line under the cap is dimmed by opacity, so the menu's own text colour shows through in both
+  // themes; nothing is coloured by hand. .slash-key-hint is the sheet's menu sub-line rule, so the two are read as a pair.
+  const more = STYLES.match(/^\.mention-more \{([^}]*)\}/m), hint = STYLES.match(/^\.slash-key-hint \{([^}]*)\}/m);
+  assert.ok(more && hint, "the count row's rule and the menu's sub-line rule");
+  const pair = (body: string) => body.match(/font-size: ([^;]+); opacity: ([^;]+);/)?.slice(1);
+  assert.deepEqual(pair(more![1]), pair(hint![1]), "the sub-line's size and opacity, the same pair on both");
+  assert.deepEqual(pair(more![1]), ["0.82em", "0.6"]);
+  assert.doesNotMatch(more![1], /#[0-9a-fA-F]{3,8}\b/, "no bare hex colour on the count row");
+});
+
 test("a copy over a chip goes through mentionCopyText from both doors: the document's copy listener in the chip block, and the selection menu's Copy", () => {
   assert.match(chipBlock(), /\ndocument\.addEventListener\("copy", \(e\) => \{/, "the listener lives in the sliced block, so the Chromium case above runs the real one");
   assert.match(RENDER, /const text = sel \? \(mentionCopyText\(sel\)\?\.text \?\? sel\.toString\(\)\) : "";/, "the right-click Copy reads the same text a Ctrl+C would");
